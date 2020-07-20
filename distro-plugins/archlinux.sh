@@ -9,6 +9,11 @@ if [ -n "$FILE_NAME" ]; then
 fi
 unset FILE_NAME
 
+# x86_64 rootfs is stored in subdirectory.
+if [ "$(uname -m)" = "x86_64" ]; then
+	DISTRO_TARBALL_STRIP_OPT=1
+fi
+
 distro_setup() {
 	# DNS resolver.
 	rm -f ./etc/resolv.conf

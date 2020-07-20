@@ -225,6 +225,10 @@ command_install() {
 		DISTRO_ROOTFS_URL_I686=""
 		DISTRO_ROOTFS_URL_X86_64=""
 
+		# Some distributions store rootfs in subdirectory.
+		# In this case this variable should be set to 1.
+		DISTRO_TARBALL_STRIP_OPT=0
+
 		# Distribution-specific module should redefine DISTRO_ROOTFS_URL_*
 		# variables listed above and optionally define a distro_setup()
 		# post-installation hook.
@@ -287,11 +291,13 @@ command_install() {
 		fi
 
 		echo "[*] Extracting rootfs, please wait..."
-		# Need to exclude /dev directory which may contain device files.
+		# --exclude='dev'||: - need to exclude /dev directory which may contain device files.
+		# --delay-directory-restore - set directory permissions only when files were extracted
+		#                             to avoid issues with Arch Linux bootstrap archives.
 		proot --link2symlink \
 			tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
-			--delay-directory-restore -xf "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}" \
-			--exclude='dev'||:
+			--delay-directory-restore --strip="$DISTRO_TARBALL_STRIP_OPT" \
+			-xf "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}" --exclude='dev'||:
 
 		# Write important environment variables to profile file as /bin/login does not
 		# preserve them.
