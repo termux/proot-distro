@@ -28,10 +28,6 @@ UTILITY_BASEDIR="@TERMUX_PREFIX@/var/lib/proot-distro"
 DOWNLOADED_ROOTFS_DIR="${UTILITY_BASEDIR}/dlcache"
 INSTALLED_ROOTFS_DIR="${UTILITY_BASEDIR}/installed-rootfs"
 
-declare -A SUPPORTED_DISTRIBUTIONS
-SUPPORTED_DISTRIBUTIONS["archlinux"]="Arch Linux"
-SUPPORTED_DISTRIBUTIONS["ubuntu"]="Ubuntu 20.04"
-
 #############################################################################
 #
 # ANTI-ROOT FUSE
@@ -148,19 +144,9 @@ command_help() {
 #  1. Checks whether requested distribution is supported, if yes - continue.
 #  2. Checks whether requested distribution is installed, if not - continue.
 #  3. Configure environment and check whether proot is installed.
-#  4. Source the distribution configuration module which contains the URLs
-#     and optional setup hook (function 'distro_setup()'). Download URLs are
-#     per-architecture and are empty (disabled) by default. To set download
-#     urls, define each of these variables where applicable:
-#
-#     DISTRO_ROOTFS_URL_AARCH64  - for aarch64 (arm64).
-#     DISTRO_ROOTFS_URL_ARM      - for arm (armv7l, armv8l).
-#     DISTRO_ROOTFS_URL_I686     - for i686.
-#     DISTRO_ROOTFS_URL_X86_64   - for x86_64.
-#
-#     Do not define URLs for architectures not supported by distribution.
-#     During installation, a proper URL will be picked according to value
-#     of `uname -a`.
+#  4. Source the distribution configuration plug-in which contains the
+#     functionality necessary for installation. It must define at least
+#     get_download_url() function which returns a download URL.
 #  5. Download the rootfs archive, if it is not available in cache.
 #  6. Extract the rootfs by using `tar` running under proot with link2symlink
 #     extension.
@@ -219,39 +205,26 @@ command_install() {
 	if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
 		echo "[*] Installing ${SUPPORTED_DISTRIBUTIONS["$distro_name"]}..."
 
-		# Empty URL means disabled/unsupported.
-		DISTRO_ROOTFS_URL_AARCH64=""
-		DISTRO_ROOTFS_URL_ARM=""
-		DISTRO_ROOTFS_URL_I686=""
-		DISTRO_ROOTFS_URL_X86_64=""
-
-		# Some distributions store rootfs in subdirectory.
-		# In this case this variable should be set to 1.
+		# Some distributions store rootfs in subdirectory - in this case
+		# this variable should be set to 1.
 		DISTRO_TARBALL_STRIP_OPT=0
 
-		# Distribution-specific module should redefine DISTRO_ROOTFS_URL_*
-		# variables listed above and optionally define a distro_setup()
-		# post-installation hook.
+		# Distribution plug-in contains steps on how to get download URL
+		# and further post-installation configuration.
 		source "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
 
 		local download_url
-		case "$(uname -m)" in
-			aarch64) download_url="$DISTRO_ROOTFS_URL_AARCH64";;
-			# Some AArch64 devices use 32 bit environment, they report armv8l
-			# through `uname -m`.
-			armv7l|armv8l) download_url="$DISTRO_ROOTFS_URL_ARM";;
-			i686) download_url="$DISTRO_ROOTFS_URL_I686";;
-			x86_64) download_url="$DISTRO_ROOTFS_URL_X86_64";;
-			# Following case should not happen. Termux supports only AArch64, ARM,
-			# i686 and x86_64 architectures.
-			*)
-				echo "[!] Your CPU has unknown architecture '$(uname -m)'. Installation is not possible."
-				return 1
-				;;
-		esac
+		if declare -f -F get_download_url >/dev/null 2>&1; then
+			download_url=$(get_download_url)
+		else
+			echo
+			echo "Error: get_download_url() is not defined in ${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
+			echo
+			return 1
+		fi
 
 		if [ -z "$download_url" ]; then
-			echo "[!] Sorry, but distribution does not support your CPU architecture '$(uname -m)'. Installation is not possible."
+			echo "[!] Sorry, but distribution download URL is not defined for your CPU architecture '$(uname -m)'."
 			return 1
 		fi
 
@@ -341,7 +314,6 @@ command_install() {
 		if declare -f -F distro_setup >/dev/null 2>&1; then
 			echo "[*] Running distro-specific configuration steps..."
 			(cd "${INSTALLED_ROOTFS_DIR}/${distro_name}"
-				export DISTRO_NAME="$distro_name"
 				distro_setup
 			)
 		fi
@@ -360,11 +332,9 @@ command_install() {
 # Special function for executing a command in rootfs.
 # Can be used only inside distro_setup().
 run_proot_cmd() {
-	local distro="${DISTRO_NAME-}"
-
-	if [ -z "$DISTRO_NAME" ]; then
+	if [ -z "${distro_name-}" ]; then
 		echo
-		echo "Error: called run_proot_cmd() but \$DISTRO_NAME is not set."
+		echo "Error: called run_proot_cmd() but \$distro_name is not set."
 		echo "Possible cause: using run_proot_cmd() outside of distro_setup() ?"
 		echo
 		return 1
@@ -686,11 +656,31 @@ command_login_help() {
 
 #############################################################################
 #
-# BASIC COMMAND LINE PARSING
+# ENTRY POINT
 #
-# Handle the requested commands or show help when '-h/--help/help' were
-# given. Further command line processing is offloaded to requested command.
+# 1. Check all available distribution plug-ins.
+# 2. Handle the requested commands or show help when '-h/--help/help' were
+#    given. Further command line processing is offloaded to requested command.
 #
+declare -A SUPPORTED_DISTRIBUTIONS
+while read -r filename; do
+	distro_name=$(. "$filename"; echo "${DISTRO_NAME-}")
+	distro_alias=${filename%%.sh}
+	distro_alias=$(basename "$distro_alias")
+
+	# We getting distribution name from $DISTRO_NAME which
+	# should be set in plug-in.
+	if [ -z "$distro_name" ]; then
+		echo
+		echo "Error: no DISTRO_NAME defined in '$filename'."
+		echo
+		exit 1
+	fi
+
+	SUPPORTED_DISTRIBUTIONS["$distro_alias"]="$distro_name"
+done < <(find "$DISTRO_PLUGINS_DIR" -maxdepth 1 -type f -iname "*.sh")
+unset distro_name distro_alias
+
 if [ $# -ge 1 ]; then
 	case "$1" in
 		-h|--help|help) shift 1; command_help;;
