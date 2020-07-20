@@ -618,6 +618,12 @@ command_login() {
 		set -- "--bind=/proc" "$@"
 		set -- "--bind=/sys" "$@"
 
+		# Bind /tmp to /dev/shm.
+		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp" ]; then
+			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp"
+		fi
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp:/dev/shm" "$@"
+
 		# When running in non-isolated mode, provide some bindings specific
 		# to Android and Termux so user can interact with host file system.
 		if ! $isolated_environment; then
