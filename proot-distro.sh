@@ -108,35 +108,6 @@ show_supported_distributions() {
 
 #############################################################################
 #
-# FUNCTION TO PRINT UTILITY USAGE INFORMATION
-#
-# Prints a basic overview of the available commands, list of supported
-# distributions and version.
-#
-command_help() {
-	echo
-	echo "Usage: $PROGRAM_NAME [COMMAND] [ARGUMENTS]"
-	echo
-	echo "Utility to manage proot'ed Linux distributions inside Termux."
-	echo
-	echo "List of the available commands:"
-	echo
-	echo "  install  - install a specified distribution."
-	echo "  login    - start login shell for the specified distribution."
-	echo "  remove   - delete a specified distribution."
-	echo "  reset    - reinstall from scratch a specified distribution."
-	echo
-	echo "Each of commands has its own help information. To view it, just supply"
-	echo "a '--help' argument to chosen command."
-	echo
-	show_supported_distributions
-	echo
-	echo "Proot-Distro version $PROGRAM_VERSION by @xeffyr."
-	echo
-}
-
-#############################################################################
-#
 # FUNCTION TO INSTALL THE SPECIFIED DISTRIBUTION
 #
 # Installs the Linux distribution by the following algorithm:
@@ -670,6 +641,36 @@ command_login_help() {
 
 #############################################################################
 #
+# FUNCTION TO PRINT UTILITY USAGE INFORMATION
+#
+# Prints a basic overview of the available commands, list of supported
+# distributions and version.
+#
+command_help() {
+	echo
+	echo "Usage: $PROGRAM_NAME [COMMAND] [ARGUMENTS]"
+	echo
+	echo "Utility to manage proot'ed Linux distributions inside Termux."
+	echo
+	echo "List of the available commands:"
+	echo
+	echo "  install  - install a specified distribution."
+	echo "  list     - list supported distributions and their installation status."
+	echo "  login    - start login shell for the specified distribution."
+	echo "  remove   - delete a specified distribution."
+	echo "  reset    - reinstall from scratch a specified distribution."
+	echo
+	echo "Each of commands has its own help information. To view it, just supply"
+	echo "a '--help' argument to chosen command."
+	echo
+	show_supported_distributions
+	echo
+	echo "Proot-Distro version $PROGRAM_VERSION by @xeffyr."
+	echo
+}
+
+#############################################################################
+#
 # ENTRY POINT
 #
 # 1. Check all available distribution plug-ins.
@@ -702,6 +703,7 @@ if [ $# -ge 1 ]; then
 		remove) shift 1; command_remove "$@";;
 		reset) shift 1; command_reset "$@";;
 		login) shift 1; command_login "$@";;
+		list) shift 1; echo; show_supported_distributions; echo;;
 		*)
 			echo
 			echo "Unknown command '$1'."
