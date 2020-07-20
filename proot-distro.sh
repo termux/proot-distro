@@ -23,7 +23,7 @@ set -e -u
 PROGRAM_VERSION="0.1"
 
 PROGRAM_NAME=$(basename "$(realpath "$0")")
-DISTRO_PLUGINS_DIR="@TERMUX_PREFIX@/share/proot-distro"
+DISTRO_PLUGINS_DIR="@TERMUX_PREFIX@/etc/proot-distro"
 UTILITY_BASEDIR="@TERMUX_PREFIX@/var/lib/proot-distro"
 DOWNLOADED_ROOTFS_DIR="${UTILITY_BASEDIR}/dlcache"
 INSTALLED_ROOTFS_DIR="${UTILITY_BASEDIR}/installed-rootfs"
