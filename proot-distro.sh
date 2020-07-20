@@ -261,17 +261,19 @@ command_install() {
 
 		if [ ! -f "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}" ]; then
 			echo "[*] Downloading rootfs tarball for '$distro_name'..."
-			echo
 
 			# Using temporary file as script can't distinguish the partially
 			# downloaded file from the complete. Useful in case if curl will
 			# fail for some reason.
+			echo
 			rm -f "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}.tmp"
 			if ! curl --fail --retry 5 --retry-connrefused --retry-delay 5 --location \
 				--output "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}.tmp" "$download_url"; then
 				echo "[!] Download failure, please check your network connection."
 				rm -f "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}.tmp"
+				return 1
 			fi
+			echo
 
 			# If curl finished successfully, rename file to original.
 			mv -f "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}.tmp" "${DOWNLOADED_ROOTFS_DIR}/${tarball_name}"
