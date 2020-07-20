@@ -298,6 +298,14 @@ command_install() {
 		export TMPDIR=/tmp
 		EOF
 
+		# /etc/resolv.conf may not be configured, so write in it our configuraton.
+		echo "[*] Creating DNS resolver configuration (NS 1.1.1.1/1.0.0.1)..."
+		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
+		nameserver 1.1.1.1
+		nameserver 1.0.0.1
+		EOF
+
 		# Add Android-specific UIDs/GIDs to /etc/group and /etc/gshadow.
 		echo "[*] Registering Android-specific UIDs and GIDs..."
 		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/usr/sbin/nologin" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"

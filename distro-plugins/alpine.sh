@@ -25,10 +25,12 @@ get_download_url() {
 # Define here additional steps which should be executed
 # for configuration.
 distro_setup() {
-	# DNS resolver.
-	rm -f ./etc/resolv.conf
-	cat <<- EOF > ./etc/resolv.conf
-	nameserver 1.1.1.1
-	nameserver 1.0.0.1
-	EOF
+	# Hint: $PWD is the distribution rootfs directory.
+	#echo "hello world" > ./etc/motd
+
+	# Run command within proot'ed environment with
+	# run_proot_cmd function.
+	# Uncomment this to run 'apk upgrade' during installation.
+	#run_proot_cmd apk upgrade
+	:
 }

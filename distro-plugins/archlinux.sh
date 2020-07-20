@@ -32,13 +32,6 @@ get_download_url() {
 # Define here additional steps which should be executed
 # for configuration.
 distro_setup() {
-	# DNS resolver.
-	rm -f ./etc/resolv.conf
-	cat <<- EOF > ./etc/resolv.conf
-	nameserver 1.1.1.1
-	nameserver 1.0.0.1
-	EOF
-
 	# Pacman keyring initialization.
 	run_proot_cmd pacman-key --init
 	run_proot_cmd pacman-key --populate archlinux
