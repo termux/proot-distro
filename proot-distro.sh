@@ -103,7 +103,7 @@ show_supported_distributions() {
 		else
 			echo "  * ${SUPPORTED_DISTRIBUTIONS[$i]} (alias: $i, status: NOT installed)"
 		fi
-	done
+	done | sort -d
 }
 
 #############################################################################
