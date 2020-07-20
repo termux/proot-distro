@@ -340,8 +340,10 @@ command_install() {
 		# Run optional distro-specific hook.
 		if declare -f -F distro_setup >/dev/null 2>&1; then
 			echo "[*] Running distro-specific configuration steps..."
-			cd "${INSTALLED_ROOTFS_DIR}/${distro_name}"
-			distro_setup
+			(cd "${INSTALLED_ROOTFS_DIR}/${distro_name}"
+				export DISTRO_NAME="$distro_name"
+				distro_setup
+			)
 		fi
 
 		echo "[*] Installation finished."
@@ -353,6 +355,29 @@ command_install() {
 		echo "[!] Cannot find '${DISTRO_PLUGINS_DIR}/${distro_name}.sh' which contains distro-specific install functions."
 		return 1
 	fi
+}
+
+# Special function for executing a command in rootfs.
+# Can be used only inside distro_setup().
+run_proot_cmd() {
+	local distro="${DISTRO_NAME-}"
+
+	if [ -z "$DISTRO_NAME" ]; then
+		echo
+		echo "Error: called run_proot_cmd() but \$DISTRO_NAME is not set."
+		echo "Possible cause: using run_proot_cmd() outside of distro_setup() ?"
+		echo
+		return 1
+	fi
+
+	proot --rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" --link2symlink \
+		--root-id --cwd=/root --bind=/dev --bind=/proc --bind=/sys /usr/bin/env -i \
+			"HOME=/root" \
+			"LANG=C.UTF-8" \
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+			"TERM=$TERM" \
+			"TMPDIR=/tmp" \
+			"$@"
 }
 
 # Usage info for command_install.
