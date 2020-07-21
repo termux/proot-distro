@@ -652,6 +652,9 @@ command_login() {
 		# When running in non-isolated mode, provide some bindings specific
 		# to Android and Termux so user can interact with host file system.
 		if ! $isolated_environment; then
+			if [ -d "/apex" ]; then
+				set -- "--bind=/apex" "$@"
+			fi
 			set -- "--bind=/data/dalvik-cache" "$@"
 			set -- "--bind=/data/data/com.termux" "$@"
 			set -- "--bind=/storage" "$@"
@@ -720,6 +723,7 @@ command_login_help() {
 	echo -e "${CYAN}If no '${GREEN}--isolated${CYAN}' option given, the following host directories${RST}"
 	echo -e "${CYAN}will be available:${RST}"
 	echo
+	echo -e "  ${CYAN}* ${YELLOW}/apex ${CYAN}(only Android 10+)${RST}"
 	echo -e "  ${CYAN}* ${YELLOW}/data/dalvik-cache${RST}"
 	echo -e "  ${CYAN}* ${YELLOW}/data/data/com.termux${RST}"
 	echo -e "  ${CYAN}* ${YELLOW}/sdcard${RST}"
