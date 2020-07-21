@@ -667,7 +667,7 @@ command_login() {
 			set -- "--bind=/data/dalvik-cache" "$@"
 			set -- "--bind=/data/data/com.termux" "$@"
 			set -- "--bind=/storage" "$@"
-			set -- "--bind=/storage/emulated/0:/sdcard" "$@"
+			set -- "--bind=/storage/self/primary:/sdcard" "$@"
 			set -- "--bind=/system" "$@"
 			set -- "--bind=/vendor" "$@"
 			if [ -f "/plat_property_contexts" ]; then
