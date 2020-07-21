@@ -20,7 +20,7 @@
 
 set -e -u
 
-PROGRAM_VERSION="0.1"
+PROGRAM_VERSION="0.2.1"
 
 PROGRAM_NAME=$(basename "$(realpath "$0")")
 DISTRO_PLUGINS_DIR="@TERMUX_PREFIX@/etc/proot-distro"
