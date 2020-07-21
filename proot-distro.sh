@@ -389,10 +389,9 @@ command_remove() {
 	fi
 
 	echo "[*] Deleting '${INSTALLED_ROOTFS_DIR}/${distro_name}'..."
-	# Attempt to restore write permissions.
-	chmod u+w -R "${INSTALLED_ROOTFS_DIR}/${distro_name}" > /dev/null 2>&1
-	# If user messed up with permissions, there is a chance that not all
-	# files will be deleted.
+	# Attempt to restore permissions so directory can be removed without issues.
+	chmod u+rwx -R "${INSTALLED_ROOTFS_DIR}/${distro_name}" > /dev/null 2>&1 || true
+	# There is still chance for failure.
 	if ! rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; then
 		echo "[*] Finished with errors. Some files probably were not deleted."
 		return 1
