@@ -98,27 +98,6 @@ is_distro_installed() {
 
 #############################################################################
 #
-# FUNCTION TO PREPARE PROOT FOR USE
-#
-# Checks whether proot is installed. Creates a per-distribution directory
-# for storing data created by link2symlink proot extension.
-#
-# Accepted arguments: $1 - name of distribution.
-#
-setup_proot() {
-	export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${1}/.l2s"
-	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${1}/.l2s" ]; then
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$PROOT_L2S_DIR'...${RST}"
-		mkdir -p "$PROOT_L2S_DIR"
-	fi
-
-	# We need this to disable the preloaded libtermux-exec.so library
-	# which redefines 'execve()' implementation.
-	unset LD_PRELOAD
-}
-
-#############################################################################
-#
 # FUNCTION TO INSTALL THE SPECIFIED DISTRIBUTION
 #
 # Installs the Linux distribution by the following algorithm:
@@ -187,7 +166,13 @@ command_install() {
 			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 		fi
 
-		setup_proot "$distro_name"
+		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
+			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
+		fi
+
+		# We need this to disable the preloaded libtermux-exec.so library
+		# which redefines 'execve()' implementation.
+		unset LD_PRELOAD
 
 		# Some distributions store rootfs in subdirectory - in this case
 		# this variable should be set to 1.
@@ -605,7 +590,10 @@ command_login() {
 	fi
 
 	if is_distro_installed "$distro_name"; then
-		setup_proot "$distro_name"
+		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
+			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
+		fi
+		unset LD_PRELOAD
 
 		if [ $# -ge 1 ]; then
 			# Wrap in quotes each argument to prevent word splitting.
