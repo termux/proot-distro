@@ -32,6 +32,12 @@ get_download_url() {
 # Define here additional steps which should be executed
 # for configuration.
 distro_setup() {
+	# Enable the first found mirror. Needed only for x86_64 as
+	# ArchLinuxARM has geoip-based mirror enabled by default.
+	if [ "$(uname -m)" = "x86_64" ]; then
+		sed -i 's/#Server = http/Server = http/' ./etc/pacman.d/mirrorlist
+	fi
+
 	# Pacman keyring initialization.
 	run_proot_cmd pacman-key --init
 	run_proot_cmd pacman-key --populate archlinux
