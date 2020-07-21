@@ -28,6 +28,8 @@ UTILITY_BASEDIR="@TERMUX_PREFIX@/var/lib/proot-distro"
 DOWNLOADED_ROOTFS_DIR="${UTILITY_BASEDIR}/dlcache"
 INSTALLED_ROOTFS_DIR="${UTILITY_BASEDIR}/installed-rootfs"
 
+trap 'echo "[!] Exiting immediately as requested."; exit 1;' HUP INT TERM
+
 #############################################################################
 #
 # ANTI-ROOT FUSE
