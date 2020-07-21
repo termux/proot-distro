@@ -438,7 +438,7 @@ command_remove() {
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		echo
 		echo -e "${BRED}Error: distribution '$distro_name' is not installed.${RST}"
-		command_remove_help
+		echo
 		return 1
 	fi
 
@@ -508,7 +508,7 @@ command_reset() {
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		echo
 		echo -e "${BRED}Error: distribution '$distro_name' is not installed.${RST}"
-		command_reset_help
+		echo
 		return 1
 	fi
 
