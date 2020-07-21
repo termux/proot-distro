@@ -783,6 +783,9 @@ command_help() {
 	echo -e "${CYAN}supported distributions. Pick a distro alias and run the next${RST}"
 	echo -e "${CYAN}command to install it: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
 	echo
+	echo -e "${CYAN}Runtime data is stored at this location:${RST}"
+	echo -e "${CYAN}${RUNTIME_DIR}${RST}"
+	echo
 	show_version
 	echo
 }
