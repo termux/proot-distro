@@ -511,6 +511,7 @@ command_reset_help() {
 command_login() {
 	local isolated_environment=false
 	local no_procstat_faking=false
+	local use_termux_home=false
 	local distro_name=""
 
 	while (($# >= 1)); do
@@ -528,6 +529,9 @@ command_login() {
 				;;
 			--no-fake-proc-stat)
 				no_procstat_faking=true
+				;;
+			--termux-home)
+				use_termux_home=true
 				;;
 			-*)
 				echo
@@ -629,6 +633,12 @@ command_login() {
 			fi
 		fi
 
+		# Use Termux home directory if requested.
+		# Ignores --isolated.
+		if $use_termux_home; then
+			set -- "--bind=@TERMUX_HOME@:/root" "$@"
+		fi
+
 		exec proot "$@"
 	else
 		echo
@@ -653,6 +663,7 @@ command_login_help() {
 	echo
 	echo "  --isolated           - Run isolated environment without access to host file system."
 	echo "  --no-fake-proc-stat  - Don't fake /proc/stat, useful only on devices with SELinux in permissive mode."
+	echo "  --termux-home        - Mount Termux home directory to /root."
 	echo
 	echo "Put '--' if you wish to stop command line processing and pass options as shell arguments."
 	echo
