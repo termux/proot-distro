@@ -40,5 +40,9 @@ distro_setup() {
 
 	# Pacman keyring initialization.
 	run_proot_cmd pacman-key --init
-	run_proot_cmd pacman-key --populate archlinux
+	if [ "$(uname -m)" = "x86_64" ]; then
+		run_proot_cmd pacman-key --populate archlinux
+	else
+		run_proot_cmd pacman-key --populate archlinuxarm
+	fi
 }
