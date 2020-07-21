@@ -134,9 +134,10 @@ setup_proot() {
 #  6. Write environment variables configuration to /etc/profile.d/termux-proot.sh.
 #     If profile.d directory is not available, append to /etc/profile.
 #  7. Create a source file for faking /proc/stat.
-#  8. Write default /etc/resolv.conf.
-#  9. Add missing Android specific UIDs/GIDs to user database.
-#  10. Execute optional setup hook (distro_setup) if present.
+#  8. Create a source file for faking /proc/version.
+#  9. Write default /etc/resolv.conf.
+#  10. Add missing Android specific UIDs/GIDs to user database.
+#  11. Execute optional setup hook (distro_setup) if present.
 #
 # Accepted arguments: $1 - distribution name.
 #
@@ -302,6 +303,12 @@ command_install() {
 		softirq 25293348 2883 7658936 40779 539155 497187 2864 1908702 7229194 279723 7133925
 		EOF
 
+		# Fake /proc/version source.
+		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/version file for SELinux restrictions workaround...${RST}"
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
+		Linux version 3.18.140 (termux@fakehost) (gcc version 4.9.x 20150123 (prerelease) (GCC) ) #1 SMP PREEMPT Sun Jul 10 00:00:00 UTC 2020
+		EOF
+
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating DNS resolver configuration (NS 1.1.1.1/1.0.0.1)...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
@@ -365,6 +372,7 @@ run_proot_cmd() {
 		--bind="/proc/self/fd/2:/dev/stderr" \
 		--bind=/sys \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
 		/usr/bin/env -i \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
@@ -537,7 +545,7 @@ command_reset_help() {
 #
 command_login() {
 	local isolated_environment=false
-	local no_procstat_faking=false
+	local no_proc_faking=false
 	local use_termux_home=false
 	local distro_name=""
 
@@ -554,8 +562,8 @@ command_login() {
 			--isolated)
 				isolated_environment=true
 				;;
-			--no-fake-proc-stat)
-				no_procstat_faking=true
+			--no-fake-proc)
+				no_proc_faking=true
 				;;
 			--termux-home)
 				use_termux_home=true
@@ -642,8 +650,9 @@ command_login() {
 		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 		set -- "--bind=/sys" "$@"
 
-		if ! $no_procstat_faking; then
+		if ! $no_proc_faking; then
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
+			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" "$@"
 		fi
 
 		# Bind /tmp to /dev/shm.
@@ -707,8 +716,9 @@ command_login_help() {
 	echo -e "  ${GREEN}--isolated           ${CYAN}- Run isolated environment without access${RST}"
 	echo -e "                         ${CYAN}to host file system.${RST}"
 	echo
-	echo -e "  ${GREEN}--no-fake-proc-stat  ${CYAN}- Don't fake /proc/stat. Useful only on${RST}"
-	echo -e "                         ${CYAN}devices with SELinux in permissive mode.${RST}"
+	echo -e "  ${GREEN}--no-fake-proc       ${CYAN}- Don't fake /proc/stat and /proc/version${RST}"
+	echo -e "                         ${CYAN}data. Useful only on devices with${RST}"
+	echo -e "                         ${CYAN}SELinux in permissive mode.${RST}"
 	echo
 	echo -e "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '--isolated' option.${RST}"
