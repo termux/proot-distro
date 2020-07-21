@@ -351,9 +351,20 @@ run_proot_cmd() {
 		return 1
 	fi
 
-	proot --rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" --link2symlink \
-		--kill-on-exit --root-id --cwd=/root --bind=/dev --bind=/proc --bind=/sys \
-		"--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" \
+	proot \
+		--link2symlink \
+		--kill-on-exit \
+		--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
+		--root-id \
+		--cwd=/root \
+		--bind=/dev \
+		--bind=/proc \
+		--bind="/proc/self/fd:/dev/fd" \
+		--bind="/proc/self/fd/0:/dev/stdin" \
+		--bind="/proc/self/fd/1:/dev/stdout" \
+		--bind="/proc/self/fd/2:/dev/stderr" \
+		--bind=/sys \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" \
 		/usr/bin/env -i \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
@@ -625,6 +636,10 @@ command_login() {
 		# Core file systems that should always be present.
 		set -- "--bind=/dev" "$@"
 		set -- "--bind=/proc" "$@"
+		set -- "--bind=/proc/self/fd:/dev/fd" "$@"
+		set -- "--bind=/proc/self/fd/0:/dev/stdin" "$@"
+		set -- "--bind=/proc/self/fd/1:/dev/stdout" "$@"
+		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 		set -- "--bind=/sys" "$@"
 
 		if ! $no_procstat_faking; then
