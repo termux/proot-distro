@@ -735,6 +735,9 @@ command_list() {
 			else
 				echo -e "    ${CYAN}Status: ${RED}NOT installed${RST}"
 			fi
+			if [ -n "${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]+x}" ]; then
+				echo -e "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
+			fi
 		done
 
 		echo
@@ -820,8 +823,10 @@ done
 unset i
 
 declare -A SUPPORTED_DISTRIBUTIONS
+declare -A SUPPORTED_DISTRIBUTIONS_COMMENTS
 while read -r filename; do
 	distro_name=$(. "$filename"; echo "${DISTRO_NAME-}")
+	distro_comment=$(. "$filename"; echo "${DISTRO_COMMENT-}")
 	distro_alias=${filename%%.sh}
 	distro_alias=$(basename "$distro_alias")
 
@@ -835,6 +840,7 @@ while read -r filename; do
 	fi
 
 	SUPPORTED_DISTRIBUTIONS["$distro_alias"]="$distro_name"
+	[ -n "$distro_comment" ] && SUPPORTED_DISTRIBUTIONS_COMMENTS["$distro_alias"]="$distro_comment"
 done < <(find "$DISTRO_PLUGINS_DIR" -maxdepth 1 -type f -iname "*.sh" 2>/dev/null)
 unset distro_name distro_alias
 
