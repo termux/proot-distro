@@ -532,6 +532,7 @@ command_login() {
 	local isolated_environment=false
 	local no_proc_faking=false
 	local use_termux_home=false
+	local no_link2symlink=false
 	local distro_name=""
 
 	while (($# >= 1)); do
@@ -552,6 +553,9 @@ command_login() {
 				;;
 			--termux-home)
 				use_termux_home=true
+				;;
+			--no-link2symlink)
+				no_link2symlink=true
 				;;
 			-*)
 				echo
@@ -622,8 +626,10 @@ command_login() {
 		# Terminate all processes on exit so proot won't hang.
 		set -- "--kill-on-exit" "$@"
 
-		# Support hardlinks.
-		set -- "--link2symlink" "$@"
+		if ! $no_link2symlink; then
+			# Support hardlinks.
+			set -- "--link2symlink" "$@"
+		fi
 
 		# Simulate root so we can switch users.
 		set -- "--cwd=/root" "$@"
@@ -713,6 +719,10 @@ command_login_help() {
 	echo
 	echo -e "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
+	echo
+	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
+	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
+	echo -e "                         ${CYAN}in permissive mode.${RST}"
 	echo
 	echo -e "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	echo -e "${CYAN}options as shell arguments.${RST}"
