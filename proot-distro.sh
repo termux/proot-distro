@@ -320,7 +320,8 @@ run_proot_cmd() {
 	fi
 
 	proot --rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" --link2symlink \
-		--root-id --cwd=/root --bind=/dev --bind=/proc --bind=/sys /usr/bin/env -i \
+		--kill-on-exit --root-id --cwd=/root --bind=/dev --bind=/proc --bind=/sys \
+		/usr/bin/env -i \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
 			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
