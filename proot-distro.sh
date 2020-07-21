@@ -75,7 +75,7 @@ fi
 #
 if [ "$(id -u)" = "0" ]; then
 	echo
-	echo -e "${BRED}Error: utility '${PROGRAM_NAME}' should not be used as root.${RST}"
+	echo -e "${BRED}Error: utility '${YELLOW}${PROGRAM_NAME}${BRED}' should not be used as root.${RST}"
 	echo
 	exit 1
 fi
@@ -150,7 +150,7 @@ command_install() {
 
 	if is_distro_installed "$distro_name"; then
 		echo
-		echo -e "${BRED}Error: distribution '$distro_name' is already installed.${RST}"
+		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
 		echo
 		echo -e "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME} login ${distro_name}${RST}"
 		echo -e "${CYAN}Reinstall:  ${GREEN}${PROGRAM_NAME} reset ${distro_name}${RST}"
@@ -437,7 +437,7 @@ command_remove() {
 	# whether rootfs directory is available.
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		echo
-		echo -e "${BRED}Error: distribution '$distro_name' is not installed.${RST}"
+		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
 		echo
 		return 1
 	fi
@@ -507,7 +507,7 @@ command_reset() {
 
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		echo
-		echo -e "${BRED}Error: distribution '$distro_name' is not installed.${RST}"
+		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
 		echo
 		return 1
 	fi
