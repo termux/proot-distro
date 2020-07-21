@@ -583,20 +583,8 @@ command_login() {
 		# care whether they actually defined in Termux or not. If they
 		# will be empty, this should not cause any issues.
 		set -- "/usr/bin/env" "-i" \
-			"ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}" \
-			"ANDROID_DATA=${ANDROID_DATA-}" \
-			"ANDROID_I18N_ROOT=${ANDROID_I18N_ROOT-}" \
-			"ANDROID_ROOT=${ANDROID_ROOT-}" \
-			"ANDROID_RUNTIME_ROOT=${ANDROID_RUNTIME_ROOT-}" \
-			"ANDROID_TZDATA_ROOT=${ANDROID_TZDATA_ROOT-}" \
-			"BOOTCLASSPATH=${BOOTCLASSPATH-}" \
-			"COLORTERM=${COLORTERM-}" \
-			"DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}" \
-			"EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}" \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
-			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin" \
-			"PREFIX=${PREFIX-/data/data/com.termux/files/usr}" \
 			"TERM=${TERM-xterm-256color}" \
 			"$@"
 
