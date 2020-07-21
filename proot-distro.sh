@@ -721,13 +721,34 @@ command_login_help() {
 	echo -e "                         ${CYAN}SELinux in permissive mode.${RST}"
 	echo
 	echo -e "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
-	echo -e "                         ${CYAN}Takes priority over '--isolated' option.${RST}"
+	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	echo
 	echo -e "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	echo -e "${CYAN}options as shell arguments.${RST}"
 	echo
 	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	echo
+	echo -e "${CYAN}If no '${GREEN}--isolated${CYAN}' option given, the following host directories${RST}"
+	echo -e "${CYAN}will be available:${RST}"
+	echo
+	echo -e "  ${CYAN}* ${YELLOW}/data/dalvik-cache${RST}"
+	echo -e "  ${CYAN}* ${YELLOW}/data/data/com.termux${RST}"
+	echo -e "  ${CYAN}* ${YELLOW}/sdcard${RST}"
+	echo -e "  ${CYAN}* ${YELLOW}/storage${RST}"
+	echo -e "  ${CYAN}* ${YELLOW}/system${RST}"
+	echo -e "  ${CYAN}* ${YELLOW}/vendor${RST}"
+	echo
+	echo -e "${CYAN}This should be enough to get Termux utilities like termux-api or${RST}"
+	echo -e "${CYAN}termux-open get working. If they do not work for some reason,${RST}"
+	echo -e "${CYAN}check if these files are sourced by your shell:${RST}"
+	echo
+	echo -e "  ${CYAN}* ${YELLOW}/etc/profile.d/termux-proot.sh${RST}"
+	echo -e "  ${CYAN}* ${YELLOW}/etc/profile${RST}"
+	echo
+	echo -e "${CYAN}Also check whether they define variables like ANDROID_DATA,${RST}"
+	echo -e "${CYAN}ANDROID_ROOT, BOOTCLASSPATH and others which are usually set${RST}"
+	echo -e "${CYAN}in Termux sessions.${RST}"
 	echo
 	show_version
 	echo
