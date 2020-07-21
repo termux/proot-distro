@@ -87,4 +87,10 @@ distro_setup() {
 	esac
 	EOF
 	chmod 700 ./usr/bin/kex
+
+	# Fix ~/.bash_profile.
+	cat <<- EOF > ./root/.bash_profile
+	. /root/.bashrc
+	. /root/.profile
+	EOF
 }
