@@ -4,6 +4,7 @@ For now it supports installation of these distributions:
 
 * Alpine Linux
 * Arch Linux
+* Kali Nethunter (rootless)
 * Ubuntu
 
 ## Usage example
