@@ -115,8 +115,9 @@ is_distro_installed() {
 #  7. Create a source file for faking /proc/stat.
 #  8. Create a source file for faking /proc/version.
 #  9. Write default /etc/resolv.conf.
-#  10. Add missing Android specific UIDs/GIDs to user database.
-#  11. Execute optional setup hook (distro_setup) if present.
+#  10. Write default /etc/hosts.
+#  11. Add missing Android specific UIDs/GIDs to user database.
+#  12. Execute optional setup hook (distro_setup) if present.
 #
 # Accepted arguments: $1 - distribution name.
 #
@@ -295,11 +296,26 @@ command_install() {
 		EOF
 
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating DNS resolver configuration (NS 1.1.1.1/1.0.0.1)...${RST}"
+		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 1.1.1.1/1.0.0.1)...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		nameserver 1.1.1.1
 		nameserver 1.0.0.1
+		EOF
+
+		# /etc/hosts may be empty by default on some distributions.
+		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing hosts file...${RST}"
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts"
+		# IPv4.
+		127.0.0.1   localhost.localdomain localhost
+
+		# IPv6.
+		::1         localhost.localdomain localhost ipv6-localhost ipv6-loopback
+		fe00::0     ipv6-localnet
+		ff00::0     ipv6-mcastprefix
+		ff02::1     ipv6-allnodes
+		ff02::2     ipv6-allrouters
+		ff02::3     ipv6-allhosts
 		EOF
 
 		# Add Android-specific UIDs/GIDs to /etc/group and /etc/gshadow.
