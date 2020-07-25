@@ -290,7 +290,7 @@ command_install() {
 		# Fake /proc/version source.
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/version file for SELinux restrictions workaround...${RST}"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
-		Linux version 3.18.140 (termux@fakehost) (gcc version 4.9.x 20150123 (prerelease) (GCC) ) #1 SMP PREEMPT Sun Jul 10 00:00:00 UTC 2020
+		Linux version 5.4.0-fake-kernel (termux@fakehost) (gcc version 4.9.x 20150123 (prerelease) (GCC) ) #1 SMP PREEMPT Fri Jul 10 00:00:00 UTC 2020
 		EOF
 
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
