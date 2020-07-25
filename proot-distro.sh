@@ -164,7 +164,7 @@ command_install() {
 
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
-			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
+			mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 		fi
 
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
