@@ -45,4 +45,17 @@ distro_setup() {
 	else
 		run_proot_cmd pacman-key --populate archlinuxarm
 	fi
+
+	# Uninstall packages which are not necessary.
+	case "$(uname -m)" in
+		aarch64)
+			run_proot_cmd pacman -Rnsc --noconfirm dbus linux-aarch64 systemd
+			;;
+		armv7l|armv8l)
+			run_proot_cmd pacman -Rnsc --noconfirm dbus linux-armv7 systemd
+			;;
+		x86_64)
+			run_proot_cmd pacman -Rnsc --noconfirm dbus systemd
+			;;
+	esac
 }
