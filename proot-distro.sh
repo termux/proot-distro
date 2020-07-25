@@ -175,6 +175,9 @@ command_install() {
 		# which redefines 'execve()' implementation.
 		unset LD_PRELOAD
 
+		# Needed for compatibility with some devices.
+		export PROOT_NO_SECCOMP=1
+
 		# Some distributions store rootfs in subdirectory - in this case
 		# this variable should be set to 1.
 		DISTRO_TARBALL_STRIP_OPT=0
@@ -609,6 +612,7 @@ command_login() {
 			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		fi
 		unset LD_PRELOAD
+		export PROOT_NO_SECCOMP=1
 
 		if [ $# -ge 1 ]; then
 			# Wrap in quotes each argument to prevent word splitting.
