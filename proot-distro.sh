@@ -228,11 +228,6 @@ command_install() {
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Using cached rootfs tarball...${RST}"
 		fi
 
-		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
-			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
-		fi
-
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting rootfs, please wait...${RST}"
 		# --exclude='dev'||: - need to exclude /dev directory which may contain device files.
 		# --delay-directory-restore - set directory permissions only when files were extracted
