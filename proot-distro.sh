@@ -358,6 +358,7 @@ run_proot_cmd() {
 	fi
 
 	proot \
+		--kernel-release=5.4.0-fake-kernel \
 		--link2symlink \
 		--kill-on-exit \
 		--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
@@ -645,6 +646,10 @@ command_login() {
 			# Support hardlinks.
 			set -- "--link2symlink" "$@"
 		fi
+
+		# Some devices have old kernels and GNU libc refuses to work on them.
+		# Fix this behavior by reporting a fake up-to-date kernel version.
+		set -- "--kernel-release=5.4.0-fake-kernel" "$@"
 
 		# Simulate root so we can switch users.
 		set -- "--cwd=/root" "$@"
