@@ -46,6 +46,11 @@ distro_setup() {
 		run_proot_cmd pacman-key --populate archlinuxarm
 	fi
 
+	# Initialize en_US locale.
+	echo "en_US.UTF-8 UTF-8" > ./etc/locale.gen
+	run_proot_cmd locale-gen
+	sed -i 's/LANG=C.UTF-8/LANG=en_US.UTF-8/' ./etc/profile.d/termux-proot.sh
+
 	# Uninstall packages which are not necessary.
 	case "$(uname -m)" in
 		aarch64)
