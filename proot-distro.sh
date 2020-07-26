@@ -365,6 +365,7 @@ run_proot_cmd() {
 		--root-id \
 		--cwd=/root \
 		--bind=/dev \
+		--bind="/dev/urandom:/dev/random" \
 		--bind=/proc \
 		--bind="/proc/self/fd:/dev/fd" \
 		--bind="/proc/self/fd/0:/dev/stdin" \
@@ -657,6 +658,7 @@ command_login() {
 
 		# Core file systems that should always be present.
 		set -- "--bind=/dev" "$@"
+		set -- "--bind=/dev/urandom:/dev/random" "$@"
 		set -- "--bind=/proc" "$@"
 		set -- "--bind=/proc/self/fd:/dev/fd" "$@"
 		set -- "--bind=/proc/self/fd/0:/dev/stdin" "$@"
