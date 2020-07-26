@@ -39,7 +39,6 @@ distro_setup() {
 	fi
 
 	# Pacman keyring initialization.
-	echo "NOTE: Pacman keyring is going to be initialized now. GPG key generation may take a long time if your device does not provide enough entropy."
 	run_proot_cmd pacman-key --init
 	if [ "$(uname -m)" = "x86_64" ]; then
 		run_proot_cmd pacman-key --populate archlinux
