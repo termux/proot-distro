@@ -176,7 +176,7 @@ command_install() {
 		unset LD_PRELOAD
 
 		# Needed for compatibility with some devices.
-		export PROOT_NO_SECCOMP=1
+		#export PROOT_NO_SECCOMP=1
 
 		# Some distributions store rootfs in subdirectory - in this case
 		# this variable should be set to 1.
@@ -614,7 +614,7 @@ command_login() {
 			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		fi
 		unset LD_PRELOAD
-		export PROOT_NO_SECCOMP=1
+		#export PROOT_NO_SECCOMP=1
 
 		if [ $# -ge 1 ]; then
 			# Wrap in quotes each argument to prevent word splitting.
@@ -855,6 +855,9 @@ command_help() {
 	echo
 	echo -e "${CYAN}Runtime data is stored at this location:${RST}"
 	echo -e "${CYAN}${RUNTIME_DIR}${RST}"
+	echo
+	echo -e "${CYAN}If you have issues with proot during installation or login, try${RST}"
+	echo -e "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
 	echo
 	show_version
 	echo
