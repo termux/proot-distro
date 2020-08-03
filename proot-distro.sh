@@ -692,6 +692,9 @@ command_login() {
 			if [ -f "/plat_property_contexts" ]; then
 				set -- "--bind=/plat_property_contexts" "$@"
 			fi
+			if [ -f "/property_contexts" ]; then
+				set -- "--bind=/property_contexts" "$@"
+			fi
 		fi
 
 		# Use Termux home directory if requested.
