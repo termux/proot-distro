@@ -249,6 +249,8 @@ command_install() {
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
+		local LIBGCC_S_PATH
+		LIBGCC_S_PATH="/$(cd ${INSTALLED_ROOTFS_DIR}/${distro_name}; find usr/lib/ -name libgcc_s.so.1)"
 		cat <<- EOF >> "$profile_script"
 		export ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}
 		export ANDROID_DATA=${ANDROID_DATA-}
@@ -266,6 +268,10 @@ command_install() {
 		export TERM=${TERM-xterm-256color}
 		export TMPDIR=/tmp
 		EOF
+		if [ "${LIBGCC_S_PATH}" != "/" ]; then
+			echo "export LD_PRELOAD=${LIBGCC_S_PATH}" >> "$profile_script"
+		fi
+		unset LIBGCC_S_PATH
 
 		# Fake /proc/stat source.
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/stat file for SELinux restrictions workaround...${RST}"
