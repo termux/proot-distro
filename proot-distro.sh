@@ -754,6 +754,8 @@ command_login_help() {
 	echo -e "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	echo
+	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
+	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
 	echo -e "                         ${CYAN}in permissive mode.${RST}"
