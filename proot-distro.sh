@@ -549,6 +549,7 @@ command_login() {
 	local no_proc_faking=false
 	local use_termux_home=false
 	local no_link2symlink=false
+	local make_host_tmp_shared=false
 	local distro_name=""
 
 	while (($# >= 1)); do
@@ -569,6 +570,9 @@ command_login() {
 				;;
 			--termux-home)
 				use_termux_home=true
+				;;
+			--shared-tmp)
+				make_host_tmp_shared=true
 				;;
 			--no-link2symlink)
 				no_link2symlink=true
@@ -702,7 +706,12 @@ command_login() {
 		if $use_termux_home; then
 			set -- "--bind=@TERMUX_HOME@:/root" "$@"
 		fi
-
+		
+		# Bind the tmp folder from the host system to the guest system
+		if $make_host_tmp_shared; then
+			set -- "--bind=@TERMUX_PREFIX@/tmp:/tmp" "$@"
+		fi
+		
 		exec proot "$@"
 	else
 		if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
