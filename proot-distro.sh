@@ -555,6 +555,7 @@ command_login() {
 	local no_proc_faking=false
 	local use_termux_home=false
 	local no_link2symlink=false
+	local port=false
 	local make_host_tmp_shared=false
 	local distro_name=""
 
