@@ -772,7 +772,7 @@ command_login_help() {
 	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	echo
-	echo -e "  ${GREEN}--port               ${CYAN}- Modify bindings to protected ports to use a higher port number.${RST}"
+	echo -e "  ${GREEN}--port                 ${CYAN}- Modify bindings to protected ports to use a higher port number.${RST}"
 	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
