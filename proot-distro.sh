@@ -324,7 +324,8 @@ command_install() {
 		export TMPDIR=/tmp
 		EOF
 		if [ "${LIBGCC_S_PATH}" != "/" ]; then
-			echo "export LD_PRELOAD=${LIBGCC_S_PATH}" >> "$profile_script"
+			echo "${LIBGCC_S_PATH}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
+			chmod 644 "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 		fi
 		unset LIBGCC_S_PATH
 
