@@ -188,8 +188,8 @@ command_install() {
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
 			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${DISTRO_PLUGINS_DIR}/${override_alias}.sh"
-			distro_name="${override_alias}"
 			SUPPORTED_DISTRIBUTIONS["${override_alias}"]="${SUPPORTED_DISTRIBUTIONS["$distro_name"]}"
+			distro_name="${override_alias}"
 		else
 			echo
 			echo -e "${BRED}Error: you cannot use value '${YELLOW}${override_alias}${BRED}' as alias override.${RST}"
