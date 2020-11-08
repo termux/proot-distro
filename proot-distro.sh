@@ -153,7 +153,7 @@ command_install() {
 				return 1
 				;;
 			*)
-				if [ -z "$distro_name" ]; then
+				if [ -z "${distro_name-}" ]; then
 					distro_name="$1"
 				else
 					echo
