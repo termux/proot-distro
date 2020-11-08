@@ -1019,7 +1019,7 @@ while read -r filename; do
 	# * alias.sh
 	# but we need to treat both as 'alias'.
 	distro_alias=${filename%%.override.sh}
-	distro_alias=${filename%%.sh}
+	distro_alias=${distro_alias%%.sh}
 	distro_alias=$(basename "$distro_alias")
 
 	# We getting distribution name from $DISTRO_NAME which
