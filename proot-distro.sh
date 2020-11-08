@@ -185,7 +185,7 @@ command_install() {
 		return 1
 	fi
 
-	if [ -n "$override_alias" ]; then
+	if [ -n "${override_alias-}" ]; then
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
 			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh"
