@@ -570,6 +570,9 @@ command_login() {
 				command_login_help
 				return 0
 				;;
+			--fix-low-ports)
+				fix_low_ports=true
+				;;
 			--isolated)
 				isolated_environment=true
 				;;
@@ -587,9 +590,6 @@ command_login() {
 				;;
 			--no-sysvipc)
 				no_sysvipc=true
-				;;
-			--fix-low-ports)
-				fix_low_ports=true
 				;;
 			-*)
 				echo
@@ -769,6 +769,9 @@ command_login_help() {
 	echo
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	echo
+	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
+	echo -e "                         ${CYAN}a higher port number.${RST}"
+	echo
 	echo -e "  ${GREEN}--isolated           ${CYAN}- Run isolated environment without access${RST}"
 	echo -e "                         ${CYAN}to host file system.${RST}"
 	echo
@@ -781,9 +784,6 @@ command_login_help() {
 	echo
 	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
-	echo
-	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
-	echo -e "                         ${CYAN}a higher port number.${RST}"
 	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
