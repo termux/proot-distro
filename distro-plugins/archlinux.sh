@@ -19,7 +19,7 @@ get_download_url() {
 			echo "https://eu.mirror.archlinuxarm.org/os/ArchLinuxARM-armv7-latest.tar.gz"
 			;;
 		x86_64)
-			# File name of x86_64 tarball is not persistent, so generate URL in hacky way.
+			echo "https://mirrors.evowise.com/archlinux/iso/2020.11.01/archlinux-bootstrap-2020.11.01-x86_64.tar.gz"
 			local file_name
 			file_name=$(curl --fail --silent "https://mirror.rackspace.com/archlinux/iso/latest/md5sums.txt" | grep bootstrap | awk '{ print $2 }')
 			if [ -n "$file_name" ]; then
