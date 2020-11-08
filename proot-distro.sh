@@ -555,6 +555,7 @@ command_login() {
 	local no_proc_faking=false
 	local use_termux_home=false
 	local no_link2symlink=false
+	local no_sysvipc=false
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
@@ -583,6 +584,9 @@ command_login() {
 				;;
 			--no-link2symlink)
 				no_link2symlink=true
+				;;
+			--no-sysvipc)
+				no_sysvipc=true
 				;;
 			--fix-low-ports)
 				fix_low_ports=true
@@ -660,6 +664,11 @@ command_login() {
 		if ! $no_link2symlink; then
 			# Support hardlinks.
 			set -- "--link2symlink" "$@"
+		fi
+
+		if ! $no_sysvipc; then
+			# Support System V IPC.
+			set -- "--sysvipc" "$@"
 		fi
 
 		# Some devices have old kernels and GNU libc refuses to work on them.
