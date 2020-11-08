@@ -16,6 +16,13 @@ pkg install proot-distro
 
 Example on how to install Ubuntu and launch shell:
 ```
-proot-distro install ubuntu
-proot-distro login ubuntu
+proot-distro install ubuntu-20.04
+proot-distro login ubuntu-20.04
 ```
+
+You may create a distribution installation with custom name:
+```
+proot-distro install --override-alias ubuntu-testing ubuntu-20.04
+proot-distro login ubuntu-testing
+```
+This will allow to have multiple installations of same distribution.
