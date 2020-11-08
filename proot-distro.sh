@@ -187,7 +187,7 @@ command_install() {
 	if [ -n "$override_alias" ]; then
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
-			cp "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" "${DISTRO_PLUGINS_DIR}/${override_alias}.sh"
+			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${DISTRO_PLUGINS_DIR}/${override_alias}.sh"
 			distro_name="${override_alias}"
 			SUPPORTED_DISTRIBUTIONS["${override_alias}"]="${SUPPORTED_DISTRIBUTIONS["$distro_name"]}"
 		else
