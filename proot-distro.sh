@@ -1014,6 +1014,11 @@ declare -A SUPPORTED_DISTRIBUTIONS_COMMENTS
 while read -r filename; do
 	distro_name=$(. "$filename"; echo "${DISTRO_NAME-}")
 	distro_comment=$(. "$filename"; echo "${DISTRO_COMMENT-}")
+	# May have 2 name formats:
+	# * alias.override.sh
+	# * alias.sh
+	# but we need to treat both as 'alias'.
+	distro_alias=${filename%%.override.sh}
 	distro_alias=${filename%%.sh}
 	distro_alias=$(basename "$distro_alias")
 
