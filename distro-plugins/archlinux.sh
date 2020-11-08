@@ -54,13 +54,10 @@ distro_setup() {
 	# Uninstall packages which are not necessary.
 	case "$(uname -m)" in
 		aarch64)
-			run_proot_cmd pacman -Rnsc --noconfirm dbus linux-aarch64 systemd
+			run_proot_cmd pacman -Rnsc --noconfirm linux-aarch64
 			;;
 		armv7l|armv8l)
-			run_proot_cmd pacman -Rnsc --noconfirm dbus linux-armv7 systemd
-			;;
-		x86_64)
-			run_proot_cmd pacman -Rnsc --noconfirm dbus systemd
+			run_proot_cmd pacman -Rnsc --noconfirm linux-armv7
 			;;
 	esac
 }
