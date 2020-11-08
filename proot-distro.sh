@@ -123,53 +123,16 @@ is_distro_installed() {
 #
 command_install() {
 	local distro_name
-	local override_alias
-	local distro_plugin_script
 
-	while (($# >= 1)); do
+	if [ $# -ge 1 ]; then
 		case "$1" in
-			--)
-				shift 1
-				break
-				;;
-			--help)
+			-h|--help)
 				command_install_help
 				return 0
 				;;
-			--override-alias)
-				if [ $# -ge 2 ]; then
-					shift 1
-					override_alias="$1"
-				else
-					echo
-					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
-					command_install_help
-					return 1
-				fi
-				;;
-			-*)
-				echo
-				echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-				command_install_help
-				return 1
-				;;
-			*)
-				if [ -z "${distro_name-}" ]; then
-					distro_name="$1"
-				else
-					echo
-					echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					echo
-					echo -e "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
-					command_install_help
-					return 1
-				fi
-				;;
+			*) distro_name="$1";;
 		esac
-		shift 1
-	done
-
-	if [ -z "${distro_name-}" ]; then
+	else
 		echo
 		echo -e "${BRED}Error: distribution alias is not specified.${RST}"
 		command_install_help
@@ -185,24 +148,6 @@ command_install() {
 		return 1
 	fi
 
-	if [ -n "${override_alias-}" ]; then
-		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
-			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh"
-			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${distro_plugin_script}"
-			sed -i "s/^\(DISTRO_NAME=\)\(.*\)\$/\1\"${SUPPORTED_DISTRIBUTIONS["$distro_name"]} (override)\"/g" "${distro_plugin_script}"
-			SUPPORTED_DISTRIBUTIONS["${override_alias}"]="${SUPPORTED_DISTRIBUTIONS["$distro_name"]}"
-			distro_name="${override_alias}"
-		else
-			echo
-			echo -e "${BRED}Error: you cannot use value '${YELLOW}${override_alias}${BRED}' as alias override.${RST}"
-			echo
-			return 1
-		fi
-	else
-		distro_plugin_script="${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
-	fi
-
 	if is_distro_installed "$distro_name"; then
 		echo
 		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
@@ -214,7 +159,7 @@ command_install() {
 		return 1
 	fi
 
-	if [ -f "${distro_plugin_script}" ]; then
+	if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
@@ -239,14 +184,14 @@ command_install() {
 
 		# Distribution plug-in contains steps on how to get download URL
 		# and further post-installation configuration.
-		source "${distro_plugin_script}"
+		source "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
 
 		local download_url
 		if declare -f -F get_download_url >/dev/null 2>&1; then
 			download_url=$(get_download_url)
 		else
 			echo
-			echo -e "${BRED}Error: get_download_url() is not defined in ${distro_plugin_script}${RST}"
+			echo -e "${BRED}Error: get_download_url() is not defined in ${DISTRO_PLUGINS_DIR}/${distro_name}.sh${RST}"
 			echo
 			return 1
 		fi
@@ -403,7 +348,7 @@ command_install() {
 		echo
 		return 0
 	else
-		echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which contains distro-specific install functions.${RST}"
+		echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${DISTRO_PLUGINS_DIR}/${distro_name}.sh' which contains distro-specific install functions.${RST}"
 		return 1
 	fi
 }
@@ -451,12 +396,6 @@ command_install_help() {
 	echo
 	echo -e "${CYAN}This command will create a fresh installation of specified Linux${RST}"
 	echo -e "${CYAN}distribution.${RST}"
-	echo
-	echo -e "${CYAN}Options:${RST}"
-	echo
-	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
-	echo
-	echo -e "  ${GREEN}--override-alias     ${CYAN}- Set a custom alias for installed distribution.${RST}"
 	echo
 	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
@@ -507,12 +446,6 @@ command_remove() {
 		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
 		echo
 		return 1
-	fi
-
-	# Delete plugin with overridden alias.
-	if [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
-		rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
 	fi
 
 	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Wiping the rootfs of ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
@@ -733,10 +666,7 @@ command_login() {
 			set -- "--link2symlink" "$@"
 		fi
 
-		if ! $no_sysvipc; then
-			# Support System V IPC.
-			set -- "--sysvipc" "$@"
-		fi
+		
 
 		# Some devices have old kernels and GNU libc refuses to work on them.
 		# Fix this behavior by reporting a fake up-to-date kernel version.
@@ -1015,12 +945,7 @@ declare -A SUPPORTED_DISTRIBUTIONS_COMMENTS
 while read -r filename; do
 	distro_name=$(. "$filename"; echo "${DISTRO_NAME-}")
 	distro_comment=$(. "$filename"; echo "${DISTRO_COMMENT-}")
-	# May have 2 name formats:
-	# * alias.override.sh
-	# * alias.sh
-	# but we need to treat both as 'alias'.
-	distro_alias=${filename%%.override.sh}
-	distro_alias=${distro_alias%%.sh}
+	distro_alias=${filename%%.sh}
 	distro_alias=$(basename "$distro_alias")
 
 	# We getting distribution name from $DISTRO_NAME which
