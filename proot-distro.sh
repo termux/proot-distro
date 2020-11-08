@@ -124,6 +124,7 @@ is_distro_installed() {
 command_install() {
 	local distro_name
 	local override_alias
+	local distro_plugin_script
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -187,7 +188,8 @@ command_install() {
 	if [ -n "$override_alias" ]; then
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
-			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${DISTRO_PLUGINS_DIR}/${override_alias}.sh"
+			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh"
+			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${distro_plugin_script}"
 			SUPPORTED_DISTRIBUTIONS["${override_alias}"]="${SUPPORTED_DISTRIBUTIONS["$distro_name"]}"
 			distro_name="${override_alias}"
 		else
@@ -196,6 +198,8 @@ command_install() {
 			echo
 			return 1
 		fi
+	else
+		distro_plugin_script="${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
 	fi
 
 	if is_distro_installed "$distro_name"; then
@@ -209,7 +213,7 @@ command_install() {
 		return 1
 	fi
 
-	if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
+	if [ -f "${distro_plugin_script}" ]; then
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
@@ -234,14 +238,14 @@ command_install() {
 
 		# Distribution plug-in contains steps on how to get download URL
 		# and further post-installation configuration.
-		source "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
+		source "${distro_plugin_script}"
 
 		local download_url
 		if declare -f -F get_download_url >/dev/null 2>&1; then
 			download_url=$(get_download_url)
 		else
 			echo
-			echo -e "${BRED}Error: get_download_url() is not defined in ${DISTRO_PLUGINS_DIR}/${distro_name}.sh${RST}"
+			echo -e "${BRED}Error: get_download_url() is not defined in ${distro_plugin_script}${RST}"
 			echo
 			return 1
 		fi
@@ -398,7 +402,7 @@ command_install() {
 		echo
 		return 0
 	else
-		echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${DISTRO_PLUGINS_DIR}/${distro_name}.sh' which contains distro-specific install functions.${RST}"
+		echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which contains distro-specific install functions.${RST}"
 		return 1
 	fi
 }
@@ -502,6 +506,12 @@ command_remove() {
 		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
 		echo
 		return 1
+	fi
+
+	# Delete plugin with overridden alias.
+	if [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
+		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
+		rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
 	fi
 
 	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Wiping the rootfs of ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
