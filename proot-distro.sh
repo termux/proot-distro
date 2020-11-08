@@ -168,7 +168,7 @@ command_install() {
 		shift 1
 	done
 
-	if [ -z "$distro_name" ]; then
+	if [ -z "${distro_name-}" ]; then
 		echo
 		echo -e "${BRED}Error: distribution alias is not specified.${RST}"
 		command_install_help
