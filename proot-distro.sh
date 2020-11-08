@@ -555,7 +555,7 @@ command_login() {
 	local no_proc_faking=false
 	local use_termux_home=false
 	local no_link2symlink=false
-	local port=false
+	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
 
@@ -584,8 +584,8 @@ command_login() {
 			--no-link2symlink)
 				no_link2symlink=true
 				;;
-			--port)
-				port=true
+			--fix-low-ports)
+				fix_low_ports=true
 				;;
 			-*)
 				echo
@@ -724,7 +724,7 @@ command_login() {
 		fi
 		
 		# Modify bindings to protected ports to use a higher port number.
-		if $port; then
+		if $fix_low_ports; then
 			set -- "-p" "$@"
 		fi
 		
@@ -773,7 +773,7 @@ command_login_help() {
 	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	echo
-	echo -e "  ${GREEN}--port               ${CYAN}- Modify bindings to protected ports to use a higher port number.${RST}"
+	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use a higher port number.${RST}"
 	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
