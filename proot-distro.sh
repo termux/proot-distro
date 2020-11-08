@@ -123,16 +123,52 @@ is_distro_installed() {
 #
 command_install() {
 	local distro_name
+	local override_alias
 
-	if [ $# -ge 1 ]; then
+	while (($# >= 1)); do
 		case "$1" in
-			-h|--help)
+			--)
+				shift 1
+				break
+				;;
+			--help)
 				command_install_help
 				return 0
 				;;
-			*) distro_name="$1";;
+			--override-alias)
+				if [ $# -ge 2 ]; then
+					shift 1
+					override_alias="$1"
+				else
+					echo
+					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					command_install_help
+					return 1
+				fi
+				;;
+			-*)
+				echo
+				echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_install_help
+				return 1
+				;;
+			*)
+				if [ -z "$distro_name" ]; then
+					distro_name="$1"
+				else
+					echo
+					echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+					echo
+					echo -e "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					command_install_help
+					return 1
+				fi
+				;;
 		esac
-	else
+		shift 1
+	done
+
+	if [ -z "$distro_name" ]; then
 		echo
 		echo -e "${BRED}Error: distribution alias is not specified.${RST}"
 		command_install_help
@@ -146,6 +182,20 @@ command_install() {
 		echo -e "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
 		echo
 		return 1
+	fi
+
+	if [ -n "$override_alias" ]; then
+		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
+			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
+			cp "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" "${DISTRO_PLUGINS_DIR}/${override_alias}.sh"
+			distro_name="${override_alias}"
+			SUPPORTED_DISTRIBUTIONS["${override_alias}"]="${SUPPORTED_DISTRIBUTIONS["$distro_name"]}"
+		else
+			echo
+			echo -e "${BRED}Error: you cannot use value '${YELLOW}${override_alias}${BRED}' as alias override.${RST}"
+			echo
+			return 1
+		fi
 	fi
 
 	if is_distro_installed "$distro_name"; then
@@ -396,6 +446,12 @@ command_install_help() {
 	echo
 	echo -e "${CYAN}This command will create a fresh installation of specified Linux${RST}"
 	echo -e "${CYAN}distribution.${RST}"
+	echo
+	echo -e "${CYAN}Options:${RST}"
+	echo
+	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	echo
+	echo -e "  ${GREEN}--override-alias     ${CYAN}- Set a custom alias for installed distribution.${RST}"
 	echo
 	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
