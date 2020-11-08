@@ -716,18 +716,18 @@ command_login() {
 		if $use_termux_home; then
 			set -- "--bind=@TERMUX_HOME@:/root" "$@"
 		fi
-		
+
 		# Bind the tmp folder from the host system to the guest system
 		# Ignores --isolated.
 		if $make_host_tmp_shared; then
 			set -- "--bind=@TERMUX_PREFIX@/tmp:/tmp" "$@"
 		fi
-		
+
 		# Modify bindings to protected ports to use a higher port number.
 		if $fix_low_ports; then
 			set -- "-p" "$@"
 		fi
-		
+
 		exec proot "$@"
 	else
 		if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
@@ -773,7 +773,8 @@ command_login_help() {
 	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	echo
-	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use a higher port number.${RST}"
+	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
+	echo -e "                         ${CYAN}a higher port number.${RST}"
 	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
