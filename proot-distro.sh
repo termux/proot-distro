@@ -789,6 +789,8 @@ command_login_help() {
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
 	echo -e "                         ${CYAN}in permissive mode.${RST}"
 	echo
+	echo -e "  ${GREEN}--no-sysvipc         ${CYAN}- Disable System V IPC emulation by proot.${RST}"
+	echo
 	echo -e "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	echo -e "${CYAN}options as shell arguments.${RST}"
 	echo
