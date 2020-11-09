@@ -457,7 +457,8 @@ command_install_help() {
 	echo
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	echo
-	echo -e "  ${GREEN}--override-alias     ${CYAN}- Set a custom alias for installed distribution.${RST}"
+	echo -e "  ${GREEN}--override-alias [new alias]   ${CYAN}- Set a custom alias for installed${RST}"
+	echo -e "                                   ${CYAN}distribution.${RST}"
 	echo
 	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
