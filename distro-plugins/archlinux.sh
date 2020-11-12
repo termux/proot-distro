@@ -1,5 +1,9 @@
 ##
-## Plug-in for installing Arch Linux (original and ARM variants).
+## Plug-in for installing Arch Linux.
+##
+## Warning: Arch Linux ARM is not Arch Linux! This is a different project,
+## yet it is a lot similar to the original. Proot-Distro considers them as
+## equal to make things easier.
 ##
 
 DISTRO_NAME="Arch Linux"
