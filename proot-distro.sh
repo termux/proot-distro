@@ -755,11 +755,11 @@ command_login() {
 		# Fix this behavior by reporting a fake up-to-date kernel version.
 		set -- "--kernel-release=5.4.0-fake-kernel" "$@"
 
+		# If flag --user is specified
 		if [ -n "$user" ]; then
-			# If flag --user is specified
-			# Login as $user and set working directory to /home/$user
+			# Login as $user
+			# Home directory is inferred by su
 			set -- "--change-id=$user" "$@"
-			set -- "--cwd=/home/$user/" "$@"
 		else
 			# Default to root if --user is not specified
 			set -- "--cwd=/root" "$@"
