@@ -628,7 +628,8 @@ command_login() {
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
-	local user=""
+	# Defaults to root if --user is not specified
+	local user="root"
 
 	while (($# >= 1)); do
 		case "$1" in
