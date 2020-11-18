@@ -857,6 +857,7 @@ command_login_help() {
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	echo
 	echo -e "  ${GREEN}--user USER          ${CYAN}- Specify which user proot-distro should login to.${RST}"
+	echo -e "                         ${CYAN}If not provided, login defaults to root.{RST}"
 	echo
 	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	echo -e "                         ${CYAN}a higher port number.${RST}"
