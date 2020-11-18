@@ -756,16 +756,9 @@ command_login() {
 		# Fix this behavior by reporting a fake up-to-date kernel version.
 		set -- "--kernel-release=5.4.0-fake-kernel" "$@"
 
-		# If flag --user is specified
-		if [ -n "$user" ]; then
-			# Login as $user
-			# Home directory is inferred by su
-			set -- "--change-id=$user" "$@"
-		else
-			# Default to root if --user is not specified
-			set -- "--cwd=/root" "$@"
-			set -- "--root-id" "$@"
-		fi
+		# Simulate root so we can switch users.
+		set -- "--cwd=/root" "$@"
+		set -- "--root-id" "$@"
 
 		# Core file systems that should always be present.
 		set -- "--bind=/dev" "$@"
