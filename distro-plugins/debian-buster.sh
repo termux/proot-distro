@@ -3,6 +3,7 @@
 ##
 
 DISTRO_NAME="Debian 10 (Buster)"
+DISTRO_TARBALL_STRIP_OPT=1
 
 # Returns download URL.
 get_download_url() {
