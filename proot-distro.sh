@@ -112,12 +112,10 @@ is_distro_installed() {
 #     extension.
 #  6. Write environment variables configuration to /etc/profile.d/termux-proot.sh.
 #     If profile.d directory is not available, append to /etc/profile.
-#  7. Create a source file for faking /proc/stat.
-#  8. Create a source file for faking /proc/version.
-#  9. Write default /etc/resolv.conf.
-#  10. Write default /etc/hosts.
-#  11. Add missing Android specific UIDs/GIDs to user database.
-#  12. Execute optional setup hook (distro_setup) if present.
+#  7. Write default /etc/resolv.conf.
+#  8. Write default /etc/hosts.
+#  9. Add missing Android specific UIDs/GIDs to user database.
+#  10. Execute optional setup hook (distro_setup) if present.
 #
 # Accepted arguments: $1 - distribution name.
 #
@@ -377,6 +375,9 @@ command_install() {
 			fi
 		done
 
+		# Ensure that proot will be able to bind fake /proc entries.
+		setup_fake_proc
+
 		# Run optional distro-specific hook.
 		if declare -f -F distro_setup >/dev/null 2>&1; then
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Running distro-specific configuration steps...${RST}"
@@ -407,7 +408,7 @@ run_proot_cmd() {
 	fi
 
 	proot \
-		--kernel-release=5.4.0-fake-kernel \
+		--kernel-release=5.4.0-faked \
 		--link2symlink \
 		--kill-on-exit \
 		--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
@@ -421,7 +422,9 @@ run_proot_cmd() {
 		--bind="/proc/self/fd/1:/dev/stdout" \
 		--bind="/proc/self/fd/2:/dev/stderr" \
 		--bind=/sys \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
 		/usr/bin/env -i \
 			"HOME=/root" \
@@ -430,6 +433,50 @@ run_proot_cmd() {
 			"TERM=$TERM" \
 			"TMPDIR=/tmp" \
 			"$@"
+}
+
+# A function for preparing fake content for certain /proc
+# entries which are known to be restricted on Android.
+setup_fake_proc() {
+	mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+
+	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg" ]; then
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg"
+		0.54 0.41 0.30 1/931 370386
+		EOF
+	fi
+
+	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat" ]; then
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat"
+		cpu  1050008 127632 898432 43828767 37203 63 99244 0 0 0
+		cpu0 212383 20476 204704 8389202 7253 42 12597 0 0 0
+		cpu1 224452 24947 215570 8372502 8135 4 42768 0 0 0
+		cpu2 222993 17440 200925 8424262 8069 9 17732 0 0 0
+		cpu3 186835 8775 195974 8486330 5746 3 8360 0 0 0
+		cpu4 107075 32886 48854 8688521 3995 4 5758 0 0 0
+		cpu5 90733 20914 27798 1429573 2984 1 11419 0 0 0
+		intr 53261351 0 686 1 0 0 1 12 31 1 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 7818 0 0 0 0 0 0 0 0 255 33 1912 33 0 0 0 0 0 0 3449534 2315885 2150546 2399277 696281 339300 22642 19371 0 0 0 0 0 0 0 0 0 0 0 2199 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2445 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 162240 14293 2858 0 151709 151592 0 0 0 284534 0 0 0 0 0 0 0 0 0 0 0 0 0 0 185353 0 0 938962 0 0 0 0 736100 0 0 1 1209 27960 0 0 0 0 0 0 0 0 303 115968 452839 2 0 0 0 0 0 0 0 0 0 0 0 0 0 160361 8835 86413 1292 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3592 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 6091 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 35667 0 0 156823 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 138 2667417 0 41 4008 952 16633 533480 0 0 0 0 0 0 262506 0 0 0 0 0 0 126 0 0 1558488 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 2 8 0 0 6 0 0 0 10 3 4 0 0 0 0 0 3 0 0 0 0 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12 1 1 83806 0 1 1 0 1 0 1 1 319686 2 8 0 0 0 0 0 0 0 0 0 244534 0 1 10 9 0 10 112 107 40 221 0 0 0 144
+		ctxt 90182396
+		btime 1595203295
+		processes 270853
+		procs_running 2
+		procs_blocked 0
+		softirq 25293348 2883 7658936 40779 539155 497187 2864 1908702 7229194 279723 7133925
+		EOF
+	fi
+
+	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime" ]; then
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime"
+		284684.56 513853.46
+		EOF
+	fi
+
+	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version" ]; then
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
+		Linux version 5.4.0-faked (termux@androidos) (gcc version 4.9.x (Faked /proc/version by Proot-Distro) ) #1 SMP PREEMPT Fri Jul 10 00:00:00 UTC 2020
+		EOF
+	fi
 }
 
 # Usage info for command_install.
@@ -748,7 +795,7 @@ command_login() {
 
 		# Some devices have old kernels and GNU libc refuses to work on them.
 		# Fix this behavior by reporting a fake up-to-date kernel version.
-		set -- "--kernel-release=5.4.0-fake-kernel" "$@"
+		set -- "--kernel-release=5.4.0-faked" "$@"
 
 		# Simulate root so we can switch users.
 		set -- "--cwd=/root" "$@"
@@ -764,64 +811,26 @@ command_login() {
 		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 		set -- "--bind=/sys" "$@"
 
+		# Ensure that we can bind fake /proc entries.
+		setup_fake_proc
+
 		# Fake /proc/loadavg if necessary.
 		if ! cat /proc/loadavg > /dev/null 2>&1; then
-			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg" ]; then
-				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg"
-				0.54 0.41 0.30 1/931 370386
-				EOF
-			fi
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" "$@"
 		fi
 
 		# Fake /proc/stat if necessary.
 		if ! cat /proc/stat > /dev/null 2>&1; then
-			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat" ]; then
-				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat"
-				cpu  1050008 127632 898432 43828767 37203 63 99244 0 0 0
-				cpu0 212383 20476 204704 8389202 7253 42 12597 0 0 0
-				cpu1 224452 24947 215570 8372502 8135 4 42768 0 0 0
-				cpu2 222993 17440 200925 8424262 8069 9 17732 0 0 0
-				cpu3 186835 8775 195974 8486330 5746 3 8360 0 0 0
-				cpu4 107075 32886 48854 8688521 3995 4 5758 0 0 0
-				cpu5 90733 20914 27798 1429573 2984 1 11419 0 0 0
-				intr 53261351 0 686 1 0 0 1 12 31 1 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 7818 0 0 0 0 0 0 0 0 255 33 1912 33 0 0 0 0 0 0 3449534 2315885 2150546 2399277 696281 339300 22642 19371 0 0 0 0 0 0 0 0 0 0 0 2199 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2445 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 162240 14293 2858 0 151709 151592 0 0 0 284534 0 0 0 0 0 0 0 0 0 0 0 0 0 0 185353 0 0 938962 0 0 0 0 736100 0 0 1 1209 27960 0 0 0 0 0 0 0 0 303 115968 452839 2 0 0 0 0 0 0 0 0 0 0 0 0 0 160361 8835 86413 1292 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3592 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 6091 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 35667 0 0 156823 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 138 2667417 0 41 4008 952 16633 533480 0 0 0 0 0 0 262506 0 0 0 0 0 0 126 0 0 1558488 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 2 8 0 0 6 0 0 0 10 3 4 0 0 0 0 0 3 0 0 0 0 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12 1 1 83806 0 1 1 0 1 0 1 1 319686 2 8 0 0 0 0 0 0 0 0 0 244534 0 1 10 9 0 10 112 107 40 221 0 0 0 144
-				ctxt 90182396
-				btime 1595203295
-				processes 270853
-				procs_running 2
-				procs_blocked 0
-				softirq 25293348 2883 7658936 40779 539155 497187 2864 1908702 7229194 279723 7133925
-				EOF
-			fi
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
 		fi
 
 		# Fake /proc/uptime if necessary.
 		if ! cat /proc/uptime > /dev/null 2>&1; then
-			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime" ]; then
-				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime"
-				284684.56 513853.46
-				EOF
-			fi
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" "$@"
 		fi
 
 		# Fake /proc/version if necessary.
 		if ! cat /proc/version > /dev/null 2>&1; then
-			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version" ]; then
-				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
-				Linux version 5.4.0-faked (termux@androidos) (gcc version 4.9.x (Faked /proc/version by Proot-Distro) ) #1 SMP PREEMPT Fri Jul 10 00:00:00 UTC 2020
-				EOF
-			fi
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" "$@"
 		fi
 
