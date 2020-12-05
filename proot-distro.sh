@@ -712,7 +712,7 @@ command_login() {
 			# Wrap in quotes each argument to prevent word splitting.
 			local -a shell_command_args
 			for i in "$@"; do
-				shell_command_args+=("\"$i\"")
+				shell_command_args+=("'$i'")
 			done
 
 			set -- "/bin/su" "-l" "-c" "${shell_command_args[*]}"
