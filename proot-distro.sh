@@ -201,6 +201,11 @@ command_install() {
 		fi
 	else
 		distro_plugin_script="${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
+
+		# Try an alternate distribution name.
+		if [ ! -f "${distro_plugin_script}" ]; then
+			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
+		fi
 	fi
 
 	if is_distro_installed "$distro_name"; then
