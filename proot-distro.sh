@@ -512,7 +512,7 @@ command_remove() {
 	fi
 
 	# Delete plugin with overridden alias.
-	if ! [ "${CMD_REMOVE_REQUESTED_RESET-false}" = "false" ] && [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
+	if [ "${CMD_REMOVE_REQUESTED_RESET-false}" = "false" ] && [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
 		rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
 	fi
