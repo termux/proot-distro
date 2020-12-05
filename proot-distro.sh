@@ -139,6 +139,13 @@ command_install() {
 			--override-alias)
 				if [ $# -ge 2 ]; then
 					shift 1
+
+					if [ -z "$1" ]; then
+						echo -e "${BRED}Error: argument to option '${YELLOW}$1${BRED}' should not be empty.${RST}"
+						command_install_help
+						return 1
+					fi
+
 					override_alias="$1"
 				else
 					echo
@@ -669,6 +676,13 @@ command_login() {
 			--user)
 				if [ $# -ge 2 ]; then
 					shift 1
+
+					if [ -z "$1" ]; then
+						echo -e "${BRED}Error: argument to option '${YELLOW}$1${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
 					login_user="$1"
 				else
 					echo
