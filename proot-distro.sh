@@ -871,7 +871,7 @@ command_login_help() {
 	echo
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	echo
-	echo -e "  ${GREEN}--user <user>        ${CYAN}- Login as specified user instead of 'root'.${RST}"
+	echo -e "  ${GREEN}--user [user]        ${CYAN}- Login as specified user instead of 'root'.${RST}"
 	echo
 	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	echo -e "                         ${CYAN}a higher port number.${RST}"
