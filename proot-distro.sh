@@ -141,7 +141,8 @@ command_install() {
 					shift 1
 
 					if [ -z "$1" ]; then
-						echo -e "${BRED}Error: argument to option '${YELLOW}$1${BRED}' should not be empty.${RST}"
+						echo
+						echo -e "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should not be empty.${RST}"
 						command_install_help
 						return 1
 					fi
@@ -678,7 +679,8 @@ command_login() {
 					shift 1
 
 					if [ -z "$1" ]; then
-						echo -e "${BRED}Error: argument to option '${YELLOW}$1${BRED}' should not be empty.${RST}"
+						echo
+						echo -e "${BRED}Error: argument to option '${YELLOW}--user${BRED}' should not be empty.${RST}"
 						command_login_help
 						return 1
 					fi
