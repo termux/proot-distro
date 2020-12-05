@@ -512,7 +512,7 @@ command_remove() {
 	fi
 
 	# Delete plugin with overridden alias.
-	if [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
+	if ! [ "${CMD_REMOVE_REQUESTED_RESET-false}" = "false" ] && [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
 		rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
 	fi
@@ -587,7 +587,7 @@ command_reset() {
 		return 1
 	fi
 
-	command_remove "$distro_name"
+	CMD_REMOVE_REQUESTED_RESET="true" command_remove "$distro_name"
 	command_install "$distro_name"
 }
 
@@ -1043,7 +1043,7 @@ if [ $# -ge 1 ]; then
 	case "$1" in
 		-h|--help|help) shift 1; command_help;;
 		install) shift 1; command_install "$@";;
-		remove) shift 1; command_remove "$@";;
+		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
 		reset) shift 1; command_reset "$@";;
 		login) shift 1; command_login "$@";;
 		list) shift 1; command_list;;
