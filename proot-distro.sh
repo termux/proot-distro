@@ -633,8 +633,7 @@ command_login() {
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
-	# Defaults to root if --user is not specified
-	local user="root"
+	local login_user="root"
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -668,14 +667,15 @@ command_login() {
 				no_sysvipc=true
 				;;
 			--user)
-				shift
-				if [[ $# -eq 0 || $1 == -* ]]; then
+				if [ $# -ge 2 ]; then
+					shift 1
+					login_user="$1"
+				else
 					echo
-					echo -e "${BRED}Error: with flag --user, USER must be specified.${RST}"
+					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
 					command_login_help
 					return 1
 				fi
-				user="$1"
 				;;
 			-*)
 				echo
@@ -727,9 +727,9 @@ command_login() {
 				shell_command_args+=("'$i'")
 			done
 
-			set -- "/bin/su" "-l" "$user" "-c" "${shell_command_args[*]}"
+			set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
 		else
-			set -- "/bin/su" "-l" "$user"
+			set -- "/bin/su" "-l" "$login_user"
 		fi
 
 		# Setup the default environment as well as copy some variables
@@ -855,8 +855,7 @@ command_login_help() {
 	echo
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	echo
-	echo -e "  ${GREEN}--user USER          ${CYAN}- Specify which user proot-distro should login to.${RST}"
-	echo -e "                         ${CYAN}If not provided, login defaults to root.{RST}"
+	echo -e "  ${GREEN}--user <user>        ${CYAN}- Login as specified user instead of 'root'.${RST}"
 	echo
 	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	echo -e "                         ${CYAN}a higher port number.${RST}"
@@ -864,15 +863,15 @@ command_login_help() {
 	echo -e "  ${GREEN}--isolated           ${CYAN}- Run isolated environment without access${RST}"
 	echo -e "                         ${CYAN}to host file system.${RST}"
 	echo
-	echo -e "  ${GREEN}--no-fake-proc       ${CYAN}- Don't fake /proc/stat and /proc/version${RST}"
-	echo -e "                         ${CYAN}data. Useful only on devices with${RST}"
-	echo -e "                         ${CYAN}SELinux in permissive mode.${RST}"
-	echo
 	echo -e "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	echo
 	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
+	echo
+	echo -e "  ${GREEN}--no-fake-proc       ${CYAN}- Don't fake /proc/stat and /proc/version${RST}"
+	echo -e "                         ${CYAN}data. Useful only on devices with${RST}"
+	echo -e "                         ${CYAN}SELinux in permissive mode.${RST}"
 	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
