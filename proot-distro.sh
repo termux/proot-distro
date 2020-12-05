@@ -764,9 +764,6 @@ command_login() {
 		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 		set -- "--bind=/sys" "$@"
 
-		# Fake /proc/version source.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/version file for SELinux restrictions workaround...${RST}"
-
 		# Fake /proc/stat if necessary.
 		if ! cat /proc/stat > /dev/null 2>&1; then
 			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat" ]; then
