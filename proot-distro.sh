@@ -792,6 +792,18 @@ command_login() {
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
 		fi
 
+		# Fake /proc/uptime if necessary.
+		if ! cat /proc/uptime > /dev/null 2>&1; then
+			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime" ]; then
+				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime"
+				284684.56 513853.46
+				EOF
+			fi
+			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" "$@"
+		fi
+
 		# Fake /proc/version if necessary.
 		if ! cat /proc/version > /dev/null 2>&1; then
 			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version" ]; then
