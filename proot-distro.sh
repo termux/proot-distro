@@ -825,7 +825,11 @@ command_login() {
 		# Use Termux home directory if requested.
 		# Ignores --isolated.
 		if $use_termux_home; then
-			set -- "--bind=@TERMUX_HOME@:/root" "$@"
+			if [ "$login_user" = "root" ]; then
+				set -- "--bind=@TERMUX_HOME@:/root" "$@"
+			else
+				set -- "--bind=@TERMUX_HOME@:/home/${login_user}" "$@"
+			fi
 		fi
 
 		# Bind the tmp folder from the host system to the guest system
