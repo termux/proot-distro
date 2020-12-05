@@ -764,6 +764,18 @@ command_login() {
 		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 		set -- "--bind=/sys" "$@"
 
+		# Fake /proc/loadavg if necessary.
+		if ! cat /proc/loadavg > /dev/null 2>&1; then
+			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg" ]; then
+				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg"
+				0.54 0.41 0.30 1/931 370386
+				EOF
+			fi
+			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" "$@"
+		fi
+
 		# Fake /proc/stat if necessary.
 		if ! cat /proc/stat > /dev/null 2>&1; then
 			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat" ]; then
