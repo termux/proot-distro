@@ -342,32 +342,6 @@ command_install() {
 		fi
 		unset LIBGCC_S_PATH
 
-		# Fake /proc/stat source.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/stat file for SELinux restrictions workaround...${RST}"
-		chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc" >/dev/null 2>&1
-		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat"
-		cpu  1050008 127632 898432 43828767 37203 63 99244 0 0 0
-		cpu0 212383 20476 204704 8389202 7253 42 12597 0 0 0
-		cpu1 224452 24947 215570 8372502 8135 4 42768 0 0 0
-		cpu2 222993 17440 200925 8424262 8069 9 17732 0 0 0
-		cpu3 186835 8775 195974 8486330 5746 3 8360 0 0 0
-		cpu4 107075 32886 48854 8688521 3995 4 5758 0 0 0
-		cpu5 90733 20914 27798 1429573 2984 1 11419 0 0 0
-		intr 53261351 0 686 1 0 0 1 12 31 1 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 7818 0 0 0 0 0 0 0 0 255 33 1912 33 0 0 0 0 0 0 3449534 2315885 2150546 2399277 696281 339300 22642 19371 0 0 0 0 0 0 0 0 0 0 0 2199 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2445 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 162240 14293 2858 0 151709 151592 0 0 0 284534 0 0 0 0 0 0 0 0 0 0 0 0 0 0 185353 0 0 938962 0 0 0 0 736100 0 0 1 1209 27960 0 0 0 0 0 0 0 0 303 115968 452839 2 0 0 0 0 0 0 0 0 0 0 0 0 0 160361 8835 86413 1292 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3592 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 6091 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 35667 0 0 156823 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 138 2667417 0 41 4008 952 16633 533480 0 0 0 0 0 0 262506 0 0 0 0 0 0 126 0 0 1558488 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 2 8 0 0 6 0 0 0 10 3 4 0 0 0 0 0 3 0 0 0 0 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12 1 1 83806 0 1 1 0 1 0 1 1 319686 2 8 0 0 0 0 0 0 0 0 0 244534 0 1 10 9 0 10 112 107 40 221 0 0 0 144
-		ctxt 90182396
-		btime 1595203295
-		processes 270853
-		procs_running 2
-		procs_blocked 0
-		softirq 25293348 2883 7658936 40779 539155 497187 2864 1908702 7229194 279723 7133925
-		EOF
-
-		# Fake /proc/version source.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/version file for SELinux restrictions workaround...${RST}"
-		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
-		Linux version 5.4.0-fake-kernel (termux@fakehost) (gcc version 4.9.x 20150123 (prerelease) (GCC) ) #1 SMP PREEMPT Fri Jul 10 00:00:00 UTC 2020
-		EOF
-
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 1.1.1.1/1.0.0.1)...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
@@ -634,7 +608,6 @@ command_reset_help() {
 #
 command_login() {
 	local isolated_environment=false
-	local no_proc_faking=false
 	local use_termux_home=false
 	local no_link2symlink=false
 	local no_sysvipc=false
@@ -660,7 +633,7 @@ command_login() {
 				isolated_environment=true
 				;;
 			--no-fake-proc)
-				no_proc_faking=true
+				echo -e "${BRED}Warning: option '${YELLOW}${1}${BRED}' is deprecated.${RST}"
 				;;
 			--termux-home)
 				use_termux_home=true
@@ -791,8 +764,43 @@ command_login() {
 		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 		set -- "--bind=/sys" "$@"
 
-		if ! $no_proc_faking; then
+		# Fake /proc/version source.
+		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating a source for fake /proc/version file for SELinux restrictions workaround...${RST}"
+
+		# Fake /proc/stat if necessary.
+		if ! cat /proc/stat > /dev/null 2>&1; then
+			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat" ]; then
+				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat"
+				cpu  1050008 127632 898432 43828767 37203 63 99244 0 0 0
+				cpu0 212383 20476 204704 8389202 7253 42 12597 0 0 0
+				cpu1 224452 24947 215570 8372502 8135 4 42768 0 0 0
+				cpu2 222993 17440 200925 8424262 8069 9 17732 0 0 0
+				cpu3 186835 8775 195974 8486330 5746 3 8360 0 0 0
+				cpu4 107075 32886 48854 8688521 3995 4 5758 0 0 0
+				cpu5 90733 20914 27798 1429573 2984 1 11419 0 0 0
+				intr 53261351 0 686 1 0 0 1 12 31 1 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 7818 0 0 0 0 0 0 0 0 255 33 1912 33 0 0 0 0 0 0 3449534 2315885 2150546 2399277 696281 339300 22642 19371 0 0 0 0 0 0 0 0 0 0 0 2199 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2445 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 162240 14293 2858 0 151709 151592 0 0 0 284534 0 0 0 0 0 0 0 0 0 0 0 0 0 0 185353 0 0 938962 0 0 0 0 736100 0 0 1 1209 27960 0 0 0 0 0 0 0 0 303 115968 452839 2 0 0 0 0 0 0 0 0 0 0 0 0 0 160361 8835 86413 1292 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3592 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 6091 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 35667 0 0 156823 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 138 2667417 0 41 4008 952 16633 533480 0 0 0 0 0 0 262506 0 0 0 0 0 0 126 0 0 1558488 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 2 8 0 0 6 0 0 0 10 3 4 0 0 0 0 0 3 0 0 0 0 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12 1 1 83806 0 1 1 0 1 0 1 1 319686 2 8 0 0 0 0 0 0 0 0 0 244534 0 1 10 9 0 10 112 107 40 221 0 0 0 144
+				ctxt 90182396
+				btime 1595203295
+				processes 270853
+				procs_running 2
+				procs_blocked 0
+				softirq 25293348 2883 7658936 40779 539155 497187 2864 1908702 7229194 279723 7133925
+				EOF
+			fi
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
+		fi
+
+		# Fake /proc/version if necessary.
+		if ! cat /proc/version > /dev/null 2>&1; then
+			if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version" ]; then
+				mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
+				Linux version 5.4.0-faked (termux@androidos) (gcc version 4.9.x (Faked /proc/version by Proot-Distro) ) #1 SMP PREEMPT Fri Jul 10 00:00:00 UTC 2020
+				EOF
+			fi
 			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" "$@"
 		fi
 
@@ -888,10 +896,6 @@ command_login_help() {
 	echo
 	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
-	echo
-	echo -e "  ${GREEN}--no-fake-proc       ${CYAN}- Don't fake /proc/stat and /proc/version${RST}"
-	echo -e "                         ${CYAN}data. Useful only on devices with${RST}"
-	echo -e "                         ${CYAN}SELinux in permissive mode.${RST}"
 	echo
 	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
 	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
