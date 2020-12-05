@@ -117,8 +117,6 @@ is_distro_installed() {
 #  9. Add missing Android specific UIDs/GIDs to user database.
 #  10. Execute optional setup hook (distro_setup) if present.
 #
-# Accepted arguments: $1 - distribution name.
-#
 command_install() {
 	local distro_name
 	local override_alias
