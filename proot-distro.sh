@@ -633,6 +633,8 @@ command_login() {
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
+	# Defaults to root if --user is not specified
+	local user="root"
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -664,6 +666,16 @@ command_login() {
 				;;
 			--no-sysvipc)
 				no_sysvipc=true
+				;;
+			--user)
+				shift
+				if [[ $# -eq 0 || $1 == -* ]]; then
+					echo
+					echo -e "${BRED}Error: with flag --user, USER must be specified.${RST}"
+					command_login_help
+					return 1
+				fi
+				user="$1"
 				;;
 			-*)
 				echo
@@ -715,9 +727,9 @@ command_login() {
 				shell_command_args+=("'$i'")
 			done
 
-			set -- "/bin/su" "-l" "-c" "${shell_command_args[*]}"
+			set -- "/bin/su" "-l" "$user" "-c" "${shell_command_args[*]}"
 		else
-			set -- "/bin/su" "-l"
+			set -- "/bin/su" "-l" "$user"
 		fi
 
 		# Setup the default environment as well as copy some variables
@@ -842,6 +854,9 @@ command_login_help() {
 	echo -e "${CYAN}Options:${RST}"
 	echo
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	echo
+	echo -e "  ${GREEN}--user USER          ${CYAN}- Specify which user proot-distro should login to.${RST}"
+	echo -e "                         ${CYAN}If not provided, login defaults to root.{RST}"
 	echo
 	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	echo -e "                         ${CYAN}a higher port number.${RST}"
