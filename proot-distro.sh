@@ -353,12 +353,12 @@ command_install() {
 		127.0.0.1   localhost.localdomain localhost
 
 		# IPv6.
-		::1         localhost.localdomain localhost ipv6-localhost ipv6-loopback
-		fe00::0     ipv6-localnet
-		ff00::0     ipv6-mcastprefix
-		ff02::1     ipv6-allnodes
-		ff02::2     ipv6-allrouters
-		ff02::3     ipv6-allhosts
+		::1         localhost.localdomain localhost ip6-localhost ip6-loopback
+		fe00::0     ip6-localnet
+		ff00::0     ip6-mcastprefix
+		ff02::1     ip6-allnodes
+		ff02::2     ip6-allrouters
+		ff02::3     ip6-allhosts
 		EOF
 
 		# Add Android-specific UIDs/GIDs to /etc/group and /etc/gshadow.
