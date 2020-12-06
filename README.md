@@ -4,6 +4,7 @@ For now it supports installation of these distributions:
 
 * Alpine Linux
 * Arch Linux & Arch Linux ARM
+* Debian (buster)
 * Kali Nethunter (rootless)
 * Ubuntu (18.04 / 20.04)
 
