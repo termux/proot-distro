@@ -21,11 +21,11 @@ get_download_url() {
 			;;
 		i686)
 			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-alpine-rootfs/alpine-minirootfs-3.12.0-x86.tar.gz"
-			sha256="0beb54cf9bf69d085f9fcd291ff28b3335184d08b706d535f425e8180851edc9"
+			sha256="f06ae2ed0b5f52457a9762ddfcd067f559d35f92b83b4d0a294e3001e5070a62"
 			;;
 		x86_64)
 			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-alpine-rootfs/alpine-minirootfs-3.12.0-x86_64.tar.gz"
-			sha256="f06ae2ed0b5f52457a9762ddfcd067f559d35f92b83b4d0a294e3001e5070a62"
+			sha256="0beb54cf9bf69d085f9fcd291ff28b3335184d08b706d535f425e8180851edc9"
 			;;
 	esac
 
