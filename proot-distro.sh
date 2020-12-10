@@ -1278,23 +1278,30 @@ command_backup() {
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 	if [ -z "$tarball_file_path" ]; then
-		tarball_file_path="${PWD}/backup-${distro_name}-$(date +%s).tar.gz"
-	fi
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to stdout.${RST}"
 
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to '${tarball_file_path}'.${RST}"
+		if [ -t 1 ]; then
+			msg
+			msg "${BRED}Error: tarball cannot be printed to console, please use option '${YELLOW}--output${BRED}' or pipe it to another program.${RST}"
+			msg
+			return 1
+		fi
+	else
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to '${tarball_file_path}'.${RST}"
 
-	if [ -d "$tarball_file_path" ]; then
-		msg
-		msg "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' - path is a directory.${RST}"
-		command_backup_help
-		return 1
-	fi
+		if [ -d "$tarball_file_path" ]; then
+			msg
+			msg "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' - path is a directory.${RST}"
+			command_backup_help
+			return 1
+		fi
 
-	if [ -f "$tarball_file_path" ]; then
-		msg
-		msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exist, please specify a different name.${RST}"
-		command_backup_help
-		return 1
+		if [ -f "$tarball_file_path" ]; then
+			msg
+			msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exist, please specify a different name.${RST}"
+			command_backup_help
+			return 1
+		fi
 	fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Fixing file permissions in rootfs...${RST}"
@@ -1310,9 +1317,15 @@ command_backup() {
 	fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving rootfs...${RST}"
-	tar zcf "$tarball_file_path" \
-		-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
-		-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
+	if [ -n "$tarball_file_path" ]; then
+		tar zcf "$tarball_file_path" \
+			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
+			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
+	else
+		tar zc \
+			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
+			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
+	fi
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished successfully.${RST}"
 }
 
@@ -1329,7 +1342,7 @@ command_backup_help() {
 	msg
 	msg "  ${GREEN}--output [path]      ${CYAN}- Write tarball to specified file.${RST}"
 	msg "                         ${CYAN}If not specified, the tarball will be${RST}"
-	msg "                         ${CYAN}created at \$PWD.${RST}"
+	msg "                         ${CYAN}printed to stdout.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
