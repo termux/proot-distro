@@ -108,14 +108,16 @@ is_distro_installed() {
 #     functionality necessary for installation. It must define at least
 #     get_download_url() function which returns a download URL and SHA-256.
 #  4. Download the rootfs archive, if it is not available in cache.
-#  5. Extract the rootfs by using `tar` running under proot with link2symlink
+#  5. Verify the rootfs archive if we have a SHA-256 for it. Otherwise print
+#     a warning stating that integrity cannot be verified.
+#  6. Extract the rootfs by using `tar` running under proot with link2symlink
 #     extension.
-#  6. Write environment variables configuration to /etc/profile.d/termux-proot.sh.
+#  7. Write environment variables configuration to /etc/profile.d/termux-proot.sh.
 #     If profile.d directory is not available, append to /etc/profile.
-#  7. Write default /etc/resolv.conf.
-#  8. Write default /etc/hosts.
-#  9. Add missing Android specific UIDs/GIDs to user database.
-#  10. Execute optional setup hook (distro_setup) if present.
+#  8. Write default /etc/resolv.conf.
+#  9. Write default /etc/hosts.
+#  10. Add missing Android specific UIDs/GIDs to user database.
+#  11. Execute optional setup hook (distro_setup) if present.
 #
 command_install() {
 	local distro_name
@@ -250,9 +252,19 @@ command_install() {
 		# and further post-installation configuration.
 		source "${distro_plugin_script}"
 
+		local integrity_sha256
 		local download_url
 		if declare -f -F get_download_url >/dev/null 2>&1; then
+			integrity_sha256=$(get_download_url | cut -d'|' -f1)
 			download_url=$(get_download_url | cut -d'|' -f2-)
+
+			# If this is not a HEX string, then we probably got an URL instead of
+			# SHA-256. In this case treat that integrity checking was disabled.
+			if ! grep -qP '^[0-9a-fA-F]+$' <<< "${integrity_sha256}"; then
+				echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Got malformed SHA-256 string, considering it as URL.${RST}"
+				download_url="$integrity_sha256"
+				integrity_sha256=""
+			fi
 		else
 			echo
 			echo -e "${BRED}Error: get_download_url() is not defined in ${distro_plugin_script}${RST}"
@@ -293,6 +305,19 @@ command_install() {
 			mv -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp" "${DOWNLOAD_CACHE_DIR}/${tarball_name}"
 		else
 			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Using cached rootfs tarball...${RST}"
+		fi
+
+		if [ -n "${integrity_sha256}" ]; then
+			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Checking integrity, please wait...${RST}"
+			local actual_sha256
+			actual_sha256=$(sha256sum "${DOWNLOAD_CACHE_DIR}/${tarball_name}" | awk '{ print $1}')
+
+			if [ "${integrity_sha256}" != "${actual_sha256}" ]; then
+				echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking failed. Try to redo installation again.${RST}"
+				return 1
+			fi
+		else
+			echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking of downloaded rootfs has been disabled.${RST}"
 		fi
 
 		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting rootfs, please wait...${RST}"
