@@ -5,26 +5,32 @@
 DISTRO_NAME="Debian 10 (Buster)"
 DISTRO_TARBALL_STRIP_OPT=1
 
-# Returns download URL.
+# Returns download URL and SHA-256 of file in this format:
+# SHA-256|FILE-NAME
 get_download_url() {
 	local deb_arch
+	local sha256
 
 	case "$(uname -m)" in
 		aarch64)
 			deb_arch="arm64"
+			sha256="3dbe607b4d79ea8bc0a779c17f55d42231ff6f643c25f7be9cae48160674ebaf"
 			;;
 		armv7l|armv8l)
 			deb_arch="armhf"
+			sha256="2f9881d66192014964dbde8cf3d0cddba497a10312ad61e6f120b646da52bd6f"
 			;;
 		i686)
 			deb_arch="i386"
+			sha256="084dd00617e84514a718bfbf8434d1913a04a4985a3c487569a7de038afa1eda"
 			;;
 		x86_64)
 			deb_arch="amd64"
+			sha256="38d2ef257de4d3648b769f96802b2e99f07ee80ccc24e0bb093d80bcbdde0a73"
 			;;
 	esac
 
-	echo "https://github.com/termux/proot-distro/releases/download/v1.1-debian-rootfs/debian-buster-${deb_arch}-2020.12.05.tar.gz"
+	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.1-debian-rootfs/debian-buster-${deb_arch}-2020.12.05.tar.gz"
 }
 
 # Define here additional steps which should be executed

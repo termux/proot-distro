@@ -106,7 +106,7 @@ is_distro_installed() {
 #  2. Checks whether requested distribution is installed, if not - continue.
 #  3. Source the distribution configuration plug-in which contains the
 #     functionality necessary for installation. It must define at least
-#     get_download_url() function which returns a download URL.
+#     get_download_url() function which returns a download URL and SHA-256.
 #  4. Download the rootfs archive, if it is not available in cache.
 #  5. Extract the rootfs by using `tar` running under proot with link2symlink
 #     extension.
@@ -252,7 +252,7 @@ command_install() {
 
 		local download_url
 		if declare -f -F get_download_url >/dev/null 2>&1; then
-			download_url=$(get_download_url)
+			download_url=$(get_download_url | cut -d'|' -f2-)
 		else
 			echo
 			echo -e "${BRED}Error: get_download_url() is not defined in ${distro_plugin_script}${RST}"

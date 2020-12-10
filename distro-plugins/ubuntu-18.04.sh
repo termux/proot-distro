@@ -4,22 +4,32 @@
 
 DISTRO_NAME="Ubuntu 18.04"
 
-# Returns download URL.
+# Returns download URL and SHA-256 of file in this format:
+# SHA-256|FILE-NAME
 get_download_url() {
+	local rootfs
+	local sha256
+
 	case "$(uname -m)" in
 		aarch64)
-			echo "https://partner-images.canonical.com/core/bionic/current/ubuntu-bionic-core-cloudimg-arm64-root.tar.gz"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-arm64-root-2020.12.10.tar.gz"
+			sha256="f65e67f1b2d5cab43548356eff4001f3a34210d66686ab46375fe13eddb5ac33"
 			;;
 		armv7l|armv8l)
-			echo "https://partner-images.canonical.com/core/bionic/current/ubuntu-bionic-core-cloudimg-armhf-root.tar.gz"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-armhf-root-2020.12.10.tar.gz"
+			sha256="503c7828eeb4903c05d51e973e42fa9ce2f969e123ef60ad2a3cf4a09b3bfa2e"
 			;;
 		i686)
-			echo "https://partner-images.canonical.com/core/bionic/current/ubuntu-bionic-core-cloudimg-i386-root.tar.gz"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-i386-root-2020.12.10.tar.gz"
+			sha256="32356912ec3a3c4c2ac19c95107bd7dc01657ab0fd9ef86e7e29dcc167b4eed4"
 			;;
 		x86_64)
-			echo "https://partner-images.canonical.com/core/bionic/current/ubuntu-bionic-core-cloudimg-amd64-root.tar.gz"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-amd64-root-2020.12.10.tar.gz"
+			sha256="8f78f4029da9e3343a01a386e1be6498f96f86685264baafefa6e8836d11fce9"
 			;;
 	esac
+
+	echo "${sha256}|${rootfs}"
 }
 
 # Define here additional steps which should be executed
