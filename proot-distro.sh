@@ -1243,6 +1243,13 @@ command_backup() {
 		shift 1
 	done
 
+	if [ -z "$distro_name" ]; then
+		echo
+		echo -e "${BRED}Error: you should specify a distribution which you want to back up.${RST}"
+		command_backup_help
+		return 1
+	fi
+
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
 		echo
 		echo -e "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backing up.${RST}"
@@ -1252,7 +1259,7 @@ command_backup() {
 		return 1
 	fi
 
-	if ! is_distribution_installed "$distro_name"; then
+	if ! is_distro_installed "$distro_name"; then
 		echo
 		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
 		echo
