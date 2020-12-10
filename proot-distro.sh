@@ -1442,8 +1442,8 @@ show_version() {
 #
 # ENTRY POINT
 #
-# 1. Check for dependencies. Assume that coreutils, findutils, tar, bzip2,
-#    gzip, xz are always available.
+# 1. Check for dependencies. Assume that package 'coreutils' is always
+#    available.
 # 2. Check all available distribution plug-ins.
 # 3. Handle the requested commands or show help when '-h/--help/help' were
 #    given. Further command line processing is offloaded to requested command.
@@ -1452,7 +1452,7 @@ show_version() {
 # This will be executed when signal HUP/INT/TERM is received.
 trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
 
-for i in curl proot; do
+for i in awk bzip2 curl find gzip proot sed tar xz; do
 	if [ -z "$(command -v "$i")" ]; then
 		msg
 		msg "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
