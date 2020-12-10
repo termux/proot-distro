@@ -1319,7 +1319,8 @@ command_backup_help() {
 	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	echo
 	echo -e "  ${GREEN}--output [path]      ${CYAN}- Write tarball to specified file.${RST}"
-	echo -e "                         ${CYAN}If not specified, the tarball will be created at \$PWD.${RST}"
+	echo -e "                         ${CYAN}If not specified, the tarball will be${RST}"
+	echo -e "                         ${CYAN}created at \$PWD.${RST}"
 	echo
 	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
