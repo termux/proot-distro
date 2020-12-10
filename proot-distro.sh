@@ -68,15 +68,24 @@ fi
 
 #############################################################################
 #
+# FUNCTION TO PRINT A MESSAGE TO CONSOLE
+#
+# Prints a given text string to stderr. Handles escape sequences.
+msg() {
+	echo -e "$@" >&2
+}
+
+#############################################################################
+#
 # ANTI-ROOT FUSE
 #
 # This script should never be executed as root as can mess up the ownership,
 # and SELinux labels in $PREFIX.
 #
 if [ "$(id -u)" = "0" ]; then
-	echo
-	echo -e "${BRED}Error: utility '${YELLOW}${PROGRAM_NAME}${BRED}' should not be used as root.${RST}"
-	echo
+	msg
+	msg "${BRED}Error: utility '${YELLOW}${PROGRAM_NAME}${BRED}' should not be used as root.${RST}"
+	msg
 	exit 1
 fi
 
@@ -139,23 +148,23 @@ command_install() {
 					shift 1
 
 					if [ -z "$1" ]; then
-						echo
-						echo -e "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should not be empty.${RST}"
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should not be empty.${RST}"
 						command_install_help
 						return 1
 					fi
 
 					override_alias="$1"
 				else
-					echo
-					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
 					command_install_help
 					return 1
 				fi
 				;;
 			-*)
-				echo
-				echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg
+				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
 				command_install_help
 				return 1
 				;;
@@ -163,10 +172,10 @@ command_install() {
 				if [ -z "${distro_name-}" ]; then
 					distro_name="$1"
 				else
-					echo
-					echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					echo
-					echo -e "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					msg
+					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+					msg
+					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
 					command_install_help
 					return 1
 				fi
@@ -176,33 +185,33 @@ command_install() {
 	done
 
 	if [ -z "${distro_name-}" ]; then
-		echo
-		echo -e "${BRED}Error: distribution alias is not specified.${RST}"
+		msg
+		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_install_help
 		return 1
 	fi
 
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
-		echo
-		echo -e "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be installed.${RST}"
-		echo
-		echo -e "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be installed.${RST}"
+		msg
+		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg
 		return 1
 	fi
 
 	if [ -n "${override_alias-}" ]; then
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
 			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh"
 			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${distro_plugin_script}"
 			sed -i "s/^\(DISTRO_NAME=\)\(.*\)\$/\1\"${SUPPORTED_DISTRIBUTIONS["$distro_name"]} (override)\"/g" "${distro_plugin_script}"
 			SUPPORTED_DISTRIBUTIONS["${override_alias}"]="${SUPPORTED_DISTRIBUTIONS["$distro_name"]}"
 			distro_name="${override_alias}"
 		else
-			echo
-			echo -e "${BRED}Error: you cannot use value '${YELLOW}${override_alias}${BRED}' as alias override.${RST}"
-			echo
+			msg
+			msg "${BRED}Error: you cannot use value '${YELLOW}${override_alias}${BRED}' as alias override.${RST}"
+			msg
 			return 1
 		fi
 	else
@@ -215,21 +224,21 @@ command_install() {
 	fi
 
 	if is_distro_installed "$distro_name"; then
-		echo
-		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
-		echo
-		echo -e "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME} login ${distro_name}${RST}"
-		echo -e "${CYAN}Reinstall:  ${GREEN}${PROGRAM_NAME} reset ${distro_name}${RST}"
-		echo -e "${CYAN}Uninstall:  ${GREEN}${PROGRAM_NAME} remove ${distro_name}${RST}"
-		echo
+		msg
+		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
+		msg
+		msg "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME} login ${distro_name}${RST}"
+		msg "${CYAN}Reinstall:  ${GREEN}${PROGRAM_NAME} reset ${distro_name}${RST}"
+		msg "${CYAN}Uninstall:  ${GREEN}${PROGRAM_NAME} remove ${distro_name}${RST}"
+		msg
 		return 1
 	fi
 
 	if [ -f "${distro_plugin_script}" ]; then
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
 			mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 		fi
 
@@ -261,24 +270,24 @@ command_install() {
 			# If this is not a HEX string, then we probably got an URL instead of
 			# SHA-256. In this case treat that integrity checking was disabled.
 			if ! grep -qP '^[0-9a-fA-F]+$' <<< "${integrity_sha256}"; then
-				echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Got malformed SHA-256 string, considering it as URL.${RST}"
+				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Got malformed SHA-256 string, considering it as URL.${RST}"
 				download_url="$integrity_sha256"
 				integrity_sha256=""
 			fi
 		else
-			echo
-			echo -e "${BRED}Error: get_download_url() is not defined in ${distro_plugin_script}${RST}"
-			echo
+			msg
+			msg "${BRED}Error: get_download_url() is not defined in ${distro_plugin_script}${RST}"
+			msg
 			return 1
 		fi
 
 		if [ -z "$download_url" ]; then
-			echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Sorry, but distribution download URL is not defined for your CPU architecture '$(uname -m)'.${RST}"
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Sorry, but distribution download URL is not defined for your CPU architecture '$(uname -m)'.${RST}"
 			return 1
 		fi
 
 		if [ ! -d "$DOWNLOAD_CACHE_DIR" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$DOWNLOAD_CACHE_DIR'...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$DOWNLOAD_CACHE_DIR'...${RST}"
 			mkdir -p "$DOWNLOAD_CACHE_DIR"
 		fi
 
@@ -286,41 +295,41 @@ command_install() {
 		tarball_name=$(basename "$download_url")
 
 		if [ ! -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Downloading rootfs tarball...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Downloading rootfs tarball...${RST}"
 
 			# Using temporary file as script can't distinguish the partially
 			# downloaded file from the complete. Useful in case if curl will
 			# fail for some reason.
-			echo
+			msg
 			rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
 			if ! curl --fail --retry 5 --retry-connrefused --retry-delay 5 --location \
 				--output "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp" "$download_url"; then
-				echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Download failure, please check your network connection.${RST}"
+				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Download failure, please check your network connection.${RST}"
 				rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
 				return 1
 			fi
-			echo
+			msg
 
 			# If curl finished successfully, rename file to original.
 			mv -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp" "${DOWNLOAD_CACHE_DIR}/${tarball_name}"
 		else
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Using cached rootfs tarball...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Using cached rootfs tarball...${RST}"
 		fi
 
 		if [ -n "${integrity_sha256}" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Checking integrity, please wait...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Checking integrity, please wait...${RST}"
 			local actual_sha256
 			actual_sha256=$(sha256sum "${DOWNLOAD_CACHE_DIR}/${tarball_name}" | awk '{ print $1}')
 
 			if [ "${integrity_sha256}" != "${actual_sha256}" ]; then
-				echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking failed. Try to redo installation again.${RST}"
+				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking failed. Try to redo installation again.${RST}"
 				return 1
 			fi
 		else
-			echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking of downloaded rootfs has been disabled.${RST}"
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking of downloaded rootfs has been disabled.${RST}"
 		fi
 
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting rootfs, please wait...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting rootfs, please wait...${RST}"
 		# --exclude='dev'||: - need to exclude /dev directory which may contain device files.
 		# --delay-directory-restore - set directory permissions only when files were extracted
 		#                             to avoid issues with Arch Linux bootstrap archives.
@@ -337,7 +346,7 @@ command_install() {
 		else
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
 		local LIBGCC_S_PATH
 		LIBGCC_S_PATH="/$(cd ${INSTALLED_ROOTFS_DIR}/${distro_name}; find usr/lib/ -name libgcc_s.so.1)"
 		cat <<- EOF >> "$profile_script"
@@ -364,7 +373,7 @@ command_install() {
 		unset LIBGCC_S_PATH
 
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 1.1.1.1/1.0.0.1)...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 1.1.1.1/1.0.0.1)...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		nameserver 1.1.1.1
@@ -372,7 +381,7 @@ command_install() {
 		EOF
 
 		# /etc/hosts may be empty by default on some distributions.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing hosts file...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing hosts file...${RST}"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts"
 		# IPv4.
 		127.0.0.1   localhost.localdomain localhost
@@ -387,7 +396,7 @@ command_install() {
 		EOF
 
 		# Add Android-specific UIDs/GIDs to /etc/group and /etc/gshadow.
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Registering Android-specific UIDs and GIDs...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Registering Android-specific UIDs and GIDs...${RST}"
 		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/usr/sbin/nologin" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
 		echo "aid_$(id -un):*:18446:0:99999:7:::" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
 		local g
@@ -403,19 +412,19 @@ command_install() {
 
 		# Run optional distro-specific hook.
 		if declare -f -F distro_setup >/dev/null 2>&1; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Running distro-specific configuration steps...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Running distro-specific configuration steps...${RST}"
 			(cd "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 				distro_setup
 			)
 		fi
 
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
-		echo
-		echo -e "${CYAN}Now run '${GREEN}$PROGRAM_NAME login $distro_name${CYAN}' to log in.${RST}"
-		echo
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
+		msg
+		msg "${CYAN}Now run '${GREEN}$PROGRAM_NAME login $distro_name${CYAN}' to log in.${RST}"
+		msg
 		return 0
 	else
-		echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which contains distro-specific install functions.${RST}"
+		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which contains distro-specific install functions.${RST}"
 		return 1
 	fi
 }
@@ -424,9 +433,9 @@ command_install() {
 # Can be used only inside distro_setup().
 run_proot_cmd() {
 	if [ -z "${distro_name-}" ]; then
-		echo
-		echo -e "${BRED}Error: called run_proot_cmd() but \${distro_name} is not set. Possible cause: using run_proot_cmd() outside of distro_setup()?${RST}"
-		echo
+		msg
+		msg "${BRED}Error: called run_proot_cmd() but \${distro_name} is not set. Possible cause: using run_proot_cmd() outside of distro_setup()?${RST}"
+		msg
 		return 1
 	fi
 
@@ -648,24 +657,24 @@ setup_fake_proc() {
 
 # Usage info for command_install.
 command_install_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}install ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
-	echo
-	echo -e "${CYAN}This command will create a fresh installation of specified Linux${RST}"
-	echo -e "${CYAN}distribution.${RST}"
-	echo
-	echo -e "${CYAN}Options:${RST}"
-	echo
-	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
-	echo
-	echo -e "  ${GREEN}--override-alias [new alias]   ${CYAN}- Set a custom alias for installed${RST}"
-	echo -e "                                   ${CYAN}distribution.${RST}"
-	echo
-	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}install ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}This command will create a fresh installation of specified Linux${RST}"
+	msg "${CYAN}distribution.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}--override-alias [new alias]   ${CYAN}- Set a custom alias for installed${RST}"
+	msg "                                   ${CYAN}distribution.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -688,62 +697,62 @@ command_remove() {
 			*) distro_name="$1";;
 		esac
 	else
-		echo
-		echo -e "${BRED}Error: distribution alias is not specified.${RST}"
+		msg
+		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_remove_help
 		return 1
 	fi
 
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
-		echo
-		echo -e "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be removed.${RST}"
-		echo
-		echo -e "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be removed.${RST}"
+		msg
+		msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		msg
 		return 1
 	fi
 
 	# Not using is_distro_installed() here as we only need to know
 	# whether rootfs directory is available.
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
-		echo
-		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		msg
 		return 1
 	fi
 
 	# Delete plugin with overridden alias.
 	if [ "${CMD_REMOVE_REQUESTED_RESET-false}" = "false" ] && [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
-		echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
 		rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
 	fi
 
-	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Wiping the rootfs of ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Wiping the rootfs of ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 	# Attempt to restore permissions so directory can be removed without issues.
 	chmod u+rwx -R "${INSTALLED_ROOTFS_DIR}/${distro_name}" > /dev/null 2>&1 || true
 	# There is still chance for failure.
 	if ! rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; then
-		echo -e "${BLUE}[${RED}!${BLUE}] ${CYAN}Finished with errors. Some files probably were not deleted.${RST}"
+		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Finished with errors. Some files probably were not deleted.${RST}"
 		return 1
 	fi
 }
 
 # Usage info for command_remove.
 command_remove_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}remove ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
-	echo
-	echo -e "${CYAN}This command will uninstall the specified Linux distribution.${RST}"
-	echo
-	echo -e "${CYAN}Be careful when using it because you will not be prompted for${RST}"
-	echo -e "${CYAN}confirmation and all data saved within the distribution will${RST}"
-	echo -e "${CYAN}instantly gone.${RST}"
-	echo
-	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}remove ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}This command will uninstall the specified Linux distribution.${RST}"
+	msg
+	msg "${CYAN}Be careful when using it because you will not be prompted for${RST}"
+	msg "${CYAN}confirmation and all data saved within the distribution will${RST}"
+	msg "${CYAN}instantly gone.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -766,25 +775,25 @@ command_reset() {
 			*) distro_name="$1";;
 		esac
 	else
-		echo
-		echo -e "${BRED}Error: distribution alias is not specified.${RST}"
+		msg
+		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_reset_help
 		return 1
 	fi
 
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
-		echo
-		echo -e "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be reinstalled.${RST}"
-		echo
-		echo -e "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be reinstalled.${RST}"
+		msg
+		msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		msg
 		return 1
 	fi
 
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
-		echo
-		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		msg
 		return 1
 	fi
 
@@ -794,20 +803,20 @@ command_reset() {
 
 # Usage info for command_reset.
 command_reset_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}reset ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
-	echo
-	echo -e "${CYAN}Reinstall the specified Linux distribution.${RST}"
-	echo
-	echo -e "${CYAN}Be careful when using it because you will not be prompted for${RST}"
-	echo -e "${CYAN}confirmation and all data saved within the distribution will${RST}"
-	echo -e "${CYAN}instantly gone.${RST}"
-	echo
-	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}reset ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Reinstall the specified Linux distribution.${RST}"
+	msg
+	msg "${CYAN}Be careful when using it because you will not be prompted for${RST}"
+	msg "${CYAN}confirmation and all data saved within the distribution will${RST}"
+	msg "${CYAN}instantly gone.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -847,7 +856,7 @@ command_login() {
 				isolated_environment=true
 				;;
 			--no-fake-proc)
-				echo -e "${BRED}Warning: option '${YELLOW}${1}${BRED}' is deprecated.${RST}"
+				msg "${BRED}Warning: option '${YELLOW}${1}${BRED}' is deprecated.${RST}"
 				;;
 			--termux-home)
 				use_termux_home=true
@@ -866,30 +875,30 @@ command_login() {
 					shift 1
 
 					if [ -z "$1" ]; then
-						echo
-						echo -e "${BRED}Error: argument to option '${YELLOW}--user${BRED}' should not be empty.${RST}"
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--user${BRED}' should not be empty.${RST}"
 						command_login_help
 						return 1
 					fi
 
 					login_user="$1"
 				else
-					echo
-					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
 					command_login_help
 					return 1
 				fi
 				;;
 			-*)
-				echo
-				echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg
+				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
 				command_login_help
 				return 1
 				;;
 			*)
 				if [ -z "$1" ]; then
-					echo
-					echo -e "${BRED}Error: you should not pass empty command line arguments.${RST}"
+					msg
+					msg "${BRED}Error: you should not pass empty command line arguments.${RST}"
 					command_login_help
 					return 1
 				fi
@@ -897,10 +906,10 @@ command_login() {
 				if [ -z "$distro_name" ]; then
 					distro_name="$1"
 				else
-					echo
-					echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					echo
-					echo -e "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					msg
+					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+					msg
+					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
 					command_login_help
 					return 1
 				fi
@@ -910,8 +919,8 @@ command_login() {
 	done
 
 	if [ -z "$distro_name" ]; then
-		echo
-		echo -e "${BRED}Error: you should at least specify a distribution in order to log in.${RST}"
+		msg
+		msg "${BRED}Error: you should at least specify a distribution in order to log in.${RST}"
 		command_login_help
 		return 1
 	fi
@@ -1056,17 +1065,17 @@ command_login() {
 		exec proot "$@"
 	else
 		if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
-			echo
-			echo -e "${BRED}Error: cannot log in into unknown distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
-			echo
-			echo -e "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
-			echo
+			msg
+			msg "${BRED}Error: cannot log in into unknown distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
+			msg
+			msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+			msg
 		else
-			echo
-			echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
-			echo
-			echo -e "${CYAN}Install it with: ${GREEN}${PROGRAM_NAME} install ${distro_name}${RST}"
-			echo
+			msg
+			msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+			msg
+			msg "${CYAN}Install it with: ${GREEN}${PROGRAM_NAME} install ${distro_name}${RST}"
+			msg
 		fi
 		return 1
 	fi
@@ -1074,67 +1083,67 @@ command_login() {
 
 # Usage info for command_login.
 command_login_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
-	echo
-	echo -e "${CYAN}This command will launch a login shell for the specified${RST}"
-	echo -e "${CYAN}distribution if no additional arguments were given, otherwise${RST}"
-	echo -e "${CYAN}it will execute the given command and exit.${RST}"
-	echo
-	echo -e "${CYAN}Options:${RST}"
-	echo
-	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
-	echo
-	echo -e "  ${GREEN}--user [user]        ${CYAN}- Login as specified user instead of 'root'.${RST}"
-	echo
-	echo -e "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
-	echo -e "                         ${CYAN}a higher port number.${RST}"
-	echo
-	echo -e "  ${GREEN}--isolated           ${CYAN}- Run isolated environment without access${RST}"
-	echo -e "                         ${CYAN}to host file system.${RST}"
-	echo
-	echo -e "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
-	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
-	echo
-	echo -e "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
-	echo -e "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
-	echo
-	echo -e "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
-	echo -e "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
-	echo -e "                         ${CYAN}in permissive mode.${RST}"
-	echo
-	echo -e "  ${GREEN}--no-sysvipc         ${CYAN}- Disable System V IPC emulation by proot.${RST}"
-	echo
-	echo -e "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
-	echo -e "${CYAN}options as shell arguments.${RST}"
-	echo
-	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	echo
-	echo -e "${CYAN}If no '${GREEN}--isolated${CYAN}' option given, the following host directories${RST}"
-	echo -e "${CYAN}will be available:${RST}"
-	echo
-	echo -e "  ${CYAN}* ${YELLOW}/apex ${CYAN}(only Android 10+)${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/data/dalvik-cache${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/data/data/com.termux${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/sdcard${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/storage${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/system${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/vendor${RST}"
-	echo
-	echo -e "${CYAN}This should be enough to get Termux utilities like termux-api or${RST}"
-	echo -e "${CYAN}termux-open get working. If they do not work for some reason,${RST}"
-	echo -e "${CYAN}check if these files are sourced by your shell:${RST}"
-	echo
-	echo -e "  ${CYAN}* ${YELLOW}/etc/profile.d/termux-proot.sh${RST}"
-	echo -e "  ${CYAN}* ${YELLOW}/etc/profile${RST}"
-	echo
-	echo -e "${CYAN}Also check whether they define variables like ANDROID_DATA,${RST}"
-	echo -e "${CYAN}ANDROID_ROOT, BOOTCLASSPATH and others which are usually set${RST}"
-	echo -e "${CYAN}in Termux sessions.${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
+	msg
+	msg "${CYAN}This command will launch a login shell for the specified${RST}"
+	msg "${CYAN}distribution if no additional arguments were given, otherwise${RST}"
+	msg "${CYAN}it will execute the given command and exit.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}--user [user]        ${CYAN}- Login as specified user instead of 'root'.${RST}"
+	msg
+	msg "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
+	msg "                         ${CYAN}a higher port number.${RST}"
+	msg
+	msg "  ${GREEN}--isolated           ${CYAN}- Run isolated environment without access${RST}"
+	msg "                         ${CYAN}to host file system.${RST}"
+	msg
+	msg "  ${GREEN}--termux-home        ${CYAN}- Mount Termux home directory to /root.${RST}"
+	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
+	msg
+	msg "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
+	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
+	msg
+	msg "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
+	msg "                         ${CYAN}Adviseable only on devices with SELinux${RST}"
+	msg "                         ${CYAN}in permissive mode.${RST}"
+	msg
+	msg "  ${GREEN}--no-sysvipc         ${CYAN}- Disable System V IPC emulation by proot.${RST}"
+	msg
+	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
+	msg "${CYAN}options as shell arguments.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg
+	msg "${CYAN}If no '${GREEN}--isolated${CYAN}' option given, the following host directories${RST}"
+	msg "${CYAN}will be available:${RST}"
+	msg
+	msg "  ${CYAN}* ${YELLOW}/apex ${CYAN}(only Android 10+)${RST}"
+	msg "  ${CYAN}* ${YELLOW}/data/dalvik-cache${RST}"
+	msg "  ${CYAN}* ${YELLOW}/data/data/com.termux${RST}"
+	msg "  ${CYAN}* ${YELLOW}/sdcard${RST}"
+	msg "  ${CYAN}* ${YELLOW}/storage${RST}"
+	msg "  ${CYAN}* ${YELLOW}/system${RST}"
+	msg "  ${CYAN}* ${YELLOW}/vendor${RST}"
+	msg
+	msg "${CYAN}This should be enough to get Termux utilities like termux-api or${RST}"
+	msg "${CYAN}termux-open get working. If they do not work for some reason,${RST}"
+	msg "${CYAN}check if these files are sourced by your shell:${RST}"
+	msg
+	msg "  ${CYAN}* ${YELLOW}/etc/profile.d/termux-proot.sh${RST}"
+	msg "  ${CYAN}* ${YELLOW}/etc/profile${RST}"
+	msg
+	msg "${CYAN}Also check whether they define variables like ANDROID_DATA,${RST}"
+	msg "${CYAN}ANDROID_ROOT, BOOTCLASSPATH and others which are usually set${RST}"
+	msg "${CYAN}in Termux sessions.${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -1145,34 +1154,34 @@ command_login_help() {
 # their installation status.
 #
 command_list() {
-	echo
+	msg
 	if [ -z "${!SUPPORTED_DISTRIBUTIONS[*]}" ]; then
-		echo -e "${YELLOW}You do not have any distribution plugins configured.${RST}"
-		echo
-		echo -e "${YELLOW}Please check the directory '$DISTRO_PLUGINS_DIR'.${RST}"
+		msg "${YELLOW}You do not have any distribution plugins configured.${RST}"
+		msg
+		msg "${YELLOW}Please check the directory '$DISTRO_PLUGINS_DIR'.${RST}"
 	else
-		echo -e "${CYAN}Supported distributions:${RST}"
+		msg "${CYAN}Supported distributions:${RST}"
 
 		local i
 		for i in $(echo "${!SUPPORTED_DISTRIBUTIONS[@]}" | tr ' ' '\n' | sort -d); do
-			echo
-			echo -e "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
-			echo
-			echo -e "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
+			msg
+			msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
+			msg
+			msg "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
 			if is_distro_installed "$i"; then
-				echo -e "    ${CYAN}Status: ${GREEN}installed${RST}"
+				msg "    ${CYAN}Status: ${GREEN}installed${RST}"
 			else
-				echo -e "    ${CYAN}Status: ${RED}NOT installed${RST}"
+				msg "    ${CYAN}Status: ${RED}NOT installed${RST}"
 			fi
 			if [ -n "${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]+x}" ]; then
-				echo -e "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
+				msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
 			fi
 		done
 
-		echo
-		echo -e "${CYAN}Install selected one with: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
+		msg
+		msg "${CYAN}Install selected one with: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
 	fi
-	echo
+	msg
 }
 
 #############################################################################
@@ -1200,30 +1209,30 @@ command_backup() {
 					shift 1
 
 					if [ -z "$1" ]; then
-						echo
-						echo -e "${BRED}Error: argument to option '${YELLOW}--output${BRED}' should not be empty.${RST}"
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--output${BRED}' should not be empty.${RST}"
 						command_backup_help
 						return 1
 					fi
 
 					tarball_file_path="$1"
 				else
-					echo
-					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
 					command_backup_help
 					return 1
 				fi
 				;;
 			-*)
-				echo
-				echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg
+				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
 				command_backup_help
 				return 1
 				;;
 			*)
 				if [ -z "$1" ]; then
-					echo
-					echo -e "${BRED}Error: you should not pass empty command line arguments.${RST}"
+					msg
+					msg "${BRED}Error: you should not pass empty command line arguments.${RST}"
 					command_backup_help
 					return 1
 				fi
@@ -1231,10 +1240,10 @@ command_backup() {
 				if [ -z "$distro_name" ]; then
 					distro_name="$1"
 				else
-					echo
-					echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					echo
-					echo -e "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					msg
+					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+					msg
+					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
 					command_backup_help
 					return 1
 				fi
@@ -1244,51 +1253,51 @@ command_backup() {
 	done
 
 	if [ -z "$distro_name" ]; then
-		echo
-		echo -e "${BRED}Error: you should specify a distribution which you want to back up.${RST}"
+		msg
+		msg "${BRED}Error: you should specify a distribution which you want to back up.${RST}"
 		command_backup_help
 		return 1
 	fi
 
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
-		echo
-		echo -e "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backing up.${RST}"
-		echo
-		echo -e "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backing up.${RST}"
+		msg
+		msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		msg
 		return 1
 	fi
 
 	if ! is_distro_installed "$distro_name"; then
-		echo
-		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		msg
 		return 1
 	fi
 
-	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 	if [ -z "$tarball_file_path" ]; then
 		tarball_file_path="${PWD}/backup-${distro_name}-$(date +%s).tar.gz"
 	fi
 
-	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to '${tarball_file_path}'.${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to '${tarball_file_path}'.${RST}"
 
 	if [ -d "$tarball_file_path" ]; then
-		echo
-		echo -e "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' - path is a directory.${RST}"
+		msg
+		msg "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' - path is a directory.${RST}"
 		command_backup_help
 		return 1
 	fi
 
 	if [ -f "$tarball_file_path" ]; then
-		echo
-		echo -e "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exist, please specify a different name.${RST}"
+		msg
+		msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exist, please specify a different name.${RST}"
 		command_backup_help
 		return 1
 	fi
 
-	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Fixing file permissions in rootfs...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Fixing file permissions in rootfs...${RST}"
 	# Ensure we can read all files.
 	find "${INSTALLED_ROOTFS_DIR}/${distro_name}" -type d -print0 | xargs -0 -r chmod 700
 	find "${INSTALLED_ROOTFS_DIR}/${distro_name}" -type f -executable -print0 | xargs -0 -r chmod 700
@@ -1300,33 +1309,33 @@ command_backup() {
 		distro_plugin_script="${distro_name}.override.sh"
 	fi
 
-	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving rootfs...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving rootfs...${RST}"
 	tar zcf "$tarball_file_path" \
 		-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
 		-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
-	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished successfully.${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished successfully.${RST}"
 }
 
 # Usage info for command_backup.
 command_backup_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
-	echo
-	echo -e "${CYAN}Back up a specified distribution installation into tarball.${RST}"
-	echo
-	echo -e "${CYAN}Options:${RST}"
-	echo
-	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
-	echo
-	echo -e "  ${GREEN}--output [path]      ${CYAN}- Write tarball to specified file.${RST}"
-	echo -e "                         ${CYAN}If not specified, the tarball will be${RST}"
-	echo -e "                         ${CYAN}created at \$PWD.${RST}"
-	echo
-	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Back up a specified distribution installation into tarball.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}--output [path]      ${CYAN}- Write tarball to specified file.${RST}"
+	msg "                         ${CYAN}If not specified, the tarball will be${RST}"
+	msg "                         ${CYAN}created at \$PWD.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -1336,22 +1345,22 @@ command_backup_help() {
 # Restore a specified distribution installation from the backup (tarball).
 #
 command_restore() {
-	echo "Not implemented"
+	msg "Not implemented"
 	exit 1
 }
 
 # Usage info for command_restore.
 command_restore_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}restore ${CYAN}[${GREEN}FILENAME.TAR.GZ${CYAN}]${RST}"
-	echo
-	echo -e "${CYAN}Restore distribution installation from a specified tarball.${RST}"
-	echo
-	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}restore ${CYAN}[${GREEN}FILENAME.TAR.GZ${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Restore distribution installation from a specified tarball.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -1362,47 +1371,47 @@ command_restore_help() {
 # distributions.
 #
 command_help() {
-	echo
-	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME${CYAN} [${GREEN}COMMAND${CYAN}] [${GREEN}ARGUMENTS${CYAN}]${RST}"
-	echo
-	echo -e "${CYAN}Utility to manage proot'ed Linux distributions inside Termux.${RST}"
-	echo
-	echo -e "${CYAN}List of the available commands:${RST}"
-	echo
-	echo -e "  ${GREEN}help     ${CYAN}- Show this help information.${RST}"
-	echo
-	echo -e "  ${GREEN}backup   ${CYAN}- Backup a specified distribution.${RST}"
-	echo
-	echo -e "  ${GREEN}install  ${CYAN}- Install a specified distribution.${RST}"
-	echo
-	echo -e "  ${GREEN}list     ${CYAN}- List supported distributions and their installation${RST}"
-	echo -e "             ${CYAN}status.${RST}"
-	echo
-	echo -e "  ${GREEN}login    ${CYAN}- Start login shell for the specified distribution.${RST}"
-	echo
-	echo -e "  ${GREEN}remove   ${CYAN}- Delete a specified distribution.${RST}"
-	echo -e "             ${RED}WARNING: this command destroys data!${RST}"
-	echo
-	echo -e "  ${GREEN}reset    ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
-	echo -e "             ${RED}WARNING: this command destroys data!${RST}"
-	echo
-	echo -e "  ${GREEN}restore  ${CYAN}- Restore a specified distribution.${RST}"
-	echo
-	echo -e "${CYAN}Each of commands has its own help information. To view it, just${RST}"
-	echo -e "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
-	echo
-	echo -e "${CYAN}Hint: type command '${GREEN}${PROGRAM_NAME} list${CYAN}' to get a list of the${RST}"
-	echo -e "${CYAN}supported distributions. Pick a distro alias and run the next${RST}"
-	echo -e "${CYAN}command to install it: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
-	echo
-	echo -e "${CYAN}Runtime data is stored at this location:${RST}"
-	echo -e "${CYAN}${RUNTIME_DIR}${RST}"
-	echo
-	echo -e "${CYAN}If you have issues with proot during installation or login, try${RST}"
-	echo -e "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
-	echo
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME${CYAN} [${GREEN}COMMAND${CYAN}] [${GREEN}ARGUMENTS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Utility to manage proot'ed Linux distributions inside Termux.${RST}"
+	msg
+	msg "${CYAN}List of the available commands:${RST}"
+	msg
+	msg "  ${GREEN}help     ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}backup   ${CYAN}- Backup a specified distribution.${RST}"
+	msg
+	msg "  ${GREEN}install  ${CYAN}- Install a specified distribution.${RST}"
+	msg
+	msg "  ${GREEN}list     ${CYAN}- List supported distributions and their installation${RST}"
+	msg "             ${CYAN}status.${RST}"
+	msg
+	msg "  ${GREEN}login    ${CYAN}- Start login shell for the specified distribution.${RST}"
+	msg
+	msg "  ${GREEN}remove   ${CYAN}- Delete a specified distribution.${RST}"
+	msg "             ${RED}WARNING: this command destroys data!${RST}"
+	msg
+	msg "  ${GREEN}reset    ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
+	msg "             ${RED}WARNING: this command destroys data!${RST}"
+	msg
+	msg "  ${GREEN}restore  ${CYAN}- Restore a specified distribution.${RST}"
+	msg
+	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
+	msg "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
+	msg
+	msg "${CYAN}Hint: type command '${GREEN}${PROGRAM_NAME} list${CYAN}' to get a list of the${RST}"
+	msg "${CYAN}supported distributions. Pick a distro alias and run the next${RST}"
+	msg "${CYAN}command to install it: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
+	msg
+	msg "${CYAN}Runtime data is stored at this location:${RST}"
+	msg "${CYAN}${RUNTIME_DIR}${RST}"
+	msg
+	msg "${CYAN}If you have issues with proot during installation or login, try${RST}"
+	msg "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
+	msg
 	show_version
-	echo
+	msg
 }
 
 #############################################################################
@@ -1413,7 +1422,7 @@ command_help() {
 # usage info.
 #
 show_version() {
-	echo -e "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by @xeffyr.${RST}"
+	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by @xeffyr.${RST}"
 }
 
 #############################################################################
@@ -1432,9 +1441,9 @@ trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requeste
 
 for i in curl proot; do
 	if [ -z "$(command -v "$i")" ]; then
-		echo
-		echo -e "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
-		echo
+		msg
+		msg "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
+		msg
 		exit 1
 	fi
 done
@@ -1456,9 +1465,9 @@ while read -r filename; do
 	# We getting distribution name from $DISTRO_NAME which
 	# should be set in plug-in.
 	if [ -z "$distro_name" ]; then
-		echo
-		echo -e "${BRED}Error: no DISTRO_NAME defined in '${YELLOW}${filename}${BRED}'.${RST}"
-		echo
+		msg
+		msg "${BRED}Error: no DISTRO_NAME defined in '${YELLOW}${filename}${BRED}'.${RST}"
+		msg
 		exit 1
 	fi
 
@@ -1478,17 +1487,17 @@ if [ $# -ge 1 ]; then
 		reset) shift 1; command_reset "$@";;
 		restore) shift 1; command_restore "$@";;
 		*)
-			echo
-			echo -e "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
-			echo
-			echo -e "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available commands.${RST}"
-			echo
+			msg
+			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
+			msg
+			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available commands.${RST}"
+			msg
 			exit 1
 			;;
 	esac
 else
-	echo
-	echo -e "${BRED}Error: no command provided.${RST}"
+	msg
+	msg "${BRED}Error: no command provided.${RST}"
 	command_help
 fi
 
