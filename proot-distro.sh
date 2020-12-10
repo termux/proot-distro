@@ -1177,6 +1177,177 @@ command_list() {
 
 #############################################################################
 #
+# FUNCTION TO BACKUP A SPECIFIED DISTRIBUTION
+#
+# Backup a specified distribution installation by making a tarball.
+#
+command_backup() {
+	local distro_name=""
+	local tarball_file_path=""
+
+	while (($# >= 1)); do
+		case "$1" in
+			--)
+				shift 1
+				break
+				;;
+			--help)
+				command_backup_help
+				return 0
+				;;
+			--output)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						echo
+						echo -e "${BRED}Error: argument to option '${YELLOW}--output${BRED}' should not be empty.${RST}"
+						command_backup_help
+						return 1
+					fi
+
+					tarball_file_path="$1"
+				else
+					echo
+					echo -e "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					command_backup_help
+					return 1
+				fi
+				;;
+			-*)
+				echo
+				echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_backup_help
+				return 1
+				;;
+			*)
+				if [ -z "$1" ]; then
+					echo
+					echo -e "${BRED}Error: you should not pass empty command line arguments.${RST}"
+					command_backup_help
+					return 1
+				fi
+
+				if [ -z "$distro_name" ]; then
+					distro_name="$1"
+				else
+					echo
+					echo -e "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+					echo
+					echo -e "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					command_backup_help
+					return 1
+				fi
+				;;
+		esac
+		shift 1
+	done
+
+	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
+		echo
+		echo -e "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backing up.${RST}"
+		echo
+		echo -e "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		echo
+		return 1
+	fi
+
+	if ! is_distribution_installed "$distro_name"; then
+		echo
+		echo -e "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		echo
+		return 1
+	fi
+
+	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
+
+	if [ -z "$tarball_file_path" ]; then
+		tarball_file_path="${PWD}/backup-${distro_name}-$(date +%s).tar.gz"
+	fi
+
+	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to '${tarball_file_path}'.${RST}"
+
+	if [ -d "$tarball_file_path" ]; then
+		echo
+		echo -e "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' - path is a directory.${RST}"
+		command_backup_help
+		return 1
+	fi
+
+	if [ -f "$tarball_file_path" ]; then
+		echo
+		echo -e "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exist, please specify a different name.${RST}"
+		command_backup_help
+		return 1
+	fi
+
+	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Fixing file permissions in rootfs...${RST}"
+	# Ensure we can read all files.
+	find "${INSTALLED_ROOTFS_DIR}/${distro_name}" -type d -print0 | xargs chmod 700
+	find "${INSTALLED_ROOTFS_DIR}/${distro_name}" -type f -executable -print0 | xargs chmod 700
+	find "${INSTALLED_ROOTFS_DIR}/${distro_name}" -type f ! -executable -print0 | xargs chmod 600
+
+	local distro_plugin_script="${distro_name}.sh"
+	if [ ! -f "${DISTRO_PLUGINS_DIR}/${distro_plugin_script}" ]; then
+		# Alt name.
+		distro_plugin_script="${distro_name}.override.sh"
+	fi
+
+	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving rootfs...${RST}"
+	tar zcf "$tarball_file_path" \
+		-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
+		-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
+	echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished successfully.${RST}"
+}
+
+# Usage info for command_backup.
+command_backup_help() {
+	echo
+	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	echo
+	echo -e "${CYAN}Back up a specified distribution installation into tarball.${RST}"
+	echo
+	echo -e "${CYAN}Options:${RST}"
+	echo
+	echo -e "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	echo
+	echo -e "  ${GREEN}--output [path]      ${CYAN}- Write tarball to specified file.${RST}"
+	echo -e "                         ${CYAN}If not specified, the tarball will be created at \$PWD.${RST}"
+	echo
+	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	echo
+	show_version
+	echo
+}
+
+#############################################################################
+#
+# FUNCTION TO RESTORE A SPECIFIED DISTRIBUTION
+#
+# Restore a specified distribution installation from the backup (tarball).
+#
+command_restore() {
+	echo "Not implemented"
+	exit 1
+}
+
+# Usage info for command_restore.
+command_restore_help() {
+	echo
+	echo -e "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}restore ${CYAN}[${GREEN}FILENAME.TAR.GZ${CYAN}]${RST}"
+	echo
+	echo -e "${CYAN}Restore distribution installation from a specified tarball.${RST}"
+	echo
+	echo -e "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	echo -e "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	echo
+	show_version
+	echo
+}
+
+#############################################################################
+#
 # FUNCTION TO PRINT UTILITY USAGE INFORMATION
 #
 # Prints a basic overview of the available commands and list of supported
@@ -1192,6 +1363,8 @@ command_help() {
 	echo
 	echo -e "  ${GREEN}help     ${CYAN}- Show this help information.${RST}"
 	echo
+	echo -e "  ${GREEN}backup   ${CYAN}- Backup a specified distribution.${RST}"
+	echo
 	echo -e "  ${GREEN}install  ${CYAN}- Install a specified distribution.${RST}"
 	echo
 	echo -e "  ${GREEN}list     ${CYAN}- List supported distributions and their installation${RST}"
@@ -1204,6 +1377,8 @@ command_help() {
 	echo
 	echo -e "  ${GREEN}reset    ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
 	echo -e "             ${RED}WARNING: this command destroys data!${RST}"
+	echo
+	echo -e "  ${GREEN}restore  ${CYAN}- Restore a specified distribution.${RST}"
 	echo
 	echo -e "${CYAN}Each of commands has its own help information. To view it, just${RST}"
 	echo -e "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
@@ -1287,11 +1462,13 @@ unset distro_name distro_alias
 if [ $# -ge 1 ]; then
 	case "$1" in
 		-h|--help|help) shift 1; command_help;;
+		backup) shift 1; command_backup "$@";;
 		install) shift 1; command_install "$@";;
+		list) shift 1; command_list;;
+		login) shift 1; command_login "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
 		reset) shift 1; command_reset "$@";;
-		login) shift 1; command_login "$@";;
-		list) shift 1; command_list;;
+		restore) shift 1; command_restore "$@";;
 		*)
 			echo
 			echo -e "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
