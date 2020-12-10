@@ -17,10 +17,12 @@ fi
 get_download_url() {
 	case "$(uname -m)" in
 		aarch64)
-			echo "https://eu.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+			# Using HTTP because HTTPS variant of os.archlinuxarm.org has
+			# certificate issues as of 2020.12.10.
+			echo "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
 			;;
 		armv7l|armv8l)
-			echo "https://eu.mirror.archlinuxarm.org/os/ArchLinuxARM-armv7-latest.tar.gz"
+			echo "http://os.archlinuxarm.org/os/ArchLinuxARM-armv7-latest.tar.gz"
 			;;
 		x86_64)
 			# File name of x86_64 tarball is not persistent, so generate URL in hacky way.
