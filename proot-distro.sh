@@ -323,6 +323,7 @@ command_install() {
 
 			if [ "${integrity_sha256}" != "${actual_sha256}" ]; then
 				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Integrity checking failed. Try to redo installation again.${RST}"
+				rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}"
 				return 1
 			fi
 		else
