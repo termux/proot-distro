@@ -1397,16 +1397,16 @@ command_restore() {
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting tarball...${RST}"
 	if [ -n "$tarball_file_path" ]; then
 		if ! tar zxf "$tarball_file_path" \
-			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/${distro_plugin_script}" \
-			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")"; then
+			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
+			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
 			success=false
 		else
 			success=true
 		fi
 	else
 		if ! tar zxf "$tarball_file_path" \
-			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/${distro_plugin_script}" \
-			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")"; then
+			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
+			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
 			success=false
 		else
 			success=true
