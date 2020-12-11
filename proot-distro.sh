@@ -1432,7 +1432,7 @@ command_restore_help() {
 	msg
 	msg "${CYAN}Restore distribution installation from a specified tarball. If${RST}"
 	msg "${CYAN}file name is not specified, it will be assumed that tarball is${RST}"
-	msg "${CYAN}being piped to stdin.${RST}"
+	msg "${CYAN}being piped from stdin.${RST}"
 	msg
 	msg "${CYAN}Important note: there are no any sanity check being performed${RST}"
 	msg "${CYAN}on the supplied tarballs. Be careful when using this command as${RST}"
