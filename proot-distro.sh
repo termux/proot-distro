@@ -18,7 +18,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="1.3.2"
+PROGRAM_VERSION="1.3.3"
 
 #############################################################################
 #
