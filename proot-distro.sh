@@ -1434,8 +1434,9 @@ command_restore_help() {
 	msg "${CYAN}file name is not specified, it will be assumed that tarball is${RST}"
 	msg "${CYAN}being piped to stdin.${RST}"
 	msg
-	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg "${CYAN}Important note: there are no any sanity check being performed on the${RST}"
+	msg "${CYAN}supplied tarballs. Be careful when using this command as data loss may${RST}"
+	msg "${CYAN}happen if you have used the wrong one.${RST}"
 	msg
 	show_version
 	msg
