@@ -1404,7 +1404,7 @@ command_restore() {
 			success=true
 		fi
 	else
-		if ! tar zx "$tarball_file_path" \
+		if ! tar zx \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
 			success=false
