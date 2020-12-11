@@ -1134,7 +1134,8 @@ command_login_help() {
 	msg "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
 	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	msg
-	msg "  ${GREEN}--bind [path:path]   ${CYAN}- Custom file system binding.${RST}"
+	msg "  ${GREEN}--bind [path:path]   ${CYAN}- Custom file system binding. Can be specified${RST}"
+	msg "                         ${CYAN}multiple times.${RST}"
 	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	msg
 	msg "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
