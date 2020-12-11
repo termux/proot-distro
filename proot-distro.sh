@@ -1396,7 +1396,7 @@ command_restore() {
 	local success
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting tarball...${RST}"
 	if [ -n "$tarball_file_path" ]; then
-		if ! tar zxf "$tarball_file_path" \
+		if ! tar zxf "$tarball_file_path" --recursive-unlink \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
 			success=false
@@ -1404,7 +1404,7 @@ command_restore() {
 			success=true
 		fi
 	else
-		if ! tar zx \
+		if ! tar zx --recursive-unlink \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
 			success=false
