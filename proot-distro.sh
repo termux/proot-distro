@@ -1474,6 +1474,7 @@ command_help() {
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "  ${GREEN}restore  ${CYAN}- Restore a specified distribution.${RST}"
+	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
 	msg "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
