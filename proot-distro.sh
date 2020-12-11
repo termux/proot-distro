@@ -1358,8 +1358,71 @@ command_backup_help() {
 # Restore a specified distribution installation from the backup (tarball).
 #
 command_restore() {
-	msg "Not implemented"
-	exit 1
+	local tarball_file_path=""
+
+	if [ $# -ge 1 ]; then
+		case "$1" in
+			-h|--help)
+				command_restore_help
+				return 0
+				;;
+			*) tarball_file_path="$1";;
+		esac
+	else
+		if [ -t 0 ]; then
+			msg
+			msg "${BRED}Error: tarball path is not specified and it looks like nothing is being piped via stdin.${RST}"
+			command_restore_help
+			return 1
+		fi
+	fi
+
+	if [ -n "$tarball_file_path" ]; then
+		if [ ! -e "$tarball_file_path" ]; then
+			msg
+			msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' is not found.${RST}"
+			command_restore_help
+			return 1
+		fi
+
+		if [ -d "$tarball_file_path" ]; then
+			msg
+			msg "${BRED}Error: path '${YELLOW}${tarball_file_path}${YELLOW}' is a directory.${RST}"
+			command_restore_help
+			return 1
+		fi
+	fi
+
+	local success
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting tarball...${RST}"
+	if [ -n "$tarball_file_path" ]; then
+		if ! tar zxf "$tarball_file_path" \
+			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/${distro_plugin_script}" \
+			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")"; then
+			success=false
+		else
+			success=true
+		fi
+	else
+		if ! tar zxf "$tarball_file_path" \
+			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/${distro_plugin_script}" \
+			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")"; then
+			success=false
+		else
+			success=true
+		fi
+	fi
+
+	if $success; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished...${RST}"
+	else
+		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
+		msg
+		msg "${BRED}Failed to restore distribution from the given tarball.${RST}"
+		msg
+		msg "${BRED}Possibly that tarball is corrupted or was not made by Proot-Distro.${RST}"
+		msg
+	fi
 }
 
 # Usage info for command_restore.
@@ -1367,7 +1430,9 @@ command_restore_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}restore ${CYAN}[${GREEN}FILENAME.TAR.GZ${CYAN}]${RST}"
 	msg
-	msg "${CYAN}Restore distribution installation from a specified tarball.${RST}"
+	msg "${CYAN}Restore distribution installation from a specified tarball. If${RST}"
+	msg "${CYAN}file name is not specified, it will be assumed that tarball is${RST}"
+	msg "${CYAN}being piped to stdin.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
