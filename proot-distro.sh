@@ -838,6 +838,7 @@ command_login() {
 	local make_host_tmp_shared=false
 	local distro_name=""
 	local login_user="root"
+	local -a custom_fs_bindings
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -863,6 +864,25 @@ command_login() {
 				;;
 			--shared-tmp)
 				make_host_tmp_shared=true
+				;;
+			--bind)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--bind${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
+					custom_fs_bindings+=("$1")
+				else
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					command_login_help
+					return 1
+				fi
 				;;
 			--no-link2symlink)
 				no_link2symlink=true
@@ -1057,6 +1077,12 @@ command_login() {
 			set -- "--bind=@TERMUX_PREFIX@/tmp:/tmp" "$@"
 		fi
 
+		# Bind custom file systems.
+		local bnd
+		for bnd in "${custom_fs_bindings[@]}"; do
+			set -- "--bind=${bnd}" "$@"
+		done
+
 		# Modify bindings to protected ports to use a higher port number.
 		if $fix_low_ports; then
 			set -- "-p" "$@"
@@ -1106,6 +1132,9 @@ command_login_help() {
 	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	msg
 	msg "  ${GREEN}--shared-tmp         ${CYAN}- Mount Termux temp directory to /tmp.${RST}"
+	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
+	msg
+	msg "  ${GREEN}--bind [path:path]   ${CYAN}- Custom file system binding.${RST}"
 	msg "                         ${CYAN}Takes priority over '${GREEN}--isolated${CYAN}' option.${RST}"
 	msg
 	msg "  ${GREEN}--no-link2symlink    ${CYAN}- Disable hardlink emulation by proot.${RST}"
