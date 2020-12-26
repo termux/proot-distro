@@ -257,6 +257,9 @@ command_install() {
 		# this variable should be set to 1.
 		DISTRO_TARBALL_STRIP_OPT=0
 
+		# Some distributions need special params for proot to run
+		DISTRO_PROOT_PARAMS=""
+
 		# Distribution plug-in contains steps on how to get download URL
 		# and further post-installation configuration.
 		source "${distro_plugin_script}"
@@ -440,6 +443,16 @@ run_proot_cmd() {
 		return 1
 	fi
 
+	# Some distributions need special params for proot to run
+	local distro_params
+	distro_params=""
+	if [ -n "${DISTRO_PROOT_PARAMS}" ]; then
+		for param in "${DISTRO_PROOT_PARAMS[@]}"
+		do
+			distro_params="${distro_params}"$'\n'"${param}"
+		done
+	fi
+
 	proot \
 		--kernel-release=5.4.0-faked \
 		--link2symlink \
@@ -460,6 +473,9 @@ run_proot_cmd() {
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" \
+		--bind=/system \
+		--bind=/data/data/com.termux \
+		--bind=/apex ${distro_params}\
 		/usr/bin/env -i \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
@@ -1087,6 +1103,24 @@ command_login() {
 		# Modify bindings to protected ports to use a higher port number.
 		if $fix_low_ports; then
 			set -- "-p" "$@"
+		fi
+
+		# Load Plugin-Script for special handling if needed
+		local distro_plugin_script
+		distro_plugin_script="${DISTRO_PLUGINS_DIR}/${distro_name}.sh"
+		# Try an alternate distribution name.
+		if [ ! -f "${distro_plugin_script}" ]; then
+			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
+		fi
+
+		# Some distributions need special params for proot to run
+		DISTRO_PROOT_PARAMS=""
+		source "${distro_plugin_script}"
+		if [ -n "${DISTRO_PROOT_PARAMS}" ]; then
+			for param in "${DISTRO_PROOT_PARAMS[@]}"
+			do
+				set -- "${param}" "$@"
+			done
 		fi
 
 		exec proot "$@"
