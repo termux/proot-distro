@@ -1043,7 +1043,7 @@ command_login() {
 		local target_arch
 		if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
 			target_arch=$(DISTRO_ARCH=$(uname -m); . "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
-		elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]
+		elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
 			target_arch=$(DISTRO_ARCH=$(uname -m); . "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
 		else
 			# This should never happen.
