@@ -8,8 +8,22 @@
 
 DISTRO_NAME="Arch Linux"
 
+# You can override a CPU architecture to let distribution
+# be executed by QEMU (user-mode).
+#
+# You can specify the following values here:
+#
+#  * aarch64: AArch64 (ARM64, 64bit ARM)
+#  * armv7l:  ARM (32bit)
+#  * i686:    x86 (32bit)
+#  * x86_64:  x86 (64bit)
+#
+# Default value is set by proot-distro script and is equal
+# to the CPU architecture of your device (uname -m).
+#DISTRO_ARCH=$(uname -m)
+
 # x86_64 rootfs is inside subdirectory.
-if [ "$(uname -m)" = "x86_64" ]; then
+if [ "$DISTRO_ARCH" = "x86_64" ]; then
 	DISTRO_TARBALL_STRIP_OPT=1
 fi
 
@@ -19,7 +33,7 @@ get_download_url() {
 	local rootfs
 	local sha256
 
-	case "$(uname -m)" in
+	case "$DISTRO_ARCH" in
 		aarch64)
 			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-arch-rootfs/ArchLinuxARM-aarch64-2020.12.10.tar.gz"
 			sha256="e1ae234a381097674d7d2445c79b13c43e0c39a61a6c6839a3b984d2e9bb0804"

@@ -3,7 +3,23 @@
 ##
 
 DISTRO_NAME="Debian 10 (Buster)"
+
+# Rootfs is in subdirectory.
 DISTRO_TARBALL_STRIP_OPT=1
+
+# You can override a CPU architecture to let distribution
+# be executed by QEMU (user-mode).
+#
+# You can specify the following values here:
+#
+#  * aarch64: AArch64 (ARM64, 64bit ARM)
+#  * armv7l:  ARM (32bit)
+#  * i686:    x86 (32bit)
+#  * x86_64:  x86 (64bit)
+#
+# Default value is set by proot-distro script and is equal
+# to the CPU architecture of your device (uname -m).
+#DISTRO_ARCH=$(uname -m)
 
 # Returns download URL and SHA-256 of file in this format:
 # SHA-256|FILE-NAME
@@ -11,7 +27,7 @@ get_download_url() {
 	local deb_arch
 	local sha256
 
-	case "$(uname -m)" in
+	case "$DISTRO_ARCH" in
 		aarch64)
 			deb_arch="arm64"
 			sha256="3dbe607b4d79ea8bc0a779c17f55d42231ff6f643c25f7be9cae48160674ebaf"

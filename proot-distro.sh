@@ -257,6 +257,10 @@ command_install() {
 		# this variable should be set to 1.
 		DISTRO_TARBALL_STRIP_OPT=0
 
+		# Determine a CPU architecture so we will download a compatible
+		# distribution.
+		DISTRO_ARCH=$(uname -m)
+
 		# Distribution plug-in contains steps on how to get download URL
 		# and further post-installation configuration.
 		source "${distro_plugin_script}"
@@ -282,7 +286,7 @@ command_install() {
 		fi
 
 		if [ -z "$download_url" ]; then
-			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Sorry, but distribution download URL is not defined for your CPU architecture '$(uname -m)'.${RST}"
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Sorry, but distribution download URL is not defined for CPU architecture '$DISTRO_ARCH'.${RST}"
 			return 1
 		fi
 

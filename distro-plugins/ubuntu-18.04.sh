@@ -4,13 +4,27 @@
 
 DISTRO_NAME="Ubuntu 18.04"
 
+# You can override a CPU architecture to let distribution
+# be executed by QEMU (user-mode).
+#
+# You can specify the following values here:
+#
+#  * aarch64: AArch64 (ARM64, 64bit ARM)
+#  * armv7l:  ARM (32bit)
+#  * i686:    x86 (32bit)
+#  * x86_64:  x86 (64bit)
+#
+# Default value is set by proot-distro script and is equal
+# to the CPU architecture of your device (uname -m).
+#DISTRO_ARCH=$(uname -m)
+
 # Returns download URL and SHA-256 of file in this format:
 # SHA-256|FILE-NAME
 get_download_url() {
 	local rootfs
 	local sha256
 
-	case "$(uname -m)" in
+	case "$DISTRO_ARCH" in
 		aarch64)
 			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-arm64-root-2020.12.10.tar.gz"
 			sha256="f65e67f1b2d5cab43548356eff4001f3a34210d66686ab46375fe13eddb5ac33"
