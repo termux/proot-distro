@@ -444,7 +444,64 @@ run_proot_cmd() {
 		return 1
 	fi
 
+	if [ -z "${DISTRO_ARCH-}" ]; then
+		msg
+		msg "${BRED}Error: called run_proot_cmd() but \${DISTRO_ARCH} is not set.${RST}"
+		msg
+		return 1
+	fi
+
+	local qemu_arg=""
+
+	if [ "$(uname -m)" != "$DISTRO_ARCH" ]; then
+		case "$DISTRO_ARCH" in
+			aarch64)
+				qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-aarch64"
+				if [ ! -e "@TERMUX_PREFIX@/bin/qemu-aarch64" ]; then
+					msg
+					msg "${BRED}Error: package 'qemu-user-aarch64' is not installed.${RST}"
+					msg
+					return 1
+				fi
+				;;
+			armv7l|armv8l)
+				qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-arm"
+				if [ ! -e "@TERMUX_PREFIX@/bin/qemu-arm" ]; then
+					msg
+					msg "${BRED}Error: package 'qemu-user-arm' is not installed.${RST}"
+					msg
+					return 1
+				fi
+				;;
+			i686)
+				qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-i386"
+				if [ ! -e "@TERMUX_PREFIX@/bin/qemu-i386" ]; then
+					msg
+					msg "${BRED}Error: package 'qemu-user-i386' is not installed.${RST}"
+					msg
+					return 1
+				fi
+				;;
+			x86_64)
+				qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-x86_64"
+				if [ ! -e "@TERMUX_PREFIX@/bin/qemu-x86_64" ]; then
+					msg
+					msg "${BRED}Error: package 'qemu-user-x86_64' is not installed.${RST}"
+					msg
+					return 1
+				fi
+				;;
+			*)
+				msg
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '$DISTRO_ARCH'. Valid ones are: aarch64, armv7l, armv8l, i686, x86_64.${RST}"
+				msg
+				return 1
+				;;
+		esac
+	fi
+
 	proot \
+		$qemu_arg \
 		--kernel-release=5.4.0-faked \
 		--link2symlink \
 		--kill-on-exit \
@@ -844,6 +901,7 @@ command_login() {
 	local distro_name=""
 	local login_user="root"
 	local -a custom_fs_bindings
+	local need_qemu=false
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -981,6 +1039,68 @@ command_login() {
 
 		set -- "--rootfs=${INSTALLED_ROOTFS_DIR}/${distro_name}" "$@"
 
+		# Setup QEMU when CPU architecture do not match the one of device.
+		local target_arch
+		if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
+			target_arch=$(DISTRO_ARCH=$(uname -m); . "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
+		elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]
+			target_arch=$(DISTRO_ARCH=$(uname -m); . "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
+		else
+			# This should never happen.
+			msg
+			msg "${BRED}Error: missing plugin for distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
+			msg
+			return 1
+		fi
+
+		if [ "$(uname -m)" != "$target_arch" ]; then
+			need_qemu=true
+			case "$target_arch" in
+				aarch64)
+					set -- "-q" "@TERMUX_PREFIX@/bin/qemu-aarch64" "$@"
+					if [ ! -e "@TERMUX_PREFIX@/bin/qemu-aarch64" ]; then
+						msg
+						msg "${BRED}Error: package 'qemu-user-aarch64' is not installed.${RST}"
+						msg
+						return 1
+					fi
+					;;
+				armv7l|armv8l)
+					set -- "-q" "@TERMUX_PREFIX@/bin/qemu-arm" "$@"
+					if [ ! -e "@TERMUX_PREFIX@/bin/qemu-arm" ]; then
+						msg
+						msg "${BRED}Error: package 'qemu-user-arm' is not installed.${RST}"
+						msg
+						return 1
+					fi
+					;;
+				i686)
+					set -- "-q" "@TERMUX_PREFIX@/bin/qemu-i386" "$@"
+					if [ ! -e "@TERMUX_PREFIX@/bin/qemu-i386" ]; then
+						msg
+						msg "${BRED}Error: package 'qemu-user-i386' is not installed.${RST}"
+						msg
+						return 1
+					fi
+					;;
+				x86_64)
+					set -- "-q" "@TERMUX_PREFIX@/bin/qemu-x86_64" "$@"
+					if [ ! -e "@TERMUX_PREFIX@/bin/qemu-x86_64" ]; then
+						msg
+						msg "${BRED}Error: package 'qemu-user-x86_64' is not installed.${RST}"
+						msg
+						return 1
+					fi
+					;;
+				*)
+					msg
+					msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid ones are: aarch64, armv7l, armv8l, i686, x86_64.${RST}"
+					msg
+					return 1
+					;;
+			esac
+		fi
+
 		# Terminate all processes on exit so proot won't hang.
 		set -- "--kill-on-exit" "$@"
 
@@ -1049,13 +1169,19 @@ command_login() {
 		# When running in non-isolated mode, provide some bindings specific
 		# to Android and Termux so user can interact with host file system.
 		if ! $isolated_environment; then
+			set -- "--bind=/data/dalvik-cache" "$@"
+			set -- "--bind=/data/data/com.termux/cache" "$@"
+			set -- "--bind=/data/data/com.termux/files/home" "$@"
+			set -- "--bind=/storage" "$@"
+			set -- "--bind=/storage/self/primary:/sdcard" "$@"
+		fi
+
+		# When using QEMU, we need some host files even in isolated mode.
+		if ! $isolated_environment || $need_qemu; then
 			if [ -d "/apex" ]; then
 				set -- "--bind=/apex" "$@"
 			fi
-			set -- "--bind=/data/dalvik-cache" "$@"
-			set -- "--bind=/data/data/com.termux" "$@"
-			set -- "--bind=/storage" "$@"
-			set -- "--bind=/storage/self/primary:/sdcard" "$@"
+			set -- "--bind=/data/data/com.termux/files/usr" "$@"
 			set -- "--bind=/system" "$@"
 			set -- "--bind=/vendor" "$@"
 			if [ -f "/plat_property_contexts" ]; then
