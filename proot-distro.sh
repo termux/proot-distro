@@ -257,10 +257,6 @@ command_install() {
 		# this variable should be set to 1.
 		DISTRO_TARBALL_STRIP_OPT=0
 
-		# Determine a CPU architecture so we will download a compatible
-		# distribution.
-		DISTRO_ARCH=$(uname -m)
-
 		# Distribution plug-in contains steps on how to get download URL
 		# and further post-installation configuration.
 		source "${distro_plugin_script}"
@@ -1042,9 +1038,9 @@ command_login() {
 		# Setup QEMU when CPU architecture do not match the one of device.
 		local target_arch
 		if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
-			target_arch=$(DISTRO_ARCH=$(uname -m); . "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
+			target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
 		elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
-			target_arch=$(DISTRO_ARCH=$(uname -m); . "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
+			target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
 		else
 			# This should never happen.
 			msg
@@ -1689,6 +1685,9 @@ for i in awk bzip2 curl find gzip proot sed tar xz; do
 	fi
 done
 unset i
+
+# Determine a CPU architecture of device.
+DISTRO_ARCH=$(uname -m)
 
 declare -A SUPPORTED_DISTRIBUTIONS
 declare -A SUPPORTED_DISTRIBUTIONS_COMMENTS
