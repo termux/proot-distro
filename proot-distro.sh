@@ -364,6 +364,8 @@ command_install() {
 		export LANG=C.UTF-8
 		export PATH=\${PATH}:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin
 		export PREFIX=${PREFIX-/data/data/com.termux/files/usr}
+		export PULSE_SERVER=127.0.0.1
+		export MOZ_FAKE_NO_SANDBOX=1
 		export TERM=${TERM-xterm-256color}
 		export TMPDIR=/tmp
 		EOF
@@ -894,6 +896,7 @@ command_login() {
 	local no_sysvipc=false
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
+	local dont_init_pulseaudio=false
 	local distro_name=""
 	local login_user="root"
 	local -a custom_fs_bindings
@@ -923,6 +926,9 @@ command_login() {
 				;;
 			--shared-tmp)
 				make_host_tmp_shared=true
+				;;
+			--dont-init-pulseaudio)
+				dont_init_pulseaudio=true
 				;;
 			--bind)
 				if [ $# -ge 2 ]; then
@@ -1215,6 +1221,15 @@ command_login() {
 			set -- "-p" "$@"
 		fi
 
+		if ! $dont_init_pulseaudio; then
+			# Initialization Pulseaudio
+			pulseaudio \
+				--start \
+				--load="module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1" \
+				--exit-idle-time=-1
+		fi
+
+		# Starting proot
 		exec proot "$@"
 	else
 		if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
@@ -1270,6 +1285,8 @@ command_login_help() {
 	msg "                         ${CYAN}in permissive mode.${RST}"
 	msg
 	msg "  ${GREEN}--no-sysvipc         ${CYAN}- Disable System V IPC emulation by proot.${RST}"
+	msg
+	msg "  ${GREEN}--dont-init-pulseaudio ${CYAN}- Disable Pulseaudio initialization${RST}"
 	msg
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
