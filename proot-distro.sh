@@ -366,6 +366,8 @@ command_install() {
 		export PREFIX=${PREFIX-/data/data/com.termux/files/usr}
 		export TERM=${TERM-xterm-256color}
 		export TMPDIR=/tmp
+		export PULSE_SERVER=127.0.0.1
+		export MOZ_FAKE_NO_SANDBOX=1
 		EOF
 		if [ "${LIBGCC_S_PATH}" != "/" ]; then
 			echo "${LIBGCC_S_PATH}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
