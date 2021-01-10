@@ -7,6 +7,7 @@ For now it supports installation of these distributions:
 * Debian Buster
 * Fedora 33
 * Kali Nethunter (rootless)
+* Parrot OS (LTS)
 * Ubuntu (18.04 / 20.04)
 
 ## Usage example
