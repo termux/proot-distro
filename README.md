@@ -3,8 +3,9 @@ A Bash script for managing proot'ed Linux distributions in Termux.
 For now it supports installation of these distributions:
 
 * Alpine Linux
-* Arch Linux & Arch Linux ARM
-* Debian (buster)
+* Arch Linux / Arch Linux ARM
+* Debian Buster
+* Fedora 33
 * Kali Nethunter (rootless)
 * Ubuntu (18.04 / 20.04)
 
