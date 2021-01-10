@@ -24,25 +24,25 @@ DISTRO_TARBALL_STRIP_OPT=1
 # Returns download URL and SHA-256 of file in this format:
 # SHA-256|FILE-NAME
 get_download_url() {
-	local deb_arch
+	local dist_arch
 	local sha256
 
 	case "$DISTRO_ARCH" in
 		aarch64)
-			deb_arch="arm64"
+			dist_arch="arm64"
 			sha256="1048a1d745c31317f39e703ed5932cd45b4ab2184f5dfcfe02f6182315d13c4b"
 			;;
 		armv7l|armv8l)
-			deb_arch="armhf"
+			dist_arch="armhf"
 			sha256="340458d0e7a96aa9ea78f429ae8faf2ab96625346c6d8a21f4bff52cd2913ce1"
 			;;
 		x86_64)
-			deb_arch="amd64"
+			dist_arch="amd64"
 			sha256="7ffafb55f1c344801165461004dac468faba2e85beb968c122d17e158102aeeb"
 			;;
 	esac
 
-	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.4.0-fedora-rootfs/fedora-33-${deb_arch}-2021.01.10.tar.gz"
+	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.4.0-fedora-rootfs/fedora-33-${dist_arch}-2021.01.10.tar.gz"
 }
 
 # Define here additional steps which should be executed
