@@ -30,15 +30,15 @@ get_download_url() {
 	case "$DISTRO_ARCH" in
 		aarch64)
 			dist_arch="arm64"
-			sha256="1048a1d745c31317f39e703ed5932cd45b4ab2184f5dfcfe02f6182315d13c4b"
+			sha256="4c113d35b8793d43756ca0f77bf46c41853daafe04d7514b2217079e0c2aa2c5"
 			;;
 		armv7l|armv8l)
 			dist_arch="armhf"
-			sha256="340458d0e7a96aa9ea78f429ae8faf2ab96625346c6d8a21f4bff52cd2913ce1"
+			sha256="47c911447e5912f133d26b6e8464007cdd169ca1c9a8b70ff1d4188c7be74e70"
 			;;
 		x86_64)
 			dist_arch="amd64"
-			sha256="7ffafb55f1c344801165461004dac468faba2e85beb968c122d17e158102aeeb"
+			sha256="4002904ef27aafbe63294dc12c1b96a42bb3ff1a8596e0c61ec28f6be3b10a53"
 			;;
 	esac
 
