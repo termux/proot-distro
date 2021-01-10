@@ -30,23 +30,23 @@ get_download_url() {
 	case "$DISTRO_ARCH" in
 		aarch64)
 			deb_arch="arm64"
-			sha256="3dbe607b4d79ea8bc0a779c17f55d42231ff6f643c25f7be9cae48160674ebaf"
+			sha256="c9e87d21eea22d5eec3681508b84cf1f48dfeb2e7178c65c5bd755d56600936a"
 			;;
 		armv7l|armv8l)
 			deb_arch="armhf"
-			sha256="2f9881d66192014964dbde8cf3d0cddba497a10312ad61e6f120b646da52bd6f"
+			sha256="35f29b0568b1c1d7d9d1263245834d2dce8c5fa5b78b64c72a79349585b06690"
 			;;
 		i686)
 			deb_arch="i386"
-			sha256="084dd00617e84514a718bfbf8434d1913a04a4985a3c487569a7de038afa1eda"
+			sha256="c74b2b9771ba5ad693a2d8ee5600b0373ffad3f6a548f71bbb9516cd7b1d2e43"
 			;;
 		x86_64)
 			deb_arch="amd64"
-			sha256="38d2ef257de4d3648b769f96802b2e99f07ee80ccc24e0bb093d80bcbdde0a73"
+			sha256="968e753aafc2b94fd4f94729b3453d7515cf4ab647a6db38ed0b80af0e9c5720"
 			;;
 	esac
 
-	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.1-debian-rootfs/debian-buster-${deb_arch}-2020.12.05.tar.gz"
+	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.4.0-debian-rootfs/debian-buster-${deb_arch}-2021.01.10.tar.gz"
 }
 
 # Define here additional steps which should be executed
