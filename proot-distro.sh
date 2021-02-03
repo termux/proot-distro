@@ -1179,6 +1179,9 @@ command_login() {
 			if [ -d "/apex" ]; then
 				set -- "--bind=/apex" "$@"
 			fi
+			if [ -e "/linkerconfig/ld.config.txt" ]; then
+				set -- "--bind=/linkerconfig/ld.config.txt" "$@"
+			fi
 			set -- "--bind=/data/data/com.termux/files/usr" "$@"
 			set -- "--bind=/system" "$@"
 			set -- "--bind=/vendor" "$@"
