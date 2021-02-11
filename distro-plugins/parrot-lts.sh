@@ -52,13 +52,6 @@ get_download_url() {
 # Define here additional steps which should be executed
 # for configuration.
 distro_setup() {
-	# Hint: $PWD is the distribution rootfs directory.
-	#echo "hello world" > ./etc/motd
-
-	# Run command within proot'ed environment with
-	# run_proot_cmd function.
-	# Uncomment this to do system upgrade during installation.
-	#run_proot_cmd apt update
-	#run_proot_cmd apt upgrade -yq
-	:
+	sed -i 's@deb http@deb [trusted=yes] http@g' \
+		./etc/apt/sources.list.d/parrot.list
 }
