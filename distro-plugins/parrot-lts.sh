@@ -30,23 +30,23 @@ get_download_url() {
 	case "$DISTRO_ARCH" in
 		aarch64)
 			dist_arch="arm64"
-			sha256="678e395321df1cc819ddf5f5fee7e83e4795e414dcb261ee6bfd2733a6c1c755"
+			sha256="130ce87b3c0cfc8a8942fa80f42133bd6ca3ff4dcc373b91276cb0d42c5ee46e"
 			;;
 		armv7l|armv8l)
 			dist_arch="armhf"
-			sha256="ecad84033e402a43c9209df3a0a181009fcd85f9ec27b2a3bbf02d1ea4f29174"
+			sha256="b85512291f33fe1b583e44f917c643805a8ba0fea32152091bbe72f6a93fd752"
 			;;
 		i686)
 			dist_arch="i386"
-			sha256="9f093c3bfa44ae38538861374e62dc0d151ff2b8d96725c6f6305f7cae736445"
+			sha256="0a23e8a7099f1fc6ffde53bc2a37037d35908587762fdcf099936172e2442a0e"
 			;;
 		x86_64)
 			dist_arch="amd64"
-			sha256="c2d561f89f05ba12408d554f1ac862d1054e76d81d054d27b2ee70bcd5d4d93d"
+			sha256="b613656955014fc0bdc44f7014ee5e23fe25b25d42cc95aef0f4f7dd793bacc2"
 			;;
 	esac
 
-	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.4.0-parrot-rootfs/parrotos-lts-${dist_arch}-2021.01.10.tar.gz"
+	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.4.0-parrot-rootfs/parrotos-lts-${dist_arch}-2021.02.11.tar.gz"
 }
 
 # Define here additional steps which should be executed
