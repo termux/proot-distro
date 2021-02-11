@@ -61,9 +61,15 @@ distro_setup() {
 
 	# Fix keyring.
 	local dl_keyring_file="${DOWNLOAD_CACHE_DIR}/kali-keyring-updated.asc"
-	curl --fail --retry 3 --retry-connrefused --retry-delay 1 \
-		--location --output "$dl_keyring_file" --time-cond "$dl_keyring_file" \
-		https://archive.kali.org/archive-key.asc
+	if [ -e "$dl_keyring_file" ]; then
+		curl --fail --retry 3 --retry-connrefused --retry-delay 1 \
+			--location --output "$dl_keyring_file" --time-cond "$dl_keyring_file" \
+			https://archive.kali.org/archive-key.asc
+	else
+		curl --fail --retry 3 --retry-connrefused --retry-delay 1 \
+			--location --output "$dl_keyring_file" \
+			https://archive.kali.org/archive-key.asc
+	fi
 	rm -f ./etc/apt/trusted.gpg.d/kali-archive-keyring.gpg
 	cp -f "${DOWNLOAD_CACHE_DIR}/kali-keyring-updated.asc" \
 		./etc/apt/trusted.gpg.d/kali-keyring-updated.asc
