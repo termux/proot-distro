@@ -52,3 +52,8 @@ This will allow to have multiple installations of same distribution.
    rm /var/lib/dpkg/info/libfprint0:*.postinst
    dpkg --configure -a
    ```
+3. fprintd
+   ```
+   rm /var/lib/dpkg/info/fprintd.postinst
+   dpkg --configure -a
+   ```
