@@ -822,11 +822,13 @@ command_remove_help() {
 
 command_clear_cache() {
 
-	if [ -z "${DOWNLOAD_CACHE_DIR}" ]; then
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No dlcache found...${CYAN}...${RST}"
+	if [ -z ${DOWNLOAD_CACHE_DIR} ]; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download found...${RST}"
 	else
-		for f in $(ls "${DOWNLOAD_CACHE_DIR}/*tar.gz"); do
-			[[ -e "$f" ]] || break
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
+		ls "${DOWNLOAD_CACHE_DIR}"/*tar.gz > temp_buffer.txt
+
+		for f in $(cat temp_buffer.txt); do
 			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} Removing ${BLUE} ${f} ${RST}"
 			rm -rf "${f}"
 		done
@@ -1649,7 +1651,7 @@ command_help() {
 	msg
 	msg "  ${GREEN}login    		${CYAN}- Start login shell for the specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}clear-dlcache	${CYAN}- clears locally stored rootfs cache. ${RST}"
+	msg "  ${GREEN}clear-cache	    ${CYAN}- clears locally stored rootfs cache. ${RST}"
 	msg
 	msg "  ${GREEN}remove   		${CYAN}- Delete a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
