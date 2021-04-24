@@ -817,6 +817,25 @@ command_remove_help() {
 
 #############################################################################
 #
+# FUNCTION TO CLEAR DLCACHE
+#
+
+command_clear_cache() {
+
+	if [ -z "${DOWNLOAD_CACHE_DIR}" ]; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No dlcache found...${CYAN}...${RST}"
+	else
+		for f in $(ls "${DOWNLOAD_CACHE_DIR}/*tar.gz"); do
+			[[ -e "$f" ]] || break
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} Removing ${BLUE} ${f} ${RST}"
+			rm -rf "${f}"
+		done
+	fi
+
+}
+
+#############################################################################
+#
 # FUNCTION TO REINSTALL THE GIVEN DISTRIBUTION
 #
 # Just a shortcut for command_remove && command_install.
@@ -1619,24 +1638,25 @@ command_help() {
 	msg
 	msg "${CYAN}List of the available commands:${RST}"
 	msg
-	msg "  ${GREEN}help     ${CYAN}- Show this help information.${RST}"
+	msg "  ${GREEN}help     		${CYAN}- Show this help information.${RST}"
 	msg
-	msg "  ${GREEN}backup   ${CYAN}- Backup a specified distribution.${RST}"
+	msg "  ${GREEN}backup   		${CYAN}- Backup a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}install  ${CYAN}- Install a specified distribution.${RST}"
+	msg "  ${GREEN}install  		${CYAN}- Install a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}list     ${CYAN}- List supported distributions and their installation${RST}"
+	msg "  ${GREEN}list     		${CYAN}- List supported distributions and their installation${RST}"
 	msg "             ${CYAN}status.${RST}"
 	msg
-	msg "  ${GREEN}login    ${CYAN}- Start login shell for the specified distribution.${RST}"
+	msg "  ${GREEN}login    		${CYAN}- Start login shell for the specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}remove   ${CYAN}- Delete a specified distribution.${RST}"
+	msg "  ${GREEN}clear-dlcache	${CYAN}- clears locally stored rootfs cache. ${RST}"
+	msg
+	msg "  ${GREEN}remove   		${CYAN}- Delete a specified distribution.${RST}"
+	msg "             ${RED}WARNING: this command destroys data!${RST}"
+	msg "  ${GREEN}reset    		${CYAN}- Reinstall from scratch a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
-	msg "  ${GREEN}reset    ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
-	msg "             ${RED}WARNING: this command destroys data!${RST}"
-	msg
-	msg "  ${GREEN}restore  ${CYAN}- Restore a specified distribution.${RST}"
+	msg "  ${GREEN}restore  		${CYAN}- Restore a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
@@ -1729,6 +1749,7 @@ if [ $# -ge 1 ]; then
 		list) shift 1; command_list;;
 		login) shift 1; command_login "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
+		clear-cache) shift 1; command_clear_cache;;
 		reset) shift 1; command_reset "$@";;
 		restore) shift 1; command_restore "$@";;
 		*)
