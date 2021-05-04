@@ -499,7 +499,7 @@ run_proot_cmd() {
 	fi
 
 	proot \
-		$qemu_arg \
+		$qemu_arg -L \
 		--kernel-release=5.4.0-faked \
 		--link2symlink \
 		--kill-on-exit \
@@ -1136,6 +1136,9 @@ command_login() {
 		# Some devices have old kernels and GNU libc refuses to work on them.
 		# Fix this behavior by reporting a fake up-to-date kernel version.
 		set -- "--kernel-release=5.4.0-faked" "$@"
+
+		# Fix lstat to prevent dpkg symlink size warnings
+		set -- "-L" "$@"
 
 		# Simulate root so we can switch users.
 		set -- "--cwd=/root" "$@"
