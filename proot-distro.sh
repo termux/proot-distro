@@ -814,6 +814,17 @@ command_remove_help() {
 	show_version
 	msg
 }
+command_clear_cache_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache"
+	msg
+	msg "${CYAN}This command will delete the download cache...${RST}"
+	msg
+	msg "${CYAN}This command is useful to clear some space by deleting dowmloaded rootfs tarballs${RST}"
+	msg
+	show_version
+	msg
+}
 
 #############################################################################
 #
@@ -821,20 +832,34 @@ command_remove_help() {
 #
 
 command_clear_cache() {
+	if [ $# -ge 1 ]; then
+		case "$1" in
+			-h|--help) command_clear_cache_help;;
+			*)
+				msg
+				msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
+				msg
+				msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} clear-cache --help${CYAN}' to see the list of available commands.${RST}"
+				msg
+				exit 1
+			;;
+		esac
+	elif (( $# == 0 )); then
+		if ! ls -la "${DOWNLOAD_CACHE_DIR}"/*tar.gz > /dev/null 2>&1; then
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download cache found...${RST}"
+		else
+			SIZE_OF_CACHE="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
+			ls "${DOWNLOAD_CACHE_DIR}"/*tar.gz > temp_buffer.txt
 
-	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/*tar.gz > /dev/null 2>&1; then
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download cache found...${RST}"
-	else
-		SIZE_OF_CACHE="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
-		ls "${DOWNLOAD_CACHE_DIR}"/*tar.gz > temp_buffer.txt
+			for f in $(cat temp_buffer.txt); do
+				msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} Removing ${BLUE} ${f} ${RST}"
+				rm -rf "${f}"
+			done
 
-		for f in $(cat temp_buffer.txt); do
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} Removing ${BLUE} ${f} ${RST}"
-			rm -rf "${f}"
-		done
-		rm -rf temp_buffer.txt
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} \"${SIZE_OF_CACHE}\" Of cache removed ${RST}"
+			rm -rf temp_buffer.txt
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} \"${SIZE_OF_CACHE}\" Of cache removed ${RST}"
+		fi
 	fi
 }
 
@@ -1645,25 +1670,25 @@ command_help() {
 	msg
 	msg "${CYAN}List of the available commands:${RST}"
 	msg
-	msg "  ${GREEN}help     		${CYAN}- Show this help information.${RST}"
+	msg "  ${GREEN}help         ${CYAN}- Show this help information.${RST}"
 	msg
-	msg "  ${GREEN}backup   		${CYAN}- Backup a specified distribution.${RST}"
+	msg "  ${GREEN}backup       ${CYAN}- Backup a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}install  		${CYAN}- Install a specified distribution.${RST}"
+	msg "  ${GREEN}install      ${CYAN}- Install a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}list     		${CYAN}- List supported distributions and their installation${RST}"
+	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their installation${RST}"
 	msg "             ${CYAN}status.${RST}"
 	msg
-	msg "  ${GREEN}login    		${CYAN}- Start login shell for the specified distribution.${RST}"
+	msg "  ${GREEN}login        ${CYAN}- Start login shell for the specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}clear-cache	    ${CYAN}- clears locally stored rootfs cache. ${RST}"
+	msg "  ${GREEN}clear-cache	${CYAN}- clears locally stored rootfs cache. ${RST}"
 	msg
-	msg "  ${GREEN}remove   		${CYAN}- Delete a specified distribution.${RST}"
+	msg "  ${GREEN}remove   	${CYAN}- Delete a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
-	msg "  ${GREEN}reset    		${CYAN}- Reinstall from scratch a specified distribution.${RST}"
+	msg "  ${GREEN}reset    	${CYAN}- Reinstall from scratch a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
-	msg "  ${GREEN}restore  		${CYAN}- Restore a specified distribution.${RST}"
+	msg "  ${GREEN}restore  	${CYAN}- Restore a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
@@ -1756,7 +1781,7 @@ if [ $# -ge 1 ]; then
 		list) shift 1; command_list;;
 		login) shift 1; command_login "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
-		clear-cache) shift 1; command_clear_cache;;
+		clear-cache) shift 1; command_clear_cache "$@";;
 		reset) shift 1; command_reset "$@";;
 		restore) shift 1; command_restore "$@";;
 		*)
