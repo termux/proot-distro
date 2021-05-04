@@ -822,8 +822,8 @@ command_remove_help() {
 
 command_clear_cache() {
 
-	if [ -z ${DOWNLOAD_CACHE_DIR} ]; then
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download found...${RST}"
+	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/*tar.gz >> /dev/null; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download cache found...${RST}"
 	else
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
 		ls "${DOWNLOAD_CACHE_DIR}"/*tar.gz > temp_buffer.txt
@@ -833,7 +833,6 @@ command_clear_cache() {
 			rm -rf "${f}"
 		done
 	fi
-
 }
 
 #############################################################################
