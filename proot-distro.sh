@@ -814,52 +814,57 @@ command_remove_help() {
 	show_version
 	msg
 }
-command_clear_cache_help() {
-	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache"
-	msg
-	msg "${CYAN}This command will delete the download cache...${RST}"
-	msg
-	msg "${CYAN}This command is useful to clear some space by deleting dowmloaded rootfs tarballs${RST}"
-	msg
-	show_version
-	msg
-}
 
 #############################################################################
 #
 # FUNCTION TO CLEAR DLCACHE
 #
-
+# Removes all cached downloads.
+#
 command_clear_cache() {
 	if [ $# -ge 1 ]; then
 		case "$1" in
-			-h|--help) command_clear_cache_help;;
+			-h|--help)
+				command_clear_cache_help
+				return 0
+				;;
 			*)
 				msg
-				msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
-				msg
-				msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} clear-cache --help${CYAN}' to see the list of available commands.${RST}"
-				msg
-				exit 1
-			;;
+				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_clear_cache_help
+				return 1
+				;;
 		esac
-	elif (( $# == 0 )); then
-
-		if ! ls -la "${DOWNLOAD_CACHE_DIR}"/*tar.gz > /dev/null 2>&1; then
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download cache found...${RST}"
-		else
-			SIZE_OF_CACHE="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
-
-			while read -r filename; do
-				msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Removing ${BLUE}'${filename}'${RST}"
-				rm -f "${filename}"
-			done < <(find "${DOWNLOAD_CACHE_DIR}" -type f)
-
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} '${SIZE_OF_CACHE}' Of cache removed ${RST}"
-		fi
 	fi
+	
+	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Download cache is empty.${RST}"
+	else
+		local size_of_cache
+		size_of_cache="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
+
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
+
+		local filename
+		while read -r filename; do
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${BLUE}'${filename}'${RST}"
+			rm -f "${filename}"
+		done < <(find "${DOWNLOAD_CACHE_DIR}" -type f)
+
+		msg "${BLUE}[${GREEN}*${BLUE}] Reclaimed ${size_of_cache} of disk space.${RST}"
+	fi
+}
+
+# Usage info for command_clear_cache.
+command_clear_cache_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache${RST}"
+	msg
+	msg "${CYAN}This command will reclaim some disk space by deleting cached${RST}"
+	msg "${CYAN}distribution rootfs tarballs.${RST}"
+	msg
+	show_version
+	msg
 }
 
 #############################################################################
