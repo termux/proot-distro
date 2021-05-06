@@ -1680,20 +1680,21 @@ command_help() {
 	msg
 	msg "  ${GREEN}install      ${CYAN}- Install a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their installation${RST}"
-	msg "             ${CYAN}status.${RST}"
+	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their${RST}"
+	msg "                 ${CYAN}installation status.${RST}"
 	msg
 	msg "  ${GREEN}login        ${CYAN}- Start login shell for the specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}clear-cache ${CYAN}- clears locally stored rootfs cache. ${RST}"
+	msg "  ${GREEN}remove       ${CYAN}- Delete a specified distribution.${RST}"
+	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
-	msg "  ${GREEN}remove      ${CYAN}- Delete a specified distribution.${RST}"
-	msg "             ${RED}WARNING: this command destroys data!${RST}"
-	msg "  ${GREEN}reset       ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
-	msg "             ${RED}WARNING: this command destroys data!${RST}"
+	msg "  ${GREEN}reset        ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
+	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
-	msg "  ${GREEN}restore     ${CYAN}- Restore a specified distribution.${RST}"
-	msg "             ${RED}WARNING: this command destroys data!${RST}"
+	msg "  ${GREEN}restore      ${CYAN}- Restore a specified distribution.${RST}"
+	msg "                 ${RED}WARNING: this command destroys data!${RST}"
+	msg
+	msg "  ${GREEN}clear-cache  ${CYAN}- Clear cache of downloaded files. ${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
 	msg "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
