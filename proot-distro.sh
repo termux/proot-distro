@@ -845,13 +845,14 @@ command_clear_cache() {
 			;;
 		esac
 	elif (( $# == 0 )); then
-		if ! ls -la "${DOWNLOAD_CACHE_DIR}"/*tar.gz > /dev/null 2>&1; then
+
+		files="$(find "${DOWNLOAD_CACHE_DIR}" -maxdepth 1 -type f \( -iname "*.tar.gz" -o -iname "*.taz" -o -iname "*.tgz" -o -iname "*.tar.bz2" -o -iname "*.tb2" -o -iname "*.tbz" -o -iname "*.tbz2" -o -iname "*.tz2" -o -iname "*.tar.lz" -o -iname "*.tar.lzma" -o -iname "*.tlz" -o -iname "*.tar.lzo" -o -iname "*.tar.xz" -o -iname "*.txz" -o -iname "*.tar.Z" -o -iname "*.tz" -o -iname "*.taz" -o -iname "*tar.zst" -o -iname "*.tar.zst" -o -iname "*.lz" -o -iname "*.lzo" \))"
+
+		if [ -z "${files}" ]; then
 			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}No Download cache found...${RST}"
 		else
 			SIZE_OF_CACHE="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
 			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
-			
-			files="$(find "${DOWNLOAD_CACHE_DIR}" -maxdepth 1 -type f \( -iname "*.tar.gz" -o -iname "*.taz" -o -iname "*.tgz" -o -iname "*.tar.bz2" -o -iname "*.tb2" -o -iname "*.tbz" -o -iname "*.tbz2" -o -iname "*.tz2" -o -iname "*.tar.lz" -o -iname "*.tar.lzma" -o -iname "*.tlz" -o -iname "*.tar.lzo" -o -iname "*.tar.xz" -o -iname "*.txz" -o -iname "*.tar.Z" -o -iname "*.tz" -o -iname "*.taz" -o -iname "*tar.zst" -o -iname "*.tar.zst" -o -iname "*.lz" -o -iname "*.lzo" \))"
 			
 			for f in ${files}; do
 				msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} Removing ${BLUE} ${f} ${RST}"
