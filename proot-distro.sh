@@ -851,7 +851,7 @@ command_clear_cache() {
 			SIZE_OF_CACHE="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
 			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
 			
-			files="$(find "${DOWNLOAD_CACHE_DIR}" -maxdepth 1 -type f \( -iname "*.tar.gz" -o -iname "*.taz" -o "*.tgz" -o "*.tar.bz2" -o "*.tb2" -o "*.tbz" -o ".tbz2" -o "*.tz2" -o "*.tar.lz" -o "*.tar.lzma" -o "*.tlz" -o "*.tar.lzo" -o "*.tar.xz" -o "*.txz" -o "*.tar.Z" -o "*.tz" -o "*.taz" -o "*tar.zst" -o "*.tar.zst" -o -iname "*.lz" -o -iname "*.lzo" \))"
+			files="$(find "${DOWNLOAD_CACHE_DIR}" -maxdepth 1 -type f \( -iname "*.tar.gz" -o -iname "*.taz" -o -iname "*.tgz" -o -iname "*.tar.bz2" -o -iname "*.tb2" -o -iname "*.tbz" -o -iname "*.tbz2" -o -iname "*.tz2" -o -iname "*.tar.lz" -o -iname "*.tar.lzma" -o -iname "*.tlz" -o -iname "*.tar.lzo" -o -iname "*.tar.xz" -o -iname "*.txz" -o -iname "*.tar.Z" -o -iname "*.tz" -o -iname "*.taz" -o -iname "*tar.zst" -o -iname "*.tar.zst" -o -iname "*.lz" -o -iname "*.lzo" \))"
 			
 			for f in ${files}; do
 				msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN} Removing ${BLUE} ${f} ${RST}"
