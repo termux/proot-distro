@@ -817,6 +817,58 @@ command_remove_help() {
 
 #############################################################################
 #
+# FUNCTION TO CLEAR DLCACHE
+#
+# Removes all cached downloads.
+#
+command_clear_cache() {
+	if [ $# -ge 1 ]; then
+		case "$1" in
+			-h|--help)
+				command_clear_cache_help
+				return 0
+				;;
+			*)
+				msg
+				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_clear_cache_help
+				return 1
+				;;
+		esac
+	fi
+	
+	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Download cache is empty.${RST}"
+	else
+		local size_of_cache
+		size_of_cache="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
+
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
+
+		local filename
+		while read -r filename; do
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${BLUE}'${filename}'${RST}"
+			rm -f "${filename}"
+		done < <(find "${DOWNLOAD_CACHE_DIR}" -type f)
+
+		msg "${BLUE}[${GREEN}*${BLUE}] Reclaimed ${size_of_cache} of disk space.${RST}"
+	fi
+}
+
+# Usage info for command_clear_cache.
+command_clear_cache_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache${RST}"
+	msg
+	msg "${CYAN}This command will reclaim some disk space by deleting cached${RST}"
+	msg "${CYAN}distribution rootfs tarballs.${RST}"
+	msg
+	show_version
+	msg
+}
+
+#############################################################################
+#
 # FUNCTION TO REINSTALL THE GIVEN DISTRIBUTION
 #
 # Just a shortcut for command_remove && command_install.
@@ -1622,24 +1674,25 @@ command_help() {
 	msg
 	msg "${CYAN}List of the available commands:${RST}"
 	msg
-	msg "  ${GREEN}help     ${CYAN}- Show this help information.${RST}"
+	msg "  ${GREEN}help         ${CYAN}- Show this help information.${RST}"
 	msg
-	msg "  ${GREEN}backup   ${CYAN}- Backup a specified distribution.${RST}"
+	msg "  ${GREEN}backup       ${CYAN}- Backup a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}install  ${CYAN}- Install a specified distribution.${RST}"
+	msg "  ${GREEN}install      ${CYAN}- Install a specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}list     ${CYAN}- List supported distributions and their installation${RST}"
+	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their installation${RST}"
 	msg "             ${CYAN}status.${RST}"
 	msg
-	msg "  ${GREEN}login    ${CYAN}- Start login shell for the specified distribution.${RST}"
+	msg "  ${GREEN}login        ${CYAN}- Start login shell for the specified distribution.${RST}"
 	msg
-	msg "  ${GREEN}remove   ${CYAN}- Delete a specified distribution.${RST}"
+	msg "  ${GREEN}clear-cache ${CYAN}- clears locally stored rootfs cache. ${RST}"
+	msg
+	msg "  ${GREEN}remove      ${CYAN}- Delete a specified distribution.${RST}"
+	msg "             ${RED}WARNING: this command destroys data!${RST}"
+	msg "  ${GREEN}reset       ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
-	msg "  ${GREEN}reset    ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
-	msg "             ${RED}WARNING: this command destroys data!${RST}"
-	msg
-	msg "  ${GREEN}restore  ${CYAN}- Restore a specified distribution.${RST}"
+	msg "  ${GREEN}restore     ${CYAN}- Restore a specified distribution.${RST}"
 	msg "             ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
@@ -1732,6 +1785,7 @@ if [ $# -ge 1 ]; then
 		list) shift 1; command_list;;
 		login) shift 1; command_login "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
+		clear-cache) shift 1; command_clear_cache "$@";;
 		reset) shift 1; command_reset "$@";;
 		restore) shift 1; command_restore "$@";;
 		*)
