@@ -836,7 +836,7 @@ command_clear_cache() {
 				;;
 		esac
 	fi
-	
+
 	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Download cache is empty.${RST}"
 	else
@@ -847,11 +847,11 @@ command_clear_cache() {
 
 		local filename
 		while read -r filename; do
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${BLUE}'${filename}'${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${CYAN}'${filename}'${RST}"
 			rm -f "${filename}"
 		done < <(find "${DOWNLOAD_CACHE_DIR}" -type f)
 
-		msg "${BLUE}[${GREEN}*${BLUE}] Reclaimed ${size_of_cache} of disk space.${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Reclaimed ${size_of_cache} of disk space.${RST}"
 	fi
 }
 
