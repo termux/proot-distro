@@ -817,58 +817,6 @@ command_remove_help() {
 
 #############################################################################
 #
-# FUNCTION TO CLEAR DLCACHE
-#
-# Removes all cached downloads.
-#
-command_clear_cache() {
-	if [ $# -ge 1 ]; then
-		case "$1" in
-			-h|--help)
-				command_clear_cache_help
-				return 0
-				;;
-			*)
-				msg
-				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-				command_clear_cache_help
-				return 1
-				;;
-		esac
-	fi
-
-	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Download cache is empty.${RST}"
-	else
-		local size_of_cache
-		size_of_cache="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
-
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
-
-		local filename
-		while read -r filename; do
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${CYAN}'${filename}'${RST}"
-			rm -f "${filename}"
-		done < <(find "${DOWNLOAD_CACHE_DIR}" -type f)
-
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Reclaimed ${size_of_cache} of disk space.${RST}"
-	fi
-}
-
-# Usage info for command_clear_cache.
-command_clear_cache_help() {
-	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache${RST}"
-	msg
-	msg "${CYAN}This command will reclaim some disk space by deleting cached${RST}"
-	msg "${CYAN}distribution rootfs tarballs.${RST}"
-	msg
-	show_version
-	msg
-}
-
-#############################################################################
-#
 # FUNCTION TO REINSTALL THE GIVEN DISTRIBUTION
 #
 # Just a shortcut for command_remove && command_install.
@@ -1654,6 +1602,58 @@ command_restore_help() {
 	msg "${CYAN}Important note: there are no any sanity check being performed${RST}"
 	msg "${CYAN}on the supplied tarballs. Be careful when using this command as${RST}"
 	msg "${CYAN}data loss may happen when the wrong tarball has been used.${RST}"
+	msg
+	show_version
+	msg
+}
+
+#############################################################################
+#
+# FUNCTION TO CLEAR DLCACHE
+#
+# Removes all cached downloads.
+#
+command_clear_cache() {
+	if [ $# -ge 1 ]; then
+		case "$1" in
+			-h|--help)
+				command_clear_cache_help
+				return 0
+				;;
+			*)
+				msg
+				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_clear_cache_help
+				return 1
+				;;
+		esac
+	fi
+
+	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Download cache is empty.${RST}"
+	else
+		local size_of_cache
+		size_of_cache="$(du -d 0 -h -a ${DOWNLOAD_CACHE_DIR} | awk '{$2=$2};1' | cut -d " " -f 1)"
+
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Clearing cache files...${RST}"
+
+		local filename
+		while read -r filename; do
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${CYAN}'${filename}'${RST}"
+			rm -f "${filename}"
+		done < <(find "${DOWNLOAD_CACHE_DIR}" -type f)
+
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Reclaimed ${size_of_cache} of disk space.${RST}"
+	fi
+}
+
+# Usage info for command_clear_cache.
+command_clear_cache_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache${RST}"
+	msg
+	msg "${CYAN}This command will reclaim some disk space by deleting cached${RST}"
+	msg "${CYAN}distribution rootfs tarballs.${RST}"
 	msg
 	show_version
 	msg
