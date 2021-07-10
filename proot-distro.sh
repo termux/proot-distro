@@ -1106,8 +1106,9 @@ command_login() {
 		if ! $no_kill_on_exit; then
 			# This option terminates all background processes on exit, so
 			# proot can terminate freely.
-			msg "${BRED}Warning: option '--no-kill-on-exit' is enabled. When exiting, your session will be blocked until all processes will be terminated.${RST}"
 			set -- "--kill-on-exit" "$@"
+		else
+			msg "${BRED}Warning: option '--no-kill-on-exit' is enabled. When exiting, your session will be blocked until all processes will be terminated.${RST}"
 		fi
 
 		if ! $no_link2symlink; then
