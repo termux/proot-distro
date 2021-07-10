@@ -894,6 +894,7 @@ command_login() {
 	local use_termux_home=false
 	local no_link2symlink=false
 	local no_sysvipc=false
+	local no_kill_on_exit=false
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
@@ -950,6 +951,9 @@ command_login() {
 				;;
 			--no-sysvipc)
 				no_sysvipc=true
+				;;
+			--no-kill-on-exit)
+				no_kill_on_exit=true
 				;;
 			--user)
 				if [ $# -ge 2 ]; then
@@ -1099,8 +1103,12 @@ command_login() {
 			esac
 		fi
 
-		# Terminate all processes on exit so proot won't hang.
-		set -- "--kill-on-exit" "$@"
+		if ! $no_kill_on_exit; then
+			# This option terminates all background processes on exit, so
+			# proot can terminate freely.
+			msg "${BRED}Warning: option '--no-kill-on-exit' is enabled. When exiting, your session will be blocked until all processes will be terminated.${RST}"
+			set -- "--kill-on-exit" "$@"
+		fi
 
 		if ! $no_link2symlink; then
 			# Support hardlinks.
@@ -1278,6 +1286,10 @@ command_login_help() {
 	msg "                         ${CYAN}in permissive mode.${RST}"
 	msg
 	msg "  ${GREEN}--no-sysvipc         ${CYAN}- Disable System V IPC emulation by proot.${RST}"
+	msg
+	msg "  ${GREEN}--no-kill-on-exit    ${CYAN}- Wait until all running processes will finish${RST}"
+	msg "                         ${CYAN}before exiting. This will cause proot to${RST}"
+	msg "                         ${CYAN}freeze if you are running daemons.${RST}"
 	msg
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
