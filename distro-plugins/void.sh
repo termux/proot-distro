@@ -26,23 +26,24 @@ get_download_url() {
 
 	case "$DISTRO_ARCH" in
 		aarch64)
-			rootfs="https://alpha.de.repo.voidlinux.org/live/current/void-aarch64-ROOTFS-20210218.tar.xz"
-			sha256="82b33beeae9a06947e25bcbfc57ffd15bc9055cf92a64b96409113869219c3fa"
+			rootfs="https://alpha.de.repo.voidlinux.org/live/20210316/void-aarch64-ROOTFS-20210316.tar.xz"
+			sha256="6ed8dc1d10e5700f2cf2c18a51dfbb3f8067636b65f20546b4c589d158483da8"
 			;;
 		armv6l)
-		    rootfs="https://alpha.de.repo.voidlinux.org/live/current/void-armv6l-ROOTFS-20210218.tar.xz"
-		    sha256="b0bd507f52b905b956f97d711721bcfd79059fd97e2c9eef738e6327eb164040"
+		    rootfs="https://alpha.de.repo.voidlinux.org/live/20210316/void-armv6l-ROOTFS-20210316.tar.xz"
+		    sha256="1806b13bee0d03fa4b26ddef722e411e6113eae2da70abd0989bfca1a4a89452"
 	        ;;
 		armv7l|armv8l)
-			rootfs="https://alpha.de.repo.voidlinux.org/live/current/void-armv7l-ROOTFS-20210218.tar.xz"
-			sha256="4ef61e05276cf4cb2141bbeaad8614db0a9ec7b709d966680791131ac9823240"
+			rootfs="https://alpha.de.repo.voidlinux.org/live/20210316/void-armv7l-ROOTFS-20210316.tar.xz"
+			sha256="f26059cd39ed608194bf31a31db8890cafcb9a3f0dfc2145eefb785d9867d9fb"
 			;;
 	    i686)
-	        rootfs="https://alpha.de.repo.voidlinux.org/live/current/void-i686-ROOTFS-20210218.tar.xz"
-	        sha256="7814ccf33dfd7a536ec48cc1550e94a1344311fddeb1981d6c5d49df1f1684f6"
-		x86_64)
-			rootfs="https://alpha.de.repo.voidlinux.org/live/current/void-x86_64-ROOTFS-20210218.tar.xz"
-			sha256="66fb856557946da129354e22f1b2cfd93f8e1e56bcbcba8902a5e59dc309c3cd"
+	        rootfs="https://alpha.de.repo.voidlinux.org/live/20210316/void-i686-ROOTFS-20210316.tar.xz"
+	        sha256="c47dc4d522978bb866fb0e163bdc67126498bbf47a81c3f377d4b341cf5b8cfc"
+	        ;;
+        x86_64)
+			rootfs="https://alpha.de.repo.voidlinux.org/live/20210316/void-x86_64-ROOTFS-20210316.tar.xz"
+			sha256="a5b28d171aa8eeec7fd5a5b10cdcc9161749fbe5e1e74a00c67b379a85a7d1ed"
 			;;
 	esac
 
