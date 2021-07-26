@@ -345,7 +345,7 @@ command_install() {
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d" ]; then
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d/termux-proot.sh"
 		else
-		    chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
+			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
@@ -371,7 +371,7 @@ command_install() {
 		export MOZ_FAKE_NO_SANDBOX=1
 		EOF
 		if [ "${LIBGCC_S_PATH}" != "/" ]; then
-		    chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
+			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 			echo "${LIBGCC_S_PATH}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 			chmod 644 "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 		fi
