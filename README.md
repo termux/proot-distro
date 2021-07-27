@@ -9,6 +9,7 @@ For now it supports installation of these distributions:
 * Kali Nethunter (rootless)
 * Parrot OS (LTS)
 * Ubuntu (18.04 / 20.04)
+* Void Linux
 
 ## Usage example
 
