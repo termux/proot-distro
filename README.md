@@ -8,7 +8,7 @@ For now it supports installation of these distributions:
 * Fedora 33
 * Kali Nethunter (rootless)
 * Parrot OS (LTS)
-* Ubuntu (18.04 / 20.04)
+* Ubuntu (18.04 / 20.04 / 21.04)
 
 ## Usage example
 
