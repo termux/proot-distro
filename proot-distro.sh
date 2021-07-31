@@ -416,7 +416,7 @@ command_install() {
 				echo "aid_${group_name}:*::root,aid_$(id -un)" >> \
 					"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow"
 			fi
-		done < <(paste <(id -G | tr ' ' '\n') <(id -Gn | tr ' ' '\n'))
+		done < <(paste <(id -Gn | tr ' ' '\n') <(id -G | tr ' ' '\n'))
 
 		# Ensure that proot will be able to bind fake /proc entries.
 		setup_fake_proc
