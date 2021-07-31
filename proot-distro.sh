@@ -406,8 +406,10 @@ command_install() {
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" >/dev/null 2>&1 || true
-		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/usr/sbin/nologin" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
-		echo "aid_$(id -un):*:18446:0:99999:7:::" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
+		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/sbin/nologin" >> \
+			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
+		echo "aid_$(id -un):*:18446:0:99999:7:::" >> \
+			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
 		local group_name group_id
 		while read -r group_name group_id; do
 			echo "aid_${group_name}:x:${group_id}:root,aid_$(id -un)" >> \
