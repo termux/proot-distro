@@ -408,13 +408,15 @@ command_install() {
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" >/dev/null 2>&1 || true
 		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/usr/sbin/nologin" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
 		echo "aid_$(id -un):*:18446:0:99999:7:::" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
-		local g
-		for g in $(id -G); do
-			echo "aid_$(id -gn "$g"):x:${g}:root,aid_$(id -un)" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group"
+		local group_name group_id
+		while read -r group_name group_id; do
+			echo "aid_${group_name}:x:${group_id}:root,aid_$(id -un)" >> \
+				"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group"
 			if [ -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" ]; then
-				echo "aid_$(id -gn "$g"):*::root,aid_$(id -un)" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow"
+				echo "aid_${group_name}:*::root,aid_$(id -un)" >> \
+					"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow"
 			fi
-		done
+		done < <(paste <(id -G | tr ' ' '\n') <(id -Gn | tr ' ' '\n'))
 
 		# Ensure that proot will be able to bind fake /proc entries.
 		setup_fake_proc
