@@ -345,6 +345,7 @@ command_install() {
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d" ]; then
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d/termux-proot.sh"
 		else
+			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
@@ -385,6 +386,7 @@ command_install() {
 
 		# /etc/hosts may be empty by default on some distributions.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing hosts file...${RST}"
+		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts"
 		# IPv4.
 		127.0.0.1   localhost.localdomain localhost
@@ -400,6 +402,7 @@ command_install() {
 
 		# Add Android-specific UIDs/GIDs to /etc/group and /etc/gshadow.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Registering Android-specific UIDs and GIDs...${RST}"
+		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow"
 		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/usr/sbin/nologin" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
 		echo "aid_$(id -un):*:18446:0:99999:7:::" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
 		local g
