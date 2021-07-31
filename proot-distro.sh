@@ -371,7 +371,6 @@ command_install() {
 		export MOZ_FAKE_NO_SANDBOX=1
 		EOF
 		if [ "${LIBGCC_S_PATH}" != "/" ]; then
-			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 			echo "${LIBGCC_S_PATH}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 			chmod 644 "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
 		fi
