@@ -10,6 +10,9 @@ For now it supports installation of these distributions:
 * Ubuntu (18.04 / 20.04 / 21.04)
 * Void Linux
 
+*Note: only the latest LTS or rolling distributions will be supported
+in future and versioning will be removed.*
+
 ## Usage example
 
 Install package in Termux:
