@@ -1,5 +1,5 @@
 ##
-## Plug-in for installing Slackware
+## Plug-in for installing Slackware Arm
 ##
 
 DISTRO_NAME="Slackware"
