@@ -26,20 +26,20 @@ get_download_url() {
 
 	case "$DISTRO_ARCH" in
 		aarch64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-arm64-root-2020.12.10.tar.gz"
-			sha256="f65e67f1b2d5cab43548356eff4001f3a34210d66686ab46375fe13eddb5ac33"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/bionic-server-cloudimg-arm64-root.tar.xz"
+			sha256="1f9ea68be35cc646017c0da6f1001bb0613bd7c540617aee8e9fd0d30e80078c"
 			;;
 		armv7l|armv8l)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-armhf-root-2020.12.10.tar.gz"
-			sha256="503c7828eeb4903c05d51e973e42fa9ce2f969e123ef60ad2a3cf4a09b3bfa2e"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/bionic-server-cloudimg-armhf-root.tar.xz"
+			sha256="ce9533c6920f621e23f4e379a2f7c92568807187ac88e93cbd53f9ecee2d7899"
 			;;
 		i686)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-i386-root-2020.12.10.tar.gz"
-			sha256="32356912ec3a3c4c2ac19c95107bd7dc01657ab0fd9ef86e7e29dcc167b4eed4"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/bionic-server-cloudimg-i386-root.tar.xz"
+			sha256="55af22f3b181de25b9142f308713b8034b2851990ac0b30eabaeb9ccded4bc15"
 			;;
 		x86_64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-bionic-rootfs/ubuntu-bionic-core-cloudimg-amd64-root-2020.12.10.tar.gz"
-			sha256="8f78f4029da9e3343a01a386e1be6498f96f86685264baafefa6e8836d11fce9"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/bionic-server-cloudimg-amd64-root.tar.xz"
+			sha256="e16108fd926cd170bc5de2797a66da99f3b10afd9706384c02ef3806297d17fc"
 			;;
 	esac
 
