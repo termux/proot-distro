@@ -26,20 +26,20 @@ get_download_url() {
 
 	case "$DISTRO_ARCH" in
 		aarch64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-focal-rootfs/ubuntu-focal-core-cloudimg-arm64-root-2020.12.10.tar.gz"
-			sha256="426a0345245ab95491bc78073b7f2f2ea91acd65b001eb9d6b8709eb1a5ba642"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/focal-server-cloudimg-arm64-root.tar.xz"
+			sha256="30f87b519fe6d381bb7fcf3f6ddf59c4bc1a7cc679c0440a547a7ad52ee4a898"
 			;;
 		armv7l|armv8l)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-focal-rootfs/ubuntu-focal-core-cloudimg-armhf-root-2020.12.10.tar.gz"
-			sha256="eb9ac4f4ee33071d25e95cd6b62dedfb57aa2f9449c6160f46a27fbf78bc821e"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/hirsute-server-cloudimg-armhf-root.tar.xz"
+			sha256="6ff4fad3263c46aeb3059f9849dc58183d1ea619dd22e8fdd907c697e93aa59b"
 			;;
 		i686)
 			# Ubuntu Focal does not provide tarballs for x86 32bit.
 			return
 			;;
 		x86_64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-ubuntu-focal-rootfs/ubuntu-focal-core-cloudimg-amd64-root-2020.12.10.tar.gz"
-			sha256="c7f50b2e87f172e0c0d1c3fe38fcfc7ca33d62d20ef41dc185e20d19e4d4aa59"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/focal-server-cloudimg-amd64-root.tar.xz"
+			sha256="86ec71e8ec6c7b40fa6da96618f720162ed96fc70fd974cc24a695072bfa3d35"
 			;;
 	esac
 
