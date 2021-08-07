@@ -2,7 +2,7 @@
 ## Plug-in for installing Alpine Linux.
 ##
 
-DISTRO_NAME="Alpine Linux 3.13.1"
+DISTRO_NAME="Alpine Linux 3.14.1"
 
 # You can override a CPU architecture to let distribution
 # be executed by QEMU (user-mode).
@@ -26,20 +26,20 @@ get_download_url() {
 
 	case "$DISTRO_ARCH" in
 		aarch64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-alpine-rootfs/alpine-minirootfs-3.13.1-aarch64.tar.gz"
-			sha256="0e8258cc599a86be428228dd5ea9217959f2c77873790bec645c05899f252c5e"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/alpine-minirootfs-3.14.1-aarch64.tar.gz"
+			sha256="63c3ca0cf9d870566ab35f273e4d19d6456bf8b9b22278d6990abd605c0baecf"
 			;;
 		armv7l|armv8l)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-alpine-rootfs/alpine-minirootfs-3.13.1-armv7.tar.gz"
-			sha256="71bedb0810b656377192f4a239126f452a016d7a33e28f8ad8f46e9b0e7d8028"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/alpine-minirootfs-3.14.1-armv7.tar.gz"
+			sha256="5e051a4060c0a48d530bc514f614919501eba1b1b698b799e4beb5d2de6c0463"
 			;;
 		i686)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-alpine-rootfs/alpine-minirootfs-3.13.1-x86.tar.gz"
-			sha256="6884df8f8e44d462a9723e412f0b76124019683d98afe448a8767dc5f5f3a7e0"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/alpine-minirootfs-3.14.1-x86.tar.gz"
+			sha256="f154d232179433c5f3638948943f84d39d2dd137e26a53d21223eae1ffbcd663"
 			;;
 		x86_64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.2-alpine-rootfs/alpine-minirootfs-3.13.1-x86_64.tar.gz"
-			sha256="1ab0a7c05107c4504018be170d937c07e35283b7a3f153886c8c93162dfbf4af"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/alpine-minirootfs-3.14.1-x86_64.tar.gz"
+			sha256="2723a3ced7344f29d75c10328fd772ca68f4a6b39a4bade8b2347d58ccff3bae"
 			;;
 	esac
 
