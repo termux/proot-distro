@@ -6,6 +6,7 @@ For now it supports installation of these distributions:
 * Arch Linux / Arch Linux ARM
 * Debian Buster
 * Fedora 33
+* Gentoo
 * Ubuntu (18.04 / 20.04 / 21.04)
 * Void Linux
 
