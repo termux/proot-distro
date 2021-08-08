@@ -30,7 +30,7 @@ get_download_url() {
 			sha256="30f87b519fe6d381bb7fcf3f6ddf59c4bc1a7cc679c0440a547a7ad52ee4a898"
 			;;
 		armv7l|armv8l)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/hirsute-server-cloudimg-armhf-root.tar.xz"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/focal-server-cloudimg-armhf-root.tar.xz"
 			sha256="6ff4fad3263c46aeb3059f9849dc58183d1ea619dd22e8fdd907c697e93aa59b"
 			;;
 		i686)
