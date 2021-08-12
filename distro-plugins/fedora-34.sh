@@ -1,8 +1,8 @@
 ##
-## Plug-in for installing Fedora 33.
+## Plug-in for installing Fedora 34.
 ##
 
-DISTRO_NAME="Fedora 33"
+DISTRO_NAME="Fedora 34"
 
 # Rootfs is in subdirectory.
 DISTRO_TARBALL_STRIP_OPT=1
@@ -24,25 +24,25 @@ DISTRO_TARBALL_STRIP_OPT=1
 # Returns download URL and SHA-256 of file in this format:
 # SHA-256|FILE-NAME
 get_download_url() {
-	local dist_arch
+	local rootfs
 	local sha256
 
 	case "$DISTRO_ARCH" in
 		aarch64)
-			dist_arch="arm64"
-			sha256="4c113d35b8793d43756ca0f77bf46c41853daafe04d7514b2217079e0c2aa2c5"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.10.1/fedora-aarch64-pd-v1.10.1.tar.xz"
+			sha256="9584a6c02324adc989f63876c51a93f6ca752e0d5d533428d55210260230c32b"
 			;;
 		armv7l|armv8l)
-			dist_arch="armhf"
-			sha256="47c911447e5912f133d26b6e8464007cdd169ca1c9a8b70ff1d4188c7be74e70"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.10.1/fedora-arm-pd-v1.10.1.tar.xz"
+			sha256="1491ff7603f1007feaa07ebeee477ef492c6d400dc4404503c11fb5d9ab035f6"
 			;;
 		x86_64)
-			dist_arch="amd64"
-			sha256="4002904ef27aafbe63294dc12c1b96a42bb3ff1a8596e0c61ec28f6be3b10a53"
+			rootfs="https://github.com/termux/proot-distro/releases/download/v1.10.1/fedora-x86_64-pd-v1.10.1.tar.xz"
+			sha256="5c47d00c9a196285ac5993b99bc80d659c5244924f2457ef166e757a50cd4efc"
 			;;
 	esac
 
-	echo "${sha256}|https://github.com/termux/proot-distro/releases/download/v1.4.0-fedora-rootfs/fedora-33-${dist_arch}-2021.01.10.tar.gz"
+	echo "${sha256}|${rootfs}"
 }
 
 # Define here additional steps which should be executed
