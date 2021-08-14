@@ -1,85 +1,13 @@
-##
-## Plug-in for installing Arch Linux.
-##
-## Warning: Arch Linux ARM is not Arch Linux! This is a different project,
-## yet it is a lot similar to the original. Proot-Distro considers them as
-## equal to make things easier.
-##
-
+# This is a default distribution plug-in.
+# Do not modify this file as your changes will be overwritten on next update.
+# If you want customize installation, please make a copy.
 DISTRO_NAME="Arch Linux"
 
-# You can override a CPU architecture to let distribution
-# be executed by QEMU (user-mode).
-#
-# You can specify the following values here:
-#
-#  * aarch64: AArch64 (ARM64, 64bit ARM)
-#  * armv7l:  ARM (32bit)
-#  * i686:    x86 (32bit)
-#  * x86_64:  x86 (64bit)
-#
-# Default value is set by proot-distro script and is equal
-# to the CPU architecture of your device (uname -m).
-#DISTRO_ARCH=$(uname -m)
-
-# x86_64 rootfs is inside subdirectory.
-if [ "$DISTRO_ARCH" = "x86_64" ]; then
-	DISTRO_TARBALL_STRIP_OPT=1
-fi
-
-# Returns download URL and SHA-256 of file in this format:
-# SHA-256|FILE-NAME
-get_download_url() {
-	local rootfs
-	local sha256
-
-	case "$DISTRO_ARCH" in
-		aarch64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/ArchLinuxARM-aarch64-latest.tar.gz"
-			sha256="13cdfea2c682fadfb2a6a8374beacedf0682cbc39238922a596de7c49fb90a67"
-			;;
-		armv7l|armv8l)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/ArchLinuxARM-armv7-latest.tar.gz"
-			sha256="84c6424b9dee1359bc4a49e85f51da9db1239a2d88c55df72db5500043b69a53"
-			;;
-		x86_64)
-			rootfs="https://github.com/termux/proot-distro/releases/download/v1.9.0-updated-distributions/archlinux-bootstrap-2021.08.01-x86_64.tar.gz"
-			sha256="7ddf5717999549699d9a012608e2f8cae9fbe70e24dc03ee2c3065226955e206"
-			;;
-	esac
-
-	echo "${sha256}|${rootfs}"
-}
-
-# Define here additional steps which should be executed
-# for configuration.
-distro_setup() {
-	# Enable the first found mirror. Needed only for x86_64 as
-	# ArchLinuxARM has geoip-based mirror enabled by default.
-	if [ "$(uname -m)" = "x86_64" ]; then
-		sed -i 's/#Server = http/Server = http/' ./etc/pacman.d/mirrorlist
-	fi
-
-	# Pacman keyring initialization.
-	run_proot_cmd pacman-key --init
-	if [ "$(uname -m)" = "x86_64" ]; then
-		run_proot_cmd pacman-key --populate archlinux
-	else
-		run_proot_cmd pacman-key --populate archlinuxarm
-	fi
-
-	# Initialize en_US locale.
-	echo "en_US.UTF-8 UTF-8" > ./etc/locale.gen
-	run_proot_cmd locale-gen
-	sed -i 's/LANG=C.UTF-8/LANG=en_US.UTF-8/' ./etc/profile.d/termux-proot.sh
-
-	# Uninstall packages which are not necessary.
-	case "$(uname -m)" in
-		aarch64)
-			run_proot_cmd pacman -Rnsc --noconfirm linux-aarch64
-			;;
-		armv7l|armv8l)
-			run_proot_cmd pacman -Rnsc --noconfirm linux-armv7
-			;;
-	esac
-}
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v1.10.1/archlinux-aarch64-pd-v1.10.1.tar.xz"
+TARBALL_SHA256['aarch64']="0faef6f391a367424eec971ca256a2f980576283f6b67235eb04e47fefc90e0c"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v1.10.1/archlinux-arm-pd-v1.10.1.tar.xz"
+TARBALL_SHA256['arm']="5b35f8158d6c37b9e6cb13e1753afd5c2b480d6297b73a39b24c2065a2931f67"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v1.10.1/archlinux-i686-pd-v1.10.1.tar.xz"
+TARBALL_SHA256['i686']="272756b993b903fe894aa9d9588e221673b7dbbb3e63ff867b95203b49a5a5a6"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v1.10.1/archlinux-x86_64-pd-v1.10.1.tar.xz"
+TARBALL_SHA256['x86_64']="7bc126d4e13af10be7b9ff2ae3041dee532f8c7c978f82e8163df4937d73a0f4"
