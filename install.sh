@@ -17,4 +17,4 @@ for script in ./distro-plugins/*.sh*; do
 done
 
 echo "Installing $TERMUX_PREFIX/share/doc/proot-distro/README.md"
-install -Dm600 "$TERMUX_PREFIX"/share/doc/proot-distro/README.md README.md
+install -Dm600 README.md "$TERMUX_PREFIX"/share/doc/proot-distro/README.md
