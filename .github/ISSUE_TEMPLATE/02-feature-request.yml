@@ -6,6 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
+        Check the [Functionality overview](https://github.com/termux/proot-distro#functionality-overview) section of readme document to ensure that new feature would not interfere with already existing ones.
+
         To submit a request of a new feature, fill the form below. Be patient, do not expect that feature will get added immediately.
   - type: textarea
     attributes:
