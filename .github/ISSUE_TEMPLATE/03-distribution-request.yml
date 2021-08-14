@@ -18,6 +18,8 @@ body:
   - type: input
     attributes:
       label: Home page URL
+    validations:
+      required: true
   - type: input
     attributes:
       label: Root file system archive URL
