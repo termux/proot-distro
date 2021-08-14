@@ -1,0 +1,15 @@
+name: "Feature request"
+description: "Request a new functionality"
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        To submit a request of a new feature, fill the form below. Be patient, do not expect that feature will get added immediately.
+  - type: textarea
+    attributes:
+      label: Feature description
+      description: A clear and concise description of a feature you would like to see in `proot-distro`.
+    validations:
+      required: true

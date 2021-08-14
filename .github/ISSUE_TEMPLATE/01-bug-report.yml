@@ -1,0 +1,30 @@
+name: "Bug report"
+description: "Create a report to help us improve"
+title: "[Bug]: "
+labels: ["bug report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a bug tracker of the PRoot Distro - a Bash script wrapper for `proot`. Submit reports about the issues you have encountered when using this software or belive that it doesn't work properly.
+
+        Do not submit `proot` issues there. They should be reported at https://github.com/termux/proot/issues.
+
+        Be patient, do not expect that issue could get resolved immediately.
+  - type: textarea
+    attributes:
+      label: Problem description
+      description: |
+        A clear and concise description of what the problem is. You may attach the logs, screenshots, screen video recording and whatever else that will help to understand the issue.
+
+        Issues without proper description will be closed without solution.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What steps will reproduce the bug?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What is the expected behavior?

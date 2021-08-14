@@ -1,0 +1,23 @@
+name: "Distribution support request"
+description: "Request a new distribution"
+title: "[Distribution]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        You can check supported distributions by running command `proot-distro list`. If you have not found the desired one, you can request it.
+
+        To submit a request of a new distribution, fill the form below. Be patient, do not expect that it will get added immediately. Note that `proot-distro` v2.x is dropping support of versioned distributions and will use either LTS, latest stable or rolling variant, whichever is present.
+
+        Requests of distributions that assist hacking will be rejected without feedback.
+  - type: textarea
+    attributes:
+      label: Description
+      description: 
+  - type: input
+    attributes:
+      label: Home page URL
+  - type: input
+    attributes:
+      label: Root file system archive URL
