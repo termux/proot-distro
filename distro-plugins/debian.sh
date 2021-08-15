@@ -15,9 +15,9 @@ TARBALL_SHA256['x86_64']="d0386073900115c3c4f7b9e858b2773b988ba6bc4be40d99231ee3
 distro_setup() {
 	# Include security & updates.
 	cat <<- EOF > ./etc/apt/sources.list
-	deb https://deb.debian.org/debian stable main contrib
-	deb https://deb.debian.org/debian-security/ stable/updates main contrib
-	deb https://deb.debian.org/debian stable-updates main contrib
+	deb http://deb.debian.org/debian stable main contrib
+	deb http://deb.debian.org/debian-security/ stable/updates main contrib
+	deb http://deb.debian.org/debian stable-updates main contrib
 	EOF
 
 	# Don't update gvfs-daemons and udisks2
