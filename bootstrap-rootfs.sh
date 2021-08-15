@@ -211,14 +211,15 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/archlinux-x86_64-pd-${CURRE
 EOF
 
 # Debian (stable).
-printf "\n[*] Building Debian...\n"
+debian_dist_name="buster"
+printf "\n[*] Building Debian (${debian_dist_name})...\n"
 for arch in arm64 armhf i386 amd64; do
 	sudo debootstrap \
 		--arch=${arch} \
 		--no-check-gpg \
 		--variant=minbase \
-		--include=gvfs-daemons,libsystemd0,systemd,udisks2,wget \
-		stable \
+		--include=ca-certificates,gvfs-daemons,libsystemd0,systemd,udisks2,wget \
+		"${debian_dist_name}" \
 		"${WORKDIR:?}/debian-$(translate_arch "$arch")"
 
 	sudo rm -f "${WORKDIR:?}/debian-$(translate_arch "$arch")"/var/cache/apt/archives/* || true
@@ -236,7 +237,7 @@ cat <<- EOF > "${PLUGIN_DIR}/debian.sh"
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Debian (stable)"
+DISTRO_NAME="Debian (${debian_dist_name})"
 
 TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/debian-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/debian-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
@@ -250,15 +251,16 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/debian-x86_64-pd-${CURRENT_
 distro_setup() {
 ${TAB}# Include security & updates.
 ${TAB}cat <<- EOF > ./etc/apt/sources.list
-${TAB}deb http://deb.debian.org/debian stable main contrib
-${TAB}deb http://deb.debian.org/debian-security/ stable/updates main contrib
-${TAB}deb http://deb.debian.org/debian stable-updates main contrib
+${TAB}deb https://deb.debian.org/debian ${debian_dist_name} main contrib
+${TAB}deb https://deb.debian.org/debian-security/ ${debian_dist_name}/updates main contrib
+${TAB}deb https://deb.debian.org/debian ${debian_dist_name}-updates main contrib
 ${TAB}EOF
 
 ${TAB}# Don't update gvfs-daemons and udisks2
 ${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
 }
 EOF
+unset debian_dist_name
 
 # Fedora 34.
 # Repack only.

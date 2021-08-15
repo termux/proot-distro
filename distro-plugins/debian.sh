@@ -1,23 +1,23 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Debian (stable)"
+DISTRO_NAME="Debian (buster)"
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v1.10.1/debian-aarch64-pd-v1.10.1.tar.xz"
-TARBALL_SHA256['aarch64']="f34802fbb300b4d088a638c638683fd2bfc1c03f4b40fa4cb7d2113231401a21"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v1.10.1/debian-arm-pd-v1.10.1.tar.xz"
-TARBALL_SHA256['arm']="a73a61024fc3b75d4d3facbc19b9ab716ddf2bbb011bf5d1269e02f3ca27634f"
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v1.10.1/debian-i686-pd-v1.10.1.tar.xz"
-TARBALL_SHA256['i686']="dbc6801e73fc7e568633067ff0a29f8cfd6454afd06a6e1ce104a6ab7c984b67"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v1.10.1/debian-x86_64-pd-v1.10.1.tar.xz"
-TARBALL_SHA256['x86_64']="d0386073900115c3c4f7b9e858b2773b988ba6bc4be40d99231ee324a1207e44"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v2.0.1/debian-aarch64-pd-v2.0.1.tar.xz"
+TARBALL_SHA256['aarch64']="5293c7a3dcd23dcafa877cd14d7f4f80797a36d48042216170bb4683dcb66c3a"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v2.0.1/debian-arm-pd-v2.0.1.tar.xz"
+TARBALL_SHA256['arm']="a1c1fd6755448ab42a184e03d8519d3b38039885e6bed79726538f933c50da23"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v2.0.1/debian-i686-pd-v2.0.1.tar.xz"
+TARBALL_SHA256['i686']="53e56c2ae14164fd54a793c6db5c94a9b926f8c3825488e090c72e8cc42430b1"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v2.0.1/debian-x86_64-pd-v2.0.1.tar.xz"
+TARBALL_SHA256['x86_64']="1a179871bc58e74ebe7e204c927c896ba95a2969cf7eb54a326bd968e2f6df30"
 
 distro_setup() {
 	# Include security & updates.
 	cat <<- EOF > ./etc/apt/sources.list
-	deb http://deb.debian.org/debian stable main contrib
-	deb http://deb.debian.org/debian-security/ stable/updates main contrib
-	deb http://deb.debian.org/debian stable-updates main contrib
+	deb https://deb.debian.org/debian buster main contrib
+	deb https://deb.debian.org/debian-security/ buster/updates main contrib
+	deb https://deb.debian.org/debian buster-updates main contrib
 	EOF
 
 	# Don't update gvfs-daemons and udisks2
