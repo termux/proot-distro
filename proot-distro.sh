@@ -463,7 +463,7 @@ run_proot_cmd() {
 
 	local qemu_arg=""
 	if [ "$DISTRO_ARCH" != "$DEVICE_CPU_ARCH" ]; then
-		if [[ "$DISTRO_ARCH" =~ ^(aarch64|arm|i686|x86_64)$ ]]; then
+		if ! [[ "$DISTRO_ARCH" =~ ^(aarch64|arm|i686|x86_64)$ ]]; then
 			msg
 			msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
 			msg
@@ -1036,7 +1036,7 @@ command_login() {
 
 		if [ "$DEVICE_CPU_ARCH" != "$target_arch" ]; then
 			need_qemu=true
-			if [[ "$target_arch" =~ ^(aarch64|arm|i686|x86_64)$ ]]; then
+			if ! [[ "$target_arch" =~ ^(aarch64|arm|i686|x86_64)$ ]]; then
 				msg
 				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
 				msg
