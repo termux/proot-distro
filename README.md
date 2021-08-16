@@ -34,6 +34,11 @@ Here are the supported distributions:
 * Ubuntu (20.04)
 * Void Linux
 
+All systems come in a bare-minumum variant, typically consisting of package
+manager, shell, coreutils, util-linux and few more. Extended functionality
+like shell completion or package install suggestions should be configured
+manually.
+
 If desired distribution is not in the list, you can request it.
 
 ## Installing
