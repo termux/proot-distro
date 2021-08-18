@@ -211,14 +211,14 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/archlinux-x86_64-pd-${CURRE
 EOF
 
 # Debian (stable).
-debian_dist_name="buster"
+debian_dist_name="bullseye"
 printf "\n[*] Building Debian (${debian_dist_name})...\n"
 for arch in arm64 armhf i386 amd64; do
 	sudo debootstrap \
 		--arch=${arch} \
 		--no-check-gpg \
 		--variant=minbase \
-		--include=ca-certificates,gvfs-daemons,libsystemd0,systemd,udisks2,wget \
+		--include=dbus-user-session,ca-certificates,gvfs-daemons,libsystemd0,systemd-sysv,udisks2,wget \
 		"${debian_dist_name}" \
 		"${WORKDIR:?}/debian-$(translate_arch "$arch")"
 
