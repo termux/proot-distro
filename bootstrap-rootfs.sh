@@ -214,22 +214,16 @@ EOF
 debian_dist_name="bullseye"
 printf "\n[*] Building Debian (${debian_dist_name})...\n"
 for arch in arm64 armhf i386 amd64; do
-	sudo debootstrap \
-		--arch=${arch} \
-		--no-check-gpg \
+	sudo mmdebstrap \
+		--architectures=${arch} \
 		--variant=minbase \
-		--include=dbus-user-session,ca-certificates,gvfs-daemons,libsystemd0,systemd-sysv,udisks2,wget \
+		--components="main,contrib" \
+		--include="dbus-user-session,ca-certificates,gvfs-daemons,libsystemd0,systemd-sysv,udisks2" \
+		--format=tar \
 		"${debian_dist_name}" \
-		"${WORKDIR:?}/debian-$(translate_arch "$arch")"
-
-	sudo rm -f "${WORKDIR:?}/debian-$(translate_arch "$arch")"/var/cache/apt/archives/* || true
-	sudo rm -f "${WORKDIR:?}/debian-$(translate_arch "$arch")"/var/lib/apt/lists/* || true
-
-	sudo tar -j -c \
-		-f "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-		-C "$WORKDIR" \
-		"debian-$(translate_arch "$arch")"
-	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
+		"${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+	xz "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
 done
 unset arch
 
@@ -249,13 +243,6 @@ TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/debian-x86_64-pd-${CURRENT_VERSION}.ta
 TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/debian-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 
 distro_setup() {
-${TAB}# Include security & updates.
-${TAB}cat <<- EOF > ./etc/apt/sources.list
-${TAB}deb https://deb.debian.org/debian ${debian_dist_name} main contrib
-${TAB}deb https://deb.debian.org/debian-security/ ${debian_dist_name}-security main contrib
-${TAB}deb https://deb.debian.org/debian ${debian_dist_name}-updates main contrib
-${TAB}EOF
-
 ${TAB}# Don't update gvfs-daemons and udisks2
 ${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
 }
@@ -410,22 +397,16 @@ EOF
 # Ubuntu (20.04).
 printf "\n[*] Building Ubuntu...\n"
 for arch in arm64 armhf amd64; do
-	sudo debootstrap \
-		--arch=${arch} \
-		--no-check-gpg \
+	sudo mmdebstrap \
+		--architectures=${arch} \
 		--variant=minbase \
-		--include=dbus-user-session,systemd,gvfs-daemons,libsystemd0,systemd-sysv,udisks2,wget \
+		--components="main,universe,multiverse" \
+		--include="dbus-user-session,systemd,gvfs-daemons,libsystemd0,systemd-sysv,udisks2" \
+		--format=tar \
 		focal \
-		"${WORKDIR:?}/ubuntu-$(translate_arch "$arch")"
-
-	sudo rm -f "${WORKDIR:?}/ubuntu-$(translate_arch "$arch")"/var/cache/apt/archives/* || true
-	sudo rm -f "${WORKDIR:?}/ubuntu-$(translate_arch "$arch")"/var/lib/apt/lists/* || true
-
-	sudo tar -j -c \
-		-f "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-		-C "$WORKDIR" \
-		"ubuntu-$(translate_arch "$arch")"
-	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
+		"${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+	xz "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
 done
 unset arch
 
@@ -443,13 +424,6 @@ TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/ubuntu-x86_64-pd-${CURRENT_VERSION}.ta
 TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 
 distro_setup() {
-${TAB}# Enable additional repository components.
-${TAB}if [ "\$DISTRO_ARCH" = "amd64" ]; then
-${TAB}${TAB}echo "deb http://archive.ubuntu.com/ubuntu focal main universe multiverse" > ./etc/apt/sources.list
-${TAB}else
-${TAB}${TAB}echo "deb http://ports.ubuntu.com/ubuntu-ports focal main universe multiverse" > ./etc/apt/sources.list
-${TAB}fi
-
 ${TAB}# Don't update gvfs-daemons and udisks2
 ${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
 }
