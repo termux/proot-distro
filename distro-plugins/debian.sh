@@ -16,7 +16,7 @@ distro_setup() {
 	# Include security & updates.
 	cat <<- EOF > ./etc/apt/sources.list
 	deb https://deb.debian.org/debian bullseye main contrib
-	#deb https://deb.debian.org/debian-security/ bullseye/updates main contrib
+	deb https://deb.debian.org/debian-security/ bullseye-security main contrib
 	deb https://deb.debian.org/debian bullseye-updates main contrib
 	EOF
 

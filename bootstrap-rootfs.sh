@@ -252,7 +252,7 @@ distro_setup() {
 ${TAB}# Include security & updates.
 ${TAB}cat <<- EOF > ./etc/apt/sources.list
 ${TAB}deb https://deb.debian.org/debian ${debian_dist_name} main contrib
-${TAB}#deb https://deb.debian.org/debian-security/ ${debian_dist_name}/updates main contrib
+${TAB}deb https://deb.debian.org/debian-security/ ${debian_dist_name}-security main contrib
 ${TAB}deb https://deb.debian.org/debian ${debian_dist_name}-updates main contrib
 ${TAB}EOF
 
