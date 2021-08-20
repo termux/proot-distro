@@ -1,6 +1,7 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
+# You can overide an architecture by inserting 'DISTRO_ARCH=' , but it will be overwritten on next update
 DISTRO_NAME="Debian (bullseye)"
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v2.2.0/debian-aarch64-pd-v2.2.0.tar.xz"
