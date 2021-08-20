@@ -1,5 +1,6 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
+# You can overide an architecture by inserting 'DISTRO_ARCH=' , but it will be overwritten on next update
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Fedora (34)"
 
