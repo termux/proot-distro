@@ -4,7 +4,6 @@
 # You can overide an architecture by inserting 'DISTRO_ARCH=' , but it will be overwritten on next update. 
 DISTRO_NAME="Ubuntu (20.04)"
 
-
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v2.2.0/ubuntu-aarch64-pd-v2.2.0.tar.xz"
 TARBALL_SHA256['aarch64']="486de37668963c1b6a0d131e33b91486be8eb1919b0813ad03726885753feba6"
 TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v2.2.0/ubuntu-arm-pd-v2.2.0.tar.xz"
