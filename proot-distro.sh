@@ -203,7 +203,7 @@ command_install() {
 
 	if [ -n "${override_alias-}" ]; then
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ]; then
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.sh'...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh'...${RST}"
 			distro_plugin_script="${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh"
 			cp "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" "${distro_plugin_script}"
 			sed -i "s/^\(DISTRO_NAME=\)\(.*\)\$/\1\"${SUPPORTED_DISTRIBUTIONS["$distro_name"]} (override)\"/g" "${distro_plugin_script}"
