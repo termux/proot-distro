@@ -155,9 +155,9 @@ command_install() {
 						return 1
 					fi
 
-					if ! grep -qP '^[a-z0-9._+-]+$' <<< "$1"; then
+					if ! grep -qP '^[a-z0-9._+][a-z0-9._+-]+$' <<< "$1"; then
 						msg
-						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should be lowercase and can contain only alphanumeric characters and these symbols '._+-'.${RST}"
+						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should be lowercase and can contain only alphanumeric characters and these symbols '._+-'. Also argument should not begin with '-'.${RST}"
 						msg
 						return 1
 					fi
