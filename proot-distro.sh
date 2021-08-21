@@ -162,7 +162,7 @@ command_install() {
 						return 1
 					fi
 
-					if ! grep -qP '^.*\.sh$' <<< "$1"; then
+					if grep -qP '^.*\.sh$' <<< "$1"; then
 						msg
 						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should not end with '.sh'.${RST}"
 						msg
