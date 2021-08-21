@@ -155,6 +155,20 @@ command_install() {
 						return 1
 					fi
 
+					if ! grep -qP '^[a-z0-9._+-]+$' <<< "$1"; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should be lowercase and can contain only alphanumeric characters and these symbols '._+-'.${RST}"
+						msg
+						return 1
+					fi
+
+					if ! grep -qP '^.*\.sh$' <<< "$1"; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should not end with '.sh'.${RST}"
+						msg
+						return 1
+					fi
+
 					override_alias="$1"
 				else
 					msg
