@@ -395,7 +395,8 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/opensuse-x86_64-pd-${CURREN
 EOF
 
 # Ubuntu (20.04).
-printf "\n[*] Building Ubuntu...\n"
+ubuntu_version="hirsute"
+printf "\n[*] Building Ubuntu (${ubuntu_version})...\n"
 for arch in arm64 armhf amd64; do
 	sudo mmdebstrap \
 		--architectures=${arch} \
@@ -403,7 +404,7 @@ for arch in arm64 armhf amd64; do
 		--components="main,universe,multiverse" \
 		--include="dbus-user-session,systemd,gvfs-daemons,libsystemd0,systemd-sysv,udisks2" \
 		--format=tar \
-		focal \
+		"${ubuntu_version}" \
 		"${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
 	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
 	xz "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
@@ -414,7 +415,7 @@ cat <<- EOF > "${PLUGIN_DIR}/ubuntu.sh"
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Ubuntu (20.04)"
+DISTRO_NAME="Ubuntu (${ubuntu_version})"
 
 TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/ubuntu-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
