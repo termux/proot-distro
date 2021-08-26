@@ -31,7 +31,7 @@ Here are the supported distributions:
 * Fedora 34
 * Gentoo
 * OpenSUSE (Tumbleweed)
-* Ubuntu (20.04)
+* Ubuntu (21.04)
 * Void Linux
 
 All systems come in a bare-minumum variant, typically consisting of package
