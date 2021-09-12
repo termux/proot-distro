@@ -10,10 +10,12 @@ if [ "$(uname -o)" = "Android" ]; then
 	exit 1
 fi
 
-if [ -z "$(command -v sudo)" ]; then
-	echo "[!] 'sudo' is not installed."
-	exit 1
-fi
+for i in curl git mmdebstrap sudo tar xz; do
+	if [ -z "$(command -v "$i")" ]; then
+		echo "[!] '$i' is not installed."
+		exit 1
+	fi
+done
 
 # Where to put generated plug-ins.
 PLUGIN_DIR=$(dirname "$(realpath "$0")")/distro-plugins
