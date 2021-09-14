@@ -484,14 +484,20 @@ run_proot_cmd() {
 			return 1
 		fi
 
-		if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}" ]; then
-			msg
-			msg "${BRED}Error: package 'qemu-user-${DISTRO_ARCH/i686/i386}' is not installed.${RST}"
-			msg
-			return 1
-		fi
+		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
+		# Everything else requires emulator (QEMU).
+		if ! [ "$DEVICE_CPU_ARCH" = "aarch64" ] && [ "$DISTRO_ARCH" = "arm" ] || \
+			! [ "$DEVICE_CPU_ARCH" = "x86_64" ] && [ "$DISTRO_ARCH" = "i686" ]; then
 
-		qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}"
+			if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}" ]; then
+				msg
+				msg "${BRED}Error: package 'qemu-user-${DISTRO_ARCH/i686/i386}' is not installed.${RST}"
+				msg
+				return 1
+			fi
+
+			qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}"
+		fi
 	fi
 
 	proot \
@@ -1057,14 +1063,20 @@ command_login() {
 				return 1
 			fi
 
-			if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${target_arch/i686/i386}" ]; then
-				msg
-				msg "${BRED}Error: package 'qemu-user-${target_arch/i686/i386}' is not installed.${RST}"
-				msg
-				return 1
-			fi
+			# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
+			# Everything else requires emulator (QEMU).
+			if ! [ "$DEVICE_CPU_ARCH" = "aarch64" ] && [ "$DISTRO_ARCH" = "arm" ] || \
+				! [ "$DEVICE_CPU_ARCH" = "x86_64" ] && [ "$DISTRO_ARCH" = "i686" ]; then
 
-			set -- "-q" "@TERMUX_PREFIX@/bin/qemu-${target_arch/i686/i386}" "$@"
+				if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${target_arch/i686/i386}" ]; then
+					msg
+					msg "${BRED}Error: package 'qemu-user-${target_arch/i686/i386}' is not installed.${RST}"
+					msg
+					return 1
+				fi
+
+				set -- "-q" "@TERMUX_PREFIX@/bin/qemu-${target_arch/i686/i386}" "$@"
+			fi
 		fi
 
 		if ! $no_kill_on_exit; then
