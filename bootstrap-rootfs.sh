@@ -84,8 +84,8 @@ for arch in aarch64 armv7 x86 x86_64; do
 	mount --bind /dev "${WORKDIR}/alpine-$(translate_arch "$arch")/dev"
 	mount --bind /proc "${WORKDIR}/alpine-$(translate_arch "$arch")/proc"
 	mount --bind /sys "${WORKDIR}/alpine-$(translate_arch "$arch")/sys"
-	echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
-	echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
+	echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
+	echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
 	chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk upgrade
 	chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" ln -sf /var/cache/apk /etc/apk/cache
 	EOF
