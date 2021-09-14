@@ -63,7 +63,7 @@ cd "$WORKDIR"
 
 # Alpine Linux.
 printf "\n[*] Building Alpine Linux...\n"
-version="3.14.1"
+version="3.14.2"
 for arch in aarch64 armv7 x86 x86_64; do
 	curl --fail --location \
 		--output "${WORKDIR}/alpine-minirootfs-${version}-${arch}.tar.gz" \
@@ -84,7 +84,10 @@ for arch in aarch64 armv7 x86 x86_64; do
 	mount --bind /dev "${WORKDIR}/alpine-$(translate_arch "$arch")/dev"
 	mount --bind /proc "${WORKDIR}/alpine-$(translate_arch "$arch")/proc"
 	mount --bind /sys "${WORKDIR}/alpine-$(translate_arch "$arch")/sys"
+	echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
+	echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
 	chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk upgrade
+	chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" ln -sf /var/cache/apk /etc/apk/cache
 	EOF
 
 	sudo rm -f "${WORKDIR:?}/alpine-$(translate_arch "$arch")"/var/cache/apk/* || true
@@ -100,7 +103,7 @@ cat <<- EOF > "${PLUGIN_DIR}/alpine.sh"
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Alpine Linux ($version)"
+DISTRO_NAME="Alpine Linux (edge)"
 
 TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
