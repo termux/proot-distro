@@ -1764,6 +1764,16 @@ case "$(uname -m)" in
 esac
 DISTRO_ARCH=$DEVICE_CPU_ARCH
 
+# Verify architecture if possible - avoid running under linux32 or similar.
+if [ -x "@TERMUX_PREFIX@/bin/dpkg" ]; then
+	if [ "$DEVICE_CPU_ARCH" != "$("@TERMUX_PREFIX@"/bin/dpkg --print-architecture)" ]; then
+		msg
+		msg "${BRED}CPU architecture reported by system doesn't match architecture of Termux packages. Make sure you are not using 'linux32' or similar utilities.${RST}"
+		msg
+		exit 1
+	fi
+fi
+
 declare -A TARBALL_URL TARBALL_SHA256
 declare -A SUPPORTED_DISTRIBUTIONS
 declare -A SUPPORTED_DISTRIBUTIONS_COMMENTS
