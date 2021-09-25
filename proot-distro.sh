@@ -1484,11 +1484,13 @@ command_backup() {
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving rootfs...${RST}"
 	if [ -n "$tarball_file_path" ]; then
 		tar -c --auto-compress \
+			--warning=no-file-ignored \
 			-f "$tarball_file_path" \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
 	else
 		tar -c \
+			--warning=no-file-ignored \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
 	fi
