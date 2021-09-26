@@ -6,9 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        You can check supported distributions by running command `proot-distro list`. If you have not found the desired one, you can request it.
-
-        Requests of distributions that assist hacking will be rejected without feedback.
+        You may request a distribution that is not present in `proot-distro list`. Please note that non-standard distributions like "Gentoo Prefix" as well as distributions that assist hacking will be rejected.
   - type: textarea
     attributes:
       label: Description

@@ -6,9 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        This is a bug tracker of the PRoot Distro - a Bash script wrapper for `proot`. Submit reports about the issues you have encountered when using this software or belive that it doesn't work properly.
+        This is a bug tracker of the PRoot Distro - a Bash script utility for managing distribution rootfs for use with PRoot.
 
-        Do not submit `proot` issues there. They should be reported at https://github.com/termux/proot/issues.
+        **NOTE**: crashes, package installation issues and other distribution runtime bugs ARE NOT issues of PRoot Distro and will not be reviewed/fixed.
 
         Be patient, do not expect that issue could get resolved immediately.
   - type: textarea
