@@ -19,3 +19,10 @@ body:
   - type: input
     attributes:
       label: Root file system archive URL
+  - type: checkboxes
+    attributes:
+      label: Is requested distribution has support for AArch64 (ARM64) and ARM CPUs?
+      description: Distributions not supporting at least AArch64 and ARM devices are not eligible for PRoot Distro support. Please provide the true answer as otherwise issue will be closed without feedback.
+      options:
+        - label: Yes, distribution supports AArch64 and ARM.
+          required: true
