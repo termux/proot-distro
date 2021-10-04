@@ -18,7 +18,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="2.6.2"
+PROGRAM_VERSION="2.6.3"
 
 #############################################################################
 #
