@@ -486,8 +486,8 @@ run_proot_cmd() {
 
 		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 		# Everything else requires emulator (QEMU).
-		if ! [ "$DEVICE_CPU_ARCH" = "aarch64" ] && [ "$DISTRO_ARCH" = "arm" ] || \
-			! [ "$DEVICE_CPU_ARCH" = "x86_64" ] && [ "$DISTRO_ARCH" = "i686" ]; then
+		if ! ( [ "$DEVICE_CPU_ARCH" = "aarch64" ] && [ "$DISTRO_ARCH" = "arm" ] ) || \
+			! ( [ "$DEVICE_CPU_ARCH" = "x86_64" ] && [ "$DISTRO_ARCH" = "i686" ] ); then
 
 			if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}" ]; then
 				msg
