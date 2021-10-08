@@ -378,7 +378,7 @@ command_install() {
 		export COLORTERM=${COLORTERM-}
 		export DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}
 		export EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}
-		export LANG=C.UTF-8
+		[ -z "\$LANG" ] && export LANG=C.UTF-8
 		export PATH=\${PATH}:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin
 		export PREFIX=${PREFIX-/data/data/com.termux/files/usr}
 		export TERM=${TERM-xterm-256color}
