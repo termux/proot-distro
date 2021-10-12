@@ -477,26 +477,38 @@ run_proot_cmd() {
 
 	local qemu_arg=""
 	if [ "$DISTRO_ARCH" != "$DEVICE_CPU_ARCH" ]; then
-		if ! [[ "$DISTRO_ARCH" =~ ^(aarch64|arm|i686|x86_64)$ ]]; then
-			msg
-			msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
-			msg
-			return 1
-		fi
+		local qemu_bin_path=""
 
 		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 		# Everything else requires emulator (QEMU).
-		if ! ( [ "$DEVICE_CPU_ARCH" = "aarch64" ] && [ "$DISTRO_ARCH" = "arm" ] ) || \
-			! ( [ "$DEVICE_CPU_ARCH" = "x86_64" ] && [ "$DISTRO_ARCH" = "i686" ] ); then
-
-			if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}" ]; then
+		case "$DISTRO_ARCH" in
+			aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+			arm)
+				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+				fi
+				;;
+			i686)
+				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
+					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+				fi
+				;;
+			x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+			*)
 				msg
-				msg "${BRED}Error: package 'qemu-user-${DISTRO_ARCH/i686/i386}' is not installed.${RST}"
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
 				msg
 				return 1
-			fi
+			;;
+		esac
 
-			qemu_arg="-q @TERMUX_PREFIX@/bin/qemu-${DISTRO_ARCH/i686/i386}"
+		if [ -e "$qemu_bin_path" ]; then
+			qemu_arg="-q ${qemu_bin_path}"
+		else
+			msg
+			msg "${BRED}Error: package 'qemu-user-${DISTRO_ARCH/i686/i386}' is not installed.${RST}"
+			msg
+			return 1
 		fi
 	fi
 
@@ -1054,28 +1066,44 @@ command_login() {
 			return 1
 		fi
 
-		if [ "$DEVICE_CPU_ARCH" != "$target_arch" ]; then
+		if [ "$DISTRO_ARCH" != "$DEVICE_CPU_ARCH" ]; then
+			local qemu_bin_path=""
 			need_qemu=true
-			if ! [[ "$target_arch" =~ ^(aarch64|arm|i686|x86_64)$ ]]; then
-				msg
-				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
-				msg
-				return 1
-			fi
 
 			# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 			# Everything else requires emulator (QEMU).
-			if ! ( [ "$DEVICE_CPU_ARCH" = "aarch64" ] && [ "$DISTRO_ARCH" = "arm" ] ) || \
-				! ( [ "$DEVICE_CPU_ARCH" = "x86_64" ] && [ "$DISTRO_ARCH" = "i686" ] ); then
-
-				if [ ! -e "@TERMUX_PREFIX@/bin/qemu-${target_arch/i686/i386}" ]; then
+			case "$DISTRO_ARCH" in
+				aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+				arm)
+					if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+						qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+					else
+						need_qemu=false
+					fi
+					;;
+				i686)
+					if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
+						qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+					else
+						need_qemu=false
+					fi
+					;;
+				x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+				*)
 					msg
-					msg "${BRED}Error: package 'qemu-user-${target_arch/i686/i386}' is not installed.${RST}"
+					msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
 					msg
 					return 1
-				fi
+				;;
+			esac
 
-				set -- "-q" "@TERMUX_PREFIX@/bin/qemu-${target_arch/i686/i386}" "$@"
+			if [ -e "$qemu_bin_path" ]; then
+				set -- "-q" "$qemu_bin_path" "$@"
+			else
+				msg
+				msg "${BRED}Error: package 'qemu-user-${DISTRO_ARCH/i686/i386}' is not installed.${RST}"
+				msg
+				return 1
 			fi
 		fi
 
