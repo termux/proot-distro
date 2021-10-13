@@ -380,7 +380,6 @@ command_install() {
 		export EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}
 		[ -z "\$LANG" ] && export LANG=C.UTF-8
 		export PATH=\${PATH}:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin
-		export PREFIX=${PREFIX-@TERMUX_PREFIX@}
 		export TERM=${TERM-xterm-256color}
 		export TMPDIR=/tmp
 		export PULSE_SERVER=127.0.0.1
