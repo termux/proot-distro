@@ -495,7 +495,7 @@ run_proot_cmd() {
 			x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
 			*)
 				msg
-				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '$DISTRO_ARCH'. Valid values are: aarch64, arm, i686, x86_64."
 				msg
 				return 1
 			;;
@@ -1093,13 +1093,13 @@ command_login() {
 			return 1
 		fi
 
-		if [ "$DISTRO_ARCH" != "$DEVICE_CPU_ARCH" ]; then
+		if [ "$target_arch" != "$DEVICE_CPU_ARCH" ]; then
 			local qemu_bin_path=""
 			need_qemu=true
 
 			# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 			# Everything else requires emulator (QEMU).
-			case "$DISTRO_ARCH" in
+			case "$target_arch" in
 				aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 				arm)
 					if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
@@ -1129,12 +1129,12 @@ command_login() {
 					set -- "-q" "$qemu_bin_path" "$@"
 				else
 					local qemu_user_pkg=""
-					case "$DISTRO_ARCH" in
+					case "$target_arch" in
 						aarch64) qemu_user_pkg="qemu-user-aarch64";;
 						arm) qemu_user_pkg="qemu-user-arm";;
 						i686) qemu_user_pkg="qemu-user-i386";;
 						x86_64) qemu_user_pkg="qemu-user-x86-64";;
-						*) qemu_user_pkg="qemu-user-${DISTRO_ARCH}";;
+						*) qemu_user_pkg="qemu-user-$target_arch";;
 					esac
 
 					msg
