@@ -379,8 +379,8 @@ command_install() {
 		export DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}
 		export EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}
 		[ -z "\$LANG" ] && export LANG=C.UTF-8
-		export PATH=\${PATH}:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin
-		export PREFIX=${PREFIX-/data/data/com.termux/files/usr}
+		export PATH=\${PATH}:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin
+		export PREFIX=${PREFIX-@TERMUX_PREFIX@}
 		export TERM=${TERM-xterm-256color}
 		export TMPDIR=/tmp
 		export PULSE_SERVER=127.0.0.1
@@ -527,7 +527,7 @@ run_proot_cmd() {
 		if [ -e "/linkerconfig/ld.config.txt" ]; then
 			qemu_arg="${qemu_arg} --bind=/linkerconfig/ld.config.txt"
 		fi
-		qemu_arg="${qemu_arg} --bind=/data/data/com.termux/files/usr"
+		qemu_arg="${qemu_arg} --bind=@TERMUX_PREFIX@"
 		qemu_arg="${qemu_arg} --bind=/system"
 		qemu_arg="${qemu_arg} --bind=/vendor"
 		if [ -f "/plat_property_contexts" ]; then
@@ -1220,7 +1220,7 @@ command_login() {
 		if ! $isolated_environment; then
 			set -- "--bind=/data/dalvik-cache" "$@"
 			set -- "--bind=/data/data/com.termux/cache" "$@"
-			set -- "--bind=/data/data/com.termux/files/home" "$@"
+			set -- "--bind=@TERMUX_HOME@" "$@"
 			set -- "--bind=/storage" "$@"
 			set -- "--bind=/storage/self/primary:/sdcard" "$@"
 		fi
@@ -1233,7 +1233,7 @@ command_login() {
 			if [ -e "/linkerconfig/ld.config.txt" ]; then
 				set -- "--bind=/linkerconfig/ld.config.txt" "$@"
 			fi
-			set -- "--bind=/data/data/com.termux/files/usr" "$@"
+			set -- "--bind=@TERMUX_PREFIX@" "$@"
 			set -- "--bind=/system" "$@"
 			set -- "--bind=/vendor" "$@"
 			if [ -f "/plat_property_contexts" ]; then
