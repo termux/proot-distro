@@ -520,6 +520,24 @@ run_proot_cmd() {
 		fi
 	fi
 
+	if [ -n "$qemu_arg" ]; then
+		if [ -d "/apex" ]; then
+			qemu_arg="${qemu_arg} --bind=/apex"
+		fi
+		if [ -e "/linkerconfig/ld.config.txt" ]; then
+			qemu_arg="${qemu_arg} --bind=/linkerconfig/ld.config.txt"
+		fi
+		qemu_arg="${qemu_arg} --bind=/data/data/com.termux/files/usr"
+		qemu_arg="${qemu_arg} --bind=/system"
+		qemu_arg="${qemu_arg} --bind=/vendor"
+		if [ -f "/plat_property_contexts" ]; then
+			qemu_arg="${qemu_arg} --bind=/plat_property_contexts"
+		fi
+		if [ -f "/property_contexts" ]; then
+			qemu_arg="${qemu_arg} --bind=/property_contexts"
+		fi
+	fi
+
 	proot \
 		$qemu_arg -L \
 		--kernel-release=5.4.0-faked \
