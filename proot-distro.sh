@@ -501,21 +501,23 @@ run_proot_cmd() {
 			;;
 		esac
 
-		if [ -e "$qemu_bin_path" ]; then
-			qemu_arg="-q ${qemu_bin_path}"
-		else
-			local qemu_user_pkg=""
-			case "$DISTRO_ARCH" in
-				aarch64) qemu_user_pkg="qemu-user-aarch64";;
-				arm) qemu_user_pkg="qemu-user-arm";;
-				i686) qemu_user_pkg="qemu-user-i386";;
-				x86_64) qemu_user_pkg="qemu-user-x86-64";;
-				*) qemu_user_pkg="qemu-user-${DISTRO_ARCH}";;
-			esac
-			msg
-			msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
-			msg
-			return 1
+		if [ -n "$qemu_bin_path" ]; then
+			if [ -x "$qemu_bin_path" ]; then
+				qemu_arg="-q ${qemu_bin_path}"
+			else
+				local qemu_user_pkg=""
+				case "$DISTRO_ARCH" in
+					aarch64) qemu_user_pkg="qemu-user-aarch64";;
+					arm) qemu_user_pkg="qemu-user-arm";;
+					i686) qemu_user_pkg="qemu-user-i386";;
+					x86_64) qemu_user_pkg="qemu-user-x86-64";;
+					*) qemu_user_pkg="qemu-user-${DISTRO_ARCH}";;
+				esac
+				msg
+				msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
+				msg
+				return 1
+			fi
 		fi
 	fi
 
@@ -1122,22 +1124,24 @@ command_login() {
 				;;
 			esac
 
-			if [ -e "$qemu_bin_path" ]; then
-				set -- "-q" "$qemu_bin_path" "$@"
-			else
-				local qemu_user_pkg=""
-				case "$DISTRO_ARCH" in
-					aarch64) qemu_user_pkg="qemu-user-aarch64";;
-					arm) qemu_user_pkg="qemu-user-arm";;
-					i686) qemu_user_pkg="qemu-user-i386";;
-					x86_64) qemu_user_pkg="qemu-user-x86-64";;
-					*) qemu_user_pkg="qemu-user-${DISTRO_ARCH}";;
-				esac
+			if [ -n "$qemu_bin_path" ]; then
+				if [ -x "$qemu_bin_path" ]; then
+					set -- "-q" "$qemu_bin_path" "$@"
+				else
+					local qemu_user_pkg=""
+					case "$DISTRO_ARCH" in
+						aarch64) qemu_user_pkg="qemu-user-aarch64";;
+						arm) qemu_user_pkg="qemu-user-arm";;
+						i686) qemu_user_pkg="qemu-user-i386";;
+						x86_64) qemu_user_pkg="qemu-user-x86-64";;
+						*) qemu_user_pkg="qemu-user-${DISTRO_ARCH}";;
+					esac
 
-				msg
-				msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
-				msg
-				return 1
+					msg
+					msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
+					msg
+					return 1
+				fi
 			fi
 		fi
 
