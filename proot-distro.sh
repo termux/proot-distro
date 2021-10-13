@@ -1219,7 +1219,7 @@ command_login() {
 		# to Android and Termux so user can interact with host file system.
 		if ! $isolated_environment; then
 			set -- "--bind=/data/dalvik-cache" "$@"
-			set -- "--bind=/data/data/com.termux/cache" "$@"
+			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
 			set -- "--bind=@TERMUX_HOME@" "$@"
 			set -- "--bind=/storage" "$@"
 			set -- "--bind=/storage/self/primary:/sdcard" "$@"
@@ -1353,7 +1353,7 @@ command_login_help() {
 	msg
 	msg "  ${CYAN}* ${YELLOW}/apex ${CYAN}(only Android 10+)${RST}"
 	msg "  ${CYAN}* ${YELLOW}/data/dalvik-cache${RST}"
-	msg "  ${CYAN}* ${YELLOW}/data/data/com.termux${RST}"
+	msg "  ${CYAN}* ${YELLOW}/data/data/@TERMUX_APP_PACKAGE@${RST}"
 	msg "  ${CYAN}* ${YELLOW}/sdcard${RST}"
 	msg "  ${CYAN}* ${YELLOW}/storage${RST}"
 	msg "  ${CYAN}* ${YELLOW}/system${RST}"
