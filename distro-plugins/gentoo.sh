@@ -14,14 +14,18 @@ TARBALL_SHA256['x86_64']="9bdefd5dd3eed63ace9416de9c75b3c9d0ca5d3f37abc0fb23af1c
 
 distro_setup() {
         if [ "$DISTRO_ARCH" = "aarch64" ]; then
-	run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
-	run_proot_cmd tar -C /data/data/com.termux/files/home -xf prefix-stage3-arm64-latest.tar.xz
-          run_proot_cmd mv /usr/bin/patch /usr/bin/patch.bk
-          run_proot_cmd rm -f /usr/bin/patch
-          run_proot_cmd mv /data/data/com.termux/files/home/gentoo64/usr/bin/patch /usr/bin/patch
-          run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
-          run_proot_cmd emerge -v1 patch
-          run_proot_cmd rm /usr/bin/patch.bk
-          run_proot_cmd rm -rf /data/data/com.termux/files/home/gentoo64
+	  run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
+	  run_proot_cmd tar -C /data/data/com.termux/files/home -xf prefix-stage3-arm64-latest.tar.xz
+            run_proot_cmd mv /usr/bin/patch /usr/bin/patch.bk
+            run_proot_cmd rm -f /usr/bin/patch
+            run_proot_cmd mv /data/data/com.termux/files/home/gentoo64/usr/bin/patch /usr/bin/patch
+            run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
+            run_proot_cmd emerge -v1 patch
+            run_proot_cmd rm /usr/bin/patch.bk
+            run_proot_cmd rm -rf /data/data/com.termux/files/home/gentoo64
+        else
+          run_proot_cmd emerge webrsync
+          run_proot_cmd echo "USE+=\" vanilla -xattr\""
+          run_proot_cmd emerge --verbose --update --deep --newuse @world
         fi
 }
