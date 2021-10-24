@@ -7,5 +7,5 @@ TARBALL_SHA256['arm']="365c4483fbef46624381c2f34a4e49080f8930564ba984971b56b3730
 distro_setup() {
         run_proot_cmd echo "deb [trusted=yes]  http://http.kali.org/kali kali-rolling main contrib non-free" > /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/etc/apt/sources.list
         run_proot_cmd echo "#deb-src [trusted=yes]  http://http.kali.org/kali kali-rolling main non-free contrib"  >> /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/etc/apt/sources.list
-        run_proot_cmd echo "apt update && apt install gnupg dialog apt-utils -y && apt-key adv --keyserver  http://keyserver.ubuntu.com --recv-keys ED444FF07D8D0BF6"  > /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/root/fix.sh	
+        run_proot_cmd echo "apt update && apt install gnupg dialog apt-utils -y && curl https://raw.githubusercontent.com/BDhackers009/nethunter-rootfs-termux/main/gpg.key -o gpg.key && apt-key add gpg.key && rm gpg.key"  > /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/root/fix.sh	
 }
