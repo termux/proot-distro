@@ -16,16 +16,10 @@ distro_setup() {
         if [ "$DISTRO_ARCH" = "aarch64" ]; then
 	  run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
 	  run_proot_cmd tar -C /data/data/com.termux/files/home -xf prefix-stage3-arm64-latest.tar.xz
-            run_proot_cmd mv /usr/bin/patch /usr/bin/patch.bk
             run_proot_cmd rm -f /usr/bin/patch
             run_proot_cmd mv /data/data/com.termux/files/home/gentoo64/usr/bin/patch /usr/bin/patch
             run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
             run_proot_cmd emerge -v1 patch
-            run_proot_cmd rm /usr/bin/patch.bk
-            run_proot_cmd rm -rf /data/data/com.termux/files/home/gentoo64
-        else
-          run_proot_cmd emerge webrsync
-          run_proot_cmd echo "USE+=\" vanilla -xattr\""
-          run_proot_cmd emerge --update --deep --newuse @world
+            rm -rf /data/data/com.termux/files/home/gentoo64
         fi
 }
