@@ -26,6 +26,6 @@ distro_setup() {
         else
           run_proot_cmd emerge webrsync
           run_proot_cmd echo "USE+=\" vanilla -xattr\""
-          run_proot_cmd emerge --verbose --update --deep --newuse @world
+          run_proot_cmd emerge --update --deep --newuse @world
         fi
 }
