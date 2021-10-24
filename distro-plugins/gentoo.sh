@@ -15,7 +15,7 @@ TARBALL_SHA256['x86_64']="9bdefd5dd3eed63ace9416de9c75b3c9d0ca5d3f37abc0fb23af1c
 distro_setup() {
         if [ "$DISTRO_ARCH" = "aarch64" ]; then
 	  run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
-	  run_proot_cmd tar -C /data/data/com.termux/files/home -xf prefix-stage3-arm64-latest.tar.xz
+	  run_proot_cmd tar -C /data/data/com.termux/files/home -xpf prefix-stage3-arm64-latest.tar.xz
             run_proot_cmd rm -f /usr/bin/patch
             run_proot_cmd mv /data/data/com.termux/files/home/gentoo64/usr/bin/patch /usr/bin/patch
             run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
@@ -23,7 +23,7 @@ distro_setup() {
             rm -rf /data/data/com.termux/files/home/gentoo64
         elif [ "$DISTRO_ARCH" = "arm" ]; then
 	  run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-armv7a_hardfp-latest.tar.xz
-	  run_proot_cmd tar -C /data/data/com.termux/files/home -xf prefix-stage3-armv7a_hardfp-latest.tar.xz
+	  run_proot_cmd tar -C /data/data/com.termux/files/home -xpf prefix-stage3-armv7a_hardfp-latest.tar.xz
             run_proot_cmd rm -f /usr/bin/patch
             run_proot_cmd mv /data/data/com.termux/files/home/gentoo/usr/bin/patch /usr/bin/patch
             run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
