@@ -295,10 +295,10 @@ EOF
 # Gentoo.
 printf "\n[*] Building Gentoo...\n"
 declare -A stage3_url
-stage3_url["arm64"]="https://mirror.init7.net/gentoo/releases/arm64/autobuilds/current-stage3-arm64/stage3-arm64-20210911T215140Z.tar.xz"
-stage3_url["armv7a"]="https://mirror.init7.net/gentoo/releases/arm/autobuilds/current-stage3-armv7a-openrc/stage3-armv7a-openrc-20210910T230631Z.tar.xz"
-stage3_url["i686"]="https://mirror.init7.net/gentoo/releases/x86/autobuilds/current-stage3-i686-openrc/stage3-i686-openrc-20210906T170555Z.tar.xz"
-stage3_url["amd64"]="https://mirror.init7.net/gentoo/releases/amd64/autobuilds/current-stage3-amd64-openrc/stage3-amd64-openrc-20210905T170549Z.tar.xz"
+stage3_url["arm64"]="https://mirror.init7.net/gentoo/releases/arm64/autobuilds/current-stage3-arm64/stage3-arm64-20211024T235216Z.tar.xz"
+stage3_url["armv7a"]="https://mirror.init7.net/gentoo/releases/arm/autobuilds/current-stage3-armv7a-openrc/stage3-armv7a-openrc-20211022T230635Z.tar.xz"
+stage3_url["i686"]="https://mirror.init7.net/gentoo/releases/x86/autobuilds/current-stage3-i686-openrc/stage3-i686-openrc-20211018T170551Z.tar.xz"
+stage3_url["amd64"]="https://mirror.init7.net/gentoo/releases/amd64/autobuilds/current-stage3-amd64-openrc/stage3-amd64-openrc-20211024T170536Z.tar.xz"
 
 for arch in arm64 armv7a i686 amd64; do
 	curl --fail --location \
