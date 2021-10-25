@@ -318,7 +318,6 @@ for arch in arm64 armv7a i686 amd64; do
 	mount --bind /sys "${WORKDIR}/gentoo-$(translate_arch "$arch")/sys"
 	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
 	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge-webrsync
-	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge --sync
 	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge -v1 patch
 	EOF
 	sudo tar -J -c \
