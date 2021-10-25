@@ -19,8 +19,6 @@ distro_setup() {
 		run_proot_cmd rm -f /gentoo-prefix.tar.xz
 		run_proot_cmd bash -c 'echo "USE=\"-xattr\"" >> /etc/portage/make.conf'
 		run_proot_cmd emerge-webrsync
-                run_proot_cmd emerge --sync || true #Spaces => Tabs (because GitHub web editor does not support Hacker's Keyboard's Tab)
-                run_proot_cmd emerge --sync #Read a previous string.
 		run_proot_cmd emerge -v1 patch
 	elif [ "$DISTRO_ARCH" = "arm" ]; then
 		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz 			https://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-armv7a_hardfp-latest.tar.xz
@@ -28,8 +26,6 @@ distro_setup() {
 		run_proot_cmd rm -f /gentoo-prefix.tar.xz
 		run_proot_cmd bash -c 'echo "USE=\"-xattr\"" >> /etc/portage/make.conf'
 		run_proot_cmd emerge-webrsync
-                run_proot_cmd emerge --sync || true #Spaces => Tabs (because GitHub web editor does not support Hacker's Keyboard's Tab)
-                run_proot_cmd emerge --sync #Read a previous string.
 		run_proot_cmd emerge -v1 patch
 	fi
 }
