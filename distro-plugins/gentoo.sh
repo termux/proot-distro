@@ -17,14 +17,14 @@ distro_setup() {
 		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz \
 			http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
 		run_proot_cmd tar -C / -xvpf /gentoo-prefix.tar.xz --strip-components=1 gentoo64/usr/bin/patch
-		run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
+		run_proot_cmd bash -c 'echo "USE+=\" -xattr\"" >> /etc/portage/make.conf'
 		run_proot_cmd emerge -v1 patch
 		run_proot_cmd rm -f /gentoo-prefix.tar.xz
 	elif [ "$DISTRO_ARCH" = "arm" ]; then
 		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz \
 			http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-armv7a_hardfp-latest.tar.xz
 		run_proot_cmd tar -C / -xvpf /gentoo-prefix.tar.xz --strip-components=1 gentoo/usr/bin/patch
-		run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
+		run_proot_cmd bash -c 'echo "USE+=\" -xattr\"" >> /etc/portage/make.conf'
 		run_proot_cmd emerge -v1 patch
 		run_proot_cmd rm -f /gentoo-prefix.tar.xz
 	fi
