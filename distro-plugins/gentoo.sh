@@ -11,3 +11,21 @@ TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v2
 TARBALL_SHA256['i686']="03f05d1a199144be7df5680fbb84d34f58ebad104020f9d1a33df481d33ec946"
 TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v2.4.0/gentoo-x86_64-pd-v2.4.0.tar.xz"
 TARBALL_SHA256['x86_64']="9bdefd5dd3eed63ace9416de9c75b3c9d0ca5d3f37abc0fb23af1cba50e774f3"
+
+distro_setup() {
+	if [ "$DISTRO_ARCH" = "aarch64" ]; then
+		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz \
+			http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
+		run_proot_cmd tar -C / -xvpf /gentoo-prefix.tar.xz --strip-components=1 gentoo64/usr/bin/patch
+		run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
+		run_proot_cmd emerge -v1 patch
+		run_proot_cmd rm -f /gentoo-prefix.tar.xz
+	elif [ "$DISTRO_ARCH" = "arm" ]; then
+		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz \
+			http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-armv7a_hardfp-latest.tar.xz
+		run_proot_cmd tar -C / -xvpf /gentoo-prefix.tar.xz --strip-components=1 gentoo/usr/bin/patch
+		run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
+		run_proot_cmd emerge -v1 patch
+		run_proot_cmd rm -f /gentoo-prefix.tar.xz
+	fi
+}
