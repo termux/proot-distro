@@ -307,19 +307,24 @@ for arch in arm64 armv7a i686 amd64; do
 	sudo tar -Jxp \
 		-f "${WORKDIR}/gentoo-stage3-${arch}.tar.xz" \
 		-C "${WORKDIR}/gentoo-$(translate_arch "$arch")"
-	cat <<- EOF | sudo unshare -mpf bash -e -
-	rm -f "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/resolv.conf"
-	echo "nameserver 1.1.1.1" > "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/resolv.conf"
-	echo "USE=\"-xattr\"" >> "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/portage/make.conf"
-	mkdir -p "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/portage/repos.conf"
-	mount --bind "${WORKDIR}/gentoo-$(translate_arch "$arch")/" "${WORKDIR}/gentoo-$(translate_arch "$arch")/"
-	mount --bind /dev "${WORKDIR}/gentoo-$(translate_arch "$arch")/dev"
-	mount --bind /proc "${WORKDIR}/gentoo-$(translate_arch "$arch")/proc"
-	mount --bind /sys "${WORKDIR}/gentoo-$(translate_arch "$arch")/sys"
-	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
-	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge-webrsync
-	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge -v1 patch
-	EOF
+
+	# For arm64 and armv7a fix will be executed on side of end user due to qemu issues.
+	if [ "$arch" != "arm64" ] && [ "$arch" != "armv7a" ]; then
+		cat <<- EOF | sudo unshare -mpf bash -e -
+		rm -f "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/resolv.conf"
+		echo "nameserver 1.1.1.1" > "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/resolv.conf"
+		echo "USE=\"-xattr\"" >> "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/portage/make.conf"
+		mkdir -p "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/portage/repos.conf"
+		mount --bind "${WORKDIR}/gentoo-$(translate_arch "$arch")/" "${WORKDIR}/gentoo-$(translate_arch "$arch")/"
+		mount --bind /dev "${WORKDIR}/gentoo-$(translate_arch "$arch")/dev"
+		mount --bind /proc "${WORKDIR}/gentoo-$(translate_arch "$arch")/proc"
+		mount --bind /sys "${WORKDIR}/gentoo-$(translate_arch "$arch")/sys"
+		chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
+		chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge-webrsync
+		chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge -v1 patch
+		EOF
+	fi
+
 	sudo tar -J -c \
 		-f "${ROOTFS_DIR}/gentoo-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 		-C "$WORKDIR" \
@@ -328,7 +333,7 @@ for arch in arm64 armv7a i686 amd64; do
 done
 unset stage3_url arch
 
-cat <<- EOF > "${PLUGIN_DIR}/gentoo.sh"
+cat << EOF > "${PLUGIN_DIR}/gentoo.sh"
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
@@ -342,6 +347,28 @@ TARBALL_URL['i686']="${GIT_RELEASE_URL}/gentoo-i686-pd-${CURRENT_VERSION}.tar.xz
 TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/gentoo-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/gentoo-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/gentoo-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+
+distro_setup() {
+	if [ "\$DISTRO_ARCH" = "aarch64" ]; then
+		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz \
+			https://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
+		run_proot_cmd tar -C / -xvpf /gentoo-prefix.tar.xz --strip-components=1 gentoo64/usr/bin/patch
+		run_proot_cmd rm -f /gentoo-prefix.tar.xz
+		run_proot_cmd bash -c 'echo "USE=\"-xattr\"" >> /etc/portage/make.conf'
+		run_proot_cmd emerge-webrsync
+		run_proot_cmd emerge --sync
+		run_proot_cmd emerge -v1 patch
+	elif [ "\$DISTRO_ARCH" = "arm" ]; then
+		run_proot_cmd curl --fail --location --output /gentoo-prefix.tar.xz \
+			https://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-armv7a_hardfp-latest.tar.xz
+		run_proot_cmd tar -C / -xvpf /gentoo-prefix.tar.xz --strip-components=1 gentoo/usr/bin/patch
+		run_proot_cmd rm -f /gentoo-prefix.tar.xz
+		run_proot_cmd bash -c 'echo "USE=\"-xattr\"" >> /etc/portage/make.conf'
+		run_proot_cmd emerge-webrsync
+		run_proot_cmd emerge --sync
+		run_proot_cmd emerge -v1 patch
+	fi
+}
 EOF
 unset version
 
