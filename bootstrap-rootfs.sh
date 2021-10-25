@@ -293,7 +293,6 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/fedora-x86_64-pd-${CURRENT_
 EOF
 
 # Gentoo.
-# Repack only.
 printf "\n[*] Building Gentoo...\n"
 declare -A stage3_url
 stage3_url["arm64"]="https://mirror.init7.net/gentoo/releases/arm64/autobuilds/current-stage3-arm64/stage3-arm64-20210911T215140Z.tar.xz"
@@ -308,6 +307,20 @@ for arch in arm64 armv7a i686 amd64; do
 	sudo tar -Jxp \
 		-f "${WORKDIR}/gentoo-stage3-${arch}.tar.xz" \
 		-C "${WORKDIR}/gentoo-$(translate_arch "$arch")"
+	cat <<- EOF | sudo unshare -mpf bash -e -
+	rm -f "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/resolv.conf"
+	echo "nameserver 1.1.1.1" > "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/resolv.conf"
+	echo "USE=\"-xattr\"" >> "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/portage/make.conf"
+	mkdir -p "${WORKDIR}/gentoo-$(translate_arch "$arch")/etc/portage/repos.conf"
+	mount --bind "${WORKDIR}/gentoo-$(translate_arch "$arch")/" "${WORKDIR}/gentoo-$(translate_arch "$arch")/"
+	mount --bind /dev "${WORKDIR}/gentoo-$(translate_arch "$arch")/dev"
+	mount --bind /proc "${WORKDIR}/gentoo-$(translate_arch "$arch")/proc"
+	mount --bind /sys "${WORKDIR}/gentoo-$(translate_arch "$arch")/sys"
+	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
+	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge-webrsync
+	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge --sync
+	chroot "${WORKDIR}/gentoo-$(translate_arch "$arch")" emerge -v1 patch
+	EOF
 	sudo tar -J -c \
 		-f "${ROOTFS_DIR}/gentoo-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 		-C "$WORKDIR" \
