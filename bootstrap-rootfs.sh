@@ -293,6 +293,9 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/fedora-x86_64-pd-${CURRENT_
 EOF
 
 # Gentoo.
+# This script is disabled.
+
+:'
 printf "\n[*] Building Gentoo...\n"
 declare -A stage3_url
 stage3_url["arm64"]="https://mirror.init7.net/gentoo/releases/arm64/autobuilds/current-stage3-arm64/stage3-arm64-20211024T235216Z.tar.xz"
@@ -371,6 +374,7 @@ distro_setup() {
 }
 EOF
 unset version
+'
 
 # OpenSUSE.
 # Extracting from Docker image.
