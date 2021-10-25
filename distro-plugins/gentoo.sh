@@ -17,17 +17,17 @@ distro_setup() {
 	  run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-arm64-latest.tar.xz
 	  run_proot_cmd tar xpf prefix-stage3-arm64-latest.tar.xz
             run_proot_cmd rm -f /usr/bin/patch
-            run_proot_cmd mv ~/gentoo64/usr/bin/patch /usr/bin/patch
+            run_proot_cmd mv gentoo64/usr/bin/patch /usr/bin/patch
             run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
             run_proot_cmd emerge -v1 patch
-            run_proot_cmd rm -rf ~/gentoo64 ~/prefix-stage3-arm64-latest.tar.xz
+            run_proot_cmd rm -rf gentoo64/ prefix-stage3-arm64-latest.tar.xz
         elif [ "$DISTRO_ARCH" = "arm" ]; then
 	  run_proot_cmd curl -LO http://distfiles.gentoo.org/experimental/prefix/arm/prefix-stage3-armv7a_hardfp-latest.tar.xz
 	  run_proot_cmd tar xpf prefix-stage3-armv7a_hardfp-latest.tar.xz
             run_proot_cmd rm -f /usr/bin/patch
-            run_proot_cmd mv ~/gentoo/usr/bin/patch /usr/bin/patch
+            run_proot_cmd mv gentoo/usr/bin/patch /usr/bin/patch
             run_proot_cmd echo "USE+=\" -xattr\"" >> /etc/portage/make.conf
             run_proot_cmd emerge -v1 patch
-            run_proot_cmd rm -rf ~/gentoo ~/prefix-stage3-armv7a_hardfp-latest.tar.xz
+            run_proot_cmd rm -rf gentoo/ prefix-stage3-armv7a_hardfp-latest.tar.xz
         fi
 }
