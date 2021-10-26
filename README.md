@@ -29,7 +29,6 @@ Here are the supported distributions:
 * Arch Linux / Arch Linux 32 / Arch Linux ARM
 * Debian (stable)
 * Fedora 34
-* Gentoo
 * OpenSUSE (Tumbleweed)
 * Ubuntu (21.04)
 * Void Linux
