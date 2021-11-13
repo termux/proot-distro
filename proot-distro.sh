@@ -1019,7 +1019,7 @@ command_login() {
 
 					if [ -z "$1" ]; then
 						msg
-						msg "${BRED}Error: argument to option '${YELLOW}--kernel-release${BRED}' should not be empty.${RST}"
+						msg "${BRED}Error: argument to option '${YELLOW}--kernel${BRED}' should not be empty.${RST}"
 						command_login_help
 						return 1
 					fi
