@@ -940,6 +940,7 @@ command_login() {
 	local make_host_tmp_shared=false
 	local distro_name=""
 	local login_user="root"
+	local fake_kernel_version="5.4.0-faked"
 	local -a custom_fs_bindings
 	local need_qemu=false
 
@@ -1005,6 +1006,25 @@ command_login() {
 					fi
 
 					login_user="$1"
+				else
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					command_login_help
+					return 1
+				fi
+				;;
+			--kernel)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--kernel-release${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
+					fake_kernel_version="$1"
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
@@ -1165,7 +1185,7 @@ command_login() {
 
 		# Some devices have old kernels and GNU libc refuses to work on them.
 		# Fix this behavior by reporting a fake up-to-date kernel version.
-		set -- "--kernel-release=5.4.0-faked" "$@"
+		set -- "--kernel-release=$fake_kernel_version" "$@"
 
 		# Fix lstat to prevent dpkg symlink size warnings
 		set -- "-L" "$@"
@@ -1318,6 +1338,10 @@ command_login_help() {
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	msg
 	msg "  ${GREEN}--user [user]        ${CYAN}- Login as specified user instead of 'root'.${RST}"
+	msg
+	msg "  ${GREEN}--kernel [kernel]    ${CYAN}- Set a custom kernel version to appear${RST}"
+	msg "                         ${CYAN}as current kernel.${RST}"
+	msg "                         ${CYAN}Default is '5.4.0-faked'.${RST}"
 	msg
 	msg "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	msg "                         ${CYAN}a higher port number.${RST}"
