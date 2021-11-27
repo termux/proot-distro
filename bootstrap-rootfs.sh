@@ -63,7 +63,7 @@ cd "$WORKDIR"
 
 # Alpine Linux.
 printf "\n[*] Building Alpine Linux...\n"
-version="3.14.2"
+version="3.15.0"
 for arch in aarch64 armv7 x86 x86_64; do
 	curl --fail --location \
 		--output "${WORKDIR}/alpine-minirootfs-${version}-${arch}.tar.gz" \
@@ -254,10 +254,10 @@ ${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
 EOF
 unset debian_dist_name
 
-# Fedora 34.
+# Fedora 35.
 # Repack only.
 printf "\n[*] Building Fedora...\n"
-version="34-1.2"
+version="35-1.2"
 for arch in aarch64 armhfp x86_64; do
 	curl --fail --location \
 		--output "${WORKDIR}/fedora-${version}-${arch}.tar.xz" \
@@ -359,8 +359,8 @@ TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/opensuse-x86_64-pd-${CURRENT_VERSION}.
 TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/opensuse-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 EOF
 
-# Ubuntu (20.04).
-ubuntu_version="hirsute"
+# Ubuntu (21.10).
+ubuntu_version="impish"
 printf "\n[*] Building Ubuntu (${ubuntu_version})...\n"
 for arch in arm64 armhf amd64; do
 	sudo mmdebstrap \
