@@ -1842,6 +1842,11 @@ for i in awk bzip2 curl find gzip proot sed tar xz; do
 done
 unset i
 
+# Notify user if tar available in PATH is not GNU tar.
+if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+	msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+fi
+
 # Determine a CPU architecture of device.
 case "$(uname -m)" in
 	# Note: armv8l means that device is running 32bit OS on 64bit CPU.
