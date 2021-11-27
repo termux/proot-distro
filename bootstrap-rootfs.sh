@@ -255,7 +255,6 @@ EOF
 unset debian_dist_name
 
 # Fedora 35.
-# Repack only.
 printf "\n[*] Building Fedora...\n"
 version="35-1.2"
 for arch in aarch64 armhfp x86_64; do
@@ -270,6 +269,17 @@ for arch in aarch64 armhfp x86_64; do
 	sudo mkdir -m 755 "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")"
 	sudo tar -xpf "${WORKDIR}/fedora-$(translate_arch "$arch")"/layer.tar \
 		-C "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")"
+
+	cat <<- EOF | sudo unshare -mpf bash -e -
+	rm -f "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
+	echo "nameserver 1.1.1.1" > "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
+	mount --bind "${WORKDIR}/manjaro-aarch64/" "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/"
+	mount --bind /dev "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/dev"
+	mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/proc"
+	mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/sys"
+	chroot "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")" yum upgrade -y
+	chroot "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")" yum install -y util-linux
+	EOF
 
 	sudo tar -Jcf "${ROOTFS_DIR}/fedora-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 		-C "${WORKDIR}/fedora-$(translate_arch "$arch")" \
@@ -293,7 +303,6 @@ TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/fedora-x86_64-pd-${CURRENT_
 EOF
 
 # Manjaro AArch64.
-# Repack only.
 printf "\n[*] Building Manjaro AArch64...\n"
 curl --fail --location \
 	--output "${WORKDIR}/manjaro-aarch64.tar.xz" \
