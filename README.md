@@ -16,7 +16,7 @@ before run and refuses to work if detected user id `0` (root).
 
 ***
 
-Issue reporting has been disabled: very few of them were truly useful for
+**Issue reporting has been disabled**: very few of them were truly useful for
 the project improvements. Other were related to the PRoot itself, requests of
 project design changes (i.e. "customization"), user-generated errors,
 misinterpreting (good example is [this sarchile project page](https://web.archive.org/web/20211101040225/https://github.com/Weeb-Linux/sarchile/wiki/Introduction))
