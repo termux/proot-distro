@@ -300,7 +300,7 @@ curl --fail --location \
 	"https://osdn.net/projects/manjaro-arm/storage/.rootfs/Manjaro-ARM-aarch64-latest.tar.gz"
 
 mkdir "${WORKDIR}/manjaro-aarch64"
-sudo tar -xpf \
+sudo tar -xp \
 	-f "${WORKDIR}/manjaro-aarch64.tar.xz" \
 	-C "${WORKDIR}/manjaro-aarch64"
 
