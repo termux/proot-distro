@@ -10,7 +10,7 @@ if [ "$(uname -o)" = "Android" ]; then
 	exit 1
 fi
 
-for i in curl git mmdebstrap sudo tar xz; do
+for i in curl git jq mmdebstrap sudo tar xz; do
 	if [ -z "$(command -v "$i")" ]; then
 		echo "[!] '$i' is not installed."
 		exit 1
