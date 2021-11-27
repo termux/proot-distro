@@ -4,8 +4,8 @@
 DISTRO_NAME="Fedora (35)"
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v2.8.0/fedora-aarch64-pd-v2.8.0.tar.xz"
-TARBALL_SHA256['aarch64']="7389c21f932fe0733fff53b044951b23871ebe012e471958e986cbb8cd1235cc"
+TARBALL_SHA256['aarch64']="a8ecd9b2bd5da8c2c37dddcc582cbe03fc02cd1956eaa9b2b6448f639af84756"
 TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v2.8.0/fedora-arm-pd-v2.8.0.tar.xz"
-TARBALL_SHA256['arm']="3874e636c04939256a2c26e1a29012d973e0590a34ae273b345eb1d0dc750cb5"
+TARBALL_SHA256['arm']="5a96c161cbeb37134de6fddc2b1aca9b7ca6d960121a595bdeba357663873eb6"
 TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v2.8.0/fedora-x86_64-pd-v2.8.0.tar.xz"
-TARBALL_SHA256['x86_64']="32fde1658617b72dde9ffbc9c2c02a81fb0f8d4523ccfd2d97616f636bd9a3ff"
+TARBALL_SHA256['x86_64']="e06dfcae987b0f23de7abd0a42bc3ea4eb68d75ad56ab2e8854e4029748c9f28"
