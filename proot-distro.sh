@@ -1062,9 +1062,27 @@ command_login() {
 				shell_command_args+=("'$i'")
 			done
 
-			set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
+			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" ]; then
+				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
+			else
+				msg "${BRED}Warning: no /bin/su available in rootfs!"
+				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
+					set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
+				else
+					set -- "/bin/sh" "-l" "-c" "${shell_command_args[*]}"
+				fi
+			fi
 		else
-			set -- "/bin/su" "-l" "$login_user"
+			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" ]; then
+				set -- "/bin/su" "-l" "$login_user"
+			else
+				msg "${BRED}Warning: no /bin/su available in rootfs!"
+				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
+					set -- "/bin/bash" "-l"
+				else
+					set -- "/bin/sh" "-l"
+				fi
+			fi
 		fi
 
 		# Setup the default environment as well as copy some variables
