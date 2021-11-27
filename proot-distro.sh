@@ -1065,7 +1065,7 @@ command_login() {
 			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" ]; then
 				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
 			else
-				msg "${BRED}Warning: no /bin/su available in rootfs!"
+				msg "${BRED}Warning: no /bin/su available in rootfs!${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
 					set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
 				else
@@ -1076,7 +1076,7 @@ command_login() {
 			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" ]; then
 				set -- "/bin/su" "-l" "$login_user"
 			else
-				msg "${BRED}Warning: no /bin/su available in rootfs!"
+				msg "${BRED}Warning: no /bin/su available in rootfs!${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
 					set -- "/bin/bash" "-l"
 				else
