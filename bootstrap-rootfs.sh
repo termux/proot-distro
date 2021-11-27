@@ -273,7 +273,6 @@ for arch in aarch64 armhfp x86_64; do
 	cat <<- EOF | sudo unshare -mpf bash -e -
 	rm -f "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
 	echo "nameserver 1.1.1.1" > "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
-	mount --bind "${WORKDIR}/manjaro-aarch64/" "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/"
 	mount --bind /dev "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/dev"
 	mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/proc"
 	mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/sys"
