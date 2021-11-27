@@ -332,7 +332,8 @@ for arch in arm64 arm 386 amd64; do
 	mount --bind /dev "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")/dev"
 	mount --bind /proc "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")/proc"
 	mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")/sys"
-	chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux
+	chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")" zypper dup || true
+	chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux || true
 	EOF
 
 	sudo tar -Jcf "${ROOTFS_DIR}/opensuse-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
