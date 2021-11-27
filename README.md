@@ -42,9 +42,10 @@ Here are the supported distributions:
 * Alpine Linux (edge)
 * Arch Linux / Arch Linux 32 / Arch Linux ARM
 * Debian (stable)
-* Fedora 34
+* Fedora 35
+* Manjaro AArch64
 * OpenSUSE (Tumbleweed)
-* Ubuntu (21.04)
+* Ubuntu (21.10)
 * Void Linux
 
 All systems come in a bare-minumum variant, typically consisting of package
