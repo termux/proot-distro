@@ -250,6 +250,13 @@ command_install() {
 	fi
 
 	if [ -f "${distro_plugin_script}" ]; then
+		# Notify user if tar available in PATH is not GNU tar.
+		if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+			msg
+			msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+			msg
+		fi
+
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
@@ -1524,6 +1531,13 @@ command_backup() {
 		return 1
 	fi
 
+	# Notify user if tar available in PATH is not GNU tar.
+	if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+		msg
+		msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+		msg
+	fi
+
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 	if [ -z "$tarball_file_path" ]; then
@@ -1645,6 +1659,13 @@ command_restore() {
 			command_restore_help
 			return 1
 		fi
+	fi
+
+	# Notify user if tar available in PATH is not GNU tar.
+	if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+		msg
+		msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+		msg
 	fi
 
 	local success
@@ -1841,11 +1862,6 @@ for i in awk bzip2 curl find gzip proot sed tar xz; do
 	fi
 done
 unset i
-
-# Notify user if tar available in PATH is not GNU tar.
-if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
-	msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
-fi
 
 # Determine a CPU architecture of device.
 case "$(uname -m)" in
