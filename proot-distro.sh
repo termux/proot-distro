@@ -1072,7 +1072,7 @@ command_login() {
 			if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" ]; then
 				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
 			else
-				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install util-linux package or equivalent.${RST}"
+				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
 					set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
 				else
@@ -1083,7 +1083,7 @@ command_login() {
 			if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" ]; then
 				set -- "/bin/su" "-l" "$login_user"
 			else
-				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install util-linux package or equivalent.${RST}"
+				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
 					set -- "/bin/bash" "-l"
 				else
