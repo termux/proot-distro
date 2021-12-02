@@ -53,6 +53,24 @@ manager, shell, coreutils, util-linux and few more. Extended functionality
 like shell completion or package install suggestions should be configured
 manually.
 
+## Known issues
+
+There is a number of issues that are not resolved.
+
+1. OpenSUSE installation: `zypper dup` will attempt to remove itself and
+   other essential packages.
+
+   It is unknown why this issue happens and how to fix it. This is not
+   problem of supplied rootfs. Under chroot it behaves normally. But when
+   it comes to (rootless only?) proot, the issue appears.
+
+   Even though distribution is completely broken, it won't be removed.
+
+2. Android 12: `WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"`
+
+   This warning may appear during installation of selected distribution.
+   Ignore it as it seem to be harmless.
+
 ## Installing
 
 With package manager:
