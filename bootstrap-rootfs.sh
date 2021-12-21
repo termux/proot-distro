@@ -10,7 +10,7 @@ if [ "$(uname -o)" = "Android" ]; then
 	exit 1
 fi
 
-for i in curl git mmdebstrap sudo tar xz; do
+for i in curl git jq mmdebstrap sudo tar xz; do
 	if [ -z "$(command -v "$i")" ]; then
 		echo "[!] '$i' is not installed."
 		exit 1
@@ -63,7 +63,7 @@ cd "$WORKDIR"
 
 # Alpine Linux.
 printf "\n[*] Building Alpine Linux...\n"
-version="3.14.2"
+version="3.15.0"
 for arch in aarch64 armv7 x86 x86_64; do
 	curl --fail --location \
 		--output "${WORKDIR}/alpine-minirootfs-${version}-${arch}.tar.gz" \
@@ -254,10 +254,9 @@ ${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
 EOF
 unset debian_dist_name
 
-# Fedora 34.
-# Repack only.
+# Fedora 35.
 printf "\n[*] Building Fedora...\n"
-version="34-1.2"
+version="35-1.2"
 for arch in aarch64 armhfp x86_64; do
 	curl --fail --location \
 		--output "${WORKDIR}/fedora-${version}-${arch}.tar.xz" \
@@ -270,6 +269,16 @@ for arch in aarch64 armhfp x86_64; do
 	sudo mkdir -m 755 "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")"
 	sudo tar -xpf "${WORKDIR}/fedora-$(translate_arch "$arch")"/layer.tar \
 		-C "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")"
+
+	cat <<- EOF | sudo unshare -mpf bash -e -
+	rm -f "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
+	echo "nameserver 1.1.1.1" > "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
+	mount --bind /dev "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/dev"
+	mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/proc"
+	mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/sys"
+	chroot "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")" yum upgrade -y
+	chroot "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")" yum install -y util-linux
+	EOF
 
 	sudo tar -Jcf "${ROOTFS_DIR}/fedora-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 		-C "${WORKDIR}/fedora-$(translate_arch "$arch")" \
@@ -292,46 +301,49 @@ TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/fedora-x86_64-pd-${CURRENT_VERSION}.ta
 TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/fedora-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 EOF
 
-# Gentoo.
-# Repack only.
-printf "\n[*] Building Gentoo...\n"
-declare -A stage3_url
-stage3_url["arm64"]="https://mirror.init7.net/gentoo/releases/arm64/autobuilds/current-stage3-arm64/stage3-arm64-20210911T215140Z.tar.xz"
-stage3_url["armv7a"]="https://mirror.init7.net/gentoo/releases/arm/autobuilds/current-stage3-armv7a-openrc/stage3-armv7a-openrc-20210910T230631Z.tar.xz"
-stage3_url["i686"]="https://mirror.init7.net/gentoo/releases/x86/autobuilds/current-stage3-i686-openrc/stage3-i686-openrc-20210906T170555Z.tar.xz"
-stage3_url["amd64"]="https://mirror.init7.net/gentoo/releases/amd64/autobuilds/current-stage3-amd64-openrc/stage3-amd64-openrc-20210905T170549Z.tar.xz"
+# Manjaro AArch64.
+printf "\n[*] Building Manjaro AArch64...\n"
+curl --fail --location \
+	--output "${WORKDIR}/manjaro-aarch64.tar.xz" \
+	"https://osdn.net/projects/manjaro-arm/storage/.rootfs/Manjaro-ARM-aarch64-latest.tar.gz"
 
-for arch in arm64 armv7a i686 amd64; do
-	curl --fail --location \
-		--output "${WORKDIR}/gentoo-stage3-${arch}.tar.xz" "${stage3_url["$arch"]}"
-	sudo mkdir -m 755 "${WORKDIR}/gentoo-$(translate_arch "$arch")"
-	sudo tar -Jxp \
-		-f "${WORKDIR}/gentoo-stage3-${arch}.tar.xz" \
-		-C "${WORKDIR}/gentoo-$(translate_arch "$arch")"
-	sudo tar -J -c \
-		-f "${ROOTFS_DIR}/gentoo-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-		-C "$WORKDIR" \
-		"gentoo-$(translate_arch "$arch")"
-	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/gentoo-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
-done
-unset stage3_url arch
+mkdir "${WORKDIR}/manjaro-aarch64"
+sudo tar -xp \
+	-f "${WORKDIR}/manjaro-aarch64.tar.xz" \
+	-C "${WORKDIR}/manjaro-aarch64"
 
-cat <<- EOF > "${PLUGIN_DIR}/gentoo.sh"
+cat <<- EOF | sudo unshare -mpf bash -e -
+rm -f "${WORKDIR}/manjaro-aarch64/etc/resolv.conf"
+echo "nameserver 1.1.1.1" > "${WORKDIR}/manjaro-aarch64/etc/resolv.conf"
+mount --bind "${WORKDIR}/manjaro-aarch64/" "${WORKDIR}/manjaro-aarch64/"
+mount --bind /dev "${WORKDIR}/manjaro-aarch64/dev"
+mount --bind /proc "${WORKDIR}/manjaro-aarch64/proc"
+mount --bind /sys "${WORKDIR}/manjaro-aarch64/sys"
+chroot "${WORKDIR}/manjaro-aarch64" pacman-key --init
+chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate manjaro
+chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate archlinuxarm
+chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate archlinux
+chroot "${WORKDIR}/manjaro-aarch64" pacman-mirrors -c poland
+chroot "${WORKDIR}/manjaro-aarch64" pacman -Syu --noconfirm
+chroot "${WORKDIR}/manjaro-aarch64" pacman -S --noconfirm util-linux
+EOF
+
+sudo rm -f "${WORKDIR:?}"/manjaro-aarch64/var/cache/pacman/pkg/* || true
+
+sudo tar -Jcf "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz" \
+	-C "${WORKDIR}/manjaro-aarch64" ./
+sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+
+cat <<- EOF > "${PLUGIN_DIR}/manjaro-aarch64.sh"
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Gentoo"
+DISTRO_NAME="Manjaro AArch64"
+DISTRO_COMMENT="Only for AArch64 hosts."
 
-TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/gentoo-aarch64-pd-${CURRENT_VERSION}.tar.xz"
-TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/gentoo-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-TARBALL_URL['arm']="${GIT_RELEASE_URL}/gentoo-arm-pd-${CURRENT_VERSION}.tar.xz"
-TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/gentoo-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-TARBALL_URL['i686']="${GIT_RELEASE_URL}/gentoo-i686-pd-${CURRENT_VERSION}.tar.xz"
-TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/gentoo-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/gentoo-x86_64-pd-${CURRENT_VERSION}.tar.xz"
-TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/gentoo-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 EOF
-unset version
 
 # OpenSUSE.
 # Extracting from Docker image.
@@ -373,7 +385,8 @@ for arch in arm64 arm 386 amd64; do
 	mount --bind /dev "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")/dev"
 	mount --bind /proc "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")/proc"
 	mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")/sys"
-	chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux
+	chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")" zypper dup || true
+	chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux || true
 	EOF
 
 	sudo tar -Jcf "${ROOTFS_DIR}/opensuse-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
@@ -399,8 +412,8 @@ TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/opensuse-x86_64-pd-${CURRENT_VERSION}.
 TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/opensuse-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 EOF
 
-# Ubuntu (20.04).
-ubuntu_version="hirsute"
+# Ubuntu (21.10).
+ubuntu_version="impish"
 printf "\n[*] Building Ubuntu (${ubuntu_version})...\n"
 for arch in arm64 armhf amd64; do
 	sudo mmdebstrap \

@@ -16,6 +16,20 @@ before run and refuses to work if detected user id `0` (root).
 
 ***
 
+**Issue reporting has been disabled**: very few of them were truly useful for
+the project improvements. Other were related to the PRoot itself, requests of
+project design changes (i.e. "customization"), user-generated errors,
+misinterpreting (good example is [this sarchile project page](https://web.archive.org/web/20211101040225/https://github.com/Weeb-Linux/sarchile/wiki/Introduction))
+the information stated in this readme document or lack of basic shell usage
+knowledge.
+
+Regarding design change requests: it is not possible to create project that
+will suitable for everyones needs. Of you disagree with specific implementation,
+feel free to make fork. Pull requests still accepted, so improvements which don't
+break functionality are welcome. Project is released under GNU GPL 3.0.
+
+***
+
 ## Supported distributions
 
 PRoot Distro provides support only one version of distribution types, i.e. one
@@ -28,10 +42,10 @@ Here are the supported distributions:
 * Alpine Linux (edge)
 * Arch Linux / Arch Linux 32 / Arch Linux ARM
 * Debian (stable)
-* Fedora 34
-* Gentoo
+* Fedora 35
+* Manjaro AArch64
 * OpenSUSE (Tumbleweed)
-* Ubuntu (21.04)
+* Ubuntu (21.10)
 * Void Linux
 
 All systems come in a bare-minumum variant, typically consisting of package
@@ -39,7 +53,23 @@ manager, shell, coreutils, util-linux and few more. Extended functionality
 like shell completion or package install suggestions should be configured
 manually.
 
-If desired distribution is not in the list, you can request it.
+## Known issues
+
+There is a number of issues that are not resolved.
+
+1. OpenSUSE installation: `zypper dup` will attempt to remove itself and
+   other essential packages.
+
+   It is unknown why this issue happens and how to fix it. This is not
+   problem of supplied rootfs. Under chroot it behaves normally. But when
+   it comes to (rootless only?) proot, the issue appears.
+
+   Even though distribution is completely broken, it won't be removed.
+
+2. Android 12: `WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"`
+
+   This warning may appear during installation of selected distribution.
+   Ignore it as it seem to be harmless.
 
 ## Installing
 

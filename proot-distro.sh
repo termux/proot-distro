@@ -2,7 +2,7 @@
 ##
 ## Script for managing proot'ed Linux distribution installations in Termux.
 ##
-## Copyright (C) 2020-2021 Leonid Pliushch <leonid.pliushch@gmail.com>
+## Copyright (C) 2020-2022 Leonid Pliushch <leonid.pliushch@gmail.com>
 ##
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="2.6.9"
+PROGRAM_VERSION="2.9.3"
 
 #############################################################################
 #
@@ -250,6 +250,13 @@ command_install() {
 	fi
 
 	if [ -f "${distro_plugin_script}" ]; then
+		# Notify user if tar available in PATH is not GNU tar.
+		if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+			msg
+			msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+			msg
+		fi
+
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
@@ -1062,9 +1069,27 @@ command_login() {
 				shell_command_args+=("'$i'")
 			done
 
-			set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
+			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
+				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
+			else
+				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
+				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
+					set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
+				else
+					set -- "/bin/sh" "-l" "-c" "${shell_command_args[*]}"
+				fi
+			fi
 		else
-			set -- "/bin/su" "-l" "$login_user"
+			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
+				set -- "/bin/su" "-l" "$login_user"
+			else
+				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
+				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
+					set -- "/bin/bash" "-l"
+				else
+					set -- "/bin/sh" "-l"
+				fi
+			fi
 		fi
 
 		# Setup the default environment as well as copy some variables
@@ -1506,6 +1531,13 @@ command_backup() {
 		return 1
 	fi
 
+	# Notify user if tar available in PATH is not GNU tar.
+	if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+		msg
+		msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+		msg
+	fi
+
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 	if [ -z "$tarball_file_path" ]; then
@@ -1627,6 +1659,13 @@ command_restore() {
 			command_restore_help
 			return 1
 		fi
+	fi
+
+	# Notify user if tar available in PATH is not GNU tar.
+	if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+		msg
+		msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+		msg
 	fi
 
 	local success
