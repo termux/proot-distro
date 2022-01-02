@@ -1,5 +1,5 @@
 DISTRO_NAME="Kali Linux (nethunter)"
-TARBALL_URL['aarch64']="https://github.com/BDhackers009/nethunter-rootfs-termux/releases/download/69.69/kalifs-armhf-minimal.tar.xz"
+TARBALL_URL['aarch64']="https://github.com/BDhackers009/nethunter-rootfs-termux/releases/download/69.69/kalifs-arm64-minimal.tar.xz"
 TARBALL_SHA256['aarch64']="bcd311ae53fc6576881e5f8cbbc007fc7c49a5348894e03fa97cc2397ef24fff"
 TARBALL_URL['arm']="https://github.com/BDhackers009/nethunter-rootfs-termux/releases/download/69.69/kalifs-armhf-minimal.tar.xz"
 TARBALL_SHA256['arm']="365c4483fbef46624381c2f34a4e49080f8930564ba984971b56b373012fe866"
