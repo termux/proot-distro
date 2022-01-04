@@ -14,6 +14,7 @@ echo
 echo "Username: $username"
 echo
 echo "Password:  $pass"
+echo
 
 useradd -m -s $(which zsh)  $username
 echo "$username:$pass" | chpasswd
@@ -22,3 +23,5 @@ echo "$username ALL=(ALL:ALL) ALL" >> /etc/sudoers
 
 
 
+chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo
+rm /root/user.sh
