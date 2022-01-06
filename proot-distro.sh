@@ -1,5 +1,6 @@
 #!@TERMUX_PREFIX@/bin/bash
 ##
+# Modified BY BDhackers009
 ## Script for managing proot'ed Linux distribution installations in Termux.
 ##
 ## Copyright (C) 2020-2022 Leonid Pliushch <leonid.pliushch@gmail.com>
@@ -18,7 +19,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="2.9.3"
+PROGRAM_VERSION="vBandor2.0"
 
 #############################################################################
 #
@@ -452,10 +453,11 @@ command_install() {
 				distro_setup
 			)
 		fi
+echo "$PROGRAM_NAME login $distro_name$ --shared-tmp --bind  /dev/null:/proc/sys/kernel/cap_last_last " > /data/data/com.termux/files/usr/bin/kali && chmod +x /data/data/com.termux/files/usr/bin/kali
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
 		msg
-		msg "${CYAN}Now run '${GREEN}$PROGRAM_NAME login $distro_name${CYAN}' to log in.${RST}"
+		msg "${CYAN}Now run '${GREEN}$distro_name${CYAN}' to log in.${RST}"
 		msg
 		return 0
 	else
