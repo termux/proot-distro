@@ -453,7 +453,7 @@ command_install() {
 				distro_setup
 			)
 		fi
-echo "$PROGRAM_NAME login $distro_name$ --shared-tmp --bind  /dev/null:/proc/sys/kernel/cap_last_last " > /data/data/com.termux/files/usr/bin/kali && chmod +x /data/data/com.termux/files/usr/bin/kali
+echo "$PROGRAM_NAME login $distro_name --shared-tmp --bind  /dev/null:/proc/sys/kernel/cap_last_last " > /data/data/com.termux/files/usr/bin/kali && chmod +x /data/data/com.termux/files/usr/bin/kali
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
 		msg
