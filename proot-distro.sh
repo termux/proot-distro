@@ -66,6 +66,11 @@ else
 	RST=""
 fi
 
+# Disable termux-exec or other things which may interfere with proot.
+# It is expected that all dependencies have fixed hardcoded paths according
+# to Termux file system layout.
+unset LD_PRELOAD
+
 #############################################################################
 #
 # FUNCTION TO PRINT A MESSAGE TO CONSOLE
@@ -267,13 +272,6 @@ command_install() {
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
 			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		fi
-
-		# We need this to disable the preloaded libtermux-exec.so library
-		# which redefines 'execve()' implementation.
-		unset LD_PRELOAD
-
-		# Needed for compatibility with some devices.
-		#export PROOT_NO_SECCOMP=1
 
 		# This should be overridden in distro plug-in with valid URL for
 		# each architecture where possible.
@@ -1059,8 +1057,6 @@ command_login() {
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
 			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		fi
-		unset LD_PRELOAD
-		#export PROOT_NO_SECCOMP=1
 
 		if [ $# -ge 1 ]; then
 			# Wrap in quotes each argument to prevent word splitting.
