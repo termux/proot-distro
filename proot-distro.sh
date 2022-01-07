@@ -1917,7 +1917,7 @@ if [ $# -ge 1 ]; then
 		backup) shift 1; command_backup "$@";;
 		install) shift 1; command_install "$@";;
 		list) shift 1; command_list;;
-		) shift 1; command_ "$@";;
+		login) shift 1; command_login "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
 		clear-cache) shift 1; command_clear_cache "$@";;
 		reset) shift 1; command_reset "$@";;
