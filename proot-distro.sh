@@ -1838,7 +1838,7 @@ command_help() {
 # usage info.
 #
 show_version() {
-	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by @xeffyr.${RST}"
+	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} Modified  by BDhackers009.${RST}"
 }
 
 #############################################################################
@@ -1926,7 +1926,7 @@ if [ $# -ge 1 ]; then
 			msg
 			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
 			msg
-			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available commands.${RST}"
+			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' list to see the available list.${RST}"
 			msg
 			exit 1
 			;;
