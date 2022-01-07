@@ -1,6 +1,5 @@
 #!@TERMUX_PREFIX@/bin/bash
 ##
-# Modified BY BDhackers009
 ## Script for managing proot'ed Linux distribution installations in Termux.
 ##
 ## Copyright (C) 2020-2022 Leonid Pliushch <leonid.pliushch@gmail.com>
@@ -66,6 +65,11 @@ else
 	ICYAN=""
 	RST=""
 fi
+
+# Disable termux-exec or other things which may interfere with proot.
+# It is expected that all dependencies have fixed hardcoded paths according
+# to Termux file system layout.
+unset LD_PRELOAD
 
 #############################################################################
 #
@@ -243,7 +247,7 @@ command_install() {
 		msg
 		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
 		msg
-		msg "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME}  ${distro_name}${RST}"
+		msg "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME} login ${distro_name}${RST}"
 		msg "${CYAN}Reinstall:  ${GREEN}${PROGRAM_NAME} reset ${distro_name}${RST}"
 		msg "${CYAN}Uninstall:  ${GREEN}${PROGRAM_NAME} remove ${distro_name}${RST}"
 		msg
@@ -268,13 +272,6 @@ command_install() {
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
 			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		fi
-
-		# We need this to disable the preloaded libtermux-exec.so library
-		# which redefines 'execve()' implementation.
-		unset LD_PRELOAD
-
-		# Needed for compatibility with some devices.
-		#export PROOT_NO_SECCOMP=1
 
 		# This should be overridden in distro plug-in with valid URL for
 		# each architecture where possible.
@@ -363,7 +360,7 @@ command_install() {
 			--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||:
 
-		# Write important environment variables to profile file as /bin/ does not
+		# Write important environment variables to profile file as /bin/login does not
 		# preserve them.
 		local profile_script
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d" ]; then
@@ -429,7 +426,7 @@ command_install() {
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" >/dev/null 2>&1 || true
-		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/sbin/no" >> \
+		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/sbin/nologin" >> \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
 		echo "aid_$(id -un):*:18446:0:99999:7:::" >> \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
@@ -453,7 +450,6 @@ command_install() {
 				distro_setup
 			)
 		fi
-echo "$PROGRAM_NAME  $distro_name --shared-tmp --bind  /dev/null:/proc/sys/kernel/cap_last_last " > /data/data/com.termux/files/usr/bin/${distro_name}  && chmod +x /data/data/com.termux/files/usr/bin/${distro_name}
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
 		msg
@@ -939,7 +935,7 @@ command_reset_help() {
 #
 # Accepts arbitrary amount of arguments.
 #
-command_() {
+command_login() {
 	local isolated_environment=false
 	local use_termux_home=false
 	local no_link2symlink=false
@@ -948,7 +944,7 @@ command_() {
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
-	local _user="root"
+	local login_user="root"
 	local -a custom_fs_bindings
 	local need_qemu=false
 
@@ -959,7 +955,7 @@ command_() {
 				break
 				;;
 			--help)
-				command__help
+				command_login_help
 				return 0
 				;;
 			--fix-low-ports)
@@ -981,7 +977,7 @@ command_() {
 					if [ -z "$1" ]; then
 						msg
 						msg "${BRED}Error: argument to option '${YELLOW}--bind${BRED}' should not be empty.${RST}"
-						command__help
+						command_login_help
 						return 1
 					fi
 
@@ -989,7 +985,7 @@ command_() {
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
-					command__help
+					command_login_help
 					return 1
 				fi
 				;;
@@ -1009,29 +1005,29 @@ command_() {
 					if [ -z "$1" ]; then
 						msg
 						msg "${BRED}Error: argument to option '${YELLOW}--user${BRED}' should not be empty.${RST}"
-						command__help
+						command_login_help
 						return 1
 					fi
 
-					_user="$1"
+					login_user="$1"
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
-					command__help
+					command_login_help
 					return 1
 				fi
 				;;
 			-*)
 				msg
 				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-				command__help
+				command_login_help
 				return 1
 				;;
 			*)
 				if [ -z "$1" ]; then
 					msg
 					msg "${BRED}Error: you should not pass empty command line arguments.${RST}"
-					command__help
+					command_login_help
 					return 1
 				fi
 
@@ -1042,7 +1038,7 @@ command_() {
 					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
 					msg
 					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
-					command__help
+					command_login_help
 					return 1
 				fi
 				;;
@@ -1053,7 +1049,7 @@ command_() {
 	if [ -z "$distro_name" ]; then
 		msg
 		msg "${BRED}Error: you should at least specify a distribution in order to log in.${RST}"
-		command__help
+		command_login_help
 		return 1
 	fi
 
@@ -1061,8 +1057,6 @@ command_() {
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
 			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		fi
-		unset LD_PRELOAD
-		#export PROOT_NO_SECCOMP=1
 
 		if [ $# -ge 1 ]; then
 			# Wrap in quotes each argument to prevent word splitting.
@@ -1072,7 +1066,7 @@ command_() {
 			done
 
 			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-				set -- "/bin/su" "-l" "$_user" "-c" "${shell_command_args[*]}"
+				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
 			else
 				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
@@ -1083,7 +1077,7 @@ command_() {
 			fi
 		else
 			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-				set -- "/bin/su" "-l" "$_user"
+				set -- "/bin/su" "-l" "$login_user"
 			else
 				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
@@ -1277,20 +1271,20 @@ command_() {
 		# Use Termux home directory if requested.
 		# Ignores --isolated.
 		if $use_termux_home; then
-			if [ "$_user" = "root" ]; then
+			if [ "$login_user" = "root" ]; then
 				set -- "--bind=@TERMUX_HOME@:/root" "$@"
 			else
 				if [ -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" ]; then
 					local user_home
-					user_home=$(grep -P "^${_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d: -f 6)
+					user_home=$(grep -P "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d: -f 6)
 
 					if [ -z "$user_home" ]; then
-						user_home="/home/${_user}"
+						user_home="/home/${login_user}"
 					fi
 
 					set -- "--bind=@TERMUX_HOME@:${user_home}" "$@"
 				else
-					set -- "--bind=@TERMUX_HOME@:/home/${_user}" "$@"
+					set -- "--bind=@TERMUX_HOME@:/home/${login_user}" "$@"
 				fi
 			fi
 		fi
@@ -1331,12 +1325,12 @@ command_() {
 	fi
 }
 
-# Usage info for command_.
-command__help() {
+# Usage info for command_login.
+command_login_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN} ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
 	msg
-	msg "${CYAN}This command will launch a  shell for the specified${RST}"
+	msg "${CYAN}This command will launch a login shell for the specified${RST}"
 	msg "${CYAN}distribution if no additional arguments were given, otherwise${RST}"
 	msg "${CYAN}it will execute the given command and exit.${RST}"
 	msg
@@ -1344,7 +1338,7 @@ command__help() {
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	msg
-	msg "  ${GREEN}--user [user]        ${CYAN}-  as specified user instead of 'root'.${RST}"
+	msg "  ${GREEN}--user [user]        ${CYAN}- Login as specified user instead of 'root'.${RST}"
 	msg
 	msg "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	msg "                         ${CYAN}a higher port number.${RST}"
@@ -1800,7 +1794,7 @@ command_help() {
 	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their${RST}"
 	msg "                 ${CYAN}installation status.${RST}"
 	msg
-	msg "  ${GREEN}        ${CYAN}- Start  shell for the specified distribution.${RST}"
+	msg "  ${GREEN}login        ${CYAN}- Start login shell for the specified distribution.${RST}"
 	msg
 	msg "  ${GREEN}remove       ${CYAN}- Delete a specified distribution.${RST}"
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
@@ -1823,7 +1817,7 @@ command_help() {
 	msg "${CYAN}Runtime data is stored at this location:${RST}"
 	msg "${CYAN}${RUNTIME_DIR}${RST}"
 	msg
-	msg "${CYAN}If you have issues with proot during installation or , try${RST}"
+	msg "${CYAN}If you have issues with proot during installation or login, try${RST}"
 	msg "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
 	msg
 	show_version
@@ -1838,7 +1832,7 @@ command_help() {
 # usage info.
 #
 show_version() {
-	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} Modified  by BDhackers009.${RST}"
+	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by @xeffyr.${RST}"
 }
 
 #############################################################################
@@ -1926,7 +1920,7 @@ if [ $# -ge 1 ]; then
 			msg
 			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
 			msg
-			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available  commands.${RST}"
+			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available commands.${RST}"
 			msg
 			exit 1
 			;;
@@ -1936,5 +1930,6 @@ else
 	msg "${BRED}Error: no command provided.${RST}"
 	command_help
 fi
-
+echo "$PROGRAM_NAME login $distro_name --bind /dev/null:/proc/sys/kernel/cap_last_last --shared-tmp" > /data/data/com.termux/files/usr/bin/$distro_name 
+chmod +x /data/data/com.termux/files/usr/bin/$distro_name
 exit 0
