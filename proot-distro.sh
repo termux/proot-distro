@@ -457,6 +457,7 @@ command_install() {
 		msg
 	    echo "$PROGRAM_NAME login $distro_name --bind /dev/null:/proc/sys/kernel/cap_last_last --shared-tmp" > /data/data/com.termux/files/usr/bin/${distro_name} 
 		chmod +x /data/data/com.termux/files/usr/bin/${distro_name}
+		cp /data/data/com.termux/files/etc/user.sh /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/${distro_name}/root/user.sh
 		return 0
 	else
 		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which contains distro-specific install functions.${RST}"
