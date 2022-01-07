@@ -453,7 +453,7 @@ command_install() {
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
 		msg
-		msg "${CYAN}Now run '${GREEN}$distro_name${CYAN}' to log in.${RST}"
+		msg "${CYAN}Now run '${GREEN}${distro_name}${CYAN}' to log in.${RST}"
 		msg
 		return 0
 	else
@@ -1930,6 +1930,6 @@ else
 	msg "${BRED}Error: no command provided.${RST}"
 	command_help
 fi
-echo "$PROGRAM_NAME login $distro_name --bind /dev/null:/proc/sys/kernel/cap_last_last --shared-tmp" > /data/data/com.termux/files/usr/bin/$distro_name 
-chmod +x /data/data/com.termux/files/usr/bin/$distro_name
+echo "$PROGRAM_NAME login $distro_name --bind /dev/null:/proc/sys/kernel/cap_last_last --shared-tmp" > /data/data/com.termux/files/usr/bin/${distro_name} 
+chmod +x /data/data/com.termux/files/usr/bin/${distro_name}
 exit 0
