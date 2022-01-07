@@ -22,5 +22,5 @@ echo "$username:$pass" | chpasswd
 echo "$username ALL=(ALL:ALL) ALL" >> /etc/sudoers
 
 chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo
-echo "proot-distro login --user $username kali --shared-tmp --bind /dev/null:/proc/sys/kernel/cap_last_last "
+
 mv user.sh /etc

@@ -1926,7 +1926,7 @@ if [ $# -ge 1 ]; then
 			msg
 			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
 			msg
-			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' list to see the available list.${RST}"
+			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available commands.${RST}"
 			msg
 			exit 1
 			;;
