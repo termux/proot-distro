@@ -19,7 +19,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="vBandor2.0"
+PROGRAM_VERSION="2.9.4"
 
 #############################################################################
 #
@@ -243,7 +243,7 @@ command_install() {
 		msg
 		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
 		msg
-		msg "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME} login ${distro_name}${RST}"
+		msg "${CYAN}Log in:     ${GREEN}${PROGRAM_NAME}  ${distro_name}${RST}"
 		msg "${CYAN}Reinstall:  ${GREEN}${PROGRAM_NAME} reset ${distro_name}${RST}"
 		msg "${CYAN}Uninstall:  ${GREEN}${PROGRAM_NAME} remove ${distro_name}${RST}"
 		msg
@@ -363,7 +363,7 @@ command_install() {
 			--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||:
 
-		# Write important environment variables to profile file as /bin/login does not
+		# Write important environment variables to profile file as /bin/ does not
 		# preserve them.
 		local profile_script
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d" ]; then
@@ -429,7 +429,7 @@ command_install() {
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" >/dev/null 2>&1 || true
-		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/sbin/nologin" >> \
+		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/sbin/no" >> \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
 		echo "aid_$(id -un):*:18446:0:99999:7:::" >> \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
@@ -453,7 +453,7 @@ command_install() {
 				distro_setup
 			)
 		fi
-echo "$PROGRAM_NAME login $distro_name$ --shared-tmp --bind  /dev/null:/proc/sys/kernel/cap_last_last " > /data/data/com.termux/files/usr/bin/kali && chmod +x /data/data/com.termux/files/usr/bin/kali
+echo "$PROGRAM_NAME  $distro_name --shared-tmp --bind  /dev/null:/proc/sys/kernel/cap_last_last " > /data/data/com.termux/files/usr/bin/kali && chmod +x /data/data/com.termux/files/usr/bin/kali
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
 		msg
@@ -939,7 +939,7 @@ command_reset_help() {
 #
 # Accepts arbitrary amount of arguments.
 #
-command_login() {
+command_() {
 	local isolated_environment=false
 	local use_termux_home=false
 	local no_link2symlink=false
@@ -948,7 +948,7 @@ command_login() {
 	local fix_low_ports=false
 	local make_host_tmp_shared=false
 	local distro_name=""
-	local login_user="root"
+	local _user="root"
 	local -a custom_fs_bindings
 	local need_qemu=false
 
@@ -959,7 +959,7 @@ command_login() {
 				break
 				;;
 			--help)
-				command_login_help
+				command__help
 				return 0
 				;;
 			--fix-low-ports)
@@ -981,7 +981,7 @@ command_login() {
 					if [ -z "$1" ]; then
 						msg
 						msg "${BRED}Error: argument to option '${YELLOW}--bind${BRED}' should not be empty.${RST}"
-						command_login_help
+						command__help
 						return 1
 					fi
 
@@ -989,7 +989,7 @@ command_login() {
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
-					command_login_help
+					command__help
 					return 1
 				fi
 				;;
@@ -1009,29 +1009,29 @@ command_login() {
 					if [ -z "$1" ]; then
 						msg
 						msg "${BRED}Error: argument to option '${YELLOW}--user${BRED}' should not be empty.${RST}"
-						command_login_help
+						command__help
 						return 1
 					fi
 
-					login_user="$1"
+					_user="$1"
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
-					command_login_help
+					command__help
 					return 1
 				fi
 				;;
 			-*)
 				msg
 				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-				command_login_help
+				command__help
 				return 1
 				;;
 			*)
 				if [ -z "$1" ]; then
 					msg
 					msg "${BRED}Error: you should not pass empty command line arguments.${RST}"
-					command_login_help
+					command__help
 					return 1
 				fi
 
@@ -1042,7 +1042,7 @@ command_login() {
 					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
 					msg
 					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
-					command_login_help
+					command__help
 					return 1
 				fi
 				;;
@@ -1053,7 +1053,7 @@ command_login() {
 	if [ -z "$distro_name" ]; then
 		msg
 		msg "${BRED}Error: you should at least specify a distribution in order to log in.${RST}"
-		command_login_help
+		command__help
 		return 1
 	fi
 
@@ -1072,7 +1072,7 @@ command_login() {
 			done
 
 			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
+				set -- "/bin/su" "-l" "$_user" "-c" "${shell_command_args[*]}"
 			else
 				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
@@ -1083,7 +1083,7 @@ command_login() {
 			fi
 		else
 			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-				set -- "/bin/su" "-l" "$login_user"
+				set -- "/bin/su" "-l" "$_user"
 			else
 				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
 				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
@@ -1277,20 +1277,20 @@ command_login() {
 		# Use Termux home directory if requested.
 		# Ignores --isolated.
 		if $use_termux_home; then
-			if [ "$login_user" = "root" ]; then
+			if [ "$_user" = "root" ]; then
 				set -- "--bind=@TERMUX_HOME@:/root" "$@"
 			else
 				if [ -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" ]; then
 					local user_home
-					user_home=$(grep -P "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d: -f 6)
+					user_home=$(grep -P "^${_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d: -f 6)
 
 					if [ -z "$user_home" ]; then
-						user_home="/home/${login_user}"
+						user_home="/home/${_user}"
 					fi
 
 					set -- "--bind=@TERMUX_HOME@:${user_home}" "$@"
 				else
-					set -- "--bind=@TERMUX_HOME@:/home/${login_user}" "$@"
+					set -- "--bind=@TERMUX_HOME@:/home/${_user}" "$@"
 				fi
 			fi
 		fi
@@ -1331,12 +1331,12 @@ command_login() {
 	fi
 }
 
-# Usage info for command_login.
-command_login_help() {
+# Usage info for command_.
+command__help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN} ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
 	msg
-	msg "${CYAN}This command will launch a login shell for the specified${RST}"
+	msg "${CYAN}This command will launch a  shell for the specified${RST}"
 	msg "${CYAN}distribution if no additional arguments were given, otherwise${RST}"
 	msg "${CYAN}it will execute the given command and exit.${RST}"
 	msg
@@ -1344,7 +1344,7 @@ command_login_help() {
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	msg
-	msg "  ${GREEN}--user [user]        ${CYAN}- Login as specified user instead of 'root'.${RST}"
+	msg "  ${GREEN}--user [user]        ${CYAN}-  as specified user instead of 'root'.${RST}"
 	msg
 	msg "  ${GREEN}--fix-low-ports      ${CYAN}- Modify bindings to protected ports to use${RST}"
 	msg "                         ${CYAN}a higher port number.${RST}"
@@ -1800,7 +1800,7 @@ command_help() {
 	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their${RST}"
 	msg "                 ${CYAN}installation status.${RST}"
 	msg
-	msg "  ${GREEN}login        ${CYAN}- Start login shell for the specified distribution.${RST}"
+	msg "  ${GREEN}        ${CYAN}- Start  shell for the specified distribution.${RST}"
 	msg
 	msg "  ${GREEN}remove       ${CYAN}- Delete a specified distribution.${RST}"
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
@@ -1823,7 +1823,7 @@ command_help() {
 	msg "${CYAN}Runtime data is stored at this location:${RST}"
 	msg "${CYAN}${RUNTIME_DIR}${RST}"
 	msg
-	msg "${CYAN}If you have issues with proot during installation or login, try${RST}"
+	msg "${CYAN}If you have issues with proot during installation or , try${RST}"
 	msg "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
 	msg
 	show_version
@@ -1917,7 +1917,7 @@ if [ $# -ge 1 ]; then
 		backup) shift 1; command_backup "$@";;
 		install) shift 1; command_install "$@";;
 		list) shift 1; command_list;;
-		login) shift 1; command_login "$@";;
+		) shift 1; command_ "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
 		clear-cache) shift 1; command_clear_cache "$@";;
 		reset) shift 1; command_reset "$@";;
