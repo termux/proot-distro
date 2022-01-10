@@ -39,6 +39,7 @@ own. See [Adding distribution](#adding-distribution).
 
 Here are the supported distributions:
 
+* Kali Linux (nethunter)
 * Alpine Linux (edge)
 * Arch Linux / Arch Linux 32 / Arch Linux ARM
 * Debian (stable)
