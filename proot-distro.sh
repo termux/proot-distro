@@ -18,7 +18,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="2.9.4"
+PROGRAM_VERSION="2.9.5"
 
 #############################################################################
 #
@@ -1248,8 +1248,29 @@ command_login() {
 			set -- "--bind=/data/dalvik-cache" "$@"
 			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
 			set -- "--bind=@TERMUX_HOME@" "$@"
-			set -- "--bind=/storage" "$@"
-			set -- "--bind=/storage/self/primary:/sdcard" "$@"
+
+			# Setup bind mounting for shared storage.
+			# We want to use the primary shared storage mount point there
+			# with avoiding secondary and legacy mount points. As Android
+			# OS versions are different, some directories may be unavailable
+			# and we need to try them all.
+			if ls -1U /storage/self/primary/ > /dev/null 2>&1; then
+				set -- "--bind=/storage/self/primary:/sdcard" "$@"
+			elif ls -1U /storage/emulated/0/ > /dev/null 2>&1; then
+				set -- "--bind=/storage/emulated/0:/sdcard" "$@"
+			elif ls -1U /sdcard/ > /dev/null 2>&1; then
+				set -- "--bind=/sdcard:/sdcard" "$@"
+			else
+				# No access to shared storage.
+				:
+			fi
+
+			# /storage also optional bind mounting.
+			# If we can't access it, don't provide this directory
+			# in proot environment.
+			if ls -1U /storage > /dev/null 2>&1; then
+				set -- "--bind=/storage" "$@"
+			fi
 		fi
 
 		# When using QEMU, we need some host files even in isolated mode.
