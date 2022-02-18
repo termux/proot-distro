@@ -2,8 +2,6 @@
 ##
 ## Script for managing proot'ed Linux distribution installations in Termux.
 ##
-## Copyright (C) 2020-2022 Leonid Pliushch <leonid.pliushch@gmail.com>
-##
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation, either version 3 of the License, or
@@ -18,7 +16,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="2.9.5"
+PROGRAM_VERSION="3.0.0"
 
 #############################################################################
 #
@@ -1856,7 +1854,7 @@ command_help() {
 # usage info.
 #
 show_version() {
-	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by @xeffyr.${RST}"
+	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by Termux.${RST}"
 }
 
 #############################################################################

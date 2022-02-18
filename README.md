@@ -16,20 +16,6 @@ before run and refuses to work if detected user id `0` (root).
 
 ***
 
-**Issue reporting has been disabled**: very few of them were truly useful for
-the project improvements. Other were related to the PRoot itself, requests of
-project design changes (i.e. "customization"), user-generated errors,
-misinterpreting (good example is [this sarchile project page](https://web.archive.org/web/20211101040225/https://github.com/Weeb-Linux/sarchile/wiki/Introduction))
-the information stated in this readme document or lack of basic shell usage
-knowledge.
-
-Regarding design change requests: it is not possible to create project that
-will suitable for everyones needs. Of you disagree with specific implementation,
-feel free to make fork. Pull requests still accepted, so improvements which don't
-break functionality are welcome. Project is released under GNU GPL 3.0.
-
-***
-
 ## Supported distributions
 
 PRoot Distro provides support only one version of distribution types, i.e. one
