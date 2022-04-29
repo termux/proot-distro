@@ -72,7 +72,7 @@ else
 fi
 
 # Loop over to build a specified distribution
-for distro in "${DISTRIBUTIONS}"; do
+for distro in ${DISTRIBUTIONS}; do
 	# Check distribution recipe that is about to built. if it doesn't exist. continue to next distribution
 	if [ ! -f "${BOOTSTRAPS_DIR}/${distro}.sh" ]; then
 		continue
