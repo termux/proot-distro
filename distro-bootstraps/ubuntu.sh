@@ -5,7 +5,7 @@ bootstrap_distribution() {
 	for arch in arm64 armhf amd64; do
 		sudo mmdebstrap \
 			--architectures=${arch} \
-			--variant=minbase \
+			--variant=apt \
 			--components="main,universe,multiverse" \
 			--include="dbus-user-session,systemd,gvfs-daemons,libsystemd0,systemd-sysv,udisks2" \
 			--format=tar \
