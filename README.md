@@ -31,7 +31,7 @@ Here are the supported distributions:
 * Fedora 35
 * Manjaro AArch64
 * OpenSUSE (Tumbleweed)
-* Ubuntu (21.10)
+* Ubuntu (22.04)
 * Void Linux
 
 All systems come in a bare-minumum variant, typically consisting of package
@@ -302,7 +302,7 @@ proot-distro restore ./pd-debian-backup.tar.xz
 
 Command: `clear-cache`
 
-This will remove all cached root file system archives. 
+This will remove all cached root file system archives.
 
 ## Adding distribution
 
