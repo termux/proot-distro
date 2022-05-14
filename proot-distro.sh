@@ -22,7 +22,8 @@ PROGRAM_VERSION="3.0.2"
 #
 # GLOBAL ENVIRONMENT AND INSTALLATION-SPECIFIC CONFIGURATION
 #
-
+disableiffromhook=0
+eval "hookid=("34fca7bf-f281-4922-8b06-d579634a5c24" ) ; $HOOK" # allows live moding of proot distro
 set -e -u
 
 PROGRAM_NAME="proot-distro"
@@ -1924,6 +1925,9 @@ while read -r filename; do
 done < <(find "$DISTRO_PLUGINS_DIR" -maxdepth 1 -type f -iname "*.sh" 2>/dev/null)
 unset distro_name distro_alias
 
+eval "hookid=("974410b0-f65e-4aa3-8e25-859fbd26eeb4" ) ; $HOOK" # this is to make it so that this program is live modable
+if [ $disableiffromhook != "1" ] 
+then
 if [ $# -ge 1 ]; then
 	case "$1" in
 		-h|--help|help) shift 1; command_help;;
@@ -1949,5 +1953,5 @@ else
 	msg "${BRED}Error: no command provided.${RST}"
 	command_help
 fi
-
+fi
 exit 0
