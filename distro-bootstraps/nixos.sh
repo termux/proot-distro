@@ -17,7 +17,7 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		mount --bind /dev "${WORKDIR}/nixos-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/nixos-$(translate_arch "$arch")/proc"
-		mount --bind /sys "${WORKDIR}/nios-$(translate_arch "$arch")/sys"
+		mount --bind /sys "${WORKDIR}/nixos-$(translate_arch "$arch")/sys"
 		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" $system_dir/activate
 		ln -s "$system_dir/sw/bin/su" "${WORKDIR}/nixos-$(translate_arch "$arch")/bin/su"
 		EOF
