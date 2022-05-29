@@ -30,6 +30,7 @@ Here are the supported distributions:
 * Debian (stable)
 * Fedora 35
 * Manjaro AArch64
+* NixOS 21.11
 * OpenSUSE (Tumbleweed)
 * Ubuntu (22.04)
 * Void Linux
