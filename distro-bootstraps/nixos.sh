@@ -1,5 +1,5 @@
 dist_name="NixOS"
-dist_version="21.11"
+dist_version="22.05"
 
 bootstrap_distribution() {
 	for arch in aarch64 i686 x86_64; do
