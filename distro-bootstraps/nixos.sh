@@ -9,7 +9,7 @@ bootstrap_distribution() {
 
 		sudo mkdir -m 755 "${WORKDIR}/nixos-$(translate_arch "$arch")"
 		sudo tar -zxp \
-			-f "${WORKDIR}/nixos-system-${arch}.tar.gz" \
+			-f "${WORKDIR}/nixos-system-${arch}-linux.tar.gz" \
 			-C "${WORKDIR}/nixos-$(translate_arch "$arch")"
 
 		system_dir=$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-21.11.*")
