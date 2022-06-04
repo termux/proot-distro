@@ -12,7 +12,7 @@ bootstrap_distribution() {
 			-f "${WORKDIR}/nixos-system-${arch}.tar.gz" \
 			-C "${WORKDIR}/nixos-$(translate_arch "$arch")"
 
-		system_dir=$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-21.11.*")
+		system_dir=$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-${dist_version}.*")
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		mount --bind /dev "${WORKDIR}/nixos-$(translate_arch "$arch")/dev"
