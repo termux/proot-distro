@@ -18,7 +18,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/nixos-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/nixos-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/nixos-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" $system_dir/activate
+		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" ${system_dir#"${WORKDIR}"}/activate
 		ln -s "$system_dir/sw/bin/su" "${WORKDIR}/nixos-$(translate_arch "$arch")/bin/su"
 		EOF
 
