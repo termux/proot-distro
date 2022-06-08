@@ -1,0 +1,60 @@
+name: "PRoot Distro Image Builder"
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'distro-bootstraps/**.sh'
+  pull_request:
+    paths:
+      - 'distro-bootstraps/**.sh'
+  workflow_dispatch:
+    inputs:
+      distributions:
+        description: 'A space-seperated values what distribution shall be built'
+        required: true
+
+jobs:
+  build:
+    # Ubuntu 22.04 has the up-to-date version of mmdebstrap
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Gather distributions that is needed to be built
+        run: |
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            # gather files changed on the latest HEAD commit
+            git diff-tree --no-commit-id --name-only HEAD -r > ./files_changed.txt
+
+            # check if files are changed or created are in distro-bootstraps directory
+            if ! grep -q distro-bootstraps ./files_changed.txt; then
+              echo "Does not have any distribution build script changed or added"
+              exit 2
+            fi
+
+            # filter only files from distro-bootstraps directory only
+            grep distro-bootstraps ./files_changed.txt | sed 's@\(distro-bootstraps/\|.sh\)@@g' > ./distributions.txt
+          else
+            echo "${{ github.event.inputs.distributions }}" > ./distributions.txt
+          fi
+      - name: Install Needed Dependencies
+        run: sudo apt-get install curl jq mmdebstrap qemu-user-static binfmt-support -yq
+      - name: Build distribution rootfs
+        run: |
+          for distros_to_be_built in $(cat ./distributions.txt); do
+            # check if a specified distribution build recipe exists incase for workflow dispatch inputs
+            if [ ! -f ./distro-bootstraps/${distros_to_be_built}.sh ]; then
+              echo "Cannot build distribution ${distros_to_be_built}: no such file or directory"
+              exit 2
+            fi
+            ./bootstrap-rootfs.sh ${distros_to_be_built}
+          done
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: built_rootfs
+          path: rootfs/*.tar.xz
