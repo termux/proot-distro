@@ -33,6 +33,7 @@ jobs:
               git diff-tree --no-commit-id --name-only ${{ github.event.pull_request.head.sha }} -r > ./files_changed.txt
             else
               git diff-tree --no-commit-id --name-only HEAD -r > ./files_changed.txt
+            fi
 
             # check if files are changed or created are in distro-build directory
             if ! grep -q distro-build ./files_changed.txt; then
