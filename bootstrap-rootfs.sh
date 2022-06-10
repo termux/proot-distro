@@ -68,7 +68,7 @@ cd "$WORKDIR"
 if [ "$#" -gt 0 ]; then
 	DISTRIBUTIONS="$*"
 else
-	DISTRIBUTIONS="$(ls ${BOOTSTRAPS_DIR} | sed 's/.sh//')"
+	DISTRIBUTIONS="$(cd ${BOOTSTRAPS_DIR}; ls -1 *.sh | sed 's/.sh//')"
 fi
 
 # Loop over to build a specified distribution
@@ -82,10 +82,18 @@ for distro in ${DISTRIBUTIONS}; do
 	printf "\n[*] Building ${dist_name}...\n"
 
 	# Bootstrap step
+	# If the function does not exists, abort to indicate there's an error occured during build
+	if ! declare -F bootstrap_distribution &> /dev/null; then
+		echo "[!] Failure to build rootfs ${distro}, missing bootstrap_distribution function. aborting..."
+		exit 1
+	fi
 	bootstrap_distribution
 
 	# Plugin generation step
-	write_plugin
+	if ! declare -F write_plugin &> /dev/null; then
+		echo "[!] Failure to generate plugin for ${distro}, missing write_plugin function. abort..."
+		exit 1
+	fi
 
 	# Cleanup variables and functions
 	unset dist_name	dist_version
