@@ -5,10 +5,10 @@ on:
     branches:
       - master
     paths:
-      - 'distro-bootstraps/**.sh'
+      - 'distro-build/**.sh'
   pull_request:
     paths:
-      - 'distro-bootstraps/**.sh'
+      - 'distro-build/**.sh'
   workflow_dispatch:
     inputs:
       distributions:
@@ -30,14 +30,14 @@ jobs:
             # gather files changed on the latest HEAD commit
             git diff-tree --no-commit-id --name-only HEAD -r > ./files_changed.txt
 
-            # check if files are changed or created are in distro-bootstraps directory
-            if ! grep -q distro-bootstraps ./files_changed.txt; then
+            # check if files are changed or created are in distro-build directory
+            if ! grep -q distro-build ./files_changed.txt; then
               echo "Does not have any distribution build script changed or added"
               exit 2
             fi
 
-            # filter only files from distro-bootstraps directory only
-            grep distro-bootstraps ./files_changed.txt | sed 's@\(distro-bootstraps/\|.sh\)@@g' > ./distributions.txt
+            # filter only files from distro-build directory only
+            grep distro-build ./files_changed.txt | sed 's@\(distro-build/\|.sh\)@@g' > ./distributions.txt
           else
             echo "${{ github.event.inputs.distributions }}" > ./distributions.txt
           fi
@@ -47,7 +47,7 @@ jobs:
         run: |
           for distros_to_be_built in $(cat ./distributions.txt); do
             # check if a specified distribution build recipe exists incase for workflow dispatch inputs
-            if [ ! -f ./distro-bootstraps/${distros_to_be_built}.sh ]; then
+            if [ ! -f ./distro-build/${distros_to_be_built}.sh ]; then
               echo "Cannot build distribution ${distros_to_be_built}: no such file or directory"
               exit 2
             fi
