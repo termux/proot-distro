@@ -94,6 +94,7 @@ for distro in ${DISTRIBUTIONS}; do
 		echo "[!] Failure to generate plugin for ${distro}, missing write_plugin function. abort..."
 		exit 1
 	fi
+	write_plugin
 
 	# Cleanup variables and functions
 	unset dist_name	dist_version
