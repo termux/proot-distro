@@ -1,5 +1,6 @@
 dist_name="Debian"
 dist_version="bullseye"
+revision=1
 
 bootstrap_distribution() {
 	for arch in arm64 armhf i386 amd64; do
