@@ -4,14 +4,14 @@ revision=1
 
 bootstrap_distribution() {
 	for arch in arm64 armhf i386 amd64; do
+		echo "deb https://deb.debian.org/debian ${dist_version} main contrib" | \
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=minbase \
-			--components="main,contrib" \
 			--include="dbus-user-session,ca-certificates,gvfs-daemons,libsystemd0,systemd-sysv,udisks2" \
 			--format=tar \
 			"${dist_name}" \
-			"${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+			"${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar" \
 		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
 		xz "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
 	done
