@@ -28,7 +28,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             # gather files changed on the latest HEAD commit
-            git diff-tree --no-commit-id --name-only HEAD -r > ./files_changed.txt
+            git diff-tree --no-commit-id --name-only ${{ github.sha }} -r > ./files_changed.txt
 
             # check if files are changed or created are in distro-build directory
             if ! grep -q distro-build ./files_changed.txt; then
