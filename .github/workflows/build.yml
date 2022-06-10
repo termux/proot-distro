@@ -37,8 +37,8 @@ jobs:
 
             # check if files are changed or created are in distro-build directory
             if ! grep -q distro-build ./files_changed.txt; then
-              echo "Does not have any distribution build script changed or added"
-              exit 2
+              echo "The latest commit does not have any distribution build script changed or added"
+              exit 0
             fi
 
             # filter only files from distro-build directory only
