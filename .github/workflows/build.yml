@@ -1,4 +1,4 @@
-name: "PRoot Distro Image Builder"
+name: "Build"
 
 on:
   push:
@@ -58,24 +58,27 @@ jobs:
             fi
             ./bootstrap-rootfs.sh ${distros_to_be_built}
           done
-      - name: Upload Artifacts
-      # per architecture uploads to save download times
-      - uses: actions/upload-artifact@v3
+      # Upload Artifacts separately per architecture
+      - name: Upload Artifacts (aarch64)
+        uses: actions/upload-artifact@v3
         with:
           name: built_rootfs_aarch64
           path: rootfs/*aarch64*.tar.xz
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v3
+      - name: Upload Artifacts (arm)
+        uses: actions/upload-artifact@v3
         with:
           name: built_rootfs_arm
           path: rootfs/*arm*.tar.xz
           if-no-files-found: ignore
+      - name: Upload Artifacts (i686)
       - uses: actions/upload-artifact@v3
         with:
           name: built_rootfs_i686
           path: rootfs/*i686*.tar.xz
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v3
+      - name: Upload Artifacts (x86_64)
+        uses: actions/upload-artifact@v3
         with:
           name: built_rootfs_x86_64
           path: rootfs/*x86_64*.tar.xz
