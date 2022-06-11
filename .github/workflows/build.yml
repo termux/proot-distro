@@ -72,7 +72,7 @@ jobs:
           path: rootfs/*arm*.tar.xz
           if-no-files-found: ignore
       - name: Upload Artifacts (i686)
-      - uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v3
         with:
           name: built_rootfs_i686
           path: rootfs/*i686*.tar.xz
