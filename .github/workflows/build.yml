@@ -5,10 +5,10 @@ on:
     branches:
       - master
     paths:
-      - 'distro-build/**.sh'
+      - 'distro-build/**'
   pull_request:
     paths:
-      - 'distro-build/**.sh'
+      - 'distro-build/**'
   workflow_dispatch:
     inputs:
       distributions:
