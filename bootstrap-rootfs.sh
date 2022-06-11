@@ -79,7 +79,7 @@ for distro in ${DISTRIBUTIONS}; do
 	fi
 
 	. "${BUILD_DIR}/${distro}.sh"
-	printf "\n[*] Building ${dist_name}...\n"
+	printf "\n[*] Building ${dist_name:=$distro}...\n"
 
 	# Bootstrap step
 	# If the function does not exists, abort to indicate there's an error occured during build
@@ -91,7 +91,7 @@ for distro in ${DISTRIBUTIONS}; do
 
 	# Plugin generation step
 	if ! declare -F write_plugin &> /dev/null; then
-		echo "[!] Failure to generate plugin for ${distro}, missing write_plugin function. abort..."
+		echo "[!] Failure to generate plugin for ${distro}, missing write_plugin function. aborting..."
 		exit 1
 	fi
 	write_plugin
