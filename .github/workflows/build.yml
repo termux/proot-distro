@@ -59,7 +59,24 @@ jobs:
             ./bootstrap-rootfs.sh ${distros_to_be_built}
           done
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+      # per architecture uploads to save download times
+      - uses: actions/upload-artifact@v3
         with:
-          name: built_rootfs
-          path: rootfs/*.tar.xz
+          name: built_rootfs_aarch64
+          path: rootfs/*aarch64*.tar.xz
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v3
+        with:
+          name: built_rootfs_arm
+          path: rootfs/*arm*.tar.xz
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v3
+        with:
+          name: built_rootfs_i686
+          path: rootfs/*i686*.tar.xz
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v3
+        with:
+          name: built_rootfs_x86_64
+          path: rootfs/*x86_64*.tar.xz
+          if-no-files-found: ignore
