@@ -21,7 +21,7 @@ done
 PLUGIN_DIR=$(dirname "$(realpath "$0")")/distro-plugins
 
 # Where to look for distribution build recipes
-BOOTSTRAPS_DIR=$(dirname "$(realpath "$0")")/distro-bootstraps
+BUILD_DIR=$(dirname "$(realpath "$0")")/distro-build
 
 # Where to put generated rootfs tarballs.
 ROOTFS_DIR=$(dirname "$(realpath "$0")")/rootfs
@@ -68,23 +68,32 @@ cd "$WORKDIR"
 if [ "$#" -gt 0 ]; then
 	DISTRIBUTIONS="$*"
 else
-	DISTRIBUTIONS="$(ls ${BOOTSTRAPS_DIR} | sed 's/.sh//')"
+	DISTRIBUTIONS="$(cd ${BUILD_DIR}; ls -1 *.sh | sed 's/.sh//')"
 fi
 
 # Loop over to build a specified distribution
 for distro in ${DISTRIBUTIONS}; do
 	# Check distribution recipe that is about to built. if it doesn't exist. continue to next distribution
-	if [ ! -f "${BOOTSTRAPS_DIR}/${distro}.sh" ]; then
+	if [ ! -f "${BUILD_DIR}/${distro}.sh" ]; then
 		continue
 	fi
 
-	. "${BOOTSTRAPS_DIR}/${distro}.sh"
-	printf "\n[*] Building ${dist_name}...\n"
+	. "${BUILD_DIR}/${distro}.sh"
+	printf "\n[*] Building ${dist_name:=$distro}...\n"
 
 	# Bootstrap step
+	# If the function does not exists, abort to indicate there's an error occured during build
+	if ! declare -F bootstrap_distribution &> /dev/null; then
+		echo "[!] Failure to build rootfs ${distro}, missing bootstrap_distribution function. aborting..."
+		exit 1
+	fi
 	bootstrap_distribution
 
 	# Plugin generation step
+	if ! declare -F write_plugin &> /dev/null; then
+		echo "[!] Failure to generate plugin for ${distro}, missing write_plugin function. aborting..."
+		exit 1
+	fi
 	write_plugin
 
 	# Cleanup variables and functions

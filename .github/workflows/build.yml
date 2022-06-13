@@ -1,0 +1,94 @@
+name: "Build"
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'distro-build/**'
+  pull_request:
+    paths:
+      - 'distro-build/**'
+  workflow_dispatch:
+    inputs:
+      distributions:
+        description: 'A space-seperated values what distribution shall be built'
+        required: true
+
+jobs:
+  build:
+    # Ubuntu 22.04 has the up-to-date version of mmdebstrap
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Gather distributions that is needed to be built
+        run: |
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            # gather files changed on the latest HEAD commit
+            if [ "${{ github.event_name }}" == "pull_request" ]; then
+              # process latest commit made from the PR through github.event.pull_request.head.sha context
+              git diff-tree --no-commit-id --name-only ${{ github.event.pull_request.head.sha }} -r > ./files_changed.txt
+            else
+              git diff-tree --no-commit-id --name-only HEAD -r > ./files_changed.txt
+            fi
+
+            # check if files are changed or created are in distro-build directory
+            if ! grep -q distro-build ./files_changed.txt; then
+              echo "The latest commit does not have any distribution build script changed or added"
+              exit 1
+            fi
+
+            # filter only files from distro-build directory only
+            grep distro-build ./files_changed.txt | sed 's@\(distro-build/\|.sh\)@@g' > ./distributions.txt
+          else
+            echo "${{ github.event.inputs.distributions }}" > ./distributions.txt
+          fi
+
+          # Remove distro plugins to filter and upload built distributions and its plugins later on
+          rm -rf ./distro-plugins/*
+      - name: Install Needed Dependencies
+        run: sudo apt-get install curl jq mmdebstrap qemu-user-static binfmt-support -yq
+      - name: Build distribution rootfs
+        run: |
+          for distros_to_be_built in $(cat ./distributions.txt); do
+            # check if a specified distribution build recipe exists incase for workflow dispatch inputs
+            if [ ! -f ./distro-build/${distros_to_be_built}.sh ]; then
+              echo "Cannot build distribution ${distros_to_be_built}: no such file or directory"
+              exit 2
+            fi
+            ./bootstrap-rootfs.sh ${distros_to_be_built}
+          done
+      # Upload Artifacts separately per architecture
+      - name: Upload Artifacts (aarch64)
+        uses: actions/upload-artifact@v3
+        with:
+          name: built-rootfs-aarch64
+          path: rootfs/*aarch64*.tar.xz
+          if-no-files-found: ignore
+      - name: Upload Artifacts (arm)
+        uses: actions/upload-artifact@v3
+        with:
+          name: built-rootfs-arm
+          path: rootfs/*arm*.tar.xz
+          if-no-files-found: ignore
+      - name: Upload Artifacts (i686)
+        uses: actions/upload-artifact@v3
+        with:
+          name: built-rootfs-i686
+          path: rootfs/*i686*.tar.xz
+          if-no-files-found: ignore
+      - name: Upload Artifacts (x86_64)
+        uses: actions/upload-artifact@v3
+        with:
+          name: built-rootfs-x86_64
+          path: rootfs/*x86_64*.tar.xz
+          if-no-files-found: ignore
+      # Upload distro plugins
+      - name: Upload Artifacts (distro plugins)
+        uses: actions/upload-artifact@v3
+        with:
+          name: distro-plugins
+          path: distro-plugins/*.sh

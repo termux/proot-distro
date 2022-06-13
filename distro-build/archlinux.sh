@@ -1,5 +1,5 @@
 dist_name="Arch Linux"
-dist_version="2022.04.05"
+dist_version="2022.06.01"
 
 bootstrap_distribution() {
 	for arch in aarch64 armv7; do
@@ -21,9 +21,9 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --init
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --populate archlinuxarm
 		if [ "$arch" = "aarch64" ]; then
-		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Rnsc --noconfirm linux-aarch64
+			chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Rnsc --noconfirm linux-aarch64
 		else
-		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Rnsc --noconfirm linux-armv7
+			chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Rnsc --noconfirm linux-armv7
 		fi
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Syu --noconfirm
 		EOF
@@ -61,7 +61,7 @@ bootstrap_distribution() {
 	echo 'Server = http://mirror.rackspace.com/archlinux/\$repo/os/\$arch' > \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
 	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap /archlinux-x86_64 base
-	chroot "${WORKDIR}/archlinux-bootstrap" pacman -Scc --noconfirm
+	# chroot "${WORKDIR}/archlinux-bootstrap" pacman -Scc --noconfirm
 	sed -i 's|Architecture = auto|Architecture = i686|' \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.conf"
 	sed -i 's|Required DatabaseOptional|Never|' \
