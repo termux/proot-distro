@@ -8,8 +8,8 @@ bootstrap_distribution() {
 			"https://hydra.nixos.org/job/nixos/release-${dist_version}/nixos.containerTarball.${arch}-linux/latest/download/1"
 
 		sudo mkdir -m 755 "${WORKDIR}/nixos-$(translate_arch "$arch")"
-		sudo tar -zxp \
-			-f "${WORKDIR}/nixos-system-${arch}-linux.tar.gz" \
+		sudo tar -Jxp \
+			-f "${WORKDIR}/nixos-system-${arch}-linux.tar.xz" \
 			-C "${WORKDIR}/nixos-$(translate_arch "$arch")"
 
 		system_dir=$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-${dist_version}.*")
@@ -18,7 +18,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/nixos-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/nixos-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/nixos-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" ${system_dir#"${WORKDIR}"}/activate
+		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" ${system_dir#${WORKDIR}/nixos-$(translate_arch "$arch")}/activate
 		ln -s "$system_dir/sw/bin/su" "${WORKDIR}/nixos-$(translate_arch "$arch")/bin/su"
 		EOF
 
