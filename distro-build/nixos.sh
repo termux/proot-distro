@@ -22,7 +22,7 @@ bootstrap_distribution() {
 		mkdir "${WORKDIR}/nixos-$(translate_arch "$arch")/etc"
 		touch "${WORKDIR}/nixos-$(translate_arch "$arch")/etc/profile"
 		mkdir "${WORKDIR}/nixos-$(translate_arch "$arch")/etc/profile.d"
-		nkdir -p "${WORKDIR}/nixos-$(translate_arch "$arch")/usr/lib"
+		mkdir -p "${WORKDIR}/nixos-$(translate_arch "$arch")/usr/lib"
 		ln -s "$libgcc_dir/libgcc_s.so.1" "${WORKDIR}/nixos-$(translate_arch "$arch")/lib/libgcc_s.so.1"
 		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" ${system_dir#"${WORKDIR}/nixos-$(translate_arch "$arch")"}/activate
 		ln -s "$system_dir/sw/bin/su" "${WORKDIR}/nixos-$(translate_arch "$arch")/bin/su"
