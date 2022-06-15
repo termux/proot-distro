@@ -13,7 +13,7 @@ bootstrap_distribution() {
 			-C "${WORKDIR}/nixos-$(translate_arch "$arch")"
 
 		system_dir="$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-${dist_version}.*")"
-		libgcc_dir="$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*gcc*")/lib"
+		libgcc_dir="$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -maxdepth 1 -name "*gcc*")/lib"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		mount --bind /dev "${WORKDIR}/nixos-$(translate_arch "$arch")/dev"
