@@ -12,13 +12,18 @@ bootstrap_distribution() {
 			-f "${WORKDIR}/nixos-system-${arch}-linux.tar.xz" \
 			-C "${WORKDIR}/nixos-$(translate_arch "$arch")"
 
-		system_dir=$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-${dist_version}.*")
+		system_dir="$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*nixos-system-nixos-${dist_version}.*")"
+		libgcc_dir="$(find "${WORKDIR}/nixos-$(translate_arch "$arch")/nix/store" -name "*gcc*")/lib"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		mount --bind /dev "${WORKDIR}/nixos-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/nixos-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/nixos-$(translate_arch "$arch")/sys"
 		mkdir "${WORKDIR}/nixos-$(translate_arch "$arch")/etc"
+		touch "${WORKDIR}/nixos-$(translate_arch "$arch")/etc/profile"
+		mkdir "${WORKDIR}/nixos-$(translate_arch "$arch")/etc/profile.d"
+		nkdir -p "${WORKDIR}/nixos-$(translate_arch "$arch")/usr/lib"
+		ln -s "$libgcc_dir/libgcc_s.so.1" "${WORKDIR}/nixos-$(translate_arch "$arch")/lib/libgcc_s.so.1"
 		chroot "${WORKDIR}/nixos-$(translate_arch "$arch")" ${system_dir#"${WORKDIR}/nixos-$(translate_arch "$arch")"}/activate
 		ln -s "$system_dir/sw/bin/su" "${WORKDIR}/nixos-$(translate_arch "$arch")/bin/su"
 		EOF
