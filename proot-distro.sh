@@ -368,8 +368,6 @@ command_install() {
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
-		local LIBGCC_S_PATH
-		LIBGCC_S_PATH="/$(cd ${INSTALLED_ROOTFS_DIR}/${distro_name}; find usr/lib/ -name libgcc_s.so.1)"
 		cat <<- EOF >> "$profile_script"
 		export ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}
 		export ANDROID_DATA=${ANDROID_DATA-}
@@ -388,11 +386,6 @@ command_install() {
 		export PULSE_SERVER=127.0.0.1
 		export MOZ_FAKE_NO_SANDBOX=1
 		EOF
-		if [ "${LIBGCC_S_PATH}" != "/" ]; then
-			echo "${LIBGCC_S_PATH}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
-			chmod 644 "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/ld.so.preload"
-		fi
-		unset LIBGCC_S_PATH
 
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 1.1.1.1/1.0.0.1)...${RST}"
