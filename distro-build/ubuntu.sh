@@ -32,8 +32,8 @@ write_plugin() {
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 
 	distro_setup() {
-	${TAB}# Don't update gvfs-daemons and udisks2
-	${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
+	${TAB}# Don't update udisks2
+	${TAB}run_proot_cmd apt-mark hold udisks2
 	}
 	EOF
 }

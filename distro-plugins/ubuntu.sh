@@ -11,6 +11,6 @@ TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/
 TARBALL_SHA256['x86_64']="9ad3e8f4de4a85d8dae3a88c1140da0058d5bbae65a0717bb06f1ccecad0d7a6"
 
 distro_setup() {
-	# Don't update gvfs-daemons and udisks2
-	run_proot_cmd apt-mark hold gvfs-daemons udisks2
+	# Don't update udisks2
+	run_proot_cmd apt-mark hold udisks2
 }
