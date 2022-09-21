@@ -3,7 +3,7 @@
 A Bash script wrapper for utility [proot] for easy management of chroot-based
 Linux distribution installations. It does not require root or any special ROM,
 kernel, etc. Everything you need to get started is the latest version of
-[Termux] application. See [Installing](#installation) for details.
+[Termux] application. See [Installing](#installing) for details.
 
 PRoot Distro is not a virtual machine, neither a traditional chroot. It shares
 the same kernel as your Android system, so do not even try to update it through
@@ -34,7 +34,7 @@ Here are the supported distributions:
 * Ubuntu (22.04)
 * Void Linux
 
-All systems come in a bare-minumum variant, typically consisting of package
+All systems come in a bare-minimum variant, typically consisting of package
 manager, shell, coreutils, util-linux and few more. Extended functionality
 like shell completion or package install suggestions should be configured
 manually.
@@ -323,7 +323,7 @@ distribution. For example, Debian plug-in will typically be named `debian.sh`.
 `DISTRO_ARCH`: specifies which CPU architecture variant of distribution to
 install.
 
-Normally this variable is determined automatically and you should not set it.
+Normally this variable is determined automatically, and you should not set it.
 Typical use case is to set a custom architecture to run the distribution under
 QEMU emulator (user mode).
 
@@ -338,7 +338,7 @@ not working or additional steps required to get started with this distribution.
 
 `TARBALL_STRIP_OPT`: how many leading path components should be stripped when
 extracting rootfs archive. The default value is 1 because all default rootfs
-tarballs store contents in a sub directory.
+tarballs store contents in a subdirectory.
 
 `TARBALL_URL`: a Bash associative array of root file system tarballs URLs.
 
@@ -367,7 +367,7 @@ distro_setup() {
 
 ## Differences from Chroot
 
-While PRoot is often referred as userspace chroot implementation, it is much
+While PRoot is often referred as user space chroot implementation, it is much
 different from it both by implementation and features of work. Here is a list
 of most significant differences you should be aware of.
 
