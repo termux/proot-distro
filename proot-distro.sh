@@ -1,4 +1,4 @@
-#!@TERMUX_PREFIX@/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 ##
 ## Script for managing proot'ed Linux distribution installations in Termux.
 ##
@@ -28,10 +28,10 @@ set -e -u
 PROGRAM_NAME="proot-distro"
 
 # Where distribution plug-ins are stored.
-DISTRO_PLUGINS_DIR="@TERMUX_PREFIX@/etc/proot-distro"
+DISTRO_PLUGINS_DIR="/data/data/com.termux/files/usr/etc/proot-distro"
 
 # Base directory where script keeps runtime data.
-RUNTIME_DIR="@TERMUX_PREFIX@/var/lib/proot-distro"
+RUNTIME_DIR="/data/data/com.termux/files/usr/var/lib/proot-distro"
 
 # Where rootfs tarballs are downloaded.
 DOWNLOAD_CACHE_DIR="${RUNTIME_DIR}/dlcache"
@@ -350,13 +350,21 @@ command_install() {
 		fi
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting rootfs, please wait...${RST}"
+
 		# --exclude='dev'||: - need to exclude /dev directory which may contain device files.
 		# --delay-directory-restore - set directory permissions only when files were extracted
-		#                             to avoid issues with Arch Linux bootstrap archives.
-		proot --link2symlink \
-			tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
-			--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
-			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||:
+			#                             to avoid issues with Arch Linux bootstrap archives.
+		if command -v file > /dev/null && [ "$(file --mime-type -b "${DOWNLOAD_CACHE_DIR}/${tarball_name}")" = "application/x-xz" ] || echo "${tarball_name}" | grep -q "\.tar\.gz$"; then
+			proot --link2symlink \
+				tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
+				--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
+				-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||:
+		else
+			proot --link2symlink \
+				tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
+				--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
+				-xzf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||:
+		fi
 
 		# Write important environment variables to profile file as /bin/login does not
 		# preserve them.
@@ -380,7 +388,7 @@ command_install() {
 		export DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}
 		export EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}
 		[ -z "\$LANG" ] && export LANG=C.UTF-8
-		export PATH=\${PATH}:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin
+		export PATH=\${PATH}:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin
 		export TERM=${TERM-xterm-256color}
 		export TMPDIR=/tmp
 		export PULSE_SERVER=127.0.0.1
@@ -477,18 +485,18 @@ run_proot_cmd() {
 		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 		# Everything else requires emulator (QEMU).
 		case "$DISTRO_ARCH" in
-			aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+			aarch64) qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-aarch64";;
 			arm)
 				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
-					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+					qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-arm"
 				fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
-					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+					qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-i386"
 				fi
 				;;
-			x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+			x86_64) qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-x86_64";;
 			*)
 				msg
 				msg "${BRED}Error: DISTRO_ARCH has unknown value '$DISTRO_ARCH'. Valid values are: aarch64, arm, i686, x86_64."
@@ -524,7 +532,7 @@ run_proot_cmd() {
 		if [ -e "/linkerconfig/ld.config.txt" ]; then
 			qemu_arg="${qemu_arg} --bind=/linkerconfig/ld.config.txt"
 		fi
-		qemu_arg="${qemu_arg} --bind=@TERMUX_PREFIX@"
+		qemu_arg="${qemu_arg} --bind=/data/data/com.termux/files/usr"
 		qemu_arg="${qemu_arg} --bind=/system"
 		qemu_arg="${qemu_arg} --bind=/vendor"
 		if [ -f "/plat_property_contexts" ]; then
@@ -1112,22 +1120,22 @@ command_login() {
 			# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 			# Everything else requires emulator (QEMU).
 			case "$target_arch" in
-				aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+				aarch64) qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-aarch64";;
 				arm)
 					if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
-						qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+						qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-arm"
 					else
 						need_qemu=false
 					fi
 					;;
 				i686)
 					if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
-						qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+						qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-i386"
 					else
 						need_qemu=false
 					fi
 					;;
-				x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+				x86_64) qemu_bin_path="/data/data/com.termux/files/usr/bin/qemu-x86_64";;
 				*)
 					msg
 					msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
@@ -1269,7 +1277,7 @@ command_login() {
 			if [ -e "/linkerconfig/ld.config.txt" ]; then
 				set -- "--bind=/linkerconfig/ld.config.txt" "$@"
 			fi
-			set -- "--bind=@TERMUX_PREFIX@" "$@"
+			set -- "--bind=/data/data/com.termux/files/usr" "$@"
 			set -- "--bind=/system" "$@"
 			set -- "--bind=/vendor" "$@"
 			if [ -f "/plat_property_contexts" ]; then
@@ -1304,7 +1312,7 @@ command_login() {
 		# Bind the tmp folder from the host system to the guest system
 		# Ignores --isolated.
 		if $make_host_tmp_shared; then
-			set -- "--bind=@TERMUX_PREFIX@/tmp:/tmp" "$@"
+			set -- "--bind=/data/data/com.termux/files/usr/tmp:/tmp" "$@"
 		fi
 
 		# Bind custom file systems.
@@ -1880,8 +1888,8 @@ esac
 DISTRO_ARCH=$DEVICE_CPU_ARCH
 
 # Verify architecture if possible - avoid running under linux32 or similar.
-if [ -x "@TERMUX_PREFIX@/bin/dpkg" ]; then
-	if [ "$DEVICE_CPU_ARCH" != "$("@TERMUX_PREFIX@"/bin/dpkg --print-architecture)" ]; then
+if [ -x "/data/data/com.termux/files/usr/bin/dpkg" ]; then
+	if [ "$DEVICE_CPU_ARCH" != "$("/data/data/com.termux/files/usr"/bin/dpkg --print-architecture)" ]; then
 		msg
 		msg "${BRED}CPU architecture reported by system doesn't match architecture of Termux packages. Make sure you are not using 'linux32' or similar utilities.${RST}"
 		msg
