@@ -356,7 +356,7 @@ command_install() {
 		proot --link2symlink \
 			tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
 			--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
-			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||:
+			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||: |& grep -v "/linkerconfig/" >&2
 
 		# Write important environment variables to profile file as /bin/login does not
 		# preserve them.
