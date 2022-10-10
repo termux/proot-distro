@@ -1235,6 +1235,7 @@ command_login() {
 		if ! $isolated_environment; then
 			set -- "--bind=/data/dalvik-cache" "$@"
 			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
+			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/files/apps" "$@"
 			set -- "--bind=@TERMUX_HOME@" "$@"
 
 			# Setup bind mounting for shared storage.
