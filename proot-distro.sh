@@ -350,13 +350,15 @@ command_install() {
 		fi
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting rootfs, please wait...${RST}"
-		# --exclude='dev'||: - need to exclude /dev directory which may contain device files.
+		# --exclude='dev' - need to exclude /dev directory which may contain device files.
 		# --delay-directory-restore - set directory permissions only when files were extracted
 		#                             to avoid issues with Arch Linux bootstrap archives.
+		set +e
 		proot --link2symlink \
 			tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
 			--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
-			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev'||: |& grep -v "/linkerconfig/" >&2
+			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
+		set -e
 
 		# Write important environment variables to profile file as /bin/login does not
 		# preserve them.
