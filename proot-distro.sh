@@ -388,11 +388,11 @@ command_install() {
 		EOF
 
 		# /etc/resolv.conf may not be configured, so write in it our configuraton.
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 1.1.1.1/1.0.0.1)...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 8.8.8.8/8.8.4.4)...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
-		nameserver 1.1.1.1
-		nameserver 1.0.0.1
+		nameserver 8.8.8.8
+		nameserver 8.8.4.4
 		EOF
 
 		# /etc/hosts may be empty by default on some distributions.
