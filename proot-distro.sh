@@ -267,8 +267,10 @@ command_install() {
 			mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 		fi
 
-		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
-			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
+		export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
+		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
+			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$PROOT_L2S_DIR'...${RST}"
+			mkdir -p "$PROOT_L2S_DIR"
 		fi
 
 		# This should be overridden in distro plug-in with valid URL for
