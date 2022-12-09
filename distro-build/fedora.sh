@@ -1,8 +1,8 @@
 dist_name="Fedora"
-dist_version="35-1.2"
+dist_version="37-1.7"
 
 bootstrap_distribution() {
-	for arch in aarch64 armhfp x86_64; do
+	for arch in aarch64 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/fedora-${dist_version}-${arch}.tar.xz" \
 			"https://mirror.de.leaseweb.net/fedora/linux/releases/${dist_version:0:2}/Container/${arch}/images/Fedora-Container-Base-${dist_version}.${arch}.tar.xz"
@@ -34,16 +34,15 @@ bootstrap_distribution() {
 }
 
 write_plugin() {
-	cat <<- EOF > "${PLUGIN_DIR}/archlinux.sh"
+	cat <<- EOF > "${PLUGIN_DIR}/fedora.sh"
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Fedora (${dist_version:0:2})"
+	DISTRO_COMMENT="Only for 64-bit hosts."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/fedora-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/fedora-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['arm']="${GIT_RELEASE_URL}/fedora-arm-pd-${CURRENT_VERSION}.tar.xz"
-	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/fedora-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/fedora-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/fedora-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
