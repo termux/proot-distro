@@ -1,5 +1,5 @@
 dist_name="Arch Linux"
-dist_version="2022.06.01"
+dist_version="2022.12.01"
 
 bootstrap_distribution() {
 	for arch in aarch64 armv7; do
