@@ -1,5 +1,5 @@
 dist_name="Void Linux"
-dist_version="20210316"
+dist_version="20221001"
 
 bootstrap_distribution() {
 	for arch in aarch64 armv7l i686 x86_64; do
