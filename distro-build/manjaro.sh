@@ -21,7 +21,6 @@ bootstrap_distribution() {
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --init
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate manjaro
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate archlinuxarm
-	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate archlinux
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-mirrors -c poland
 	chroot "${WORKDIR}/manjaro-aarch64" pacman -Syu --noconfirm
 	chroot "${WORKDIR}/manjaro-aarch64" pacman -S --noconfirm util-linux
