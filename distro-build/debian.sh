@@ -7,7 +7,7 @@ bootstrap_distribution() {
 			--architectures=${arch} \
 			--variant=minbase \
 			--components="main,contrib" \
-			--include="dbus-user-session,ca-certificates,gvfs-daemons,libsystemd0,systemd-sysv,udisks2" \
+			--include="ca-certificates" \
 			--format=tar \
 			"${dist_version}" \
 			"${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
@@ -32,10 +32,5 @@ write_plugin() {
 	TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/debian-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/debian-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/debian-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-
-	distro_setup() {
-	${TAB}# Don't update gvfs-daemons and udisks2
-	${TAB}run_proot_cmd apt-mark hold gvfs-daemons udisks2
-	}
 	EOF
 }
