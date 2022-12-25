@@ -56,11 +56,9 @@ bootstrap_distribution() {
 	mount --bind /sys "${WORKDIR}/archlinux-bootstrap/sys"
 	mkdir "${WORKDIR}/archlinux-bootstrap/archlinux-i686"
 	mkdir "${WORKDIR}/archlinux-bootstrap/archlinux-x86_64"
-	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --init
-	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --populate archlinux
 	echo 'Server = http://mirror.rackspace.com/archlinux/\$repo/os/\$arch' > \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
-	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap /archlinux-x86_64 base
+	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap -K /archlinux-x86_64 base
 	# chroot "${WORKDIR}/archlinux-bootstrap" pacman -Scc --noconfirm
 	sed -i 's|Architecture = auto|Architecture = i686|' \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.conf"
@@ -68,7 +66,7 @@ bootstrap_distribution() {
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.conf"
 	echo 'Server = https://de.mirror.archlinux32.org/\$arch/\$repo' > \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
-	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap /archlinux-i686 base
+	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap -K /archlinux-i686 base
 	EOF
 
 	for arch in i686 x86_64; do
