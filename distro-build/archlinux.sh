@@ -38,6 +38,9 @@ bootstrap_distribution() {
 	done
 	unset arch
 
+	# Don't build x86(64) for now as there is an issue with keyring.
+	return 0
+
 	curl --fail --location \
 		--output "${WORKDIR}/archlinux-x86_64.tar.gz" \
 		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.gz"
