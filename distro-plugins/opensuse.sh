@@ -1,7 +1,8 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="OpenSUSE (Tumbleweed)"
+DISTRO_NAME="OpenSUSE"
+DISTRO_COMMENT="Rolling release (Tumbleweed)."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.3.0/opensuse-aarch64-pd-v3.3.0.tar.xz"
 TARBALL_SHA256['aarch64']="d5ed8821bc22fbb02bc90a80f4e2ff47f8af40f6a33807c7fec868c57f427a58"

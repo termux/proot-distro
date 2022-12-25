@@ -39,7 +39,7 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Manjaro AArch64"
-	DISTRO_COMMENT="Only for AArch64 hosts."
+	DISTRO_COMMENT="Currently available only for AArch64."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"

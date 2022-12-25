@@ -1,7 +1,8 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Alpine Linux (edge)"
+DISTRO_NAME="Alpine Linux"
+DISTRO_COMMENT="Rolling release branch (edge)."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.3.0/alpine-aarch64-pd-v3.3.0.tar.xz"
 TARBALL_SHA256['aarch64']="54932de3c599855f4b18a6d405b85bd7ad1a8770dae635f60ff2407f8fbeeefa"
