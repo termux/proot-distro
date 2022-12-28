@@ -940,6 +940,7 @@ command_login() {
 	local make_host_tmp_shared=false
 	local distro_name=""
 	local login_user="root"
+	local kernel_release="5.4.0-faked"
 	local -a custom_fs_bindings
 	local need_qemu=false
 
@@ -1005,6 +1006,25 @@ command_login() {
 					fi
 
 					login_user="$1"
+				else
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					command_login_help
+					return 1
+				fi
+				;;
+			--kernel)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--kernel${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
+					kernel_release="$1"
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
@@ -1181,7 +1201,7 @@ command_login() {
 
 		# Some devices have old kernels and GNU libc refuses to work on them.
 		# Fix this behavior by reporting a fake up-to-date kernel version.
-		set -- "--kernel-release=5.4.0-faked" "$@"
+		set -- "--kernel-release=$kernel_release" "$@"
 
 		# Fix lstat to prevent dpkg symlink size warnings
 		set -- "-L" "$@"
@@ -1384,6 +1404,8 @@ command_login_help() {
 	msg "  ${GREEN}--no-kill-on-exit    ${CYAN}- Wait until all running processes will finish${RST}"
 	msg "                         ${CYAN}before exiting. This will cause proot to${RST}"
 	msg "                         ${CYAN}freeze if you are running daemons.${RST}"
+	msg
+	msg "  ${GREEN}--release [string]   ${CYAN}- Set the kernel release and compatibility level to string.${RST}"
 	msg
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
