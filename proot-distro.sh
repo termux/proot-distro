@@ -1405,7 +1405,7 @@ command_login_help() {
 	msg "                         ${CYAN}before exiting. This will cause proot to${RST}"
 	msg "                         ${CYAN}freeze if you are running daemons.${RST}"
 	msg
-	msg "  ${GREEN}--release [string]   ${CYAN}- Set the kernel release and compatibility level to string.${RST}"
+	msg "  ${GREEN}--kernel [string]    ${CYAN}- Set the kernel release and compatibility level to string.${RST}"
 	msg
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
