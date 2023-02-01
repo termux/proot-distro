@@ -32,7 +32,7 @@ Here are the supported distributions:
 * Manjaro AArch64
 * OpenSUSE (Tumbleweed)
 * Ubuntu (22.04)
-* Void Linux
+* Void Linux (glibc and musl)
 
 All systems come in a bare-minimum variant, typically consisting of package
 manager, shell, coreutils, util-linux and few more. Extended functionality
