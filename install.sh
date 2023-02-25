@@ -20,3 +20,9 @@ done
 
 echo "Installing $TERMUX_PREFIX/share/doc/proot-distro/README.md"
 install -Dm600 README.md "$TERMUX_PREFIX"/share/doc/proot-distro/README.md
+
+install -d -m 700 "$TERMUX_PREFIX"/share/bash-completion/completions
+echo "Installing $TERMUX_PREFIX/share/bash-completion/completions/proot-distro"
+sed -e "s|@TERMUX_PREFIX@|$TERMUX_PREFIX|g" \
+	./completions/proot-distro.bash > "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro
+chmod 600 "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro
