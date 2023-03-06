@@ -39,15 +39,6 @@ manager, shell, coreutils, util-linux and few more. Extended functionality
 like shell completion or package install suggestions should be configured
 manually.
 
-## Known issues
-
-There is a number of issues that are not resolved.
-
-1. Android 12: `WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"`
-
-   This warning may appear during installation of selected distribution.
-   Ignore it as it seem to be harmless.
-
 ## Installing
 
 With package manager:
