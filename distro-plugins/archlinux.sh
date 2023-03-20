@@ -4,7 +4,7 @@
 DISTRO_NAME="Arch Linux"
 DISTRO_COMMENT="Currently available only AArch64 and ARM ports."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.3.0/archlinux-aarch64-pd-v3.3.0.tar.xz"
-TARBALL_SHA256['aarch64']="69841d372219ec5fc816fdc783b5123ffb614e3249be97bd587e98081d1e37dc"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.3.0/archlinux-arm-pd-v3.3.0.tar.xz"
-TARBALL_SHA256['arm']="2b52a277b177f0099e010d8ae683a02397cee9dfee4348451e631e28544a7a8d"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.5.1/archlinux-aarch64-pd-v3.5.1.tar.xz"
+TARBALL_SHA256['aarch64']="ca8c072e0d58cc35645118a4a53d48bd2529085ea74aab4b79e504d596d6c91f"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.5.1/archlinux-arm-pd-v3.5.1.tar.xz"
+TARBALL_SHA256['arm']="be88a80ab744ee475dd84e3b2574b970e6f48837a6280a4c9521391b1caa87ad"

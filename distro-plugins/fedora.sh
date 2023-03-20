@@ -4,7 +4,7 @@
 DISTRO_NAME="Fedora"
 DISTRO_COMMENT="Version 37. Supports only 64-bit CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.3.0/fedora-aarch64-pd-v3.3.0.tar.xz"
-TARBALL_SHA256['aarch64']="87eba0f12dc36204f5519dc04fc29bfa9b404db80260130a560f7b14591681cf"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.3.0/fedora-x86_64-pd-v3.3.0.tar.xz"
-TARBALL_SHA256['x86_64']="209345db745d94daf35874d513d530079fe3c8b41ed0e58a53f995ba6e45cd88"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.5.1/fedora-aarch64-pd-v3.5.1.tar.xz"
+TARBALL_SHA256['aarch64']="5e3ed133728c3adb88e5f07f8a29b6f9f2437ba742a9503051373ce1aa831678"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.5.1/fedora-x86_64-pd-v3.5.1.tar.xz"
+TARBALL_SHA256['x86_64']="b29c3763d1b8a59cd3448367e507e825501546869b088a1b745bd194b42eb825"
