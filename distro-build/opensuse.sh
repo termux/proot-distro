@@ -69,7 +69,7 @@ write_plugin() {
 
 	distro_setup() {
 	${TAB}# Lock package filesystem to remove issues regarding zypper dup
-	${TAB}zypper al filesystem
+	${TAB}run_proot_cmd zypper al filesystem
 	}
 	EOF
 }

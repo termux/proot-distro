@@ -15,5 +15,5 @@ TARBALL_SHA256['x86_64']="8d9d09572bdb55d73ba09f915d7fedc8656b9c44bcccd33b2eaef0
 
 distro_setup() {
 	# Lock package filesystem to remove issues regarding zypper dup
-	zypper al filesystem
+	run_proot_cmd zypper al filesystem
 }
