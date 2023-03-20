@@ -1,5 +1,5 @@
 dist_name="Manjaro (aarch64)"
-dist_version="20221212"
+dist_version="20230320"
 
 bootstrap_distribution() {
 	curl --fail --location \
