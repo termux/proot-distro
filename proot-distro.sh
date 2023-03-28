@@ -389,22 +389,6 @@ fi
 
 #############################################################################
 #
-# FUNCTION TO CHECK WHETHER DISTRIBUTION IS INSTALLED
-#
-# This is done by checking the presence of /bin directory in rootfs.
-#
-# Accepted arguments: $1 - name of distribution.
-#
-is_distro_installed() {
-	if [ -e "${INSTALLED_ROOTFS_DIR}/${1}/bin" ]; then
-		return 0
-	else
-		return 1
-	fi
-}
-
-#############################################################################
-#
 # FUNCTION TO INSTALL THE SPECIFIED DISTRIBUTION
 #
 # Brief algorithm how it works:
@@ -527,7 +511,7 @@ command_install() {
 		fi
 	fi
 
-	if is_distro_installed "$distro_name"; then
+	if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		msg
 		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is already installed.${RST}"
 		msg
@@ -1098,8 +1082,6 @@ command_remove() {
 		return 1
 	fi
 
-	# Not using is_distro_installed() here as we only need to know
-	# whether rootfs directory is available.
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		msg
 		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
@@ -1862,7 +1844,7 @@ command_backup() {
 		return 1
 	fi
 
-	if ! is_distro_installed "$distro_name"; then
+	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		msg
 		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
 		msg
