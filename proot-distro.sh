@@ -1227,6 +1227,157 @@ command_remove_help() {
 
 #############################################################################
 #
+# FUNCTION TO RENAME A DISTRIBUTION
+#
+# Change the name of installed distribution by moving its rootfs directory
+# and creating copy of original distrubution plug-in. The new plug-in will
+# have an extension '.override.sh'.
+#
+#############################################################################
+
+command_rename() {
+	local orig_distro_name
+	local new_distro_name
+
+	while (($# >= 1)); do
+		case "$1" in
+			-h|--help)
+				command_rename_help
+				return 0
+				;;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_rename_help
+				return 1
+				;;
+			*)
+				if [ -z "${orig_distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: original distribution alias argument should not be empty.${RST}"
+						command_rename_help
+						return 1
+					fi
+					orig_distro_name="$1"
+					shift 1
+				elif [ -z "${new_distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: new distribution alias argument should not be empty.${RST}"
+						command_rename_help
+						return 1
+					fi
+					new_distro_name="$1"
+					shift 1
+				else
+					msg
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'.${RST}"
+					command_rename_help
+					return 1
+				fi
+				;;
+		esac
+		shift 1
+	done
+
+	if [ -z "${orig_distro_name-}" ]; then
+		msg
+		msg "${BRED}Error: the original alias of distribution is not specified.${RST}"
+		command_rename_help
+		return 1
+	fi
+
+	if [ -z "${new_distro_name-}" ]; then
+		msg
+		msg "${BRED}Error: the new alias of distribution is not specified.${RST}"
+		command_rename_help
+		return 1
+	fi
+
+	# Put a restriction on characters in distribution name.
+	# Same as for --override-alias option of command_install().
+	if ! grep -qP '^[a-z0-9][a-z0-9_.+\-]*$' <<< "${new_distro_name}"; then
+		msg
+		msg "${BRED}Error: the new alias of distribution should start only with an alphanumeric character and consist of alphanumeric characters including symbols '_.+-'.${RST}"
+		command_rename_help
+		return 1
+	fi
+
+	if grep -qP '^.*\.sh$' <<< "$1"; then
+		msg
+		msg "${BRED}Error: the new alias of distribution should not end with '.sh'.${RST}"
+		msg
+		return 1
+	fi
+
+	if [ -z "${SUPPORTED_DISTRIBUTIONS["$orig_distro_name"]+x}" ]; then
+		msg
+		msg "${BRED}Error: unknown distribution '${YELLOW}${orig_distro_name}${BRED}' was requested to be renamed.${RST}"
+		msg
+		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg
+		return 1
+	fi
+
+	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
+		msg
+		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		msg
+		return 1
+	fi
+
+	if [ -d "${INSTALLED_ROOTFS_DIR}/${new_distro_name}" ]; then
+		msg
+		msg "${BRED}Error: cannot rename because rootfs directory for the distribution '${YELLOW}${new_distro_name}${BRED}' already exists.${RST}"
+		msg
+		return 1
+	fi
+
+	if [ -e "${DISTRO_PLUGINS_DIR}/${new_distro_name}.sh" ] || [ -e "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh" ]; then
+		msg
+		msg "${BRED}Error: distribution with alias '${YELLOW}${new_distro_name}${BRED}' already exists.${RST}"
+		msg
+		return 1
+	fi
+
+	if [ -e "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.override.sh" ]; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Renaming '${DISTRO_PLUGINS_DIR}/${orig_distro_name}.override.sh' to '${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh'...${RST}"
+		mv "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.override.sh" "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh"
+	elif [ -e "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.sh" ]; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh'...${RST}"
+		cp "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.sh" "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh"
+	else
+		msg
+		msg "${BRED}Error: could not find a plug-in for distribution '${YELLOW}${orig_distro_name}${BRED}'.${RST}"
+		msg
+		return 1
+	fi
+
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Moving the rootfs directory...${RST}"
+	mv "${INSTALLED_ROOTFS_DIR}/${orig_distro_name}" "${INSTALLED_ROOTFS_DIR}/${new_distro_name}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
+}
+
+command_rename_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}rename ${CYAN}[${GREEN}ORIG ALIAS${CYAN}] [${GREEN}NEW ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Rename a specified Linux distribution.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
+	msg
+	show_version
+	msg
+}
+
+#############################################################################
+#
 # FUNCTION TO REINSTALL THE GIVEN DISTRIBUTION
 #
 # A wrapper unifying functions command_remove && command_install.
@@ -2293,6 +2444,8 @@ command_help() {
 	msg "  ${GREEN}remove       ${CYAN}- Delete a specified distribution.${RST}"
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
+	msg "  ${GREEN}rename       ${CYAN}- Rename installed distribution.${RST}"
+	msg
 	msg "  ${GREEN}reset        ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
@@ -2399,6 +2552,7 @@ if [ $# -ge 1 ]; then
 		list) shift 1; command_list;;
 		login) shift 1; command_login "$@";;
 		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
+		rename) shift 1; command_rename "$@";;
 		clear-cache) shift 1; command_clear_cache "$@";;
 		reset) shift 1; command_reset "$@";;
 		restore) shift 1; command_restore "$@";;
