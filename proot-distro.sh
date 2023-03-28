@@ -481,6 +481,12 @@ command_install() {
 				;;
 			*)
 				if [ -z "${distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: distribution alias argument should not be empty.${RST}"
+						command_install_help
+						return 1
+					fi
 					distro_name="$1"
 				else
 					msg
