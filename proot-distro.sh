@@ -1864,10 +1864,10 @@ command_list() {
 			msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
 			msg
 			msg "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
-			if is_distro_installed "$i"; then
-				msg "    ${CYAN}Status: ${GREEN}installed${RST}"
+			if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
+				msg "    ${CYAN}Installed: ${GREEN}yes${RST}"
 			else
-				msg "    ${CYAN}Status: ${RED}NOT installed${RST}"
+				msg "    ${CYAN}Installed: ${RED}no${RST}"
 			fi
 			if [ -n "${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]+x}" ]; then
 				msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
