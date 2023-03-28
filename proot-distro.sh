@@ -389,6 +389,27 @@ fi
 
 #############################################################################
 #
+# ANTI NESTED PROOT FUSE
+#
+# Nested PRoot usage leads to performance degradation and other issues.
+#
+#############################################################################
+
+TRACER_PID=$(grep TracerPid "/proc/$$/status" | cut -d $'\t' -f 2)
+if [ "$TRACER_PID" != 0 ]; then
+	TRACER_NAME=$(grep Name "/proc/${TRACER_PID}/status" | cut -d $'\t' -f 2)
+	if [ "$TRACER_NAME" = "proot" ]; then
+		msg
+		msg "${BRED}Error: ${PROGRAM_NAME} should not be executed under PRoot.${RST}"
+		msg
+		exit 1
+	fi
+	unset TRACER_NAME
+fi
+unset TRACER_PID
+
+#############################################################################
+#
 # FUNCTION TO INSTALL THE SPECIFIED DISTRIBUTION
 #
 # Brief algorithm how it works:
