@@ -354,6 +354,25 @@ msg() {
 
 #############################################################################
 #
+# DEPENDENCY CHECK
+#
+# Make sure all needed utilities are available in PATH before continuing.
+#
+#############################################################################
+
+for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
+	head id mkdir proot rm sed tar xargs xz; do
+	if [ -z "$(command -v "$i")" ]; then
+		msg
+		msg "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
+		msg
+		exit 1
+	fi
+done
+unset i
+
+#############################################################################
+#
 # ANTI ROOT FUSE
 #
 # This script should never be executed as root as can mess up the ownership,
@@ -2202,16 +2221,6 @@ show_version() {
 
 # This will be executed when signal HUP/INT/TERM is received.
 trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
-
-for i in awk bzip2 curl find gzip proot sed tar xz; do
-	if [ -z "$(command -v "$i")" ]; then
-		msg
-		msg "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
-		msg
-		exit 1
-	fi
-done
-unset i
 
 # Determine a CPU architecture of device.
 case "$(uname -m)" in
