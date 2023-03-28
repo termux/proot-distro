@@ -436,7 +436,7 @@ command_install() {
 				shift 1
 				break
 				;;
-			--help)
+			-h|--help)
 				command_install_help
 				return 0
 				;;
@@ -1796,11 +1796,7 @@ command_backup() {
 
 	while (($# >= 1)); do
 		case "$1" in
-			--)
-				shift 1
-				break
-				;;
-			--help)
+			-h|--help)
 				command_backup_help
 				return 0
 				;;
