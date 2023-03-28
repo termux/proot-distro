@@ -301,6 +301,15 @@ DOWNLOAD_CACHE_DIR="${RUNTIME_DIR}/dlcache"
 # Where extracted rootfs are stored.
 INSTALLED_ROOTFS_DIR="${RUNTIME_DIR}/installed-rootfs"
 
+# Default name servers.
+DEFAULT_PRIMARY_NAMESERVER="8.8.8.8"
+DEFAULT_PRIMARY_NAMESERVER="8.8.4.4"
+
+# Default fake kernel version.
+# Note: faking kernel version is required when using PRoot-Distro on
+# old devices that are not compatible with up-to-date versions of GNU libc.
+DEFAULT_FAKE_KERNEL_VERSION="6.2.1-PRoot-Distro"
+
 # Colors.
 if [ -n "$(command -v tput)" ] && [ $(tput colors) -ge 8 ] && [ -z "${PROOT_DISTRO_FORCE_NO_COLORS-}" ]; then
 	RST="$(tput sgr0)"
@@ -653,15 +662,15 @@ command_install() {
 		export MOZ_FAKE_NO_SANDBOX=1
 		EOF
 
-		# /etc/resolv.conf may not be configured, so write in it our configuraton.
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS 8.8.8.8/8.8.4.4)...${RST}"
+		# Default /etc/resolv.conf may be empty or unsuitable for use.
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS ${DEFAULT_PRIMARY_NAMESERVER}/${DEFAULT_SECONDARY_NAMESERVER})...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
-		nameserver 8.8.8.8
-		nameserver 8.8.4.4
+		nameserver ${DEFAULT_PRIMARY_NAMESERVER}
+		nameserver ${DEFAULT_SECONDARY_NAMESERVER}
 		EOF
 
-		# /etc/hosts may be empty by default on some distributions.
+		# Default /etc/hosts may be empty or incomplete.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing hosts file...${RST}"
 		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts" >/dev/null 2>&1 || true
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts"
@@ -803,7 +812,7 @@ run_proot_cmd() {
 
 	proot \
 		$qemu_arg -L \
-		--kernel-release=5.4.0-faked \
+		--kernel-release="${DEFAULT_FAKE_KERNEL_VERSION}" \
 		--link2symlink \
 		--kill-on-exit \
 		--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
