@@ -344,21 +344,26 @@ unset LD_PRELOAD
 #
 # FUNCTION TO PRINT A MESSAGE TO CONSOLE
 #
-# Prints a given text string to stderr. Handles escape sequences.
+# Prints a given text string to stderr. Supports escape sequences.
+#
+#############################################################################
+
 msg() {
 	echo -e "$@" >&2
 }
 
 #############################################################################
 #
-# ANTI-ROOT FUSE
+# ANTI ROOT FUSE
 #
 # This script should never be executed as root as can mess up the ownership,
 # and SELinux labels in $PREFIX.
 #
+#############################################################################
+
 if [ "$(id -u)" = "0" ]; then
 	msg
-	msg "${BRED}Error: utility '${YELLOW}${PROGRAM_NAME}${BRED}' should not be used as root.${RST}"
+	msg "${BRED}Error: ${PROGRAM_NAME} should not be executed as root user.${RST}"
 	msg
 	exit 1
 fi
@@ -383,26 +388,19 @@ is_distro_installed() {
 #
 # FUNCTION TO INSTALL THE SPECIFIED DISTRIBUTION
 #
-# Installs the Linux distribution by the following algorithm:
+# Brief algorithm how it works:
 #
-#  1. Checks whether requested distribution is supported, if yes - continue.
-#  2. Checks whether requested distribution is installed, if not - continue.
-#  3. Source the distribution configuration plug-in which contains the
-#     functionality necessary for installation. It must define at least
-#     TARBALL_URL and TARBALL_SHA256 associative array for at least one CPU
-#     architecture.
-#  4. Download the rootfs archive, if it is not available in cache.
-#  5. Verify the rootfs archive if we have a SHA-256 for it. Otherwise print
-#     a warning stating that integrity cannot be verified.
-#  6. Extract the rootfs by using `tar` running under proot with link2symlink
-#     extension. *Don't tell me that this is too slow.*
-#  7. Write environment variables configuration to /etc/profile.d/termux-proot.sh.
-#     If profile.d directory is not available, append to /etc/profile.
-#  8. Write default /etc/resolv.conf.
-#  9. Write default /etc/hosts.
-#  10. Add missing Android specific UIDs/GIDs to user database.
-#  11. Execute optional setup hook (distro_setup) if present.
+#  1. Process arguments supplied to 'install' command.
+#  2. Ensure that requested distribution is supported and is not installed.
+#  3. Source the distribution configuration plug-in.
+#  4. Download the tarball of rootfs for requested distribution unless found
+#     in cache.
+#  5. Verify SHA-256 checksum of the rootfs tarball.
+#  6. Extract the rootfs under PRoot with link2symlink extension enabled.
+#  7. Perform post-installation actions on distribution to make it ready.
 #
+#############################################################################
+
 command_install() {
 	local distro_name
 	local override_alias
@@ -446,14 +444,14 @@ command_install() {
 					override_alias="$1"
 				else
 					msg
-					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg "${BRED}Error: option '${YELLOW}--override-alias${BRED}' requires an argument.${RST}"
 					command_install_help
 					return 1
 				fi
 				;;
 			-*)
 				msg
-				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
 				command_install_help
 				return 1
 				;;
@@ -462,9 +460,7 @@ command_install() {
 					distro_name="$1"
 				else
 					msg
-					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					msg
-					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that distribution can be specified only once.${RST}"
 					command_install_help
 					return 1
 				fi
@@ -499,7 +495,7 @@ command_install() {
 			distro_name="${override_alias}"
 		else
 			msg
-			msg "${BRED}Error: you cannot use value '${YELLOW}${override_alias}${BRED}' as alias override.${RST}"
+			msg "${BRED}Error: distribution with alias '${YELLOW}${override_alias}${BRED}' already exists.${RST}"
 			msg
 			return 1
 		fi
@@ -540,7 +536,7 @@ command_install() {
 
 		export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
-			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$PROOT_L2S_DIR'...${RST}"
+			echo -e "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${PROOT_L2S_DIR}'...${RST}"
 			mkdir -p "$PROOT_L2S_DIR"
 		fi
 
@@ -568,12 +564,12 @@ command_install() {
 
 		# Cannot proceed without URL and SHA-256.
 		if [ -z "${TARBALL_URL["$DISTRO_ARCH"]}" ]; then
-			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Sorry, but distribution download URL is not defined for CPU architecture '$DISTRO_ARCH'.${RST}"
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}The distribution download URL is not defined for CPU architecture '${DISTRO_ARCH}'.${RST}"
 			return 1
 		fi
 		if ! grep -qP '^[0-9a-fA-F]+$' <<< "${TARBALL_SHA256["$DISTRO_ARCH"]}"; then
 			msg
-			msg "${BRED}Error: got malformed SHA-256 from ${distro_plugin_script}${RST}"
+			msg "${BRED}Error: got malformed SHA-256 from plug-in script '${distro_plugin_script}'.${RST}"
 			msg
 			return 1
 		fi
@@ -629,7 +625,7 @@ command_install() {
 		set +e
 		proot --link2symlink \
 			tar -C "${INSTALLED_ROOTFS_DIR}/${distro_name}" --warning=no-unknown-keyword \
-			--delay-directory-restore --preserve-permissions --strip="$TARBALL_STRIP_OPT" \
+			--delay-directory-restore --preserve-permissions --strip="${TARBALL_STRIP_OPT}" \
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
 		set -e
 
@@ -642,7 +638,7 @@ command_install() {
 			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile" >/dev/null 2>&1 || true
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '$profile_script'...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '${profile_script}'...${RST}"
 		cat <<- EOF >> "$profile_script"
 		export ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}
 		export ANDROID_DATA=${ANDROID_DATA-}
@@ -692,17 +688,17 @@ command_install() {
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group" \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" >/dev/null 2>&1 || true
-		echo "aid_$(id -un):x:$(id -u):$(id -g):Android user:/:/sbin/nologin" >> \
+		echo "aid_$(id -un):x:$(id -u):$(id -g):Termux:/:/sbin/nologin" >> \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd"
 		echo "aid_$(id -un):*:18446:0:99999:7:::" >> \
 			"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/shadow"
 		local group_name group_id
 		while read -r group_name group_id; do
-			echo "aid_${group_name}:x:${group_id}:root,aid_$(id -un)" >> \
-				"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group"
+			echo "aid_${group_name}:x:${group_id}:root,aid_$(id -un)" \
+				>> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/group"
 			if [ -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow" ]; then
-				echo "aid_${group_name}:*::root,aid_$(id -un)" >> \
-					"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow"
+				echo "aid_${group_name}:*::root,aid_$(id -un)" \
+					>> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/gshadow"
 			fi
 		done < <(paste <(id -Gn | tr ' ' '\n') <(id -G | tr ' ' '\n'))
 
@@ -711,29 +707,29 @@ command_install() {
 
 		# Run optional distro-specific hook.
 		if declare -f -F distro_setup >/dev/null 2>&1; then
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Running distro-specific configuration steps...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Running distribution-specific configuration steps...${RST}"
 			(cd "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 				distro_setup
 			)
 		fi
 
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation finished.${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 		msg
-		msg "${CYAN}Now run '${GREEN}$PROGRAM_NAME login $distro_name${CYAN}' to log in.${RST}"
+		msg "${CYAN}Now run '${GREEN}${PROGRAM_NAME} login $distro_name${CYAN}' to log in.${RST}"
 		msg
 		return 0
 	else
-		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which contains distro-specific install functions.${RST}"
+		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which is used to define a distribution properties.${RST}"
 		return 1
 	fi
 }
 
-# Special function for executing a command in rootfs.
-# Can be used only inside distro_setup().
+# Special function for executing a command inside rootfs.
+# Intended to be used inside plug-in distro_setup() function.
 run_proot_cmd() {
 	if [ -z "${distro_name-}" ]; then
 		msg
-		msg "${BRED}Error: called run_proot_cmd() but \${distro_name} is not set. Possible cause: using run_proot_cmd() outside of distro_setup()?${RST}"
+		msg "${BRED}Error: called run_proot_cmd() but \${distro_name} is not set. Make sure that run_proot_cmd() is used inside distro_setup() function.${RST}"
 		msg
 		return 1
 	fi
@@ -1027,13 +1023,11 @@ setup_fake_proc() {
 	fi
 }
 
-# Usage info for command_install.
 command_install_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}install ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}install ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
-	msg "${CYAN}This command will create a fresh installation of specified Linux${RST}"
-	msg "${CYAN}distribution.${RST}"
+	msg "${CYAN}Install a specified Linux distribution.${RST}"
 	msg
 	msg "${CYAN}Options:${RST}"
 	msg
@@ -1043,7 +1037,7 @@ command_install_help() {
 	msg "                                   ${CYAN}distribution.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
 	msg
 	show_version
 	msg
@@ -1053,10 +1047,11 @@ command_install_help() {
 #
 # FUNCTION TO UNINSTALL SPECIFIED DISTRIBUTION
 #
-# Just deletes the rootfs of the given distribution.
+# Delete the rootfs of given distribution. If the associated plug-in has
+# extension '.override.sh', it will be deleted as well.
 #
-# Accepted agruments: $1 - name of distribution.
-#
+#############################################################################
+
 command_remove() {
 	local distro_name
 
@@ -1079,7 +1074,7 @@ command_remove() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be removed.${RST}"
 		msg
-		msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
 		msg
 		return 1
 	fi
@@ -1093,9 +1088,10 @@ command_remove() {
 		return 1
 	fi
 
-	# Delete plugin with overridden alias.
+	# The plug-ins created during renaming the distribution are considered
+	# as generated content and should be deleted with rootfs.
 	if [ "${CMD_REMOVE_REQUESTED_RESET-false}" = "false" ] && [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting ${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Deleting file '${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh'...${RST}"
 		rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"
 	fi
 
@@ -1103,25 +1099,30 @@ command_remove() {
 	# Attempt to restore permissions so directory can be removed without issues.
 	chmod u+rwx -R "${INSTALLED_ROOTFS_DIR}/${distro_name}" > /dev/null 2>&1 || true
 	# There is still chance for failure.
-	if ! rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; then
+	if rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
+	else
 		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Finished with errors. Some files probably were not deleted.${RST}"
 		return 1
 	fi
 }
 
-# Usage info for command_remove.
 command_remove_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}remove ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}remove ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
-	msg "${CYAN}This command will uninstall the specified Linux distribution.${RST}"
+	msg "${CYAN}Remove a specified Linux distribution.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	msg
 	msg "${CYAN}Be careful when using it because you will not be prompted for${RST}"
 	msg "${CYAN}confirmation and all data saved within the distribution will${RST}"
 	msg "${CYAN}instantly gone.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
 	msg
 	show_version
 	msg
@@ -1131,10 +1132,10 @@ command_remove_help() {
 #
 # FUNCTION TO REINSTALL THE GIVEN DISTRIBUTION
 #
-# Just a shortcut for command_remove && command_install.
+# A wrapper unifying functions command_remove && command_install.
 #
-# Accepted arguments: $1 - distribution name.
-#
+#############################################################################
+
 command_reset() {
 	local distro_name
 
@@ -1155,9 +1156,9 @@ command_reset() {
 
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
 		msg
-		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be reinstalled.${RST}"
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be reset.${RST}"
 		msg
-		msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
 		msg
 		return 1
 	fi
@@ -1173,19 +1174,22 @@ command_reset() {
 	command_install "$distro_name"
 }
 
-# Usage info for command_reset.
 command_reset_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}reset ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
 	msg "${CYAN}Reinstall the specified Linux distribution.${RST}"
 	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
 	msg "${CYAN}Be careful when using it because you will not be prompted for${RST}"
 	msg "${CYAN}confirmation and all data saved within the distribution will${RST}"
 	msg "${CYAN}instantly gone.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
 	msg
 	show_version
 	msg
@@ -1196,24 +1200,24 @@ command_reset_help() {
 # FUNCTION TO START SHELL OR EXECUTE COMMAND
 #
 # Starts root shell inside the rootfs of specified Linux distribution.
-# If '--' with further arguments was specified, execute the root shell
-# command and exit.
 #
-# Accepts arbitrary amount of arguments.
+# If '--' with further arguments was specified, then execute command line
+# given after '--' as root user without starting interactive shell.
 #
+#############################################################################
+
 command_login() {
+	local fix_low_ports=false
 	local isolated_environment=false
 	local use_termux_home=false
+	local make_host_tmp_shared=false
+	local -a custom_fs_bindings
 	local no_link2symlink=false
 	local no_sysvipc=false
 	local no_kill_on_exit=false
-	local fix_low_ports=false
-	local make_host_tmp_shared=false
-	local distro_name=""
 	local login_user="root"
-	local kernel_release="5.4.0-faked"
-	local -a custom_fs_bindings
-	local need_qemu=false
+	local kernel_release="${DEFAULT_FAKE_KERNEL_VERSION}"
+	local distro_name
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -1251,7 +1255,7 @@ command_login() {
 					custom_fs_bindings+=("$1")
 				else
 					msg
-					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg "${BRED}Error: option '${YELLOW}--bind${BRED}' requires an argument.${RST}"
 					command_login_help
 					return 1
 				fi
@@ -1279,7 +1283,7 @@ command_login() {
 					login_user="$1"
 				else
 					msg
-					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg "${BRED}Error: option '${YELLOW}--user${BRED}' requires an argument.${RST}"
 					command_login_help
 					return 1
 				fi
@@ -1305,25 +1309,22 @@ command_login() {
 				;;
 			-*)
 				msg
-				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
 				command_login_help
 				return 1
 				;;
 			*)
-				if [ -z "$1" ]; then
-					msg
-					msg "${BRED}Error: you should not pass empty command line arguments.${RST}"
-					command_login_help
-					return 1
-				fi
-
-				if [ -z "$distro_name" ]; then
+				if [ -z "${distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: distribution alias argument should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
 					distro_name="$1"
 				else
 					msg
-					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					msg
-					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that distribution can be specified only once.${RST}"
 					command_login_help
 					return 1
 				fi
@@ -1332,324 +1333,324 @@ command_login() {
 		shift 1
 	done
 
-	if [ -z "$distro_name" ]; then
+	if [ -z "${distro_name-}" ]; then
 		msg
-		msg "${BRED}Error: you should at least specify a distribution in order to log in.${RST}"
+		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_login_help
 		return 1
 	fi
 
-	if is_distro_installed "$distro_name"; then
-		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
-			export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
-		fi
-
-		if [ $# -ge 1 ]; then
-			# Wrap in quotes each argument to prevent word splitting.
-			local -a shell_command_args
-			for i in "$@"; do
-				shell_command_args+=("'$i'")
-			done
-
-			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-				set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
-			else
-				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
-				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
-					set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
-				else
-					set -- "/bin/sh" "-l" "-c" "${shell_command_args[*]}"
-				fi
-			fi
-		else
-			if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-				set -- "/bin/su" "-l" "$login_user"
-			else
-				msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
-				if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
-					set -- "/bin/bash" "-l"
-				else
-					set -- "/bin/sh" "-l"
-				fi
-			fi
-		fi
-
-		# Setup the default environment as well as copy some variables
-		# defined by Termux. Note that when copying variables, we don't
-		# care whether they actually defined in Termux or not. If they
-		# will be empty, this should not cause any issues.
-		set -- "/usr/bin/env" "-i" \
-			"HOME=/root" \
-			"LANG=C.UTF-8" \
-			"TERM=${TERM-xterm-256color}" \
-			"$@"
-
-		set -- "--rootfs=${INSTALLED_ROOTFS_DIR}/${distro_name}" "$@"
-
-		# Setup QEMU when CPU architecture do not match the one of device.
-		local target_arch
-		if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
-			target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
-		elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
-			target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
-		else
-			# This should never happen.
-			msg
-			msg "${BRED}Error: missing plugin for distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
-			msg
-			return 1
-		fi
-
-		if [ "$target_arch" != "$DEVICE_CPU_ARCH" ]; then
-			local qemu_bin_path=""
-			need_qemu=true
-
-			# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
-			# Everything else requires emulator (QEMU).
-			case "$target_arch" in
-				aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
-				arm)
-					if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
-						qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
-					else
-						need_qemu=false
-					fi
-					;;
-				i686)
-					if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
-						qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
-					else
-						need_qemu=false
-					fi
-					;;
-				x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
-				*)
-					msg
-					msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
-					msg
-					return 1
-				;;
-			esac
-
-			if [ -n "$qemu_bin_path" ]; then
-				if [ -x "$qemu_bin_path" ]; then
-					set -- "-q" "$qemu_bin_path" "$@"
-				else
-					local qemu_user_pkg=""
-					case "$target_arch" in
-						aarch64) qemu_user_pkg="qemu-user-aarch64";;
-						arm) qemu_user_pkg="qemu-user-arm";;
-						i686) qemu_user_pkg="qemu-user-i386";;
-						x86_64) qemu_user_pkg="qemu-user-x86-64";;
-						*) qemu_user_pkg="qemu-user-$target_arch";;
-					esac
-
-					msg
-					msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
-					msg
-					return 1
-				fi
-			fi
-		fi
-
-		if ! $no_kill_on_exit; then
-			# This option terminates all background processes on exit, so
-			# proot can terminate freely.
-			set -- "--kill-on-exit" "$@"
-		else
-			msg "${BRED}Warning: option '--no-kill-on-exit' is enabled. When exiting, your session will be blocked until all processes are terminated.${RST}"
-		fi
-
-		if ! $no_link2symlink; then
-			# Support hardlinks.
-			set -- "--link2symlink" "$@"
-		fi
-
-		if ! $no_sysvipc; then
-			# Support System V IPC.
-			set -- "--sysvipc" "$@"
-		fi
-
-		# Some devices have old kernels and GNU libc refuses to work on them.
-		# Fix this behavior by reporting a fake up-to-date kernel version.
-		set -- "--kernel-release=$kernel_release" "$@"
-
-		# Fix lstat to prevent dpkg symlink size warnings
-		set -- "-L" "$@"
-
-		# Simulate root so we can switch users.
-		set -- "--cwd=/root" "$@"
-		set -- "--root-id" "$@"
-
-		# Core file systems that should always be present.
-		set -- "--bind=/dev" "$@"
-		set -- "--bind=/dev/urandom:/dev/random" "$@"
-		set -- "--bind=/proc" "$@"
-		set -- "--bind=/proc/self/fd:/dev/fd" "$@"
-		set -- "--bind=/proc/self/fd/0:/dev/stdin" "$@"
-		set -- "--bind=/proc/self/fd/1:/dev/stdout" "$@"
-		set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
-		set -- "--bind=/sys" "$@"
-
-		# Ensure that we can bind fake /proc entries.
-		setup_fake_proc
-
-		# Fake /proc/loadavg if necessary.
-		if ! cat /proc/loadavg > /dev/null 2>&1; then
-			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" "$@"
-		fi
-
-		# Fake /proc/stat if necessary.
-		if ! cat /proc/stat > /dev/null 2>&1; then
-			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
-		fi
-
-		# Fake /proc/uptime if necessary.
-		if ! cat /proc/uptime > /dev/null 2>&1; then
-			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" "$@"
-		fi
-
-		# Fake /proc/version if necessary.
-		if ! cat /proc/version > /dev/null 2>&1; then
-			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" "$@"
-		fi
-
-		# Fake /proc/vmstat if necessary.
-		if ! cat /proc/vmstat > /dev/null 2>&1; then
-			set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" "$@"
-		fi
-
-		# Bind /tmp to /dev/shm.
-		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp" ]; then
-			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp"
-		fi
-		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp:/dev/shm" "$@"
-
-		# When running in non-isolated mode, provide some bindings specific
-		# to Android and Termux so user can interact with host file system.
-		if ! $isolated_environment; then
-			set -- "--bind=/data/dalvik-cache" "$@"
-			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
-			if [ -d "/data/data/@TERMUX_APP_PACKAGE@/files/apps" ]; then
-				set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/files/apps" "$@"
-			fi
-			set -- "--bind=@TERMUX_HOME@" "$@"
-
-			# Bind whole /storage directory when it is readable. This gives
-			# access to shared storage and on some Android versions to external
-			# disks such as SD cards. On failure try binding only shared
-			# storage.
-			if ls -1U /storage > /dev/null 2>&1; then
-				set -- "--bind=/storage" "$@"
-			else
-				# We want to use the primary shared storage mount point
-				# there with avoiding secondary and legacy mount points. As
-				# Android OS versions are different, some directories may
-				#be unavailable and we need to try them all.
-				local storage_path
-				if ls -1U /storage/self/primary/ > /dev/null 2>&1; then
-					storage_path="/storage/self/primary"
-				elif ls -1U /storage/emulated/0/ > /dev/null 2>&1; then
-					storage_path="/storage/emulated/0"
-				elif ls -1U /sdcard/ > /dev/null 2>&1; then
-					storage_path="/sdcard"
-				else
-					# Shared storage is not accessible.
-					storage_path=""
-				fi
-
-				if [ -n "$storage_path" ]; then
-					set -- "--bind=${storage_path}:/sdcard" "$@"
-					set -- "--bind=${storage_path}:/storage/emulated/0" "$@"
-					set -- "--bind=${storage_path}:/storage/self/primary" "$@"
-				fi
-			fi
-		fi
-
-		# When using QEMU, we need some host files even in isolated mode.
-		if ! $isolated_environment || $need_qemu; then
-			if [ -d "/apex" ]; then
-				set -- "--bind=/apex" "$@"
-			fi
-			if [ -e "/linkerconfig/ld.config.txt" ]; then
-				set -- "--bind=/linkerconfig/ld.config.txt" "$@"
-			fi
-			set -- "--bind=@TERMUX_PREFIX@" "$@"
-			set -- "--bind=/system" "$@"
-			set -- "--bind=/vendor" "$@"
-			if [ -f "/plat_property_contexts" ]; then
-				set -- "--bind=/plat_property_contexts" "$@"
-			fi
-			if [ -f "/property_contexts" ]; then
-				set -- "--bind=/property_contexts" "$@"
-			fi
-		fi
-
-		# Use Termux home directory if requested.
-		# Ignores --isolated.
-		if $use_termux_home; then
-			if [ "$login_user" = "root" ]; then
-				set -- "--bind=@TERMUX_HOME@:/root" "$@"
-			else
-				if [ -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" ]; then
-					local user_home
-					user_home=$(grep -P "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d: -f 6)
-
-					if [ -z "$user_home" ]; then
-						user_home="/home/${login_user}"
-					fi
-
-					set -- "--bind=@TERMUX_HOME@:${user_home}" "$@"
-				else
-					set -- "--bind=@TERMUX_HOME@:/home/${login_user}" "$@"
-				fi
-			fi
-		fi
-
-		# Bind the tmp folder from the host system to the guest system
-		# Ignores --isolated.
-		if $make_host_tmp_shared; then
-			set -- "--bind=@TERMUX_PREFIX@/tmp:/tmp" "$@"
-		fi
-
-		# Bind custom file systems.
-		local bnd
-		for bnd in "${custom_fs_bindings[@]}"; do
-			set -- "--bind=${bnd}" "$@"
-		done
-
-		# Modify bindings to protected ports to use a higher port number.
-		if $fix_low_ports; then
-			set -- "-p" "$@"
-		fi
-
-		exec proot "$@"
-	else
-		if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
-			msg
-			msg "${BRED}Error: cannot log in into unknown distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
-			msg
-			msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
-			msg
-		else
-			msg
-			msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
-			msg
-			msg "${CYAN}Install it with: ${GREEN}${PROGRAM_NAME} install ${distro_name}${RST}"
-			msg
-		fi
+	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
+		msg
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for logging in.${RST}"
+		msg
+		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg
 		return 1
 	fi
+
+	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
+		msg
+		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		msg
+		return 1
+	fi
+
+	if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
+		export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
+	fi
+
+	if [ $# -ge 1 ]; then
+		# Wrap in quotes each argument to prevent word splitting.
+		local -a shell_command_args
+		for i in "$@"; do
+			shell_command_args+=("'$i'")
+		done
+
+		if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
+			set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
+		else
+			msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
+			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
+				set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
+			else
+				set -- "/bin/sh" "-l" "-c" "${shell_command_args[*]}"
+			fi
+		fi
+	else
+		if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
+			set -- "/bin/su" "-l" "$login_user"
+		else
+			msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
+			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
+				set -- "/bin/bash" "-l"
+			else
+				set -- "/bin/sh" "-l"
+			fi
+		fi
+	fi
+
+	# Setup the default environment as well as copy some variables
+	# defined by Termux. Note that when copying variables, we don't
+	# care whether they actually defined in Termux or not. If they
+	# will be empty, this should not cause any issues.
+	set -- "/usr/bin/env" "-i" \
+		"HOME=/root" \
+		"LANG=C.UTF-8" \
+		"TERM=${TERM-xterm-256color}" \
+		"$@"
+
+	set -- "--rootfs=${INSTALLED_ROOTFS_DIR}/${distro_name}" "$@"
+
+	# Setup QEMU when CPU architecture do not match the one of device.
+	local target_arch
+	if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
+		target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
+	elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
+		target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
+	else
+		# This should never happen.
+		msg
+		msg "${BRED}Error: missing plugin for distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
+		msg
+		return 1
+	fi
+
+	local need_qemu=false
+	if [ "$target_arch" != "$DEVICE_CPU_ARCH" ]; then
+		local qemu_bin_path=""
+		need_qemu=true
+
+		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
+		# Everything else requires emulator (QEMU).
+		case "$target_arch" in
+			aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+			arm)
+				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+				else
+					need_qemu=false
+				fi
+				;;
+			i686)
+				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
+					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+				else
+					need_qemu=false
+				fi
+				;;
+			x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+			*)
+				msg
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
+				msg
+				return 1
+			;;
+		esac
+
+		if [ -n "$qemu_bin_path" ]; then
+			if [ -x "$qemu_bin_path" ]; then
+				set -- "-q" "$qemu_bin_path" "$@"
+			else
+				local qemu_user_pkg=""
+				case "$target_arch" in
+					aarch64) qemu_user_pkg="qemu-user-aarch64";;
+					arm) qemu_user_pkg="qemu-user-arm";;
+					i686) qemu_user_pkg="qemu-user-i386";;
+					x86_64) qemu_user_pkg="qemu-user-x86-64";;
+					*) qemu_user_pkg="qemu-user-$target_arch";;
+				esac
+
+				msg
+				msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
+				msg
+				return 1
+			fi
+		fi
+	fi
+
+	if ! $no_kill_on_exit; then
+		# This option terminates all background processes on exit, so
+		# proot can terminate freely.
+		set -- "--kill-on-exit" "$@"
+	else
+		msg "${BRED}Warning: option '--no-kill-on-exit' is enabled. When exiting, your session will be blocked until all processes are terminated.${RST}"
+	fi
+
+	if ! $no_link2symlink; then
+		# Support hardlinks.
+		set -- "--link2symlink" "$@"
+	fi
+
+	if ! $no_sysvipc; then
+		# Support System V IPC.
+		set -- "--sysvipc" "$@"
+	fi
+
+	# Some devices have old kernels and GNU libc refuses to work on them.
+	# Fix this behavior by reporting a fake up-to-date kernel version.
+	set -- "--kernel-release=$kernel_release" "$@"
+
+	# Fix lstat to prevent dpkg symlink size warnings
+	set -- "-L" "$@"
+
+	# Simulate root so we can switch users.
+	set -- "--cwd=/root" "$@"
+	set -- "--root-id" "$@"
+
+	# Core file systems that should always be present.
+	set -- "--bind=/dev" "$@"
+	set -- "--bind=/dev/urandom:/dev/random" "$@"
+	set -- "--bind=/proc" "$@"
+	set -- "--bind=/proc/self/fd:/dev/fd" "$@"
+	set -- "--bind=/proc/self/fd/0:/dev/stdin" "$@"
+	set -- "--bind=/proc/self/fd/1:/dev/stdout" "$@"
+	set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
+	set -- "--bind=/sys" "$@"
+
+	# Ensure that we can bind fake /proc entries.
+	setup_fake_proc
+
+	# Fake /proc/loadavg if necessary.
+	if ! cat /proc/loadavg > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" "$@"
+	fi
+
+	# Fake /proc/stat if necessary.
+	if ! cat /proc/stat > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
+	fi
+
+	# Fake /proc/uptime if necessary.
+	if ! cat /proc/uptime > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" "$@"
+	fi
+
+	# Fake /proc/version if necessary.
+	if ! cat /proc/version > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" "$@"
+	fi
+
+	# Fake /proc/vmstat if necessary.
+	if ! cat /proc/vmstat > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" "$@"
+	fi
+
+	# Bind /tmp to /dev/shm.
+	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp" ]; then
+		mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp"
+		chmod 1777 "${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp"
+	fi
+	set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/tmp:/dev/shm" "$@"
+
+	# When running in non-isolated mode, provide some bindings specific
+	# to Android and Termux so user can interact with host file system.
+	if ! $isolated_environment; then
+		set -- "--bind=/data/dalvik-cache" "$@"
+		set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
+		if [ -d "/data/data/@TERMUX_APP_PACKAGE@/files/apps" ]; then
+			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/files/apps" "$@"
+		fi
+		set -- "--bind=@TERMUX_HOME@" "$@"
+
+		# Bind whole /storage directory when it is readable. This gives
+		# access to shared storage and on some Android versions to external
+		# disks such as SD cards. On failure try binding only shared
+		# storage.
+		if ls -1U /storage > /dev/null 2>&1; then
+			set -- "--bind=/storage" "$@"
+		else
+			# We want to use the primary shared storage mount point
+			# there with avoiding secondary and legacy mount points. As
+			# Android OS versions are different, some directories may
+			#be unavailable and we need to try them all.
+			local storage_path
+			if ls -1U /storage/self/primary/ > /dev/null 2>&1; then
+				storage_path="/storage/self/primary"
+			elif ls -1U /storage/emulated/0/ > /dev/null 2>&1; then
+				storage_path="/storage/emulated/0"
+			elif ls -1U /sdcard/ > /dev/null 2>&1; then
+				storage_path="/sdcard"
+			else
+				# Shared storage is not accessible.
+				storage_path=""
+			fi
+
+			if [ -n "$storage_path" ]; then
+				set -- "--bind=${storage_path}:/sdcard" "$@"
+				set -- "--bind=${storage_path}:/storage/emulated/0" "$@"
+				set -- "--bind=${storage_path}:/storage/self/primary" "$@"
+			fi
+		fi
+	fi
+
+	# When using QEMU, we need some host files even in isolated mode.
+	if ! $isolated_environment || $need_qemu; then
+		if [ -d "/apex" ]; then
+			set -- "--bind=/apex" "$@"
+		fi
+		if [ -e "/linkerconfig/ld.config.txt" ]; then
+			set -- "--bind=/linkerconfig/ld.config.txt" "$@"
+		fi
+		set -- "--bind=@TERMUX_PREFIX@" "$@"
+		set -- "--bind=/system" "$@"
+		set -- "--bind=/vendor" "$@"
+		if [ -f "/plat_property_contexts" ]; then
+			set -- "--bind=/plat_property_contexts" "$@"
+		fi
+		if [ -f "/property_contexts" ]; then
+			set -- "--bind=/property_contexts" "$@"
+		fi
+	fi
+
+	# Use Termux home directory if requested.
+	# Ignores --isolated.
+	if $use_termux_home; then
+		if [ "$login_user" = "root" ]; then
+			set -- "--bind=@TERMUX_HOME@:/root" "$@"
+		else
+			if [ -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" ]; then
+				local user_home
+				user_home=$(grep -P "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d: -f 6)
+
+				if [ -z "$user_home" ]; then
+					user_home="/home/${login_user}"
+				fi
+
+				set -- "--bind=@TERMUX_HOME@:${user_home}" "$@"
+			else
+				set -- "--bind=@TERMUX_HOME@:/home/${login_user}" "$@"
+			fi
+		fi
+	fi
+
+	# Bind the tmp folder from the host system to the guest system
+	# Ignores --isolated.
+	if $make_host_tmp_shared; then
+		set -- "--bind=@TERMUX_PREFIX@/tmp:/tmp" "$@"
+	fi
+
+	# Bind custom file systems.
+	local bnd
+	for bnd in "${custom_fs_bindings[@]}"; do
+		set -- "--bind=${bnd}" "$@"
+	done
+
+	# Modify bindings to protected ports to use a higher port number.
+	if $fix_low_ports; then
+		set -- "-p" "$@"
+	fi
+
+	exec proot "$@"
 }
 
-# Usage info for command_login.
 command_login_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
 	msg
-	msg "${CYAN}This command will launch a login shell for the specified${RST}"
-	msg "${CYAN}distribution if no additional arguments were given, otherwise${RST}"
-	msg "${CYAN}it will execute the given command and exit.${RST}"
+	msg "${CYAN}Launch a login shell for the specified distribution if no${RST}"
+	msg "${CYAN}additional arguments were given. Otherwise execute the${RST}"
+	msg "${CYAN}given command and exit.${RST}"
 	msg
 	msg "${CYAN}Options:${RST}"
 	msg
@@ -1689,9 +1690,6 @@ command_login_help() {
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
 	msg
-	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
-	msg
 	msg "${CYAN}If no '${GREEN}--isolated${CYAN}' option given, the following host directories${RST}"
 	msg "${CYAN}will be available:${RST}"
 	msg
@@ -1714,6 +1712,9 @@ command_login_help() {
 	msg "${CYAN}ANDROID_ROOT, BOOTCLASSPATH and others which are usually set${RST}"
 	msg "${CYAN}in Termux sessions.${RST}"
 	msg
+	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
+	msg
 	show_version
 	msg
 }
@@ -1722,15 +1723,17 @@ command_login_help() {
 #
 # FUNCTION TO LIST THE SUPPORTED DISTRIBUTIONS
 #
-# Shows the list of distributions which this utility can handle. Also print
-# their installation status.
+# Print the summary of available distributions and their installation
+# status. The information about distributions is read from plug-in files.
 #
+#############################################################################
+
 command_list() {
 	msg
 	if [ -z "${!SUPPORTED_DISTRIBUTIONS[*]}" ]; then
-		msg "${YELLOW}You do not have any distribution plugins configured.${RST}"
+		msg "${YELLOW}No distribution plug-ins found.${RST}"
 		msg
-		msg "${YELLOW}Please check the directory '$DISTRO_PLUGINS_DIR'.${RST}"
+		msg "${YELLOW}Please check the directory '${DISTRO_PLUGINS_DIR}' and create at least one distribution plug-in.${RST}"
 	else
 		msg "${CYAN}Supported distributions:${RST}"
 
@@ -1760,11 +1763,14 @@ command_list() {
 #
 # FUNCTION TO BACKUP A SPECIFIED DISTRIBUTION
 #
-# Backup a specified distribution installation by making a tarball.
+# Backup a specified distribution installation by making a tarball that
+# contains distribution rootfs and a corresponding plug-in file.
 #
+#############################################################################
+
 command_backup() {
-	local distro_name=""
-	local tarball_file_path=""
+	local distro_name
+	local tarball_file_path
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -1790,32 +1796,29 @@ command_backup() {
 					tarball_file_path="$1"
 				else
 					msg
-					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					msg "${BRED}Error: option '${YELLOW}--output${BRED}' requires an argument.${RST}"
 					command_backup_help
 					return 1
 				fi
 				;;
 			-*)
 				msg
-				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
 				command_backup_help
 				return 1
 				;;
 			*)
-				if [ -z "$1" ]; then
-					msg
-					msg "${BRED}Error: you should not pass empty command line arguments.${RST}"
-					command_backup_help
-					return 1
-				fi
-
-				if [ -z "$distro_name" ]; then
+				if [ -z "${distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: distribution alias argument should not be empty.${RST}"
+						command_backup_help
+						return 1
+					fi
 					distro_name="$1"
 				else
 					msg
-					msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
-					msg
-					msg "${BRED}Error: you have already set distribution as '${YELLOW}${distro_name}${BRED}'.${RST}"
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that distribution can be specified only once.${RST}"
 					command_backup_help
 					return 1
 				fi
@@ -1824,18 +1827,18 @@ command_backup() {
 		shift 1
 	done
 
-	if [ -z "$distro_name" ]; then
+	if [ -z "${distro_name-}" ]; then
 		msg
-		msg "${BRED}Error: you should specify a distribution which you want to back up.${RST}"
+		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_backup_help
 		return 1
 	fi
 
 	if [ -z "${SUPPORTED_DISTRIBUTIONS["$distro_name"]+x}" ]; then
 		msg
-		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backing up.${RST}"
+		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backup.${RST}"
 		msg
-		msg "${CYAN}Use '${GREEN}${PROGRAM_NAME} list${CYAN}' to see which distributions are supported.${RST}"
+		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
 		msg
 		return 1
 	fi
@@ -1856,12 +1859,12 @@ command_backup() {
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Backing up ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
-	if [ -z "$tarball_file_path" ]; then
+	if [ -z "${tarball_file_path-}" ]; then
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Tarball will be written to stdout.${RST}"
 
 		if [ -t 1 ]; then
 			msg
-			msg "${BRED}Error: tarball cannot be printed to console, please use option '${YELLOW}--output${BRED}' or pipe it to another program.${RST}"
+			msg "${BRED}Error: tarball cannot be printed to console. Please use option '${YELLOW}--output${BRED}' to specify a file or use pipe for sending the output to another program.${RST}"
 			msg
 			return 1
 		fi
@@ -1870,14 +1873,14 @@ command_backup() {
 
 		if [ -d "$tarball_file_path" ]; then
 			msg
-			msg "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' - path is a directory.${RST}"
+			msg "${BRED}Error: cannot write to '${YELLOW}${tarball_file_path}${YELLOW}' because this path is a directory.${RST}"
 			command_backup_help
 			return 1
 		fi
 
 		if [ -f "$tarball_file_path" ]; then
 			msg
-			msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exist, please specify a different name.${RST}"
+			msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' already exists. Please specify a different name.${RST}"
 			command_backup_help
 			return 1
 		fi
@@ -1895,7 +1898,7 @@ command_backup() {
 		distro_plugin_script="${distro_name}.override.sh"
 	fi
 
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving rootfs...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving the rootfs and plug-in...${RST}"
 	if [ -n "$tarball_file_path" ]; then
 		tar -c --auto-compress \
 			--warning=no-file-ignored \
@@ -1908,10 +1911,9 @@ command_backup() {
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
 	fi
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished successfully.${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 }
 
-# Usage info for command_backup.
 command_backup_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
@@ -1925,11 +1927,11 @@ command_backup_help() {
 	msg "  ${GREEN}--output [path]      ${CYAN}- Write tarball to specified file.${RST}"
 	msg "                         ${CYAN}If not specified, the tarball will be${RST}"
 	msg "                         ${CYAN}printed to stdout. File extension affects${RST}"
-	msg "                         ${CYAN}used compression (e.g. gz, bz2, xz)."
+	msg "                         ${CYAN}used compression (e.g. gz, bz2, xz).${RST}"
 	msg "                         ${CYAN}Backup sent to stdout is not compressed.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
-	msg "${CYAN}obtained by this command: ${GREEN}$PROGRAM_NAME list${RST}"
+	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
 	msg
 	show_version
 	msg
@@ -1940,9 +1942,13 @@ command_backup_help() {
 # FUNCTION TO RESTORE A SPECIFIED DISTRIBUTION
 #
 # Restore a specified distribution installation from the backup (tarball).
+# The supplied tarball should be one made by PRoot-Distro as it has a proper
+# structure. Regular rootfs tarball will not work here.
 #
+#############################################################################
+
 command_restore() {
-	local tarball_file_path=""
+	local tarball_file_path
 
 	if [ $# -ge 1 ]; then
 		case "$1" in
@@ -1961,10 +1967,10 @@ command_restore() {
 		fi
 	fi
 
-	if [ -n "$tarball_file_path" ]; then
+	if [ -n "${tarball_file_path-}" ]; then
 		if [ ! -e "$tarball_file_path" ]; then
 			msg
-			msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' is not found.${RST}"
+			msg "${BRED}Error: file '${YELLOW}${tarball_file_path}${YELLOW}' does not exist.${RST}"
 			command_restore_help
 			return 1
 		fi
@@ -1972,6 +1978,13 @@ command_restore() {
 		if [ -d "$tarball_file_path" ]; then
 			msg
 			msg "${BRED}Error: path '${YELLOW}${tarball_file_path}${YELLOW}' is a directory.${RST}"
+			command_restore_help
+			return 1
+		fi
+	else
+		if [ -t 0 ]; then
+			msg
+			msg "${BRED}Error: tarball file path is not specified and it looks like nothing is being piped via stdin either.${RST}"
 			command_restore_help
 			return 1
 		fi
@@ -1985,7 +1998,7 @@ command_restore() {
 	fi
 
 	local success
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting tarball...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting distribution plug-in and rootfs from the tarball...${RST}"
 	if [ -n "$tarball_file_path" ]; then
 		if ! tar -x --auto-compress -f "$tarball_file_path" \
 			--recursive-unlink --preserve-permissions \
@@ -2006,33 +2019,36 @@ command_restore() {
 	fi
 
 	if $success; then
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 	else
 		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
 		msg
 		msg "${BRED}Failed to restore distribution from the given tarball.${RST}"
 		msg
-		msg "${BRED}Possibly that tarball is corrupted or was not made by Proot-Distro.${RST}"
+		msg "${BRED}Possibly that tarball was corrupted or not made by PRoot-Distro.${RST}"
 		msg
 	fi
 }
 
-# Usage info for command_restore.
 command_restore_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}restore ${CYAN}[${GREEN}FILENAME.TAR${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}restore ${CYAN}[${GREEN}FILENAME.TAR${CYAN}]${RST}"
 	msg
 	msg "${CYAN}Restore distribution installation from a specified tarball. If${RST}"
 	msg "${CYAN}file name is not specified, it will be assumed that tarball is${RST}"
 	msg "${CYAN}being piped from stdin.${RST}"
 	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
 	msg "${CYAN}Archive compression is determined automatically from the file${RST}"
-	msg "${CYAN}extension. If archive content is piped, it is expected that${RST}"
+	msg "${CYAN}extension. When archive content is piped it is expected that${RST}"
 	msg "${CYAN}data is not compressed.${RST}"
 	msg
 	msg "${CYAN}Important note: there are no any sanity check being performed${RST}"
 	msg "${CYAN}on the supplied tarballs. Be careful when using this command as${RST}"
-	msg "${CYAN}data loss may happen when the wrong tarball has been used.${RST}"
+	msg "${CYAN}data loss may happen when the wrong tarball was used.${RST}"
 	msg
 	show_version
 	msg
@@ -2040,25 +2056,34 @@ command_restore_help() {
 
 #############################################################################
 #
-# FUNCTION TO CLEAR DLCACHE
+# FUNCTION TO CLEAR DOWNLOAD CACHE
 #
-# Removes all cached downloads.
+# Delete all cached rootfs tarballs.
 #
+#############################################################################
+
 command_clear_cache() {
-	if [ $# -ge 1 ]; then
+	while (($# >= 1)); do
 		case "$1" in
 			-h|--help)
 				command_clear_cache_help
 				return 0
 				;;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_clear_cache_help
+				return 1
+				;;
 			*)
 				msg
-				msg "${BRED}Error: unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that tarball file path can be specified only once.${RST}"
 				command_clear_cache_help
 				return 1
 				;;
 		esac
-	fi
+		shift 1
+	done
 
 	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Download cache is empty.${RST}"
@@ -2076,15 +2101,15 @@ command_clear_cache() {
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Reclaimed ${size_of_cache} of disk space.${RST}"
 	fi
+
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 }
 
-# Usage info for command_clear_cache.
 command_clear_cache_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}clear-cache${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}clear-cache${RST}"
 	msg
-	msg "${CYAN}This command will reclaim some disk space by deleting cached${RST}"
-	msg "${CYAN}distribution rootfs tarballs.${RST}"
+	msg "${CYAN}Remove all cached rootfs tarballs to reclaim disk space.${RST}"
 	msg
 	show_version
 	msg
@@ -2094,14 +2119,21 @@ command_clear_cache_help() {
 #
 # FUNCTION TO PRINT UTILITY USAGE INFORMATION
 #
-# Prints a basic overview of the available commands and list of supported
-# distributions.
+# Prints a description of PRoot-Distro utility and list of the available
+# commands.
 #
+#############################################################################
+
 command_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME${CYAN} [${GREEN}COMMAND${CYAN}] [${GREEN}ARGUMENTS${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME}${CYAN} [${GREEN}COMMAND${CYAN}] [${GREEN}ARGUMENTS${CYAN}]${RST}"
 	msg
-	msg "${CYAN}Utility to manage proot'ed Linux distributions inside Termux.${RST}"
+	msg "${CYAN}PRoot-Distro is a Bash script wrapper for PRoot. It provides${RST}"
+	msg "${CYAN}a set of functions with standardized command line interface${RST}"
+	msg "${CYAN}to let user easily manage Linux PRoot containers. By default${RST}"
+	msg "${CYAN}it supports a number of well known Linux distributions such${RST}"
+	msg "${CYAN}Alpine Linux, Debian or OpenSUSE. However it is possible to${RST}"
+	msg "${CYAN}add others with a help of plug-ins.${RST}"
 	msg
 	msg "${CYAN}List of the available commands:${RST}"
 	msg
@@ -2151,6 +2183,8 @@ command_help() {
 # Prints version & author information. Used in functions for displaying
 # usage info.
 #
+#############################################################################
+
 show_version() {
 	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by Termux.${RST}"
 }
@@ -2159,12 +2193,12 @@ show_version() {
 #
 # ENTRY POINT
 #
-# 1. Check for dependencies. Assume that package 'coreutils' is always
-#    available.
+# 1. Determine device properties such as CPU architecture.
 # 2. Check all available distribution plug-ins.
 # 3. Handle the requested commands or show help when '-h/--help/help' were
 #    given. Further command line processing is offloaded to requested command.
 #
+#############################################################################
 
 # This will be executed when signal HUP/INT/TERM is received.
 trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
@@ -2191,7 +2225,7 @@ DISTRO_ARCH=$DEVICE_CPU_ARCH
 if [ -x "@TERMUX_PREFIX@/bin/dpkg" ]; then
 	if [ "$DEVICE_CPU_ARCH" != "$("@TERMUX_PREFIX@"/bin/dpkg --print-architecture)" ]; then
 		msg
-		msg "${BRED}CPU architecture reported by system doesn't match architecture of Termux packages. Make sure you are not using 'linux32' or similar utilities.${RST}"
+		msg "${BRED}Error: the CPU architecture reported by system does not match the architecture of Termux packages. Do not attempt to hijack system properties by using 'linux32' or similar utilities.${RST}"
 		msg
 		exit 1
 	fi
