@@ -1,6 +1,9 @@
 #!@TERMUX_PREFIX@/bin/bash
 ##
-## Script for managing proot'ed Linux distribution installations in Termux.
+## Script for managing PRoot containers with Linux distributions.
+##
+## Originally created by Leonid Pliushch <sylirre@termux.dev> for Termux
+## project.
 ##
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
