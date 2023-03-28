@@ -28,3 +28,10 @@ body:
   - type: textarea
     attributes:
       label: What is the expected behavior?
+  - type: checkboxes
+    attributes:
+      label: Bug report policy acknowledgement
+      description: PRoot Distro provides distributions as-is, without binary modification of any kind. Upstream issues as well as issues of `proot` utility are not subject for bug reporting and will be ignored by PRoot Distro maintainers.
+      options:
+        - label: I understand that PRoot Distro won't fix distribution issues.
+          required: true
