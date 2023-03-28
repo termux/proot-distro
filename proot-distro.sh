@@ -451,9 +451,9 @@ command_install() {
 						return 1
 					fi
 
-					if ! grep -qP '^[a-z0-9._+][a-z0-9._+-]+$' <<< "$1"; then
+					if ! grep -qP '^[a-z0-9][a-z0-9_.+\-]*$' <<< "$1"; then
 						msg
-						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should be lowercase and can contain only alphanumeric characters and these symbols '._+-'. Also argument should not begin with '-'.${RST}"
+						msg "${BRED}Error: argument to option '${YELLOW}--override-alias${BRED}' should start only with an alphanumeric character and consist of alphanumeric characters including symbols '_.+-'."
 						msg
 						return 1
 					fi
@@ -591,7 +591,7 @@ command_install() {
 			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}The distribution download URL is not defined for CPU architecture '${DISTRO_ARCH}'.${RST}"
 			return 1
 		fi
-		if ! grep -qP '^[0-9a-fA-F]+$' <<< "${TARBALL_SHA256["$DISTRO_ARCH"]}"; then
+		if ! grep -qP '^[0-9a-fA-F]{64}$' <<< "${TARBALL_SHA256["$DISTRO_ARCH"]}"; then
 			msg
 			msg "${BRED}Error: got malformed SHA-256 from plug-in script '${distro_plugin_script}'.${RST}"
 			msg
