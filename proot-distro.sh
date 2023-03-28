@@ -1079,15 +1079,39 @@ command_install_help() {
 command_remove() {
 	local distro_name
 
-	if [ $# -ge 1 ]; then
+	while (($# >= 1)); do
 		case "$1" in
 			-h|--help)
 				command_remove_help
 				return 0
 				;;
-			*) distro_name="$1";;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_remove_help
+				return 1
+				;;
+			*)
+				if [ -z "${distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: distribution alias argument should not be empty.${RST}"
+						command_remove_help
+						return 1
+					fi
+					distro_name="$1"
+				else
+					msg
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that distribution can be specified only once.${RST}"
+					command_remove_help
+					return 1
+				fi
+				;;
 		esac
-	else
+		shift 1
+	done
+
+	if [ -z "${distro_name-}" ]; then
 		msg
 		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_remove_help
@@ -1161,15 +1185,39 @@ command_remove_help() {
 command_reset() {
 	local distro_name
 
-	if [ $# -ge 1 ]; then
+	while (($# >= 1)); do
 		case "$1" in
 			-h|--help)
 				command_reset_help
 				return 0
 				;;
-			*) distro_name="$1";;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_reset_help
+				return 1
+				;;
+			*)
+				if [ -z "${distro_name-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: distribution alias argument should not be empty.${RST}"
+						command_reset_help
+						return 1
+					fi
+					distro_name="$1"
+				else
+					msg
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that distribution can be specified only once.${RST}"
+					command_reset_help
+					return 1
+				fi
+				;;
 		esac
-	else
+		shift 1
+	done
+
+	if [ -z "${distro_name-}" ]; then
 		msg
 		msg "${BRED}Error: distribution alias is not specified.${RST}"
 		command_reset_help
@@ -1968,22 +2016,37 @@ command_backup_help() {
 command_restore() {
 	local tarball_file_path
 
-	if [ $# -ge 1 ]; then
+	while (($# >= 1)); do
 		case "$1" in
 			-h|--help)
 				command_restore_help
 				return 0
 				;;
-			*) tarball_file_path="$1";;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_restore_help
+				return 1
+				;;
+			*)
+				if [ -z "${tarball_file_path-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: tarball file path argument should not be empty.${RST}"
+						command_restore_help
+						return 1
+					fi
+					tarball_file_path="$1"
+				else
+					msg
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'. Note that tarball file path can be specified only once.${RST}"
+					command_restore_help
+					return 1
+				fi
+				;;
 		esac
-	else
-		if [ -t 0 ]; then
-			msg
-			msg "${BRED}Error: tarball path is not specified and it looks like nothing is being piped via stdin.${RST}"
-			command_restore_help
-			return 1
-		fi
-	fi
+		shift 1
+	done
 
 	if [ -n "${tarball_file_path-}" ]; then
 		if [ ! -e "$tarball_file_path" ]; then
