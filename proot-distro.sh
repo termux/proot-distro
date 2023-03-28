@@ -2013,6 +2013,16 @@ command_backup() {
 	if [ ! -f "${DISTRO_PLUGINS_DIR}/${distro_plugin_script}" ]; then
 		# Alt name.
 		distro_plugin_script="${distro_name}.override.sh"
+
+		# We already passed check for supported distributions but doing
+		# this check anyway. Above step with fixing permissions takes enough
+		# time to let significant changes on file system happen.
+		if [ ! -f "${DISTRO_PLUGINS_DIR}/${distro_plugin_script}" ]; then
+			msg
+			msg "${BRED}Error: neither '${distro_name}.sh' nor '${distro_name}.override.sh' are available in directory '${DISTRO_PLUGINS_DIR}'.${RST}"
+			msg
+			return 1
+		fi
 	fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving the rootfs and plug-in...${RST}"
