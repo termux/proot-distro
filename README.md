@@ -246,6 +246,21 @@ Usage example:
 proot-distro remove debian
 ```
 
+### Rename distribution
+
+Command: `rename`
+
+Rename the distribution by changing the alias name, renaming its plug-in and
+root file system directory. In case when default distribution is being renamed,
+a copy of plug-in will be created.
+
+Usage example:
+```
+proot-distro rename ubuntu ubuntu-test01
+```
+
+Only installed distribution can be renamed.
+
 ### Reinstall distribution
 
 Command: `reset`
