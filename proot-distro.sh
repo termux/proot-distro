@@ -1938,7 +1938,7 @@ command_login() {
 
 command_login_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}--${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}-- ${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
 	msg
 	msg "${CYAN}Launch a login shell for the specified distribution if no${RST}"
 	msg "${CYAN}additional arguments were given. Otherwise execute the${RST}"
