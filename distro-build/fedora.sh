@@ -23,6 +23,7 @@ bootstrap_distribution() {
 		mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/sys"
 		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")" yum upgrade -y
 		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")" yum install -y util-linux
+		chmod 4755 "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")"/usr/bin/sudo
 		EOF
 
 		sudo tar -Jcf "${ROOTFS_DIR}/fedora-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
