@@ -1369,7 +1369,7 @@ command_rename() {
 		return 1
 	fi
 
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Moving the rootfs directory...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Renaming '${INSTALLED_ROOTFS_DIR}/${orig_distro_name}' to '${INSTALLED_ROOTFS_DIR}/${new_distro_name}'...${RST}"
 	mv "${INSTALLED_ROOTFS_DIR}/${orig_distro_name}" "${INSTALLED_ROOTFS_DIR}/${new_distro_name}"
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 }
