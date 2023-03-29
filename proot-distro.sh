@@ -2316,7 +2316,7 @@ command_restore() {
 
 	local success
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting distribution plug-in and rootfs from the tarball...${RST}"
-	if [ -n "$tarball_file_path" ]; then
+	if [ -n "${tarball_file_path-}" ]; then
 		if ! tar -x --auto-compress -f "$tarball_file_path" \
 			--recursive-unlink --preserve-permissions \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
