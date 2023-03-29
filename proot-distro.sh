@@ -2342,7 +2342,7 @@ command_restore() {
 		msg
 		msg "${BRED}Failed to restore distribution from the given tarball.${RST}"
 		msg
-		msg "${BRED}Possibly that tarball was corrupted or not made by PRoot-Distro.${RST}"
+		msg "${BRED}Possibly that tarball was corrupted or not made by PRoot-Distro. Note that tarball piped to stdin must be decompressed.${RST}"
 		msg
 	fi
 }
