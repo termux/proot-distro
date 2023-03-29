@@ -1270,7 +1270,6 @@ command_rename() {
 						return 1
 					fi
 					orig_distro_name="$1"
-					shift 1
 				elif [ -z "${new_distro_name-}" ]; then
 					if [ -z "$1" ]; then
 						msg
@@ -1279,7 +1278,6 @@ command_rename() {
 						return 1
 					fi
 					new_distro_name="$1"
-					shift 1
 				else
 					msg
 					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'.${RST}"
