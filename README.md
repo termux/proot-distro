@@ -31,6 +31,7 @@ Here are the supported distributions:
 * Fedora 35
 * Manjaro AArch64
 * OpenSUSE (Tumbleweed)
+* Pardus (yirmibir)
 * Ubuntu (22.04)
 * Void Linux
 
