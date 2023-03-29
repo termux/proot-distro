@@ -1100,7 +1100,7 @@ setup_fake_proc() {
 
 command_install_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}install ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}install ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
 	msg "${CYAN}Install a specified Linux distribution.${RST}"
 	msg
