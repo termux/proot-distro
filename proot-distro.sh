@@ -560,8 +560,8 @@ command_install() {
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		# Make sure things are cleared up on failure or user requested exit.
-		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' EXIT
-		trap 'trap - EXIT; echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' HUP INT TERM
+		trap "echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" EXIT
+		trap "trap - EXIT; echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" HUP INT TERM
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
 		mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
@@ -624,6 +624,7 @@ command_install() {
 			rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
 			if ! curl --fail --retry 5 --retry-connrefused --retry-delay 5 --location \
 				--output "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp" "${TARBALL_URL["$DISTRO_ARCH"]}"; then
+				msg
 				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Download failure, please check your network connection.${RST}"
 				rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
 				return 1
@@ -2198,8 +2199,8 @@ command_backup() {
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving the rootfs and plug-in...${RST}"
 	if [ -n "${tarball_file_path-}" ]; then
-		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -f "${tarball_file_path}"; exit 1;' EXIT
-		trap 'trap - EXIT; echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -f "${tarball_file_path}"; exit 1;' HUP INT TERM
+		trap "echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}\"; rm -f \"${tarball_file_path:?}\"; exit 1;" EXIT
+		trap "trap - EXIT; echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}\"; rm -f \"${tarball_file_path:?}\"; exit 1;" HUP INT TERM
 		tar -c --auto-compress \
 			--warning=no-file-ignored \
 			-f "$tarball_file_path" \
