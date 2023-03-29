@@ -303,7 +303,7 @@ INSTALLED_ROOTFS_DIR="${RUNTIME_DIR}/installed-rootfs"
 
 # Default name servers.
 DEFAULT_PRIMARY_NAMESERVER="8.8.8.8"
-DEFAULT_PRIMARY_NAMESERVER="8.8.4.4"
+DEFAULT_SECONDARY_NAMESERVER="8.8.4.4"
 
 # Default fake kernel version.
 # Note: faking kernel version is required when using PRoot-Distro on
