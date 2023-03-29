@@ -1312,7 +1312,7 @@ command_rename() {
 		return 1
 	fi
 
-	if grep -qP '^.*\.sh$' <<< "$1"; then
+	if grep -qP '^.*\.sh$' <<< "${new_distro_name}"; then
 		msg
 		msg "${BRED}Error: the new alias of distribution should not end with '.sh'.${RST}"
 		msg
@@ -1328,16 +1328,16 @@ command_rename() {
 		return 1
 	fi
 
-	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
+	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${orig_distro_name}" ]; then
 		msg
-		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
+		msg "${BRED}Error: cannot rename because the distribution '${YELLOW}${orig_distro_name}${BRED}' is not installed.${RST}"
 		msg
 		return 1
 	fi
 
 	if [ -d "${INSTALLED_ROOTFS_DIR}/${new_distro_name}" ]; then
 		msg
-		msg "${BRED}Error: cannot rename because rootfs directory for the distribution '${YELLOW}${new_distro_name}${BRED}' already exists.${RST}"
+		msg "${BRED}Error: cannot rename because the rootfs directory for distribution '${YELLOW}${new_distro_name}${BRED}' already exists.${RST}"
 		msg
 		return 1
 	fi
