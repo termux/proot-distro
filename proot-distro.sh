@@ -1359,9 +1359,11 @@ command_rename() {
 	if [ -e "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.override.sh" ]; then
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Renaming '${DISTRO_PLUGINS_DIR}/${orig_distro_name}.override.sh' to '${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh'...${RST}"
 		mv "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.override.sh" "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh"
+		sed -i "s/^\(DISTRO_NAME=\)\"\(.*\) - ${orig_distro_name}\"\$/\1\"\2 - ${new_distro_name}\"/g" "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh"
 	elif [ -e "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.sh" ]; then
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh'...${RST}"
 		cp "${DISTRO_PLUGINS_DIR}/${orig_distro_name}.sh" "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh"
+		sed -i "s/^\(DISTRO_NAME=\)\(.*\)\$/\1\"${SUPPORTED_DISTRIBUTIONS["$orig_distro_name"]} - ${new_distro_name}\"/g" "${DISTRO_PLUGINS_DIR}/${new_distro_name}.override.sh"
 	else
 		msg
 		msg "${BRED}Error: could not find a plug-in for distribution '${YELLOW}${orig_distro_name}${BRED}'.${RST}"
