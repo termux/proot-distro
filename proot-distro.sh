@@ -2015,7 +2015,7 @@ command_list() {
 			msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
 			msg
 			msg "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
-			if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
+			if [ -d "${INSTALLED_ROOTFS_DIR}/${i}" ]; then
 				msg "    ${CYAN}Installed: ${GREEN}yes${RST}"
 			else
 				msg "    ${CYAN}Installed: ${RED}no${RST}"
