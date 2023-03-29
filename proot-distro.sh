@@ -1303,6 +1303,13 @@ command_rename() {
 		return 1
 	fi
 
+	if [ "${orig_distro_name}" = "${new_distro_name}" ]; then
+		msg
+		msg "${BRED}Error: the original and new distribution aliases should not be same.${RST}"
+		command_rename_help
+		return 1
+	fi
+
 	# Put a restriction on characters in distribution name.
 	# Same as for --override-alias option of command_install().
 	if ! grep -qP '^[a-z0-9][a-z0-9_.+\-]*$' <<< "${new_distro_name}"; then
