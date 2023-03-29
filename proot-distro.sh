@@ -2198,11 +2198,15 @@ command_backup() {
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving the rootfs and plug-in...${RST}"
 	if [ -n "${tarball_file_path-}" ]; then
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -f "${tarball_file_path}"; exit 1;' EXIT
+		trap 'trap - EXIT; echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -f "${tarball_file_path}"; exit 1;' HUP INT TERM
 		tar -c --auto-compress \
 			--warning=no-file-ignored \
 			-f "$tarball_file_path" \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "$DISTRO_PLUGINS_DIR")/${distro_plugin_script}" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "$INSTALLED_ROOTFS_DIR")/${distro_name}"
+		trap - EXIT
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
 	else
 		tar -c \
 			--warning=no-file-ignored \
