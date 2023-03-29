@@ -560,8 +560,8 @@ command_install() {
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		# Make sure things are cleared up on failure or user requested exit.
-		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' EXIT
-		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' HUP INT TERM
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' EXIT
+		trap 'trap - EXIT; echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' HUP INT TERM
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
 		mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
@@ -747,7 +747,7 @@ command_install() {
 
 		# Reset trap for HUP/INT/TERM.
 		trap - EXIT
-		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 		msg
@@ -757,7 +757,7 @@ command_install() {
 	else
 		# Reset trap for HUP/INT/TERM.
 		trap - EXIT
-		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
 
 		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which is used to define a distribution properties.${RST}"
 		return 1
