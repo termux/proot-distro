@@ -1382,6 +1382,9 @@ command_rename_help() {
 	msg
 	msg "${CYAN}Rename a specified Linux distribution.${RST}"
 	msg
+	msg "${CYAN}Note that renaming default distribution will create a copy of${RST}"
+	msg "${CYAN}its plug-in.${RST}"
+	msg
 	msg "${CYAN}Options:${RST}"
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
