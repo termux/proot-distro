@@ -1106,7 +1106,7 @@ command_install_help() {
 	msg
 	msg "${CYAN}Options:${RST}"
 	msg
-	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg "  ${GREEN}--help                         ${CYAN}- Show this help information.${RST}"
 	msg
 	msg "  ${GREEN}--override-alias [new alias]   ${CYAN}- Set a custom alias for installed${RST}"
 	msg "                                   ${CYAN}distribution.${RST}"
