@@ -670,7 +670,7 @@ command_install() {
 			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile" >/dev/null 2>&1 || true
 			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
 		fi
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing '${profile_script}'...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${profile_script}'...${RST}"
 		cat <<- EOF >> "$profile_script"
 		export ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}
 		export ANDROID_DATA=${ANDROID_DATA-}
@@ -691,7 +691,7 @@ command_install() {
 		EOF
 
 		# Default /etc/resolv.conf may be empty or unsuitable for use.
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing resolv.conf file (NS ${DEFAULT_PRIMARY_NAMESERVER}/${DEFAULT_SECONDARY_NAMESERVER})...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf'...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
 		nameserver ${DEFAULT_PRIMARY_NAMESERVER}
@@ -699,7 +699,7 @@ command_install() {
 		EOF
 
 		# Default /etc/hosts may be empty or incomplete.
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing hosts file...${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts'...${RST}"
 		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts" >/dev/null 2>&1 || true
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/hosts"
 		# IPv4.
