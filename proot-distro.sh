@@ -2197,7 +2197,7 @@ command_backup() {
 	fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving the rootfs and plug-in...${RST}"
-	if [ -n "$tarball_file_path" ]; then
+	if [ -n "${tarball_file_path-}" ]; then
 		tar -c --auto-compress \
 			--warning=no-file-ignored \
 			-f "$tarball_file_path" \
