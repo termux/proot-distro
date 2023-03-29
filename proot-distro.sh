@@ -559,10 +559,11 @@ command_install() {
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
-		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
-			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
-			mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
-		fi
+		# Make sure things are cleared up on failure or user requested exit.
+		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' EXIT HUP INT TERM
+
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
+		mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 
 		export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
@@ -743,12 +744,18 @@ command_install() {
 			)
 		fi
 
+		# Reset trap for HUP/INT/TERM.
+		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
+
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 		msg
 		msg "${CYAN}Now run '${GREEN}${PROGRAM_NAME} login $distro_name${CYAN}' to log in.${RST}"
 		msg
 		return 0
 	else
+		# Reset trap for HUP/INT/TERM.
+		trap 'echo -e "\\r${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
+
 		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Cannot find '${distro_plugin_script}' which is used to define a distribution properties.${RST}"
 		return 1
 	fi
