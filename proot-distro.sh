@@ -1852,6 +1852,7 @@ command_login() {
 		# storage.
 		if ls -1U /storage > /dev/null 2>&1; then
 			set -- "--bind=/storage" "$@"
+			set -- "--bind=/storage/emulated/0:/sdcard" "$@"
 		else
 			# We want to use the primary shared storage mount point
 			# there with avoiding secondary and legacy mount points. As
