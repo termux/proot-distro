@@ -630,8 +630,7 @@ command_install() {
 			# fail for some reason.
 			msg
 			rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
-			if ! curl --fail --retry 5 --retry-connrefused --retry-delay 5 --location \
-				--output "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp" "${TARBALL_URL["$DISTRO_ARCH"]}"; then
+			if ! aria2c --console-log-level=warn --no-conf -x6 -s6 -k1M -d ${DOWNLOAD_CACHE_DIR}/ -o "${tarball_name}.tmp" "${TARBALL_URL["$DISTRO_ARCH"]}"; then
 				msg
 				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Download failure, please check your network connection.${RST}"
 				rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
@@ -760,7 +759,7 @@ command_install() {
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 		msg
-		msg "${CYAN}Now run '${GREEN}${PROGRAM_NAME} login $distro_name${CYAN}' to log in.${RST}"
+		msg "${CYAN}Now run '${GREEN} $distro_name '${CYAN} to log in.${RST}"
 		msg
 		return 0
 	else
