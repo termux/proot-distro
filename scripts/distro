@@ -32,9 +32,9 @@ if [[ "$#" -eq 1 && "$1" == "--update" ]]; then
 fi
 
 if [[ "$#" -eq 1 ]]; then
-  proot-distro login "dname" --user "$1" --bind /dev/null:/proc/sys/kernel/cap_last_last || exit 1
+  proot-distro login dname --user "$1" --bind /dev/null:/proc/sys/kernel/cap_last_last || exit 1
 elif [[ "$#" -eq 0 ]]; then
-  proot-distro login "dname" --bind /dev/null:/proc/sys/kernel/cap_last_last || exit 1
+  proot-distro login dname --bind /dev/null:/proc/sys/kernel/cap_last_last || exit 1
 else
   echo "Usage: $0 [--update] 'to update the distro'"
   echo "Usage: $0 'to log in the distro as root'"
