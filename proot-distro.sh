@@ -360,13 +360,18 @@ msg() {
 #
 #############################################################################
 
-for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
+for i in awk basename bzip2 cat chmod cp curl aria2c cut du find grep gzip \
 	head id mkdir proot rm sed tar xargs xz; do
+	if [ "$i" = "aria2c" ]; then
+		i="aria2"
+	fi
 	if [ -z "$(command -v "$i")" ]; then
-		msg
-		msg "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
-		msg
-		exit 1
+		echo "Utility '${i}' is not installed. Installing..."
+		pkg install -y "$i"
+		if [ "$?" -ne 0 ]; then
+			echo "Error installing '${i}'. Cannot continue."
+			exit 1
+		fi
 	fi
 done
 unset i
