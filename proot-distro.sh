@@ -757,7 +757,8 @@ command_install() {
 		trap - EXIT
 		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; exit 1;' HUP INT TERM
 
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installation Finished.${RST}"
+		prosetup
 		msg
 		msg "${CYAN}Now run '${GREEN} $distro_name '${CYAN} to log in.${RST}"
 		msg
