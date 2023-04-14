@@ -360,20 +360,27 @@ msg() {
 #
 #############################################################################
 
+#!/bin/bash
+
+# Check if utilities are installed and install if necessary
 for i in awk basename bzip2 cat chmod cp curl aria2c cut du find grep gzip \
 	head id mkdir proot rm sed tar xargs xz; do
 	if [ "$i" = "aria2c" ]; then
-		i="aria2"
+		if [ -z "$(command -v aria2c)" ]; then
+			i="aria2"
+		fi
 	fi
 	if [ -z "$(command -v "$i")" ]; then
 		echo "Utility '${i}' is not installed. Installing..."
 		pkg install -y "$i"
+		clear
 		if [ "$?" -ne 0 ]; then
 			echo "Error installing '${i}'. Cannot continue."
 			exit 1
 		fi
 	fi
 done
+
 unset i
 
 #############################################################################
