@@ -25,15 +25,9 @@ own. See [Adding distribution](#adding-distribution).
 
 Here are the supported distributions:
 
-* Alpine Linux (edge)
-* Arch Linux / Arch Linux 32 / Arch Linux ARM
-* Debian (stable)
-* Fedora 35
-* Manjaro AArch64
-* OpenSUSE (Tumbleweed)
-* Pardus (yirmibir)
+* Kali Nethunter (2023.1-nano)
 * Ubuntu (22.04)
-* Void Linux
+
 
 All systems come in a bare-minimum variant, typically consisting of package
 manager, shell, coreutils, util-linux and few more. Extended functionality
@@ -56,7 +50,7 @@ cd proot-distro
 ```
 
 Dependencies: bash, bzip2, coreutils, curl, findutils, gzip, ncurses-utils,
-proot, sed, tar, xz-utils
+proot, sed, tar, xz-utils, aria2
 
 ## Functionality overview
 
@@ -75,7 +69,7 @@ is available) and `<arguments>` is a list of options specific to given command.
 
 Example of installing the distribution:
 ```
-proot-distro install debian
+proot-distro install kali
 ```
 
 Known distributions are defined through plug-in scripts, which define URLs
@@ -108,8 +102,8 @@ not compressed giving user freedom for further processing.
 
 Usage example:
 ```
-proot-distro backup debian | xz | ssh example.com 'cat > /backups/pd-debian-backup.tar.xz'
-proot-distro backup --output backup.tar.gz debian
+proot-distro backup kali | xz | ssh example.com 'cat > /backups/kali-backup.tar.xz'
+proot-distro backup --output backup.tar.gz kali
 ```
 
 *This command is generic. All additional processing like encryption should be
@@ -124,7 +118,7 @@ plug-in of chosen distribution.
 
 Usage example:
 ```
-proot-distro install alpine
+proot-distro install kali
 ```
 
 By default the installed distribution will have same alias as specified on
@@ -134,8 +128,8 @@ option `--override-alias` which will create a copy of distribution plug-in.
 
 Usage example:
 ```
-proot-distro install --override-alias alpine-test alpine
-proot-distro login alpine-test
+proot-distro install --override-alias kali-test kali
+proot-distro login kali-test
 ```
 
 Copied plug-in has following name format `<name>.override.sh` and is stored
@@ -154,17 +148,17 @@ Command: `login`
 
 Execute a shell within the given distribution. Example:
 ```
-proot-distro login debian
+proot-distro login kali
 ```
 
 Execute a shell as specified user in the given distribution:
 ```
-proot-distro login --user admin debian
+proot-distro login --user admin kali
 ```
 
 You can run a custom command as well:
 ```
-proot-distro login debian -- /usr/local/bin/mycommand --sample-option1
+proot-distro login kali -- /usr/local/bin/mycommand --sample-option1
 ```
 
 Argument `--` acts as terminator of `proot-distro login` options processing.
@@ -244,7 +238,7 @@ as it does not ask for confirmation. Deleted data is irrecoverably lost.
 
 Usage example:
 ```
-proot-distro remove debian
+proot-distro remove kali
 ```
 
 ### Rename distribution
@@ -257,7 +251,7 @@ a copy of plug-in will be created.
 
 Usage example:
 ```
-proot-distro rename ubuntu ubuntu-test01
+proot-distro rename kali kali-promax
 ```
 
 Only installed distribution can be renamed.
@@ -273,7 +267,7 @@ proot-distro remove <dist> && proot-distro install <dist>
 
 Usage example:
 ```
-proot-distro reset debian
+proot-distro reset kali
 ```
 
 Same as with command `remove`, deleted data is lost irrecoverably. Be careful.
@@ -292,8 +286,8 @@ must be always uncompressed before being supplied to `proot-distro`.
 
 Usage example:
 ```
-ssh example.com 'cat /backups/pd-debian-backup.tar.xz' | xz -d | proot-distro restore
-proot-distro restore ./pd-debian-backup.tar.xz
+ssh example.com 'cat /backups/kali-backup.tar.xz' | xz -d | proot-distro restore
+proot-distro restore ./kali-backup.tar.xz
 ```
 
 ### Clear downloads cache
