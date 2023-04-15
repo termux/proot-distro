@@ -435,9 +435,8 @@ prosetup() {
 	cp ${PREFIX}/etc/prootdir/user.sh ${INSTALLED_ROOTFS_DIR}/${distro_name}/root/user.sh
 	cp ${PREFIX}/etc/prootdir/distro ${PREFIX}/etc/prootdir/${distro_name}
 	if [ -f "${PREFIX}/bin/${distro_name}" ]; then
-  echo "Removing existing file: ${PREFIX}/bin/${distro_name}"
-  rm "${PREFIX}/bin/${distro_name}"
-fi
+  		rm "${PREFIX}/bin/${distro_name}"
+	fi
 	cp ${PREFIX}/etc/prootdir/${distro_name} ${PREFIX}/bin/${distro_name}
 	chmod +x ${PREFIX}/bin/${distro_name}
 }
