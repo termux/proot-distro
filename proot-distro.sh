@@ -439,7 +439,7 @@ prosetup() {
 	fi
 	cp ${PREFIX}/etc/prootdir/${distro_name} ${PREFIX}/bin/${distro_name}
 	chmod +x ${PREFIX}/bin/${distro_name}
-	dos2unix ${PREFIX}/bin/${distro_name} 2>&1 /dev/null
+	dos2unix ${PREFIX}/bin/${distro_name} > /dev/null 2>&1
 }
 command_install() {
 	local distro_name
