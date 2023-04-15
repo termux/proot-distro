@@ -1,42 +1,41 @@
 #!/bin/bash
-user=$1
-upd="--update"
-if [[ ${user} == ${upd} ]]; then
-	echo
-	echo "Your dname is going to be wiped and reseted"
-	echo
-	read -p "Do you want to continue [Y/n] " yn
-	echo
-	if [[ ${yn} == "Y" || ${yn} == "y" ]]; then
-		cd $HOME
-		rm -rf $HOME/proot-distro
-		git clone https://github.com/BDhaCkers009/proot-distro $HOME/proot-distro
-		cd $HOME/proot-distro 
-		bash install.sh
-		proot-distro reset dname 
-		rm -rf $HOME/proot-distro
-		clear
-		if [[ $? -eq 0 ]]; then
-			echo "Your dname is updated and wiped successfully."
-			echo "You can run your dname distro using command: dname"
-			exit
-		else
-			echo "Error updating dname. Please re-run this process."
-			exit 1
-		fi
-	elif [[ ${yn} == "N" || ${yn} == "n" ]]; then
-		echo
-		echo "Abort updating dname."
-		exit
-	else 
-		echo "Invalid input. Abort updating dname."
-		exit 1
-	fi
+
+function update_distribution {
+  cd "${HOME}" || exit 1
+  if [ -d "${HOME}/proot-distro" ]; then
+    rm -rf "${HOME}/proot-distro"
+  fi
+  git clone https://github.com/BDhaCkers009/proot-distro "${HOME}/proot-distro"
+  cd "${HOME}/proot-distro" || exit 1
+  bash install.sh
+  proot-distro reset dname
+  rm -rf "${HOME}/proot-distro"
+}
+
+if [[ "$#" -eq 1 && "$1" == "--update" ]]; then
+  echo "Your dname is going to be wiped and reset"
+  read -rp "Do you want to continue [Y/n] " yn
+  if [[ "$yn" == [Yy] ]]; then
+    update_distribution
+    if [[ "$?" -eq 0 ]]; then
+      echo "Your dname is updated and wiped successfully"
+      echo "You can run your dname distro using command: dname"
+      exit 0
+    else
+      echo "Error updating dname. Please rerun this process"
+      exit 1
+    fi
+  else
+    echo "Abort updating dname"
+    exit 0
+  fi
 fi
 
-# Log into the dname distribution
-if [[ ! ${user} == "" ]]; then
-	proot-distro login dname --user ${user} --bind /dev/null:/proc/sys/kernel/cap_last_last
+if [[ "$#" -eq 1 ]]; then
+  proot-distro login dname --user "$1" --bind /dev/null:/proc/sys/kernel/cap_last_last || exit 1
+elif [[ "$#" -eq 0 ]]; then
+  proot-distro login dname --bind /dev/null:/proc/sys/kernel/cap_last_last || exit 1
 else
-	proot-distro login dname --bind /dev/null:/proc/sys/kernel/cap_last_last 
+  echo "Usage: $0 [--update] [username]"
+  exit 1
 fi
