@@ -363,7 +363,7 @@ msg() {
 #!/bin/bash
 
 # Check if utilities are installed and install if necessary
-for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
+for i in awk basename bzip2 aria2c cat chmod cp curl cut du find grep gzip \
 	head id mkdir proot rm sed tar xargs xz; do
 	if [ -z "$(command -v "$i")" ]; then
 		msg
@@ -372,14 +372,7 @@ for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
 		exit 1
 	fi
 done
-if [[ ! $(command -v arai2c) ]]; then
-	msg
-	msg "${BRED}Utility 'aria2' is not installed.${RST}"
-	msg
-	msg "${GREEN}Installing now.${RST}"
-	pkg install -y aria2
-	clear
-fi
+
 unset i
 
 #############################################################################
