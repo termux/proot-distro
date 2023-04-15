@@ -17,6 +17,9 @@ for script in ./distro-plugins/*.sh*; do
 	echo "Installing $TERMUX_PREFIX/etc/proot-distro/$(basename "$script")"
 	install -Dm600 -t "$TERMUX_PREFIX"/etc/proot-distro/ "$script"
 done
+if [ -d "$PREFIX/etc/prootdir" ]; then
+  rm -rf "$PREFIX/etc/prootdir"
+fi
 mkdir -p $PREFIX/etc/prootdir
 cp ./scripts/user.sh $PREFIX/etc/prootdir
 cp ./scripts/distro $PREFIX/etc/prootdir
