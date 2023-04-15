@@ -372,7 +372,7 @@ for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
 		exit 1
 	fi
 done
-if [[ -z $(command -v arai2c) ]]; then
+if [[ ! $(command -v arai2c) ]]; then
 	msg
 	msg "${BRED}Utility 'aria2' is not installed.${RST}"
 	msg
