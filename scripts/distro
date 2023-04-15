@@ -8,7 +8,9 @@ function update_distribution {
   git clone https://github.com/BDhaCkers009/proot-distro "${HOME}/proot-distro"
   cd "${HOME}/proot-distro" || exit 1
   bash install.sh
-  proot-distro reset dname
+  proot-distro remove dname
+  proot-distro clear-cache
+  proot-distro install dname
   rm -rf "${HOME}/proot-distro"
 }
 
