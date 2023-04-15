@@ -6,6 +6,10 @@ set -e
 
 echo "Installing $TERMUX_PREFIX/bin/proot-distro"
 install -d -m 700 "$TERMUX_PREFIX"/bin
+if [ -f "$TERMUX_PREFIX"/bin/proot-distro ]; then
+  echo "Removing existing file: $TERMUX_PREFIX/bin/proot-distro"
+  rm "$TERMUX_PREFIX"/bin/proot-distro
+fi
 sed -e "s|@TERMUX_APP_PACKAGE@|$TERMUX_APP_PACKAGE|g" \
 	-e "s|@TERMUX_PREFIX@|$TERMUX_PREFIX|g" \
 	-e "s|@TERMUX_HOME@|$TERMUX_ANDROID_HOME|g" \
@@ -14,9 +18,15 @@ chmod 700 "$TERMUX_PREFIX"/bin/proot-distro
 
 install -d -m 700 "$TERMUX_PREFIX"/etc/proot-distro
 for script in ./distro-plugins/*.sh*; do
-	echo "Installing $TERMUX_PREFIX/etc/proot-distro/$(basename "$script")"
+	filename=$(basename "$script")
+	if [ -f "$TERMUX_PREFIX"/etc/proot-distro/"$filename" ]; then
+  		echo "Removing existing file: $TERMUX_PREFIX/etc/proot-distro/$filename"
+  		rm "$TERMUX_PREFIX"/etc/proot-distro/"$filename"
+  	fi
+	echo "Installing $TERMUX_PREFIX/etc/proot-distro/$filename"
 	install -Dm600 -t "$TERMUX_PREFIX"/etc/proot-distro/ "$script"
 done
+
 if [ -d "$PREFIX/etc/prootdir" ]; then
   rm -rf "$PREFIX/etc/prootdir"
 fi
