@@ -31,9 +31,7 @@ if [[ "$#" -eq 1 && "$1" == "--update" ]]; then
     echo "Abort updating dname"
     exit 0
   fi
-fi
-
-if [[ "$#" -ge 2 && "$1" == "--exec" ]]; then
+elif [[ "$#" -ge 2 && "$1" == "--exec" ]]; then
   if [[ "$#" -ge 4 && "${@: -2}" == "--user" ]]; then
     username="${@: -1}"
     proot-distro login dname --user "$username" --bind /dev/null:/proc/sys/kernel/cap_last_cap -- "${@:2:$#-4}" || exit 1
@@ -42,9 +40,9 @@ if [[ "$#" -ge 2 && "$1" == "--exec" ]]; then
   fi
 elif [[ "$#" -eq 2 && "$1" == "--user" ]]; then
   proot-distro login dname --user "$2" --bind /dev/null:/proc/sys/kernel/cap_last_cap || exit 1
-elif [[ "$#" -eq 1 ]]; then
+elif [[ "$#" -eq 0 ]]; then
   proot-distro login dname --bind /dev/null:/proc/sys/kernel/cap_last_cap || exit 1
 else
-  echo "Usage: $0 [--update] [--exec command arg1 arg2 ... --user username] [--user username] [command arg1 arg2 ...]"
+  echo "Usage: $0 [--update] [--exec command arg1 arg2 ... --user username] [--user username]"
   exit 1
 fi
