@@ -1839,7 +1839,15 @@ command_login() {
 	# When running in non-isolated mode, provide some bindings specific
 	# to Android and Termux so user can interact with host file system.
 	if ! $isolated_environment; then
-		set -- "--bind=/data/dalvik-cache" "$@"
+		for data_dir in "/data/app" "/data/dalvik-cache"; do
+			local dir_mode
+			dir_mode=$(stat --format='%a' "$d")
+			if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
+				set -- "--bind=${data_dir}" "$@"
+			fi
+		done
+		unset data_dir
+
 		set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
 		if [ -d "/data/data/@TERMUX_APP_PACKAGE@/files/apps" ]; then
 			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/files/apps" "$@"
