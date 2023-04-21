@@ -19,7 +19,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="3.9.1"
+PROGRAM_VERSION="3.10.0"
 
 #############################################################################
 ##
