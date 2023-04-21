@@ -1841,7 +1841,7 @@ command_login() {
 	if ! $isolated_environment; then
 		for data_dir in "/data/app" "/data/dalvik-cache"; do
 			local dir_mode
-			dir_mode=$(stat --format='%a' "$d")
+			dir_mode=$(stat --format='%a' "$data_dir")
 			if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
 				set -- "--bind=${data_dir}" "$@"
 			fi
