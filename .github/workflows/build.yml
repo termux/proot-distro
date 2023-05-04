@@ -50,7 +50,7 @@ jobs:
           # Remove distro plugins to filter and upload built distributions and its plugins later on
           rm -rf ./distro-plugins/*
       - name: Install Needed Dependencies
-        run: sudo apt-get install curl debian-archive-keyring jq mmdebstrap qemu-user-static binfmt-support -yq
+        run: sudo apt-get update && sudo apt-get install -yq curl debian-archive-keyring jq mmdebstrap qemu-user-static binfmt-support
       - name: Build distribution rootfs
         run: |
           for distros_to_be_built in $(cat ./distributions.txt); do
