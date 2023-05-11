@@ -23,17 +23,17 @@ of stable, LTS or rolling-release. Support of versioned distributions ended
 with branch 2.x. If you need a custom version, you will need to add it on your
 own. See [Adding distribution](#adding-distribution).
 
-Here are the supported distributions:
+Here are the supported distributions (alias: name):
 
-* Alpine Linux (edge)
-* Arch Linux / Arch Linux 32 / Arch Linux ARM
-* Debian (stable)
-* Fedora 35
-* Manjaro AArch64
-* OpenSUSE (Tumbleweed)
-* Pardus (yirmibir)
-* Ubuntu (22.04)
-* Void Linux
+* `alpine`: Alpine Linux (edge)
+* `archlinux`: Arch Linux ARM
+* `debian`: Debian (stable)
+* `fedora`: Fedora 35
+* `manjaro`: Manjaro (AArch64 only)
+* `opensuse`: OpenSUSE (Tumbleweed)
+* `pardus`: Pardus (yirmibir)
+* `ubuntu`: Ubuntu (22.04)
+* `void`: Void Linux
 
 All systems come in a bare-minimum variant, typically consisting of package
 manager, shell, coreutils, util-linux and few more. Extended functionality
