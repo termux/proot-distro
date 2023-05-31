@@ -5,7 +5,7 @@ bootstrap_distribution() {
 	for arch in aarch64 armv7l i686 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/void-${arch}.tar.xz" \
-			"https://alpha.de.repo.voidlinux.org/live/${dist_version}/void-${arch}-ROOTFS-${dist_version}.tar.xz"
+			"https://repo-default.voidlinux.org/live/${dist_version}/void-${arch}-ROOTFS-${dist_version}.tar.xz"
 
 		sudo mkdir -m 755 "${WORKDIR}/void-$(translate_arch "$arch")"
 		sudo tar -Jxp \
@@ -23,6 +23,7 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-install -y base-minimal
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-remove -y base-voidstrap
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-reconfigure -fa
+		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-install -Suy
 		EOF
 
 		sudo rm -f "${WORKDIR}/void-$(translate_arch "$arch")"/var/cache/xbps/* || true
