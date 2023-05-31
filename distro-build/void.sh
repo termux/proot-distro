@@ -23,6 +23,7 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-install -y base-minimal
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" xbps-remove -y base-voidstrap
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" xbps-reconfigure -fa
+		chroot "${WORKDIR}/void-$(translate_arch "$arch")" update-ca-certificates --verbose --fresh
 		EOF
 
 		sudo rm -f "${WORKDIR}/void-$(translate_arch "$arch")"/var/cache/xbps/* || true
