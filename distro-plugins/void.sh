@@ -3,16 +3,18 @@
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Void Linux"
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.5.1/void-aarch64-pd-v3.5.1.tar.xz"
-TARBALL_SHA256['aarch64']="c52bb1bba2391382467d581ad277fd72e5d9d7a8e30ba757a2c25a9083d1b910"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.5.1/void-arm-pd-v3.5.1.tar.xz"
-TARBALL_SHA256['arm']="77210c72f94ce879c99d9868152dc47581b1111cd3d36d9428d78f127eafa0ac"
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v3.5.1/void-i686-pd-v3.5.1.tar.xz"
-TARBALL_SHA256['i686']="3495b6e5b5d774a81f9ee1baaa0bdd87865544f57d63f8d8d950af41960988e3"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.5.1/void-x86_64-pd-v3.5.1.tar.xz"
-TARBALL_SHA256['x86_64']="dc1bd6ce37f3668565310b23b0ab2181ae33ea680211b2541cce896b03c45644"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.11.0/void-aarch64-pd-v3.11.0.tar.xz"
+TARBALL_SHA256['aarch64']="879b4ddced8cb8723193c88b53cbafdd5bf8bd6f0f1fb6445c3a8a184329f105"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.11.0/void-arm-pd-v3.11.0.tar.xz"
+TARBALL_SHA256['arm']="b372b38eef61da991efa423fa31c644e8a156d7f15c438a492c37d68859a21a5"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v3.11.0/void-i686-pd-v3.11.0.tar.xz"
+TARBALL_SHA256['i686']="5d90191fce3968cd4993f3c6a361c5e20ec21aa149adc113ada527a8132a3a2c"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.11.0/void-x86_64-pd-v3.11.0.tar.xz"
+TARBALL_SHA256['x86_64']="676546678dc2fdfc4e5ffa5c3dc8b3aa5dc8b884108fdf2346f4edd0311679bc"
 
 distro_setup() {
 	# Set default shell to bash.
 	run_proot_cmd usermod --shell /bin/bash root
+	# Fix issue where come CA certificates links may not be created.
+	run_proot_cmd update-ca-certificates --fresh
 }
