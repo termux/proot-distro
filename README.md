@@ -29,7 +29,7 @@ Here are the supported distributions (alias: name):
 * `archlinux`: Arch Linux ARM
 * `debian`: Debian (stable)
 * `fedora`: Fedora 37 (AArch64 only)
-* `manjaro`: Manjaro (AArch64 only)
+* `manjaro-aarch64`: Manjaro AArch64
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
 * `ubuntu`: Ubuntu (22.04)
