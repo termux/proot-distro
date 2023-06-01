@@ -28,7 +28,7 @@ Here are the supported distributions (alias: name):
 * `alpine`: Alpine Linux (edge)
 * `archlinux`: Arch Linux ARM
 * `debian`: Debian (stable)
-* `fedora`: Fedora 35
+* `fedora`: Fedora 37 (AArch64 only)
 * `manjaro`: Manjaro (AArch64 only)
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
