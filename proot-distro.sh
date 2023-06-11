@@ -2327,21 +2327,21 @@ command_restore() {
 	local success
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting distribution plug-in and rootfs from the tarball...${RST}"
 	if [ -n "${tarball_file_path-}" ]; then
-		if ! tar -x --auto-compress -f "$tarball_file_path" \
+		if mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}" && tar -x --auto-compress -f "$tarball_file_path" \
 			--recursive-unlink --preserve-permissions \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
-			success=false
-		else
 			success=true
+		else
+			success=false
 		fi
 	else
-		if ! tar -x --recursive-unlink --preserve-permissions \
+		if mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}" && tar -x --recursive-unlink --preserve-permissions \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
-			success=false
-		else
 			success=true
+		else
+			success=false
 		fi
 	fi
 
