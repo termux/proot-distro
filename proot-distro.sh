@@ -1888,21 +1888,20 @@ command_login() {
 
 	# When using QEMU, we need some host files even in isolated mode.
 	if ! $isolated_environment || $need_qemu; then
-		if [ -d "/apex" ]; then
-			set -- "--bind=/apex" "$@"
-		fi
-		if [ -e "/linkerconfig/ld.config.txt" ]; then
-			set -- "--bind=/linkerconfig/ld.config.txt" "$@"
-		fi
+		local system_mnt
+		for system_mnt in /apex /product /system /system_ext /vendor \
+			/linkerconfig/ld.config.txt /plat_property_contexts \
+			/property_contexts; do
+
+			[ ! -e "$system_mnt" ] && continue
+
+			local dir_mode
+			dir_mode=$(stat --format='%a' "$system_mnt")
+			if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
+				set -- "--bind=${system_mnt}" "$@"
+			fi
+		done
 		set -- "--bind=@TERMUX_PREFIX@" "$@"
-		set -- "--bind=/system" "$@"
-		set -- "--bind=/vendor" "$@"
-		if [ -f "/plat_property_contexts" ]; then
-			set -- "--bind=/plat_property_contexts" "$@"
-		fi
-		if [ -f "/property_contexts" ]; then
-			set -- "--bind=/property_contexts" "$@"
-		fi
 	fi
 
 	# Use Termux home directory if requested.
