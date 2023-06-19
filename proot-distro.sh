@@ -868,6 +868,7 @@ run_proot_cmd() {
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" \
 		/usr/bin/env -i \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
@@ -1105,6 +1106,12 @@ setup_fake_proc() {
 		direct_map_level2_splits 29
 		direct_map_level3_splits 0
 		nr_unstable 0
+		EOF
+	fi
+
+	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap" ]; then
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap"
+		40
 		EOF
 	fi
 }
@@ -1827,6 +1834,11 @@ command_login() {
 	# Fake /proc/vmstat if necessary.
 	if ! cat /proc/vmstat > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" "$@"
+	fi
+
+	# Fake /proc/sys/kernel/cap_last_cap if necessary.
+	if ! cat /proc/sys/kernel/cap_last_cap > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" "$@"
 	fi
 
 	# Bind /tmp to /dev/shm.
