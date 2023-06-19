@@ -622,7 +622,7 @@ command_install() {
 			# fail for some reason.
 			msg
 			rm -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp"
-			if ! curl --fail --retry 5 --retry-connrefused --retry-delay 5 --location \
+			if ! curl --disable --fail --retry 5 --retry-connrefused --retry-delay 5 --location \
 				--output "${DOWNLOAD_CACHE_DIR}/${tarball_name}.tmp" "${TARBALL_URL["$DISTRO_ARCH"]}"; then
 				msg
 				msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Download failure, please check your network connection.${RST}"
