@@ -1851,7 +1851,8 @@ command_login() {
 	# When running in non-isolated mode, provide some bindings specific
 	# to Android and Termux so user can interact with host file system.
 	if ! $isolated_environment; then
-		for data_dir in "/data/app" "/data/dalvik-cache"; do
+		for data_dir in /data/app /data/dalvik-cache \
+			/data/misc/apexdata/com.android.art/dalvik-cache; do
 			local dir_mode
 			dir_mode=$(stat --format='%a' "$data_dir")
 			if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
@@ -1901,9 +1902,10 @@ command_login() {
 	# When using QEMU, we need some host files even in isolated mode.
 	if ! $isolated_environment || $need_qemu; then
 		local system_mnt
-		for system_mnt in /apex /product /system /system_ext /vendor \
-			/linkerconfig/ld.config.txt /plat_property_contexts \
-			/property_contexts; do
+		for system_mnt in /apex /odm /product /system /system_ext /vendor \
+			/linkerconfig/ld.config.txt \
+			/linkerconfig/com.android.art/ld.config.txt \
+			/plat_property_contexts /property_contexts; do
 
 			if [ -d "$(realpath "$system_mnt")" ]; then
 				local dir_mode
