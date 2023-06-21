@@ -1905,12 +1905,18 @@ command_login() {
 			/linkerconfig/ld.config.txt /plat_property_contexts \
 			/property_contexts; do
 
-			[ ! -e "$system_mnt" ] && continue
-
-			local dir_mode
-			dir_mode=$(stat --format='%a' "$system_mnt")
-			if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
-				set -- "--bind=${system_mnt}" "$@"
+			if [ -d "$(realpath "$system_mnt")" ]; then
+				local dir_mode
+				dir_mode=$(stat --format='%a' "$system_mnt")
+				if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
+					set -- "--bind=${system_mnt}" "$@"
+				fi
+			elif [ -f "$(realpath "$system_mnt")" ]; then
+				if head -c 1 "$system_mnt" >/dev/null 2>&1; then
+					set -- "--bind=${system_mnt}" "$@"
+				fi
+			else
+				continue
 			fi
 		done
 		set -- "--bind=@TERMUX_PREFIX@" "$@"
