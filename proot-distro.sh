@@ -683,10 +683,13 @@ command_install() {
 		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
 			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH COLORTERM \
 			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
+			set +u
 			if [ -n "${!var}" ]; then
 				echo "export ${var}='${!var}'" >> "$profile_script"
 			fi
+			set -u
 		done
+		unset var
 
 		# Default /etc/resolv.conf may be empty or unsuitable for use.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf'...${RST}"
