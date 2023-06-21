@@ -673,16 +673,6 @@ command_install() {
 		fi
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${profile_script}'...${RST}"
 		cat <<- EOF >> "$profile_script"
-		export ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}
-		export ANDROID_DATA=${ANDROID_DATA-}
-		export ANDROID_I18N_ROOT=${ANDROID_I18N_ROOT-}
-		export ANDROID_ROOT=${ANDROID_ROOT-}
-		export ANDROID_RUNTIME_ROOT=${ANDROID_RUNTIME_ROOT-}
-		export ANDROID_TZDATA_ROOT=${ANDROID_TZDATA_ROOT-}
-		export BOOTCLASSPATH=${BOOTCLASSPATH-}
-		export COLORTERM=${COLORTERM-}
-		export DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}
-		export EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}
 		[ -z "\$LANG" ] && export LANG=C.UTF-8
 		export PATH=\${PATH}:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin
 		export TERM=${TERM-xterm-256color}
@@ -690,6 +680,13 @@ command_install() {
 		export PULSE_SERVER=127.0.0.1
 		export MOZ_FAKE_NO_SANDBOX=1
 		EOF
+		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
+			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH COLORTERM \
+			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
+			if [ -n "${!var}" ]; then
+				echo "export ${var}='${!var}'" >> "$profile_script"
+			fi
+		done
 
 		# Default /etc/resolv.conf may be empty or unsuitable for use.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf'...${RST}"
