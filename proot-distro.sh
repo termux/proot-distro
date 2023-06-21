@@ -1853,6 +1853,7 @@ command_login() {
 	if ! $isolated_environment; then
 		for data_dir in /data/app /data/dalvik-cache \
 			/data/misc/apexdata/com.android.art/dalvik-cache; do
+			[ ! -d "$data_dir" ] && continue
 			local dir_mode
 			dir_mode=$(stat --format='%a' "$data_dir")
 			if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
