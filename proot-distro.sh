@@ -1908,13 +1908,19 @@ command_login() {
 			/linkerconfig/com.android.art/ld.config.txt \
 			/plat_property_contexts /property_contexts; do
 
-			if [ -d "$(realpath "$system_mnt")" ]; then
+			if [ -e "$system_mnt" ]; then
+				system_mnt=$(realpath "$system_mnt")
+			else
+				continue
+			fi
+
+			if [ -d "$system_mnt" ]; then
 				local dir_mode
 				dir_mode=$(stat --format='%a' "$system_mnt")
 				if [[ ${dir_mode:2} =~ ^[157]$ ]]; then
 					set -- "--bind=${system_mnt}" "$@"
 				fi
-			elif [ -f "$(realpath "$system_mnt")" ]; then
+			elif [ -f "$system_mnt" ]; then
 				if head -c 1 "$system_mnt" >/dev/null 2>&1; then
 					set -- "--bind=${system_mnt}" "$@"
 				fi
