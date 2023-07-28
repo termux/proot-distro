@@ -393,5 +393,10 @@ of most significant differences you should be aware of.
    Particularly, the fake root user makes it possible to use package manager
    in chroot environment.
 
+## Forking
+
+If you wish to use PRoot Distro or its part as a base for your own project,
+plase make sure you comply with GNU GPL v3.0 license.
+
 [Termux]: <https://termux.com>
 [proot]: <https://github.com/termux/proot>
