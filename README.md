@@ -387,7 +387,7 @@ of most significant differences you should be aware of.
    Chroot also does not elevate privileges on its own. Just PRoot is configured
    to hijack user id as well, i.e. make it appear as `root`. So in reality your
    user name, id and privileges remain to be same as without PRoot but programs
-   that doing sanity check for current user will assume you are running as
+   that do sanity check for current user will assume you are running as
    root user.
 
    Particularly, the fake root user makes it possible to use package manager
