@@ -1396,7 +1396,7 @@ command_rename() {
 			# Skip non-l2s symlinks.
 			continue
 		fi
-		local symlink_new_target="${symlink_current_target/${INSTALLED_ROOTFS_DIR}\/*\//${INSTALLED_ROOTFS_DIR}\/${new_distro_name}}"
+		local symlink_new_target=$(sed -E "s@(${INSTALLED_ROOTFS_DIR})/([^/]+)/(.*)@\1/${new_distro_name}/\3@g" <<< "$symlink_current_target")
 		ln -sf "$symlink_new_target" "$symlink_file_name"
 	done
 
