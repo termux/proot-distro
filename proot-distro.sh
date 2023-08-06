@@ -1388,7 +1388,7 @@ command_rename() {
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Renaming '${INSTALLED_ROOTFS_DIR}/${orig_distro_name}' to '${INSTALLED_ROOTFS_DIR}/${new_distro_name}'...${RST}"
 	mv "${INSTALLED_ROOTFS_DIR}/${orig_distro_name}" "${INSTALLED_ROOTFS_DIR}/${new_distro_name}"
 
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Updating PRoot link2symlink extension files...${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Updating PRoot link2symlink extension files (may take long time)...${RST}"
 	local symlink_file_name
 	local old_prefix="${INSTALLED_ROOTFS_DIR}/${orig_distro_name}"
 	local new_prefix="${INSTALLED_ROOTFS_DIR}/${new_distro_name}"
