@@ -1390,15 +1390,13 @@ command_rename() {
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Updating PRoot link2symlink extension files (may take long time)...${RST}"
 	local symlink_file_name
-	local old_prefix="${INSTALLED_ROOTFS_DIR}/${orig_distro_name}"
-	local new_prefix="${INSTALLED_ROOTFS_DIR}/${new_distro_name}"
 	find "${INSTALLED_ROOTFS_DIR}/${new_distro_name}" -type l | while read -r symlink_file_name; do
 		local symlink_current_target=$(readlink "$symlink_file_name")
 		if [ "${symlink_current_target:0:${#INSTALLED_ROOTFS_DIR}}" != "${INSTALLED_ROOTFS_DIR}" ]; then
 			# Skip non-l2s symlinks.
 			continue
 		fi
-		local symlink_new_target="${symlink_current_target/${old_prefix}/${new_prefix}}"
+		local symlink_new_target="${symlink_current_target/${INSTALLED_ROOTFS_DIR}\/*\//${INSTALLED_ROOTFS_DIR}\/${new_distro_name}}"
 		ln -sf "$symlink_new_target" "$symlink_file_name"
 	done
 
