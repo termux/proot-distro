@@ -1751,6 +1751,7 @@ command_login() {
 
 	set -- "--rootfs=${INSTALLED_ROOTFS_DIR}/${distro_name}" "$@"
 	set -- "--change-id=${login_uid}:${login_gid}" "$@"
+	set -- "--cwd=${login_home}" "$@"
 
 	# Setup QEMU when CPU architecture do not match the one of device.
 	local target_arch
@@ -1843,10 +1844,6 @@ command_login() {
 
 	# Fix lstat to prevent dpkg symlink size warnings
 	set -- "-L" "$@"
-
-	# Simulate root so we can switch users.
-	set -- "--cwd=/root" "$@"
-	set -- "--root-id" "$@"
 
 	# Core file systems that should always be present.
 	set -- "--bind=/dev" "$@"
