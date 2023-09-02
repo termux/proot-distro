@@ -1724,6 +1724,16 @@ command_login() {
 		)
 	fi
 
+	# Handle /etc/environment.
+	if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" ]; then
+		# Don't validate contents. Assume everything is key=value.
+		local line
+		cat "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" | while read -r line; do
+			login_env_vars+=("$line")
+		done
+		unset line
+	fi
+
 	# Using '-i' to ensure that we can fully control which
 	# environment variables will be inherited by shell.
 	set -- "/usr/bin/env" "-i" \
