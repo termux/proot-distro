@@ -1711,27 +1711,30 @@ command_login() {
 		)
 	else
 		login_env_vars=(
-			"ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}"
-			"ANDROID_DATA=${ANDROID_DATA-}"
-			"ANDROID_I18N_ROOT=${ANDROID_I18N_ROOT-}"
-			"ANDROID_ROOT=${ANDROID_ROOT-}"
-			"ANDROID_RUNTIME_ROOT=${ANDROID_RUNTIME_ROOT-}"
-			"ANDROID_TZDATA_ROOT=${ANDROID_TZDATA_ROOT-}"
-			"BOOTCLASSPATH=${BOOTCLASSPATH-}"
-			"DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}" \
-			"EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}" \
 			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin"
 		)
+
+		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
+			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH \
+			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
+			set +u
+			if [ -n "${!var}" ]; then
+				login_env_vars+=("${var}=${!var}")
+			fi
+			set -u
+		done
+		unset var
 	fi
 
 	# Handle /etc/environment.
 	if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" ]; then
-		# Don't validate contents. Assume everything is key=value.
-		local line
-		cat "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" | while read -r line; do
-			login_env_vars+=("$line")
-		done
-		unset line
+		mapfile -t -O "${#login_env_vars[@]}" login_env_vars < <(
+			sed -E \
+				-e "s/^([^=]+=)['\"]/\1/g" \
+				-e "s/['\"]\$//g" \
+				-e "/^[^=]+\$/d" \
+				"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+		)
 	fi
 
 	# Using '-i' to ensure that we can fully control which
