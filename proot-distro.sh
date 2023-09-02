@@ -668,28 +668,6 @@ command_install() {
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
 		set -e
 
-		# Write important environment variables to /etc/environment.
-		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" >/dev/null 2>&1 || true
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment'...${RST}"
-		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
-			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH COLORTERM \
-			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
-			set +u
-			if [ -n "${!var}" ]; then
-				echo "${var}=${!var}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
-			fi
-			set -u
-		done
-		unset var
-		cat <<- EOF >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
-		LANG=en_US.UTF-8
-		MOZ_FAKE_NO_SANDBOX=1
-		PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin
-		PULSE_SERVER=127.0.0.1
-		TERM=${TERM-xterm-256color}
-		TMPDIR=/tmp
-		EOF
-
 		# Default /etc/resolv.conf may be empty or unsuitable for use.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf'...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
@@ -1724,10 +1702,33 @@ command_login() {
 		set --
 	fi
 
-	# Handle /etc/environment.
+	# Hide variables specific to Termux (Android OS) when running in
+	# isolated mode.
 	local -a login_env_vars
+	if $isolated_environment; then
+		login_env_vars=(
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		)
+	else
+		login_env_vars=(
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin"
+		)
+
+		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
+			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH \
+			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
+			set +u
+			if [ -n "${!var}" ]; then
+				login_env_vars+=("${var}=${!var}")
+			fi
+			set -u
+		done
+		unset var
+	fi
+
+	# Handle /etc/environment.
 	if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" ]; then
-		mapfile -t login_env_vars < <(
+		mapfile -t -O "${#login_env_vars[@]}" login_env_vars < <(
 			sed -E \
 				-e "s/^([^=]+=)['\"]/\1/g" \
 				-e "s/['\"]\$//g" \
