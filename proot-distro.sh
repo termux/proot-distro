@@ -668,35 +668,6 @@ command_install() {
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
 		set -e
 
-		# Write important environment variables to profile file as /bin/login does not
-		# preserve them.
-		local profile_script
-		if [ -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d" ]; then
-			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile.d/termux-proot.sh"
-		else
-			chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile" >/dev/null 2>&1 || true
-			profile_script="${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/profile"
-		fi
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${profile_script}'...${RST}"
-		cat <<- EOF >> "$profile_script"
-		[ -z "\$LANG" ] && export LANG=C.UTF-8
-		export PATH=\${PATH}:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin
-		export TERM=${TERM-xterm-256color}
-		export TMPDIR=/tmp
-		export PULSE_SERVER=127.0.0.1
-		export MOZ_FAKE_NO_SANDBOX=1
-		EOF
-		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
-			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH COLORTERM \
-			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
-			set +u
-			if [ -n "${!var}" ]; then
-				echo "export ${var}='${!var}'" >> "$profile_script"
-			fi
-			set -u
-		done
-		unset var
-
 		# Default /etc/resolv.conf may be empty or unsuitable for use.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf'...${RST}"
 		rm -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf"
@@ -1685,47 +1656,91 @@ command_login() {
 		export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 	fi
 
-	if [ $# -ge 1 ]; then
-		# Wrap in quotes each argument to prevent word splitting.
-		local -a shell_command_args
-		for i in "$@"; do
-			shell_command_args+=("'$i'")
-		done
-
-		if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-			set -- "/bin/su" "-l" "$login_user" "-c" "${shell_command_args[*]}"
-		else
-			msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
-			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
-				set -- "/bin/bash" "-l" "-c" "${shell_command_args[*]}"
-			else
-				set -- "/bin/sh" "-l" "-c" "${shell_command_args[*]}"
-			fi
-		fi
-	else
-		if stat "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/su" >/dev/null 2>&1; then
-			set -- "/bin/su" "-l" "$login_user"
-		else
-			msg "${BRED}Warning: no /bin/su available in rootfs! You may need to install package 'util-linux' or 'shadow' (shadow-utils) or equivalent, depending on distribution.${RST}"
-			if [ -x "${INSTALLED_ROOTFS_DIR}/${distro_name}/bin/bash" ]; then
-				set -- "/bin/bash" "-l"
-			else
-				set -- "/bin/sh" "-l"
-			fi
-		fi
+	# It's hard to work without /etc/passwd.
+	if [ ! -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" ]; then
+		msg "${BRED}Error: the selected distribution doesn't have /etc/passwd.${RST}"
+		return 1
 	fi
 
-	# Setup the default environment as well as copy some variables
-	# defined by Termux. Note that when copying variables, we don't
-	# care whether they actually defined in Termux or not. If they
-	# will be empty, this should not cause any issues.
+	# Catch invalid specified user before login command will be executed.
+	if ! grep -q "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" >/dev/null 2>&1; then
+		msg "${BRED}Error: no user '${login_user}' defined in /etc/passwd of distribution.${RST}"
+		return 1
+	fi
+
+	local login_uid login_gid login_home login_shell
+	login_uid=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 3)
+	if [ -z "${login_uid}" ]; then
+		msg "${BRED}Error: failed to retrieve the id of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		return 1
+	fi
+	login_gid=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 4)
+	if [ -z "${login_gid}" ]; then
+		msg "${BRED}Error: failed to retrieve the primary group id of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		return 1
+	fi
+	login_home=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 6)
+	if [ -z "${login_home}" ]; then
+		msg "${BRED}Error: failed to retrieve the home of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		return 1
+	fi
+	login_shell=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 7)
+	if [ -z "${login_shell}" ]; then
+		msg "${BRED}Error: failed to retrieve the shell of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		return 1
+	fi
+
+	local -a login_shell_args
+	if [ $# -ge 1 ]; then
+		# Wrap in quotes each argument to prevent word splitting.
+		local -a login_shell_args
+		for i in "$@"; do
+			login_shell_args+=("'$i'")
+		done
+		set -- "-c" "${login_shell_args[*]}"
+	else
+		set --
+	fi
+
+	# Hide variables specific to Termux (Android OS) when running in
+	# isolated mode.
+	local -a login_env_vars
+	if $isolated_environment; then
+		login_env_vars=(
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		)
+	else
+		login_env_vars=(
+			"ANDROID_ART_ROOT=${ANDROID_ART_ROOT-}"
+			"ANDROID_DATA=${ANDROID_DATA-}"
+			"ANDROID_I18N_ROOT=${ANDROID_I18N_ROOT-}"
+			"ANDROID_ROOT=${ANDROID_ROOT-}"
+			"ANDROID_RUNTIME_ROOT=${ANDROID_RUNTIME_ROOT-}"
+			"ANDROID_TZDATA_ROOT=${ANDROID_TZDATA_ROOT-}"
+			"BOOTCLASSPATH=${BOOTCLASSPATH-}"
+			"DEX2OATBOOTCLASSPATH=${DEX2OATBOOTCLASSPATH-}" \
+			"EXTERNAL_STORAGE=${EXTERNAL_STORAGE-}" \
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin"
+		)
+	fi
+
+	# Using '-i' to ensure that we can fully control which
+	# environment variables will be inherited by shell.
 	set -- "/usr/bin/env" "-i" \
-		"HOME=/root" \
-		"LANG=C.UTF-8" \
+		"${login_env_vars[@]}" \
+        "COLORTERM=${COLORTERM-}" \
+		"HOME=${login_home}" \
+		"LANG=en_US.UTF-8" \
+		"MOZ_FAKE_NO_SANDBOX=1" \
+		"PULSE_SERVER=127.0.0.1" \
 		"TERM=${TERM-xterm-256color}" \
+		"TMPDIR=/tmp" \
+		"${login_shell}" \
+		"-l" \
 		"$@"
 
 	set -- "--rootfs=${INSTALLED_ROOTFS_DIR}/${distro_name}" "$@"
+	set -- "--change-id=${login_uid}:${login_gid}" "$@"
 
 	# Setup QEMU when CPU architecture do not match the one of device.
 	local target_arch
