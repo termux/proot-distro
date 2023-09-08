@@ -1,4 +1,4 @@
-dist_name="Manjaro (aarch64)"
+dist_name="Manjaro"
 dist_version="20230320"
 
 bootstrap_distribution() {
@@ -34,11 +34,11 @@ bootstrap_distribution() {
 }
 
 write_plugin() {
-	cat <<- EOF > "${PLUGIN_DIR}/manjaro-aarch64.sh"
+	cat <<- EOF > "${PLUGIN_DIR}/manjaro.sh"
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
-	DISTRO_NAME="Manjaro AArch64"
+	DISTRO_NAME="Manjaro"
 	DISTRO_COMMENT="Currently available only for AArch64."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz"
