@@ -305,6 +305,9 @@ INSTALLED_ROOTFS_DIR="${RUNTIME_DIR}/installed-rootfs"
 DEFAULT_PRIMARY_NAMESERVER="8.8.8.8"
 DEFAULT_SECONDARY_NAMESERVER="8.8.4.4"
 
+# PATH environment variable for distributions.
+DEFAULT_PATH_ENV="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/games:/usr/games:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin"
+
 # Default fake kernel version.
 # Note: faking kernel version is required when using PRoot-Distro on
 # old devices that are not compatible with up-to-date versions of GNU libc.
@@ -667,6 +670,37 @@ command_install() {
 			--delay-directory-restore --preserve-permissions --strip="${TARBALL_STRIP_OPT}" \
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
 		set -e
+
+		# Write important environment variables to /etc/environment.
+		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" >/dev/null 2>&1 || true
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment'...${RST}"
+		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
+			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH COLORTERM \
+			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
+			set +u
+			if [ -n "${!var}" ]; then
+				echo "${var}=${!var}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+			fi
+			set -u
+		done
+		unset var
+		cat <<- EOF >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+		LANG=en_US.UTF-8
+		MOZ_FAKE_NO_SANDBOX=1
+		PATH=${DEFAULT_PATH_ENV}
+		PULSE_SERVER=127.0.0.1
+		TERM=${TERM-xterm-256color}
+		TMPDIR=/tmp
+		EOF
+
+		# Fix PATH in some configuration files.
+		for f in /etc/bash.bashrc /etc/profile /etc/login.defs; do
+			[ ! -e "${INSTALLED_ROOTFS_DIR}/${distro_name}${f}" ] && continue
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Updating PATH in '${INSTALLED_ROOTFS_DIR}/${distro_name}${f}' if needed...${RST}"
+			sed -i -E "s@\<(PATH=)(\"?[^\"[:space:]]+(\"|\$|\>))@\1\"${DEFAULT_PATH_ENV}\"@g" \
+				"${INSTALLED_ROOTFS_DIR}/${distro_name}${f}"
+		done
+		unset f
 
 		# Default /etc/resolv.conf may be empty or unsuitable for use.
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/resolv.conf'...${RST}"
@@ -1702,29 +1736,21 @@ command_login() {
 		set --
 	fi
 
-	# Hide variables specific to Termux (Android OS) when running in
-	# isolated mode.
 	local -a login_env_vars
-	if $isolated_environment; then
-		login_env_vars=(
-			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-		)
-	else
-		login_env_vars=(
-			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:@TERMUX_PREFIX@/bin:/system/bin:/system/xbin"
-		)
+	login_env_vars=(
+		"PATH=${DEFAULT_PATH_ENV}"
+	)
 
-		for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
-			ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH \
-			DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
-			set +u
-			if [ -n "${!var}" ]; then
-				login_env_vars+=("${var}=${!var}")
-			fi
-			set -u
-		done
-		unset var
-	fi
+	for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
+		ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH \
+		DEX2OATBOOTCLASSPATH EXTERNAL_STORAGE; do
+		set +u
+		if [ -n "${!var}" ]; then
+			login_env_vars+=("${var}=${!var}")
+		fi
+		set -u
+	done
+	unset var
 
 	# Handle /etc/environment.
 	if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" ]; then
@@ -1741,13 +1767,9 @@ command_login() {
 	# environment variables will be inherited by shell.
 	set -- "/usr/bin/env" "-i" \
 		"${login_env_vars[@]}" \
-        "COLORTERM=${COLORTERM-}" \
+		"COLORTERM=${COLORTERM-}" \
 		"HOME=${login_home}" \
-		"LANG=en_US.UTF-8" \
-		"MOZ_FAKE_NO_SANDBOX=1" \
-		"PULSE_SERVER=127.0.0.1" \
 		"TERM=${TERM-xterm-256color}" \
-		"TMPDIR=/tmp" \
 		"${login_shell}" \
 		"-l" \
 		"$@"
