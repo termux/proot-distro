@@ -1500,7 +1500,7 @@ command_reset() {
 
 command_reset_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}reset ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}reset ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
 	msg "${CYAN}Reinstall the specified Linux distribution.${RST}"
 	msg
@@ -2046,7 +2046,7 @@ command_login() {
 
 command_login_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}-- ${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}-- ${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
 	msg
 	msg "${CYAN}Launch a login shell for the specified distribution if no${RST}"
 	msg "${CYAN}additional arguments were given. Otherwise execute the${RST}"
@@ -2332,7 +2332,7 @@ command_backup() {
 
 command_backup_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}$PROGRAM_NAME ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
 	msg "${CYAN}Back up a specified distribution installation into tarball.${RST}"
 	msg
