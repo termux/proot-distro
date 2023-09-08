@@ -513,7 +513,7 @@ command_install() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be installed.${RST}"
 		msg
-		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
 	fi
@@ -763,7 +763,7 @@ command_install() {
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 		msg
-		msg "${CYAN}Now run '${GREEN}${PROGRAM_NAME} login $distro_name${CYAN}' to log in.${RST}"
+		msg "${CYAN}Log in with: ${GREEN}${PROGRAM_NAME} login ${distro_name}${CYAN}${RST}"
 		msg
 		return 0
 	else
@@ -1202,7 +1202,7 @@ command_remove() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be removed.${RST}"
 		msg
-		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
 	fi
@@ -1349,7 +1349,7 @@ command_rename() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${orig_distro_name}${BRED}' was requested to be renamed.${RST}"
 		msg
-		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
 	fi
@@ -1482,7 +1482,7 @@ command_reset() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested to be reset.${RST}"
 		msg
-		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
 	fi
@@ -1668,7 +1668,7 @@ command_login() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for logging in.${RST}"
 		msg
-		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
 	fi
@@ -2234,7 +2234,7 @@ command_backup() {
 		msg
 		msg "${BRED}Error: unknown distribution '${YELLOW}${distro_name}${BRED}' was requested for backup.${RST}"
 		msg
-		msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} list${CYAN}' to see the supported distributions.${RST}"
+		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
 	fi
@@ -2698,7 +2698,7 @@ if [ $# -ge 1 ]; then
 			msg
 			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
 			msg
-			msg "${CYAN}Run '${GREEN}${PROGRAM_NAME} help${CYAN}' to see the list of available commands.${RST}"
+			msg "${CYAN}View supported commands by: ${GREEN}${PROGRAM_NAME} help${CYAN}${RST}"
 			msg
 			exit 1
 			;;
