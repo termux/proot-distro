@@ -12,6 +12,9 @@ sed -e "s|@TERMUX_APP_PACKAGE@|$TERMUX_APP_PACKAGE|g" \
 	./proot-distro.sh > "$TERMUX_PREFIX"/bin/proot-distro
 chmod 700 "$TERMUX_PREFIX"/bin/proot-distro
 
+echo "Symlinking $TERMUX_PREFIX/bin/proot-distro --> $TERMUX_PREFIX/bin/pd"
+ln -sfr "$TERMUX_PREFIX"/bin/proot-distro "$TERMUX_PREFIX"/bin/pd
+
 install -d -m 700 "$TERMUX_PREFIX"/etc/proot-distro
 for script in ./distro-plugins/*.sh*; do
 	echo "Installing $TERMUX_PREFIX/etc/proot-distro/$(basename "$script")"

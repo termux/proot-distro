@@ -287,7 +287,7 @@ PROGRAM_VERSION="3.18.1"
 
 set -e -u
 
-PROGRAM_NAME="proot-distro"
+PROGRAM_NAME=$(basename "$(realpath "$0")")
 
 # Where distribution plug-ins are stored.
 DISTRO_PLUGINS_DIR="@TERMUX_PREFIX@/etc/proot-distro"
