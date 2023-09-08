@@ -1669,22 +1669,22 @@ command_login() {
 	fi
 
 	local login_uid login_gid login_home login_shell
-	login_uid=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 3)
+	login_uid=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 3)
 	if [ -z "${login_uid}" ]; then
 		msg "${BRED}Error: failed to retrieve the id of user '${login_user}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
-	login_gid=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 4)
+	login_gid=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 4)
 	if [ -z "${login_gid}" ]; then
 		msg "${BRED}Error: failed to retrieve the primary group id of user '${login_user}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
-	login_home=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 6)
+	login_home=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 6)
 	if [ -z "${login_home}" ]; then
 		msg "${BRED}Error: failed to retrieve the home of user '${login_user}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
-	login_shell=$(grep "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 7)
+	login_shell=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 7)
 	if [ -z "${login_shell}" ]; then
 		msg "${BRED}Error: failed to retrieve the shell of user '${login_user}' from /etc/passwd of distribution.${RST}"
 		return 1
