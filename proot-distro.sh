@@ -671,6 +671,17 @@ command_install() {
 			-xf "${DOWNLOAD_CACHE_DIR}/${tarball_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
 		set -e
 
+		# If no /etc in rootfs, terminate installation.
+		# This usually indicates that downloaded distribution tarball doesn't contain
+		# actual rootfs, wrong tar strip option was specified or the distribution has
+		# high grade of customization and doesn't respect FHS standard.
+		if [ ! -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc" ] then
+			msg
+			msg "${BRED}Error: the rootfs of distribution '${YELLOW}${distro_name}${BRED}' has unexpected structure (no /etc directory). Make sure that variable TARBALL_STRIP_OPT specified in distribution plug-in is correct.${RST}"
+			msg
+			return 1
+		fi
+
 		# Write important environment variables to /etc/environment.
 		chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" >/dev/null 2>&1 || true
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Writing file '${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment'...${RST}"
