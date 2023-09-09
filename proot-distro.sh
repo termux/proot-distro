@@ -675,7 +675,7 @@ command_install() {
 		# This usually indicates that downloaded distribution tarball doesn't contain
 		# actual rootfs, wrong tar strip option was specified or the distribution has
 		# high grade of customization and doesn't respect FHS standard.
-		if [ ! -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc" ] then
+		if [ ! -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc" ]; then
 			msg
 			msg "${BRED}Error: the rootfs of distribution '${YELLOW}${distro_name}${BRED}' has unexpected structure (no /etc directory). Make sure that variable TARBALL_STRIP_OPT specified in distribution plug-in is correct.${RST}"
 			msg
