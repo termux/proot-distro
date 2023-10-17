@@ -8,16 +8,14 @@ body:
       value: |
         This is a bug tracker of the PRoot Distro - a Bash script utility for managing distribution rootfs for use with PRoot.
 
-        **NOTE**: crashes, package installation issues and other distribution runtime bugs ARE NOT issues of PRoot Distro and will not be reviewed/fixed.
-
-        Be patient, do not expect that issue could get resolved immediately.
+        **DO NOT REPORT DISTRIBUTION BUGS HERE. THEY WILL NOT BE WORKED ON. EVER.**
   - type: textarea
     attributes:
       label: Problem description
       description: |
         A clear and concise description of what the problem is. You may attach the logs, screenshots, screen video recording and whatever else that will help to understand the issue.
 
-        Issues without proper description will be closed without solution.
+        **Reminding once more: do not report distribution bugs here such as black screens, package issues, desktop problems, etc. This bug tracker is solely about `proot-distro` script.**
     validations:
       required: true
   - type: textarea
@@ -28,10 +26,3 @@ body:
   - type: textarea
     attributes:
       label: What is the expected behavior?
-  - type: checkboxes
-    attributes:
-      label: Bug report policy acknowledgement
-      description: PRoot Distro provides distributions as-is, without binary modification of any kind. Upstream issues as well as issues of `proot` utility are not subject for bug reporting and will be ignored by PRoot Distro maintainers.
-      options:
-        - label: I understand that PRoot Distro won't fix distribution issues.
-          required: true
