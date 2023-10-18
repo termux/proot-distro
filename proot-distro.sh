@@ -923,7 +923,7 @@ jKv3LYwE9UAEouHKEk7GjrhZgeKxjesWw7jUQKzv4kP4zyR15xSMkjM1tlAfQ4HekYIsIZT9Nkkt
 cFkDebgYOkExgilV6J2QTszLvnrDNBOk+lbdu1e8kvC7gXDzb7xQzX80myE961nP+i81jPttB+XE
 LMNpn78mUKkpcapahst6HqdtmzZ4FnW1vazXZZmXdxz69HkeP6ZXt9rOb/u8fsO0lIgRbUlQIiZM
 PZ3MIjo4e1b5iB5zVMyGHzaioC2wBQAA
-   ' | base64 -d | gzip -d > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat"
+' | base64 -d | gzip -d > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat"
 	fi
 
 	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime" ]; then
