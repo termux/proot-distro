@@ -915,7 +915,7 @@ run_proot_cmd() {
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
 			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-			"TERM=$TERM" \
+			"TERM=${TERM-xterm-256color}" \
 			"TMPDIR=/tmp" \
 			"$@"
 }
