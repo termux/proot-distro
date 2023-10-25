@@ -94,10 +94,6 @@ write_plugin() {
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/archlinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['arm']="${GIT_RELEASE_URL}/archlinux-arm-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/archlinux-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['i686']="${GIT_RELEASE_URL}/archlinux-i686-pd-${CURRENT_VERSION}.tar.xz"
-	TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/archlinux-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/archlinux-x86_64-pd-${CURRENT_VERSION}.tar.xz"
-	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/archlinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
 
 	distro_setup() {
