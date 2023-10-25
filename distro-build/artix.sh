@@ -17,7 +17,7 @@ bootstrap_distribution() {
 	mount --bind /dev "${WORKDIR}/artix-aarch64/dev"
 	mount --bind /proc "${WORKDIR}/artix-aarch64/proc"
 	mount --bind /sys "${WORKDIR}/artix-aarch64/sys"
-	chroot "${WORKDIR}/artix-aarch64" pacman -Rnsc --noconfirm linux-aarch64
+	chroot "${WORKDIR}/artix-aarch64" pacman -Rnsc --noconfirm linux-aarch64 linux-aarch64-lts linux-firmware
 	EOF
 
 	sudo rm -f "${WORKDIR:?}/artix-aarch64"/var/cache/pacman/pkg/* || true
