@@ -710,6 +710,9 @@ command_install() {
 			set -u
 		done
 		unset var
+		# Don't touch these variables.
+		# TERM is being inherited from currect environment. Otherwise it is being
+		# set to xterm-256color (Termux app default).
 		cat <<- EOF >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
 		LANG=en_US.UTF-8
 		MOZ_FAKE_NO_SANDBOX=1
