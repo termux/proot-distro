@@ -1,5 +1,5 @@
 dist_name="Pardus"
-dist_version="yirmibir"
+dist_version="yirmiuc"
 
 bootstrap_distribution() {
 	for arch in arm64 i386 amd64; do
