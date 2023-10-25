@@ -715,6 +715,7 @@ command_install() {
 		MOZ_FAKE_NO_SANDBOX=1
 		PATH=${DEFAULT_PATH_ENV}
 		PULSE_SERVER=127.0.0.1
+		TERM=${TERM-xterm-256color}
 		TMPDIR=/tmp
 		EOF
 
@@ -1798,6 +1799,7 @@ command_login() {
 		"${login_env_vars[@]}" \
 		"COLORTERM=${COLORTERM-}" \
 		"HOME=${login_home}" \
+		"TERM=${TERM-xterm-256color}" \
 		"${login_shell}" \
 		"-l" \
 		"$@"
