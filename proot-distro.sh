@@ -1,4 +1,5 @@
 #!@TERMUX_PREFIX@/bin/bash
+# shellcheck disable=SC2239
 ##
 ## Script for managing PRoot containers with Linux distributions.
 ##
@@ -314,7 +315,7 @@ DEFAULT_PATH_ENV="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/
 DEFAULT_FAKE_KERNEL_VERSION="6.2.1-PRoot-Distro"
 
 # Colors.
-if [ -n "$(command -v tput)" ] && [ $(tput colors) -ge 8 ] && [ -z "${PROOT_DISTRO_FORCE_NO_COLORS-}" ]; then
+if [ -n "$(command -v tput)" ] && [ "$(tput colors)" -ge 8 ] && [ -z "${PROOT_DISTRO_FORCE_NO_COLORS-}" ]; then
 	RST="$(tput sgr0)"
 	RED="${RST}$(tput setaf 1)"
 	BRED="${RST}$(tput bold)$(tput setaf 1)"
@@ -342,6 +343,9 @@ fi
 # It is expected that all dependencies have fixed hardcoded paths according
 # to Termux file system layout.
 unset LD_PRELOAD
+
+# Override umask
+umask 0022
 
 #############################################################################
 #
@@ -569,11 +573,11 @@ command_install() {
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		# Make sure things are cleared up on failure or user requested exit.
-		trap "echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" EXIT
-		trap "trap - EXIT; echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" HUP INT TERM
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' EXIT
+		trap 'trap - EXIT; echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -rf "${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}"; [ -e "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ] && rm -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; exit 1;' HUP INT TERM
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
-		mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
+		mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
 
 		export PROOT_L2S_DIR="${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s"
 		if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}/.l2s" ]; then
@@ -601,6 +605,7 @@ command_install() {
 
 		# Distribution plug-in contains steps on how to get download URL
 		# and further post-installation configuration.
+		# shellcheck disable=SC1090
 		source "${distro_plugin_script}"
 
 		# Cannot proceed without URL and SHA-256.
@@ -788,6 +793,7 @@ command_install() {
 
 # Special function for executing a command inside rootfs.
 # Intended to be used inside plug-in distro_setup() function.
+# shellcheck disable=SC2317 # run_proot_cmd called indirectly
 run_proot_cmd() {
 	if [ -z "${distro_name-}" ]; then
 		msg
@@ -869,7 +875,7 @@ run_proot_cmd() {
 	fi
 
 	proot \
-		$qemu_arg -L \
+		"${qemu_arg}" -L \
 		--kernel-release="${DEFAULT_FAKE_KERNEL_VERSION}" \
 		--link2symlink \
 		--kill-on-exit \
@@ -1406,12 +1412,14 @@ command_rename() {
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Updating PRoot link2symlink extension files (may take long time)...${RST}"
 	local symlink_file_name
 	find "${INSTALLED_ROOTFS_DIR}/${new_distro_name}" -type l | while read -r symlink_file_name; do
-		local symlink_current_target=$(readlink "$symlink_file_name")
+		local symlink_current_target
+		symlink_current_target=$(readlink "$symlink_file_name")
 		if [ "${symlink_current_target:0:${#INSTALLED_ROOTFS_DIR}}" != "${INSTALLED_ROOTFS_DIR}" ]; then
 			# Skip non-l2s symlinks.
 			continue
 		fi
-		local symlink_new_target=$(sed -E "s@(${INSTALLED_ROOTFS_DIR})/([^/]+)/(.*)@\1/${new_distro_name}/\3@g" <<< "$symlink_current_target")
+		local symlink_new_target
+		symlink_new_target=$(sed -E "s@(${INSTALLED_ROOTFS_DIR})/([^/]+)/(.*)@\1/${new_distro_name}/\3@g" <<< "$symlink_current_target")
 		ln -sf "$symlink_new_target" "$symlink_file_name"
 	done
 
@@ -1790,8 +1798,10 @@ command_login() {
 	# Setup QEMU when CPU architecture do not match the one of device.
 	local target_arch
 	if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
+		# shellcheck disable=SC1090
 		target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
 	elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
+		# shellcheck disable=SC1090
 		target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
 	else
 		# This should never happen.
@@ -2321,8 +2331,8 @@ command_backup() {
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Archiving the rootfs and plug-in...${RST}"
 	if [ -n "${tarball_file_path-}" ]; then
-		trap "echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}\"; rm -f \"${tarball_file_path:?}\"; exit 1;" EXIT
-		trap "trap - EXIT; echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}\"; rm -f \"${tarball_file_path:?}\"; exit 1;" HUP INT TERM
+		trap 'echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}"; rm -f "${tarball_file_path:?}"; exit 1;' EXIT
+		trap 'trap - EXIT; echo -e "\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}"; rm -f "${tarball_file_path:?}"; exit 1;' HUP INT TERM
 		tar -c --auto-compress \
 			--warning=no-file-ignored \
 			-f "$tarball_file_path" \
@@ -2440,7 +2450,7 @@ command_restore() {
 	local success
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Extracting distribution plug-in and rootfs from the tarball...${RST}"
 	if [ -n "${tarball_file_path-}" ]; then
-		if mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}" && tar -x --auto-compress -f "$tarball_file_path" \
+		if mkdir -p "${INSTALLED_ROOTFS_DIR}" && tar -x --auto-compress -f "$tarball_file_path" \
 			--recursive-unlink --preserve-permissions \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
@@ -2449,7 +2459,7 @@ command_restore() {
 			success=false
 		fi
 	else
-		if mkdir -m 755 -p "${INSTALLED_ROOTFS_DIR}" && tar -x --recursive-unlink --preserve-permissions \
+		if mkdir -p "${INSTALLED_ROOTFS_DIR}" && tar -x --recursive-unlink --preserve-permissions \
 			-C "${DISTRO_PLUGINS_DIR}/../" "$(basename "${DISTRO_PLUGINS_DIR}")/" \
 			-C "${INSTALLED_ROOTFS_DIR}/../" "$(basename "${INSTALLED_ROOTFS_DIR}")/"; then
 			success=true
@@ -2522,7 +2532,6 @@ command_clear_cache() {
 				return 1
 				;;
 		esac
-		shift 1
 	done
 
 	if ! ls -la "${DOWNLOAD_CACHE_DIR}"/* > /dev/null 2>&1; then
@@ -2667,7 +2676,9 @@ declare -A TARBALL_URL TARBALL_SHA256
 declare -A SUPPORTED_DISTRIBUTIONS
 declare -A SUPPORTED_DISTRIBUTIONS_COMMENTS
 while read -r filename; do
+	# shellcheck disable=SC1090
 	distro_name=$(. "$filename"; echo "${DISTRO_NAME-}")
+	# shellcheck disable=SC1090
 	distro_comment=$(. "$filename"; echo "${DISTRO_COMMENT-}")
 	# May have 2 name formats:
 	# * alias.override.sh
