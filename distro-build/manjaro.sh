@@ -43,7 +43,6 @@ write_plugin() {
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	EOF
 
 	distro_setup() {
 	${TAB}# Fix environment variables on login or su.
