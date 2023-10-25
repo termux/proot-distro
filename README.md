@@ -27,12 +27,13 @@ Here are the supported distributions (alias: name):
 
 * `alpine`: Alpine Linux (edge)
 * `archlinux`: Arch Linux ARM
+* `artix`: Artix Linux (AArch64 only)
 * `debian`: Debian (stable)
-* `fedora`: Fedora 37 (AArch64 only)
-* `manjaro-aarch64`: Manjaro AArch64
+* `fedora`: Fedora 38 (AArch64 only)
+* `manjaro-aarch64`: Manjaro (AArch64 only)
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
-* `ubuntu`: Ubuntu (22.04)
+* `ubuntu`: Ubuntu (23.10)
 * `void`: Void Linux
 
 All systems come in a bare-minimum variant, typically consisting of package
@@ -68,6 +69,11 @@ of options, specific to the task that it performs.
 Usage basics:
 ```
 proot-distro <command> <arguments>
+```
+
+Alternative variant (v4.0.0+):
+```
+pd <comand> <arguments>
 ```
 
 Where `<command>` is a proot-distro action command (see below to learn what
