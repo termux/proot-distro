@@ -40,5 +40,13 @@ write_plugin() {
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+
+	distro_setup() {
+	${TAB}# Fix environment variables on login or su.
+	${TAB}local f
+	${TAB}for f in su su-l system-local-login system-remote-login; do
+	${TAB}${TAB}echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/"${f}"
+	${TAB}done
+	}
 	EOF
 }
