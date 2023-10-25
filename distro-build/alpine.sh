@@ -1,5 +1,5 @@
 dist_name="Alpine Linux"
-dist_version="3.17.2"
+dist_version="3.18.4"
 
 bootstrap_distribution() {
 	for arch in aarch64 armv7 x86 x86_64; do
