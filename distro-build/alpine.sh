@@ -25,6 +25,7 @@ bootstrap_distribution() {
 		echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
 		echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk upgrade
+		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add shadow-login
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" ln -sf /var/cache/apk /etc/apk/cache
 		EOF
 
