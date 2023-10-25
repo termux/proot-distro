@@ -99,7 +99,7 @@ write_plugin() {
 	${TAB}# Fix environment variables on login or su.
 	${TAB}local f
 	${TAB}for f in su su-l system-local-login system-remote-login; do
-	${TAB}${TAB}echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/"${f}"
+	${TAB}${TAB}echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/"\${f}"
 	${TAB}done
 	}
 	EOF
