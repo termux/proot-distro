@@ -4,5 +4,5 @@
 DISTRO_NAME="Manjaro"
 DISTRO_COMMENT="Currently available only for AArch64."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.10.0/manjaro-aarch64-pd-v3.10.0.tar.xz"
-TARBALL_SHA256['aarch64']="a56ee2ce0b56bf522325f82de20529862bb46540dfdb0febc151abf9e932a3f8"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/manjaro-aarch64-pd-v3.18.1.tar.xz"
+TARBALL_SHA256['aarch64']="6d6595ab9650a1836efe9dd23e0b7b321cdaf01b15ed95413036f53f6a25f495"
