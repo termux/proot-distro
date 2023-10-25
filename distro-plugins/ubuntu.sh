@@ -2,11 +2,11 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Ubuntu"
-DISTRO_COMMENT="Current LTS release (jammy). Not available for x86 32-bit (i686) CPUs."
+DISTRO_COMMENT="Standard release (mantic). Not available for x86 32-bit (i686) CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.10.0/ubuntu-aarch64-pd-v3.10.0.tar.xz"
-TARBALL_SHA256['aarch64']="e367c1cf89f4ff71a081903d12a99e3a7619fcb71e805851b25e70f556d12184"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.10.0/ubuntu-arm-pd-v3.10.0.tar.xz"
-TARBALL_SHA256['arm']="b07857afabf71d62c9a7727c3cb336c5a7e050e64628ab74ab2919cab22872ca"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.10.0/ubuntu-x86_64-pd-v3.10.0.tar.xz"
-TARBALL_SHA256['x86_64']="51a1da5b4db87ec35853d0865b1d7bf2472d39007f698ecd7ae4fa68edeb700b"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/ubuntu-aarch64-pd-v3.18.1.tar.xz"
+TARBALL_SHA256['aarch64']="7927d73d156da29b33e5724c4c6b0eb19245e61617f6550e46bedfd837656267"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.18.1/ubuntu-arm-pd-v3.18.1.tar.xz"
+TARBALL_SHA256['arm']="a6a0bcefb9ad867ae5e3ac5aece8b179ba6ede32d835f15b871c9edac546f7d9"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/ubuntu-x86_64-pd-v3.18.1.tar.xz"
+TARBALL_SHA256['x86_64']="21453462fbd43e097eaeaa0c8055df2126e376baf2a868f7b7ea7a0fa67866e5"
