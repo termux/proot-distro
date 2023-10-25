@@ -99,4 +99,13 @@ write_plugin() {
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/archlinux-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/archlinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
+
+	distro_setup() {
+	${TAB}# Fix environment variables on login or su.
+	${TAB}local f
+	${TAB}for f in su su-l system-local-login system-remote-login; do
+	${TAB}${TAB}echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/"${f}"
+	${TAB}done
+	}
+	EOF
 }

@@ -12,3 +12,11 @@ TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v3
 TARBALL_SHA256['i686']=""
 TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.10.0/archlinux-x86_64-pd-v3.10.0.tar.xz"
 TARBALL_SHA256['x86_64']=""
+
+distro_setup() {
+	# Fix environment variables on login or su.
+	local f
+	for f in su su-l system-local-login system-remote-login; do
+		echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/"${f}"
+	done
+}
