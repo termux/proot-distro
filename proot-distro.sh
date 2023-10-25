@@ -315,7 +315,7 @@ DEFAULT_PATH_ENV="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/
 DEFAULT_FAKE_KERNEL_VERSION="6.2.1-PRoot-Distro"
 
 # Colors.
-if [ -n "$(command -v tput)" ] && [ "$(tput colors)" -ge 8 ] && [ -z "${PROOT_DISTRO_FORCE_NO_COLORS-}" ]; then
+if [ -n "$(command -v tput)" ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ] && [ -z "${PROOT_DISTRO_FORCE_NO_COLORS-}" ]; then
 	RST="$(tput sgr0)"
 	RED="${RST}$(tput setaf 1)"
 	BRED="${RST}$(tput bold)$(tput setaf 1)"
