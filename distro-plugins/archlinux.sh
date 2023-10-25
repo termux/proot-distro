@@ -4,10 +4,10 @@
 DISTRO_NAME="Arch Linux"
 DISTRO_COMMENT="Currently available only AArch64 and ARM ports."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.10.0/archlinux-aarch64-pd-v3.10.0.tar.xz"
-TARBALL_SHA256['aarch64']="ffad3d535bf5172fe379fd68de4353e0951cd3e67b255cec6440e962a7d2bb4f"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.10.0/archlinux-arm-pd-v3.10.0.tar.xz"
-TARBALL_SHA256['arm']="5643e2835061d93bfe6de13de607bebd33dd75eb97b32866ac5c29dff37521dd"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/archlinux-aarch64-pd-v3.18.1.tar.xz"
+TARBALL_SHA256['aarch64']="68de6db105dc503e8defe55ac37fad9b531f07aa16b8a8072c505fff5fbc03a1"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.18.1/archlinux-arm-pd-v3.18.1.tar.xz"
+TARBALL_SHA256['arm']="2701e2aac78bb0cb86f113701ae226c35b38a4e8f5404ae97e7eb0cc4599ab79"
 
 distro_setup() {
 	# Fix environment variables on login or su.
