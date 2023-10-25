@@ -20,7 +20,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="3.18.1"
+PROGRAM_VERSION="4.0.0"
 
 #############################################################################
 ##
