@@ -47,5 +47,11 @@ write_plugin() {
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/fedora-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/fedora-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/fedora-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+
+	distro_setup() {
+	${TAB}# Fix environment variables on login or su.
+	${TAB}run_proot_cmd authselect opt-out
+	${TAB}echo "session  required  pam_env.so readenv=1" | run_proot_cmd tee -a /etc/pam.d/system-auth >/dev/null
+	}
 	EOF
 }
