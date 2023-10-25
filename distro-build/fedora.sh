@@ -51,7 +51,7 @@ write_plugin() {
 	distro_setup() {
 	${TAB}# Fix environment variables on login or su.
 	${TAB}run_proot_cmd authselect opt-out
-	${TAB}echo "session  required  pam_env.so readenv=1" | run_proot_cmd tee -a /etc/pam.d/system-auth >/dev/null
+	${TAB}echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/system-auth
 	}
 	EOF
 }

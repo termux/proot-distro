@@ -12,5 +12,5 @@ TARBALL_SHA256['x86_64']="167732ad9389523ca88ca9fdba470413322be15b3110845fa865e1
 distro_setup() {
 	# Fix environment variables on login or su.
 	run_proot_cmd authselect opt-out
-	echo "session  required  pam_env.so readenv=1" | run_proot_cmd tee -a /etc/pam.d/system-auth >/dev/null
+	echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/system-auth
 }
