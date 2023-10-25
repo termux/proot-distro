@@ -582,9 +582,9 @@ command_install() {
 
 		# Make sure things are cleared up on failure or user requested exit.
 		# shellcheck disable=SC2064 # variables must expand here
-		trap "echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" EXIT
+		trap "echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting due to failure.${RST}\"; chmod -R u+rwx \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" EXIT
 		# shellcheck disable=SC2064 # variables must expand here
-		trap "trap - EXIT; echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" HUP INT TERM
+		trap "trap - EXIT; echo -e \"\\r\\e[2K${BLUE}[${RED}!${BLUE}] ${CYAN}Exiting immediately as requested.${RST}\"; chmod -R u+rwx \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; rm -rf \"${INSTALLED_ROOTFS_DIR:?}/${distro_name:?}\"; [ -e \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\" ] && rm -f \"${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh\"; exit 1;" HUP INT TERM
 
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '${INSTALLED_ROOTFS_DIR}/${distro_name}'...${RST}"
 		mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}"
