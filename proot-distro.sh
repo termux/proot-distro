@@ -884,8 +884,9 @@ run_proot_cmd() {
 		fi
 	fi
 
-	proot \
-		"${qemu_arg}" -L \
+	# shellcheck disable=SC2086 # ${qemu_arg} should expand into nothing rather than into ''.
+	proot ${qemu_arg} \
+		-L \
 		--kernel-release="${DEFAULT_FAKE_KERNEL_VERSION}" \
 		--link2symlink \
 		--kill-on-exit \
