@@ -1802,6 +1802,7 @@ command_login() {
 		"${login_env_vars[@]}" \
 		"COLORTERM=${COLORTERM-}" \
 		"HOME=${login_home}" \
+		"USER=${login_user}" \
 		"TERM=${TERM-xterm-256color}" \
 		"${login_shell}" \
 		"-l" \
