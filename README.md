@@ -73,7 +73,7 @@ proot-distro <command> <arguments>
 
 Alternative variant (v4.0.0+):
 ```
-pd <comand> <arguments>
+pd <command> <arguments>
 ```
 
 Where `<command>` is a proot-distro action command (see below to learn what
