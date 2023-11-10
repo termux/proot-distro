@@ -1,5 +1,5 @@
 dist_name="Fedora"
-dist_version="38-1.6"
+dist_version="39-1.5"
 
 bootstrap_distribution() {
 	for arch in aarch64 x86_64; do
