@@ -36,7 +36,6 @@ Here are the supported distributions (alias: name):
 * `archlinux`: Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
 * `debian`: Debian (stable)
-* `endeavour`: Endeavour OS (AArch64 only)
 * `fedora`: Fedora 39 (AArch64 only)
 * `manjaro-aarch64`: Manjaro (AArch64 only)
 * `opensuse`: OpenSUSE (Tumbleweed)
