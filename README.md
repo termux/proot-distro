@@ -5,14 +5,21 @@ Linux distribution installations. It does not require root or any special ROM,
 kernel, etc. Everything you need to get started is the latest version of
 [Termux] application. See [Installing](#installing) for details.
 
-PRoot Distro is not a virtual machine, neither a traditional chroot. It shares
-the same kernel as your Android system, so do not even try to update it through
-package manager - this will not work.
+PRoot Distro is not a virtual machine. This is a container environment manager
+based on `proot` utility which able to emulate `chroot` and `mount --bind`.
 
 This script should never be run as root user. If you do so, file permissions
 and SELinux labels could get messed up. There also possibility of damaging
 system if being executed as root. For safety, PRoot Distro checks the user id
 before run and refuses to work if detected user id `0` (root).
+
+## Donate
+
+If you like the project and wish to support the developer, PRoot Distro
+accepts donations in Tron crypto:
+```
+TUwtYNqDUSafZnoReXqS2qxMAWWJ7zhjCg
+```
 
 ***
 
@@ -29,7 +36,8 @@ Here are the supported distributions (alias: name):
 * `archlinux`: Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
 * `debian`: Debian (stable)
-* `fedora`: Fedora 38 (AArch64 only)
+* `endeavour`: Endeavour OS (AArch64 only)
+* `fedora`: Fedora 39 (AArch64 only)
 * `manjaro-aarch64`: Manjaro (AArch64 only)
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
