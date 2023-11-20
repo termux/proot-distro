@@ -7,7 +7,7 @@ bootstrap_distribution() {
 			--architectures=${arch} \
 			--variant=apt \
 			--components="main,universe,multiverse" \
-			--include="passwd" \
+			--include="locales,passwd" \
 			--format=tar \
 			"${dist_version}" \
 			"${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
@@ -31,5 +31,11 @@ write_plugin() {
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/ubuntu-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/ubuntu-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+
+	distro_setup() {
+	${TAB}# Configure en_US.UTF-8 locale.
+	${TAB}run_proot_cmd sed -i -E 's/# (en_US.UTF-8)/\1/g' /etc/locale.gen
+	${TAB}run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
+	}
 	EOF
 }
