@@ -18,6 +18,7 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/resolv.conf"
+		echo "excludepkgs=*selinux*" >> "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/etc/dnf/dnf.conf"
 		mount --bind /dev "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/fedora-$(translate_arch "$arch")/sys"
