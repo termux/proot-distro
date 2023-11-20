@@ -4,11 +4,18 @@
 DISTRO_NAME="Debian"
 DISTRO_COMMENT="A stable release (bookworm)."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/debian-aarch64-pd-v3.18.1.tar.xz"
-TARBALL_SHA256['aarch64']="044b3f7036f853b1fa61f2161862a3b35dbc604a33c81276e97e0dc44010e2ec"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v3.18.1/debian-arm-pd-v3.18.1.tar.xz"
-TARBALL_SHA256['arm']="10f1715790b9daccd763d9ce6e5557b970abd69fd84382c093200b76deed44da"
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v3.18.1/debian-i686-pd-v3.18.1.tar.xz"
-TARBALL_SHA256['i686']="14da210b1b570cc703ab752804df572bdeb0e6e27cd2800e2abb31282fa547aa"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/debian-x86_64-pd-v3.18.1.tar.xz"
-TARBALL_SHA256['x86_64']="672d61557cd11a2e9b12a241dbefce4b8d45178912a4fa6e50b8081138ceb082"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.0.2/debian-aarch64-pd-v4.0.2.tar.xz"
+TARBALL_SHA256['aarch64']="5100c435d4f410e4bce0d448e273a3783a9a94e31bfb86f1e1448f7e696df87a"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.0.2/debian-arm-pd-v4.0.2.tar.xz"
+TARBALL_SHA256['arm']="5fd0cc8a3b96486658222569a8d250f1ed1ae3bc2c54cff4c191b7625264ab1a"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.0.2/debian-i686-pd-v4.0.2.tar.xz"
+TARBALL_SHA256['i686']="6a3cdbf0a19251f932d256896ede242dddb2fec0e669f5cabcb1d21942745a0d"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.0.2/debian-x86_64-pd-v4.0.2.tar.xz"
+TARBALL_SHA256['x86_64']="ed26084174fc6c000817276f3fa36594327c5df2f8f7ba98007474d64857b669"
+
+distro_setup() {
+	# Configure en_US.UTF-8 locale.
+	run_proot_cmd sed -i -E 's/# (en_US.UTF-8)/\1/g' /etc/locale.gen
+	run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
+}
+
