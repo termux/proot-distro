@@ -22,7 +22,11 @@ for script in ./distro-plugins/*.sh*; do
 done
 
 echo "Installing $TERMUX_PREFIX/share/bash-completion/completions/proot-distro"
-install -Dm600 ./completions/proot-distro.bash "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro
+install -d -m 700 "$TERMUX_PREFIX"/share/bash-completion/completions
+sed -e "s|@TERMUX_APP_PACKAGE@|$TERMUX_APP_PACKAGE|g" \
+	-e "s|@TERMUX_PREFIX@|$TERMUX_PREFIX|g" \
+	-e "s|@TERMUX_HOME@|$TERMUX_ANDROID_HOME|g" \
+	./completions/proot-distro.bash > "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro
 
 echo "Installing $TERMUX_PREFIX/share/doc/proot-distro/README.md"
 install -Dm600 README.md "$TERMUX_PREFIX"/share/doc/proot-distro/README.md
