@@ -21,5 +21,8 @@ for script in ./distro-plugins/*.sh*; do
 	install -Dm600 -t "$TERMUX_PREFIX"/etc/proot-distro/ "$script"
 done
 
+echo "Installing $TERMUX_PREFIX/share/bash-completion/completions/proot-distro"
+install -Dm600 ./completions/proot-distro.bash "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro
+
 echo "Installing $TERMUX_PREFIX/share/doc/proot-distro/README.md"
 install -Dm600 README.md "$TERMUX_PREFIX"/share/doc/proot-distro/README.md
