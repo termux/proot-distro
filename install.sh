@@ -28,5 +28,8 @@ sed -e "s|@TERMUX_APP_PACKAGE@|$TERMUX_APP_PACKAGE|g" \
 	-e "s|@TERMUX_HOME@|$TERMUX_ANDROID_HOME|g" \
 	./completions/proot-distro.bash > "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro
 
+echo "Symlinking $TERMUX_PREFIX/share/bash-completion/completions/proot-distro --> $TERMUX_PREFIX/share/bash-completion/completions/pd"
+ln -sfr "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro "$TERMUX_PREFIX"/share/bash-completion/completions/pd
+
 echo "Installing $TERMUX_PREFIX/share/doc/proot-distro/README.md"
 install -Dm600 README.md "$TERMUX_PREFIX"/share/doc/proot-distro/README.md

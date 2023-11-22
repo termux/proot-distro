@@ -71,4 +71,4 @@ _proot-distro() {
 	fi
 }
 
-complete -F _proot-distro proot-distro
+complete -F _proot-distro proot-distro pd
