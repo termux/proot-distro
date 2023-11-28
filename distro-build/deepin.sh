@@ -19,17 +19,26 @@ bootstrap_distribution() {
 		aptsources=Debian\n\
 		bootstrap=Deepin\n\
 		[Deepin]\n\
-		packages=apt ca-certificates passwd locales-all\n\
+		packages=apt base-files ca-certificates passwd locales-all\n\
 		source=https://community-packages.deepin.com/${dist_version}/\n\
 		suite=${dist_version}\n\
 		" >/tmp/${dist_version}.multistrap
 		sudo multistrap -f /tmp/${dist_version}.multistrap
 
+		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}"/deepin-$(translate_arch "$arch")/etc/resolv.conf
 		echo "nameserver 1.1.1.1" > "${WORKDIR}"/deepin-$(translate_arch "$arch")/etc/resolv.conf
 		echo "en_US.UTF-8 UTF-8" > "${WORKDIR}"/deepin-$(translate_arch "$arch")/etc/locale.gen
 		echo "deb     https://community-packages.deepin.com/${dist_version}/ ${dist_version} main commercial community" > ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/sources.list
 		echo "deb-src https://community-packages.deepin.com/${dist_version}/ ${dist_version} main commercial community" >> ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/sources.list
+		mount --bind "${WORKDIR}/deepin-$(translate_arch "$arch")/" "${WORKDIR}/deepin-$(translate_arch "$arch")/"
+		mount --bind /dev "${WORKDIR}/deepin-$(translate_arch "$arch")/dev"
+		mount --bind /proc "${WORKDIR}/deepin-$(translate_arch "$arch")/proc"
+		mount --bind /sys "${WORKDIR}/deepin-$(translate_arch "$arch")/sys"
+		# configure packages in 2 runs to avoid dependency issues related to base-files and bash.
+		env DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true LC_ALL=C LANGUAGE=C LANG=C chroot "${WORKDIR}/deepin-$(translate_arch "$arch")" dpkg --configure -a || true
+		env DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true LC_ALL=C LANGUAGE=C LANG=C chroot "${WORKDIR}/deepin-$(translate_arch "$arch")" dpkg --configure -a
+		EOF
 
 		sudo tar -J -c \
 			-f "${ROOTFS_DIR}/deepin-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
