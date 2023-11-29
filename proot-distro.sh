@@ -314,6 +314,10 @@ DEFAULT_PATH_ENV="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/
 # old devices that are not compatible with up-to-date versions of GNU libc.
 DEFAULT_FAKE_KERNEL_VERSION="6.2.1-PRoot-Distro"
 
+# Emulator type for x86_64 systems.
+# Can be either BLINK or QEMU.
+: "${PROOT_DISTRO_X64_EMULATOR:=QEMU}"
+
 # Colors.
 if [ -n "$(command -v tput)" ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ] && [ -z "${PROOT_DISTRO_FORCE_NO_COLORS-}" ]; then
 	RST="$(tput sgr0)"
@@ -823,25 +827,35 @@ run_proot_cmd() {
 		return 1
 	fi
 
-	local qemu_arg=""
+	local cpu_emulator_arg=""
 	if [ "$DISTRO_ARCH" != "$DEVICE_CPU_ARCH" ]; then
-		local qemu_bin_path=""
+		local cpu_emulator_path=""
 
 		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 		# Everything else requires emulator (QEMU).
 		case "$DISTRO_ARCH" in
-			aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
 				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
-					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
 				fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
-					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-i386"
 				fi
 				;;
-			x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+			x86_64)
+				if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-x86_64"
+				elif [ "$PROOT_DISTRO_X64_EMULATOR" = "BLINK" ]; then
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/blink"
+				else
+					msg
+					msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '$PROOT_DISTRO_X64_EMULATOR'. Valid values are: BLINK, QEMU."
+					msg
+				fi
+				;;
 			*)
 				msg
 				msg "${BRED}Error: DISTRO_ARCH has unknown value '$DISTRO_ARCH'. Valid values are: aarch64, arm, i686, x86_64."
@@ -850,46 +864,56 @@ run_proot_cmd() {
 			;;
 		esac
 
-		if [ -n "$qemu_bin_path" ]; then
-			if [ -x "$qemu_bin_path" ]; then
-				qemu_arg="-q ${qemu_bin_path}"
+		if [ -n "$cpu_emulator_path" ]; then
+			if [ -x "$cpu_emulator_path" ]; then
+				cpu_emulator_arg="-q ${cpu_emulator_path}"
 			else
-				local qemu_user_pkg=""
+				local cpu_emulator_pkg=""
 				case "$DISTRO_ARCH" in
-					aarch64) qemu_user_pkg="qemu-user-aarch64";;
-					arm) qemu_user_pkg="qemu-user-arm";;
-					i686) qemu_user_pkg="qemu-user-i386";;
-					x86_64) qemu_user_pkg="qemu-user-x86-64";;
-					*) qemu_user_pkg="qemu-user-${DISTRO_ARCH}";;
+					aarch64) cpu_emulator_pkg="qemu-user-aarch64";;
+					arm) cpu_emulator_pkg="qemu-user-arm";;
+					i686) cpu_emulator_pkg="qemu-user-i386";;
+					x86_64)
+						if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
+							cpu_emulator_pkg="qemu-user-x86-64"
+						elif [ "$PROOT_DISTRO_X64_EMULATOR" = "BLINK" ]; then
+							cpu_emulator_pkg="blink"
+						else
+							msg
+							msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '$PROOT_DISTRO_X64_EMULATOR'. Valid values are: BLINK, QEMU."
+							msg
+						fi
+						;;
+					*) cpu_emulator_pkg="qemu-user-${DISTRO_ARCH}";;
 				esac
 				msg
-				msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
+				msg "${BRED}Error: package '${cpu_emulator_pkg}' is not installed.${RST}"
 				msg
 				return 1
 			fi
 		fi
 	fi
 
-	if [ -n "$qemu_arg" ]; then
+	if [ -n "$cpu_emulator_arg" ]; then
 		if [ -d "/apex" ]; then
-			qemu_arg="${qemu_arg} --bind=/apex"
+			cpu_emulator_arg="${cpu_emulator_arg} --bind=/apex"
 		fi
 		if [ -e "/linkerconfig/ld.config.txt" ]; then
-			qemu_arg="${qemu_arg} --bind=/linkerconfig/ld.config.txt"
+			cpu_emulator_arg="${cpu_emulator_arg} --bind=/linkerconfig/ld.config.txt"
 		fi
-		qemu_arg="${qemu_arg} --bind=@TERMUX_PREFIX@"
-		qemu_arg="${qemu_arg} --bind=/system"
-		qemu_arg="${qemu_arg} --bind=/vendor"
+		cpu_emulator_arg="${cpu_emulator_arg} --bind=@TERMUX_PREFIX@"
+		cpu_emulator_arg="${cpu_emulator_arg} --bind=/system"
+		cpu_emulator_arg="${cpu_emulator_arg} --bind=/vendor"
 		if [ -f "/plat_property_contexts" ]; then
-			qemu_arg="${qemu_arg} --bind=/plat_property_contexts"
+			cpu_emulator_arg="${cpu_emulator_arg} --bind=/plat_property_contexts"
 		fi
 		if [ -f "/property_contexts" ]; then
-			qemu_arg="${qemu_arg} --bind=/property_contexts"
+			cpu_emulator_arg="${cpu_emulator_arg} --bind=/property_contexts"
 		fi
 	fi
 
-	# shellcheck disable=SC2086 # ${qemu_arg} should expand into nothing rather than into ''.
-	proot ${qemu_arg} \
+	# shellcheck disable=SC2086 # ${cpu_emulator_arg} should expand into nothing rather than into ''.
+	proot ${cpu_emulator_arg} \
 		-L \
 		--kernel-release="${DEFAULT_FAKE_KERNEL_VERSION}" \
 		--link2symlink \
@@ -1828,30 +1852,40 @@ command_login() {
 		return 1
 	fi
 
-	local need_qemu=false
+	local need_cpu_emulator=false
 	if [ "$target_arch" != "$DEVICE_CPU_ARCH" ]; then
-		local qemu_bin_path=""
-		need_qemu=true
+		local cpu_emulator_path=""
+		need_cpu_emulator=true
 
 		# If CPU and host OS are 64bit, we can run 32bit guest OS without emulation.
 		# Everything else requires emulator (QEMU).
 		case "$target_arch" in
-			aarch64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
+			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
 				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
-					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-arm"
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
 				else
-					need_qemu=false
+					need_cpu_emulator=false
 				fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
-					qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-i386"
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-i386"
 				else
-					need_qemu=false
+					need_cpu_emulator=false
 				fi
 				;;
-			x86_64) qemu_bin_path="@TERMUX_PREFIX@/bin/qemu-x86_64";;
+			x86_64)
+				if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-x86_64"
+				elif [ "$PROOT_DISTRO_X64_EMULATOR" = "BLINK" ]; then
+					cpu_emulator_path="@TERMUX_PREFIX@/bin/blink"
+				else
+					msg
+					msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '$PROOT_DISTRO_X64_EMULATOR'. Valid values are: BLINK, QEMU."
+					msg
+				fi
+				;;
 			*)
 				msg
 				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
@@ -1860,21 +1894,31 @@ command_login() {
 			;;
 		esac
 
-		if [ -n "$qemu_bin_path" ]; then
-			if [ -x "$qemu_bin_path" ]; then
-				set -- "-q" "$qemu_bin_path" "$@"
+		if [ -n "$cpu_emulator_path" ]; then
+			if [ -x "$cpu_emulator_path" ]; then
+				set -- "-q" "$cpu_emulator_path" "$@"
 			else
-				local qemu_user_pkg=""
+				local cpu_emulator_pkg=""
 				case "$target_arch" in
-					aarch64) qemu_user_pkg="qemu-user-aarch64";;
-					arm) qemu_user_pkg="qemu-user-arm";;
-					i686) qemu_user_pkg="qemu-user-i386";;
-					x86_64) qemu_user_pkg="qemu-user-x86-64";;
-					*) qemu_user_pkg="qemu-user-$target_arch";;
+					aarch64) cpu_emulator_pkg="qemu-user-aarch64";;
+					arm) cpu_emulator_pkg="qemu-user-arm";;
+					i686) cpu_emulator_pkg="qemu-user-i386";;
+					x86_64)
+						if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
+							cpu_emulator_pkg="qemu-user-x86-64"
+						elif [ "$PROOT_DISTRO_X64_EMULATOR" = "BLINK" ]; then
+							cpu_emulator_pkg="blink"
+						else
+							msg
+							msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '$PROOT_DISTRO_X64_EMULATOR'. Valid values are: BLINK, QEMU."
+							msg
+						fi
+						;;
+					*) cpu_emulator_pkg="qemu-user-$target_arch";;
 				esac
 
 				msg
-				msg "${BRED}Error: package '${qemu_user_pkg}' is not installed.${RST}"
+				msg "${BRED}Error: package '${cpu_emulator_pkg}' is not installed.${RST}"
 				msg
 				return 1
 			fi
@@ -2009,7 +2053,7 @@ command_login() {
 	fi
 
 	# When using QEMU, we need some host files even in isolated mode.
-	if ! $isolated_environment || $need_qemu; then
+	if ! $isolated_environment || $need_cpu_emulator; then
 		local system_mnt
 		for system_mnt in /apex /odm /product /system /system_ext /vendor \
 			/linkerconfig/ld.config.txt \
