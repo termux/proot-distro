@@ -377,6 +377,24 @@ distro_setup() {
 
 `run_proot_cmd` is used when command should be executed inside the rootfs.
 
+## Experimental Blink emulator support
+
+If user specified `DISTRO_ARCH` different from the current device architecture,
+a CPU emulation mode will be used.
+
+The default CPU emulation backend is QEMU user mode. However for `x86_64`
+target architecture user can enable use of Blink emulator. To use Blink
+as emulation backend user need to set an environment variable:
+```
+export PROOT_DISTRO_X64_EMULATOR=BLINK
+```
+
+`PROOT_DISTRO_X64_EMULATOR` accepts values only `QEMU` or `BLINK`.
+
+Emulation mode doesn't guarantee stability. User can observe a weird behavior
+of programs and crashes. Some distributions may work while others may not.
+The performance also would be reduced due to emulator overhead.
+
 ## Differences from Chroot
 
 While PRoot is often referred as user space chroot implementation, it is much
