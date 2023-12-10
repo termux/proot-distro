@@ -1781,6 +1781,23 @@ command_login() {
 		return 1
 	fi
 
+	# Update Android-specific variables in /etc/environment.
+	# Needed to handle changes after Android OS was upgraded.
+	chmod u+rw "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" >/dev/null 2>&1 || true
+	for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
+		ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH \
+		DEX2OATBOOTCLASSPATH; do
+		set +u
+		if [ -n "${!var}" ]; then
+			# Create new variable entry instead of editing as variable may
+			# not exist in the file.
+			sed -i "s/^${var}=/d" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+			echo "${var}=${!var}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+		fi
+		set -u
+	done
+	unset var
+
 	local -a login_shell_args
 	if [ $# -ge 1 ]; then
 		# Wrap in quotes each argument to prevent word splitting.
