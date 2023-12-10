@@ -1477,8 +1477,9 @@ command_rename_help() {
 	msg
 	msg "${CYAN}Rename a specified Linux distribution.${RST}"
 	msg
-	msg "${CYAN}Note that renaming default distribution will create a copy of${RST}"
-	msg "${CYAN}its plug-in.${RST}"
+	msg "${CYAN}Note that renaming default distribution will take a while${RST}"
+	msg "${CYAN}as PRoot-Distro has to update symlinks. If user renames a${RST}"
+	msg "${CYAN}default distribution, the plug-in copy will be created.${RST}"
 	msg
 	msg "${CYAN}Options:${RST}"
 	msg
