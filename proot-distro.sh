@@ -2213,14 +2213,22 @@ command_login_help() {
 	msg
 	msg "${CYAN}This should be enough to get Termux utilities like termux-api or${RST}"
 	msg "${CYAN}termux-open get working. If they do not work for some reason,${RST}"
-	msg "${CYAN}check if these files are sourced by your shell:${RST}"
-	msg
-	msg "  ${CYAN}* ${YELLOW}/etc/profile.d/termux-proot.sh${RST}"
-	msg "  ${CYAN}* ${YELLOW}/etc/profile${RST}"
+	msg "${CYAN}make sure they are properly set in ${YELLOW}/etc/environment${CYAN}.${RST}"
 	msg
 	msg "${CYAN}Also check whether they define variables like ANDROID_DATA,${RST}"
 	msg "${CYAN}ANDROID_ROOT, BOOTCLASSPATH and others which are usually set${RST}"
 	msg "${CYAN}in Termux sessions.${RST}"
+	msg
+	msg "${CYAN}If issue occurs only after su/sudo use, then likely your PAM${RST}"
+	msg "${CYAN}configuration doesn't load ${YELLOW}/etc/environment${CYAN} and you need to"
+	msg "${CYAN}fix it by enabling pam_env.so in /etc/pam.d configuration.${RST}"
+	msg
+	msg "${CYAN}Example PAM configuration line:${RST}"
+	msg
+	msg "  ${CYAN}session  required  pam_env.so readenv=1${RST}"
+	msg
+	msg "${CYAN}You need to append it to ${YELLOW}/etc/pam.d/su${CYAN}, ${YELLOW}/etc/pam.d/sudo${CYAN} or${RST}"
+	msg "${CYAN}file depending on distribution.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
