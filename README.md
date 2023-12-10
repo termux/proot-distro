@@ -68,6 +68,8 @@ cd proot-distro
 Dependencies: bash, bzip2, coreutils, curl, findutils, gzip, ncurses-utils,
 proot, sed, tar, xz-utils
 
+If you want command line auto complete, install the `bash-completion` package.
+
 ## Functionality overview
 
 PRoot Distro aims to provide all-in-one functionality for managing the
@@ -93,6 +95,24 @@ Example of installing the distribution:
 proot-distro install debian
 ```
 
+Some commands support aliases. For example, instead of
+```
+proot-distro list
+proot-distro install debian
+proot-distro login debian
+proot-distro remove debian
+```
+
+you can type this:
+```
+proot-distro ls
+proot-distro i debian
+proot-distro sh debian
+proot-distro rm debian
+```
+
+Information about supported aliases can be viewed in help for each command.
+
 Known distributions are defined through plug-in scripts, which define URLs
 from where root file system archive will be downloaded and set of checksums
 for integrity check. Plug-ins also can define a set of commands which would
@@ -112,6 +132,8 @@ This command will show the help information about `proot-distro` usage.
 ### Backing up distribution
 
 Command: `backup`
+
+Aliases: `bak`, `bkp`
 
 Backup specified distribution and its plug-in into tar archive. The contents
 of backup can be either printed to stdout for further processing or written
@@ -133,6 +155,8 @@ done by user through external commands.*
 ### Installing a distribution
 
 Command: `install`
+
+Aliases: `add`, `i`, `in`, `ins`
 
 Install a distribution specified by alias - a short name referring to the
 plug-in of chosen distribution.
@@ -160,12 +184,16 @@ in directory with others (`$PREFIX/etc/proot-distro`).
 
 Command: `list`
 
+Aliases: `li`, `ls`
+
 Shows a list of available distributions, their aliases, installation status
 and comments.
 
 ### Start shell session
 
 Command: `login`
+
+Aliases: `sh`
 
 Execute a shell within the given distribution. Example:
 ```
@@ -250,9 +278,15 @@ Login command supports these behavior modifying options:
   Do not kill processes when shell session terminates. Typically will cause
   session to hang if you have any background processes running.
 
+* `--kernel`
+
+  Set the kernel release and compatibility level to given value.
+
 ### Uninstall distribution
 
 Command: `remove`
+
+Aliases: `rm`
 
 This command completely deletes the installation of given system. Be careful
 as it does not ask for confirmation. Deleted data is irrecoverably lost.
@@ -265,6 +299,8 @@ proot-distro remove debian
 ### Rename distribution
 
 Command: `rename`
+
+Aliases: `mv`
 
 Rename the distribution by changing the alias name, renaming its plug-in and
 root file system directory. In case when default distribution is being renamed,
@@ -281,6 +317,8 @@ Only installed distribution can be renamed.
 
 Command: `reset`
 
+Aliases: \-
+
 Delete the specified distribution and install it again. This is a shortcut for
 ```
 proot-distro remove <dist> && proot-distro install <dist>
@@ -296,6 +334,8 @@ Same as with command `remove`, deleted data is lost irrecoverably. Be careful.
 ### Restore from backup
 
 Command: `restore`
+
+Aliases: \-
 
 Restore the distribution from the given proot-distro backup (tar archive).
 
@@ -314,6 +354,8 @@ proot-distro restore ./pd-debian-backup.tar.xz
 ### Clear downloads cache
 
 Command: `clear-cache`
+
+Aliases: `clear`, `cl`
 
 This will remove all cached root file system archives.
 
