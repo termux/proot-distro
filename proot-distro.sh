@@ -1791,7 +1791,7 @@ command_login() {
 		if [ -n "${!var}" ]; then
 			# Create new variable entry instead of editing as variable may
 			# not exist in the file.
-			sed -i "s/^${var}=/d" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+			sed -i "/^${var}=/d" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
 			echo "${var}=${!var}" >> "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
 		fi
 		set -u
