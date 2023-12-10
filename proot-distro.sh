@@ -328,6 +328,7 @@ if [ -n "$(command -v tput)" ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8
 	BYELLOW="${RST}$(tput bold)$(tput setaf 3)"
 	IYELLOW="${RST}$(tput sitm)$(tput setaf 3)"
 	BLUE="${RST}$(tput setaf 4)"
+	MAGENTA="${RST}$(tput setaf 5)"
 	CYAN="${RST}$(tput setaf 6)"
 	BCYAN="${RST}$(tput bold)$(tput setaf 6)"
 	ICYAN="${RST}$(tput sitm)$(tput setaf 6)"
@@ -339,6 +340,7 @@ else
 	BYELLOW=""
 	IYELLOW=""
 	BLUE=""
+	MAGENTA=""
 	CYAN=""
 	BCYAN=""
 	ICYAN=""
@@ -2747,12 +2749,12 @@ show_version() {
 #############################################################################
 
 show_donate() {
-	msg "${YELLOW}Support development by donation and motivate us to bring new${RST}"
-	msg "${YELLOW}features. We are accepting cryptocurrency:${RST}"
+	msg "${MAGENTA}Support development by donation and motivate us to bring new${RST}"
+	msg "${MAGENTA}features. We are accepting cryptocurrency:${RST}"
 	msg
-	msg "${YELLOW}LTC: ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua${RST}"
+	msg "${MAGENTA}LTC: ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua${RST}"
 	msg
-	msg "${YELLOW}TRX: TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR${RST}"
+	msg "${MAGENTA}TRX: TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR${RST}"
 }
 
 #############################################################################
