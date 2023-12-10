@@ -15,11 +15,12 @@ before run and refuses to work if detected user id `0` (root).
 
 ## Donate
 
-If you like the project and wish to support the developer, PRoot Distro
-accepts donations in Tron crypto:
-```
-TUwtYNqDUSafZnoReXqS2qxMAWWJ7zhjCg
-```
+Want support developer and motivate to bring new features? Donations in
+cryptocurrency are accepted.
+
+* Ethereum: `0xDCf2f1883cbE3778F7c3EDF578cB1f7067e7cAcE`
+* Litecoin: `ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua`
+* Tron: `TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR`
 
 ***
 
