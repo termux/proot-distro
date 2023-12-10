@@ -1836,11 +1836,11 @@ command_login() {
 	# Handle /etc/environment.
 	if [ -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" ]; then
 		mapfile -t -O "${#login_env_vars[@]}" login_env_vars < <(
-			sed -E \
-				-e "s/^([^=]+=)['\"]/\1/g" \
-				-e "s/['\"]\$//g" \
-				-e "/^[^=]+\$/d" \
-				"${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment"
+			grep -P '^[A-Za-z_][A-Za-z0-9_]+=.+' "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/environment" | \
+				sed -E \
+					-e "s/^([^=]+=)['\"]/\1/g" \
+					-e "s/['\"]\$//g" \
+					-e "/^[^=]+\$/d"
 		)
 	fi
 
