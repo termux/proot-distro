@@ -2220,14 +2220,14 @@ command_login_help() {
 	msg "${CYAN}in Termux sessions.${RST}"
 	msg
 	msg "${CYAN}If issue occurs only after su/sudo use, then likely your PAM${RST}"
-	msg "${CYAN}configuration doesn't load ${YELLOW}/etc/environment${CYAN} and you need to"
-	msg "${CYAN}fix it by enabling pam_env.so in /etc/pam.d configuration.${RST}"
+	msg "${CYAN}configuration doesn't load ${YELLOW}/etc/environment${CYAN} and you need to fix${RST}"
+	msg "${CYAN}it by enabling pam_env.so in /etc/pam.d configuration.${RST}"
 	msg
 	msg "${CYAN}Example PAM configuration line:${RST}"
 	msg
-	msg "  ${CYAN}session  required  pam_env.so readenv=1${RST}"
+	msg "  ${GREEN}session  required  pam_env.so readenv=1${RST}"
 	msg
-	msg "${CYAN}You need to append it to ${YELLOW}/etc/pam.d/su${CYAN}, ${YELLOW}/etc/pam.d/sudo${CYAN} or${RST}"
+	msg "${CYAN}You need to append it to ${YELLOW}/etc/pam.d/su${CYAN}, ${YELLOW}/etc/pam.d/sudo${CYAN} or other${RST}"
 	msg "${CYAN}file depending on distribution.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
