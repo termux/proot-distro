@@ -101,6 +101,10 @@ write_plugin() {
 	${TAB}for f in su su-l system-local-login system-remote-login; do
 	${TAB}${TAB}echo "session  required  pam_env.so readenv=1" >> ./etc/pam.d/"\${f}"
 	${TAB}done
+
+	${TAB}# Configure en_US.UTF-8 locale.
+	${TAB}sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' ./etc/locale.gen
+	${TAB}run_proot_cmd locale-gen
 	}
 	EOF
 }
