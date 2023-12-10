@@ -2734,7 +2734,7 @@ command_help() {
 #############################################################################
 
 show_version() {
-	msg "${IYELLOW}Proot-Distro v${PROGRAM_VERSION} by Termux (@sylirre).${RST}"
+	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by Termux (@sylirre).${RST}"
 }
 
 #############################################################################
