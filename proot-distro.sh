@@ -326,6 +326,7 @@ if [ -n "$(command -v tput)" ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8
 	GREEN="${RST}$(tput setaf 2)"
 	YELLOW="${RST}$(tput setaf 3)"
 	BYELLOW="${RST}$(tput bold)$(tput setaf 3)"
+	IYELLOW="${RST}$(tput sitm)$(tput setaf 3)"
 	BLUE="${RST}$(tput setaf 4)"
 	CYAN="${RST}$(tput setaf 6)"
 	BCYAN="${RST}$(tput bold)$(tput setaf 6)"
@@ -336,6 +337,7 @@ else
 	GREEN=""
 	YELLOW=""
 	BYELLOW=""
+	IYELLOW=""
 	BLUE=""
 	CYAN=""
 	BCYAN=""
@@ -2732,7 +2734,7 @@ command_help() {
 #############################################################################
 
 show_version() {
-	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by Termux (@sylirre).${RST}"
+	msg "${IYELLOW}Proot-Distro v${PROGRAM_VERSION} by Termux (@sylirre).${RST}"
 }
 
 #############################################################################
@@ -2745,12 +2747,12 @@ show_version() {
 #############################################################################
 
 show_donate() {
-	msg "${CYAN}Support development by donation and motivate us to bring new${RST}"
-	msg "${CYAN}features. We are accepting cryptocurrency:${RST}"
+	msg "${YELLOW}Support development by donation and motivate us to bring new${RST}"
+	msg "${YELLOW}features. We are accepting cryptocurrency:${RST}"
 	msg
-	msg "LTC: ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua"
+	msg "${YELLOW}LTC: ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua${RST}"
 	msg
-	msg "TRX: TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR"
+	msg "${YELLOW}TRX: TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR${RST}"
 }
 
 #############################################################################
