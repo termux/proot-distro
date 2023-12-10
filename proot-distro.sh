@@ -1186,6 +1186,8 @@ command_install_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}install ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
+	msg "${CYAN}Command aliases: ${GREEN}add${CYAN}, ${GREEN}i${CYAN}, ${GREEN}in${CYAN}, ${GREEN}ins${RST}"
+	msg
 	msg "${CYAN}Install a specified Linux distribution.${RST}"
 	msg
 	msg "${CYAN}Options:${RST}"
@@ -1291,6 +1293,8 @@ command_remove() {
 command_remove_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}remove ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Command aliases: ${GREEN}rm${RST}"
 	msg
 	msg "${CYAN}Remove a specified Linux distribution.${RST}"
 	msg
@@ -1468,6 +1472,8 @@ command_rename() {
 command_rename_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}rename ${CYAN}[${GREEN}ORIG ALIAS${CYAN}] [${GREEN}NEW ALIAS${CYAN}]${RST}"
+	msg
+	msg "${CYAN}Command aliases: ${GREEN}mv${RST}"
 	msg
 	msg "${CYAN}Rename a specified Linux distribution.${RST}"
 	msg
@@ -2145,6 +2151,8 @@ command_login_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}login ${CYAN}[${GREEN}OPTIONS${CYAN}] [${GREEN}DISTRO ALIAS${CYAN}] [${GREEN}-- ${CYAN}[${GREEN}COMMAND${CYAN}]]${RST}"
 	msg
+	msg "${CYAN}Command aliases: ${GREEN}sh${RST}"
+	msg
 	msg "${CYAN}Launch a login shell for the specified distribution if no${RST}"
 	msg "${CYAN}additional arguments were given. Otherwise execute the${RST}"
 	msg "${CYAN}given command and exit.${RST}"
@@ -2433,6 +2441,8 @@ command_backup_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}backup ${CYAN}[${GREEN}DISTRIBUTION ALIAS${CYAN}]${RST}"
 	msg
+	msg "${CYAN}Command aliases: ${GREEN}bak${CYAN}, ${GREEN}bkp${RST}"
+	msg
 	msg "${CYAN}Back up a specified distribution installation into tarball.${RST}"
 	msg
 	msg "${CYAN}Options:${RST}"
@@ -2638,6 +2648,8 @@ command_clear_cache_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}clear-cache${RST}"
 	msg
+	msg "${CYAN}Command aliases: ${GREEN}clear${CYAN}, ${GREEN}cl${RST}"
+	msg
 	msg "${CYAN}Remove all cached rootfs tarballs to reclaim disk space.${RST}"
 	msg
 	show_version
@@ -2784,16 +2796,20 @@ unset distro_name distro_alias
 
 if [ $# -ge 1 ]; then
 	case "$1" in
-		-h|--help|help) shift 1; command_help;;
-		backup) shift 1; command_backup "$@";;
-		install) shift 1; command_install "$@";;
-		list) shift 1; command_list;;
-		login) shift 1; command_login "$@";;
-		remove) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
-		rename) shift 1; command_rename "$@";;
-		clear-cache) shift 1; command_clear_cache "$@";;
+		-h|--help|help|hel|he|h) shift 1; command_help;;
+		backup|bak|bkp) shift 1; command_backup "$@";;
+		install|i|in|ins|add) shift 1; command_install "$@";;
+		list|li|ls) shift 1; command_list;;
+		login|sh) shift 1; command_login "$@";;
+		remove|rm) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
+		rename|mv) shift 1; command_rename "$@";;
+		clear-cache|clear|cl) shift 1; command_clear_cache "$@";;
+
+		# Not implementing aliases as they could be confusing.
+		# We don't have many choices for these two commands: r, re, res, rst.
 		reset) shift 1; command_reset "$@";;
 		restore) shift 1; command_restore "$@";;
+
 		*)
 			msg
 			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
