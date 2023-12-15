@@ -3,8 +3,6 @@ dist_version="yangtze"
 
 bootstrap_distribution() {
 	for arch in amd64 arm64; do
-		mkdir -p ${WORKDIR}/openkylin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d
-		keyring=openkylin-keyring
 		echo -e "[General]\n\
 		arch=$arch\n\
 		directory=${WORKDIR}/openkylin-$(translate_arch "$arch")/\n\
@@ -18,6 +16,7 @@ bootstrap_distribution() {
 		[openKylin]\n\
 		packages=apt ca-certificates passwd locales-all\n\
 		source=http://archive.build.openkylin.top/openkylin/\n\
+		keyring=openkylin-keyring\n\
 		suite=${dist_version}\n\
 		" >/tmp/${dist_version}.multistrap
 		sudo multistrap -f /tmp/${dist_version}.multistrap
