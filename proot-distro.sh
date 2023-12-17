@@ -2735,7 +2735,8 @@ command_help() {
 	msg "${CYAN}command to install it: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
 	msg
 	msg "${CYAN}Runtime data is stored at this location:${RST}"
-	msg "${CYAN}${RUNTIME_DIR}${RST}"
+	msg
+	msg "${YELLOW}  ${RUNTIME_DIR}${RST}"
 	msg
 	msg "${CYAN}If you have issues with proot during installation or login, try${RST}"
 	msg "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
