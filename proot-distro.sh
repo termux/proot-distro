@@ -648,6 +648,7 @@ command_install() {
 
 		if [ ! -f "${DOWNLOAD_CACHE_DIR}/${tarball_name}" ]; then
 			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Downloading rootfs tarball...${RST}"
+			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}URL: ${TARBALL_URL["$DISTRO_ARCH"]}${RST}"
 
 			# Using temporary file as script can't distinguish the partially
 			# downloaded file from the complete. Useful in case if curl will
