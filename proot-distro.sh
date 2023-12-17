@@ -288,6 +288,10 @@ PROGRAM_VERSION="4.6.0"
 
 set -e -u
 
+# Override user-defined PATH.
+export PATH="@TERMUX_PREFIX@/bin"
+
+# Reference this where need to retrieve program name.
 PROGRAM_NAME=$(basename "$(realpath "$0")")
 
 # Where distribution plug-ins are stored.
@@ -385,6 +389,20 @@ for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
 	fi
 done
 unset i
+
+# Notify user if bin/bash is not a GNU Bash.
+if ! grep -q '^GNU bash' <(bash --version 2>/dev/null | head -n 1); then
+	msg
+	msg "${BRED}Warning: bash binary that is available in PATH appears to be not a GNU bash. You may experience issues during installation, backup and restore operations.${RST}"
+	msg
+fi
+
+# Notify user if tar available in PATH is not GNU tar.
+if ! grep -q '^tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
+	msg
+	msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
+	msg
+fi
 
 #############################################################################
 #
@@ -579,13 +597,6 @@ command_install() {
 	fi
 
 	if [ -f "${distro_plugin_script}" ]; then
-		# Notify user if tar available in PATH is not GNU tar.
-		if ! grep -q 'tar (GNU tar)' <(tar --version 2>/dev/null | head -n 1); then
-			msg
-			msg "${BRED}Warning: tar binary that is available in PATH appears to be not a GNU tar. You may experience issues during installation, backup and restore operations.${RST}"
-			msg
-		fi
-
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Installing ${YELLOW}${SUPPORTED_DISTRIBUTIONS["$distro_name"]}${CYAN}...${RST}"
 
 		# Make sure things are cleared up on failure or user requested exit.
