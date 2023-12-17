@@ -2,6 +2,8 @@ dist_name="Void Linux"
 dist_version="20230628"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/void-*.tar.xz
+
 	for arch in aarch64 armv7l i686 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/void-${arch}.tar.xz" \

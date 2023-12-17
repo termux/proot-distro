@@ -2,6 +2,8 @@ dist_name="deepin"
 dist_version="beige"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/deepin-*.tar.xz
+
 	for arch in amd64 arm64; do
 		mkdir -p ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d
 		curl --fail --location \

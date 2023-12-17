@@ -2,6 +2,8 @@ dist_name="Arch Linux"
 dist_version="2023.03.01"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/archlinux-*.tar.xz
+
 	for arch in aarch64 armv7; do
 		curl --fail --location \
 			--output "${WORKDIR}/archlinux-${arch}.tar.gz" \

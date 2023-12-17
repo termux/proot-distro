@@ -2,6 +2,8 @@ dist_name="Ubuntu"
 dist_version="mantic"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/ubuntu-*.tar.xz
+
 	for arch in arm64 armhf amd64; do
 		sudo mmdebstrap \
 			--architectures=${arch} \

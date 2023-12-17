@@ -2,6 +2,8 @@ dist_name="Fedora"
 dist_version="39-1.5"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/fedora-*.tar.xz
+
 	for arch in aarch64 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/fedora-${dist_version}-${arch}.tar.xz" \

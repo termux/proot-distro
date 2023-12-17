@@ -2,6 +2,8 @@ dist_name="Alpine Linux"
 dist_version="3.18.4"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/alpine-*.tar.xz
+
 	for arch in aarch64 armv7 x86 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/alpine-minirootfs-${dist_version}-${arch}.tar.gz" \

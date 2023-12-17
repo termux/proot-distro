@@ -1,6 +1,8 @@
 dist_name="OpenSUSE"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/opensuse-*.tar.xz
+
 	opensuse_manifest=$(docker manifest inspect opensuse/tumbleweed:latest)
 	for arch in arm64 arm 386 amd64; do
 		if [ "$arch" = "arm" ]; then

@@ -60,7 +60,7 @@ translate_arch() {
 ##############################################################################
 
 # Reset workspace. This also deletes any previously made rootfs tarballs.
-sudo rm -rf "${ROOTFS_DIR:?}" "${WORKDIR:?}"
+sudo rm -rf "${WORKDIR:?}"
 mkdir -p "$ROOTFS_DIR" "$WORKDIR"
 cd "$WORKDIR"
 

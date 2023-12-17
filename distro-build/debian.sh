@@ -2,6 +2,8 @@ dist_name="Debian"
 dist_version="bookworm"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/debian-*.tar.xz
+
 	for arch in arm64 armhf i386 amd64; do
 		sudo mmdebstrap \
 			--architectures=${arch} \

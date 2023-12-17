@@ -2,6 +2,8 @@ dist_name="Manjaro"
 dist_version="20231023"
 
 bootstrap_distribution() {
+	sudo rm -f "${ROOTFS_DIR}"/manjaro-*.tar.xz
+
 	curl --fail --location \
 		--output "${WORKDIR}/manjaro-aarch64.tar.xz" \
 		"https://github.com/manjaro-arm/rootfs/releases/download/${dist_version}/Manjaro-ARM-aarch64-latest.tar.gz"
