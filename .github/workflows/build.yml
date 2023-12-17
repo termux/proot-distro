@@ -53,14 +53,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -yq curl debian-archive-keyring jq mmdebstrap qemu-user-static binfmt-support multistrap
       - name: Build distribution rootfs
         run: |
-          for distros_to_be_built in $(cat ./distributions.txt); do
-            # check if a specified distribution build recipe exists incase for workflow dispatch inputs
-            if [ ! -f ./distro-build/${distros_to_be_built}.sh ]; then
-              echo "Cannot build distribution ${distros_to_be_built}: no such file or directory"
+          distros_to_be_built=$(cat ./distributions.txt)
+          for d in ${distros_to_be_built}; do
+            # check if a specified distribution build recipe exists in case for workflow dispatch inputs
+            if [ ! -f ./distro-build/${d}.sh ]; then
+              echo "Cannot build distribution ${d}: ./distro-build/${d}.sh: no such file exist"
               exit 2
             fi
-            ./bootstrap-rootfs.sh ${distros_to_be_built}
           done
+          ./bootstrap-rootfs.sh ${distros_to_be_built}
       # Upload Artifacts separately per architecture
       - name: Upload Artifacts (aarch64)
         uses: actions/upload-artifact@v4
