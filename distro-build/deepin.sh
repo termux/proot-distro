@@ -5,36 +5,30 @@ bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/deepin-*.tar.xz
 
 	for arch in amd64 arm64; do
-		sudo rm -rf ${WORKDIR}/deepin-$(translate_arch "$arch")
-		sudo mkdir -p ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d
-		sudo chmod 755 ${WORKDIR}/deepin-$(translate_arch "$arch")
+		sudo rm -rf "${WORKDIR}/deepin-$(translate_arch "$arch")"
+		sudo mkdir -m 755 "${WORKDIR}/deepin-$(translate_arch "$arch")"
+
 		curl --fail --location \
-			--output "${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d/deepin.gpg" \
+			--output "${WORKDIR}/deepin-keyring.gpg" \
 			"https://github.com/deepin-community/deepin-rootfs/raw/master/deepin.gpg"
 
-		echo -e "[General]\n\
-		arch=$arch\n\
-		directory=${WORKDIR}/deepin-$(translate_arch "$arch")/\n\
-		cleanup=true\n\
-		noauth=false\n\
-		unpack=true\n\
-		explicitsuite=false\n\
-		multiarch=\n\
-		aptsources=Debian\n\
-		bootstrap=Deepin\n\
-		[Deepin]\n\
-		packages=apt base-files ca-certificates passwd locales-all\n\
-		source=https://community-packages.deepin.com/${dist_version}/\n\
-		suite=${dist_version}\n\
-		" >/tmp/${dist_version}.multistrap
-		sudo multistrap -f /tmp/${dist_version}.multistrap
+		sudo mmdebstrap \
+			--keyring "${WORKDIR}/deepin-keyring.gpg" \
+			--architectures=${arch} \
+			--variant=minbase \
+			--components="main,commercial,community" \
+			--include="apt,base-files,ca-certificates,passwd,locales-all" \
+			--format=directory \
+			"${dist_version}" \
+			"${WORKDIR}/deepin-$(translate_arch "$arch")" \
+			"https://community-packages.deepin.com/${dist_version}/"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}"/deepin-$(translate_arch "$arch")/etc/resolv.conf
 		echo "nameserver 1.1.1.1" > "${WORKDIR}"/deepin-$(translate_arch "$arch")/etc/resolv.conf
 		echo "en_US.UTF-8 UTF-8" > "${WORKDIR}"/deepin-$(translate_arch "$arch")/etc/locale.gen
-		echo "deb     https://community-packages.deepin.com/${dist_version}/ ${dist_version} main commercial community" > ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/sources.list
-		echo "deb-src https://community-packages.deepin.com/${dist_version}/ ${dist_version} main commercial community" >> ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/sources.list
+		#echo "deb     https://community-packages.deepin.com/${dist_version}/ ${dist_version} main commercial community" > ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/sources.list
+		#echo "deb-src https://community-packages.deepin.com/${dist_version}/ ${dist_version} main commercial community" >> ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/sources.list
 		mount --bind "${WORKDIR}/deepin-$(translate_arch "$arch")/" "${WORKDIR}/deepin-$(translate_arch "$arch")/"
 		mount --bind /dev "${WORKDIR}/deepin-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/deepin-$(translate_arch "$arch")/proc"
