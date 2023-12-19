@@ -15,7 +15,7 @@ bootstrap_distribution() {
 			"${dist_version}" \
 			"${WORKDIR}/debian-$(translate_arch "$arch")"
 		archive_rootfs "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			"${WORKDIR}/debian-$(translate_arch "$arch")"
+			"debian-$(translate_arch "$arch")"
 	done
 	unset arch
 }

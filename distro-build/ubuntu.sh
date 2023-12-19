@@ -15,7 +15,7 @@ bootstrap_distribution() {
 			"${dist_version}" \
 			"${WORKDIR}/ubuntu-$(translate_arch "$arch")"
 		archive_rootfs "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			"${WORKDIR}/ubuntu-$(translate_arch "$arch")"
+			"ubuntu-$(translate_arch "$arch")"
 	done
 	unset arch
 }

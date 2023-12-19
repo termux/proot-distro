@@ -19,7 +19,7 @@ bootstrap_distribution() {
 			"${WORKDIR}/pardus-$(translate_arch "$arch")" \
 			https://depo.pardus.org.tr/pardus
 		archive_rootfs "${ROOTFS_DIR}/pardus-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			"${WORKDIR}/pardus-$(translate_arch "$arch")"
+			"pardus-$(translate_arch "$arch")"
 	done
 	unset arch
 }
