@@ -61,6 +61,7 @@ translate_arch() {
 # Usage: archive_rootfs /path/to/rootfs.tar.xz rootfs-dir
 # rootfs-dir is relative to $WORKDIR
 archive_rootfs() {
+	sudo rm -f "${1}.tmp"
 	sudo tar \
 		--directory="$WORKDIR" \
 		--create \
@@ -72,9 +73,10 @@ archive_rootfs() {
 		--xattrs \
 		--xattrs-include='*' \
 		--xz \
-		--file="$1" \
+		--file="${1}.tmp" \
 		"$2"
-	sudo chown $(id -un):$(id -gn) "$1"
+	sudo chown $(id -un):$(id -gn) "${1}.tmp"
+	mv "${1}.tmp" "${1}"
 }
 
 ##############################################################################
