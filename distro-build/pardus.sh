@@ -3,12 +3,13 @@ dist_version="yirmibir"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/pardus-*.tar.xz
-	sudo rm -rf "${WORKDIR}/pardus-$(translate_arch "$arch")"
+
+	wget https://depo.pardus.org.tr/pardus/pool/main/p/pardus-archive-keyring/pardus-archive-keyring_2021.1_all.deb
+	sudo dpkg -i pardus-archive-keyring_2021.1_all.deb
+	rm pardus-archive-keyring_2021.1_all.deb
 
 	for arch in arm64 i386 amd64; do
-		wget https://depo.pardus.org.tr/pardus/pool/main/p/pardus-archive-keyring/pardus-archive-keyring_2021.1_all.deb
-		sudo dpkg -i pardus-archive-keyring_2021.1_all.deb
-		rm pardus-archive-keyring_2021.1_all.deb
+		sudo rm -rf "${WORKDIR}/pardus-$(translate_arch "$arch")"
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=minbase \

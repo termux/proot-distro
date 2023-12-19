@@ -3,9 +3,9 @@ dist_version="mantic"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/ubuntu-*.tar.xz
-	sudo rm -rf "${WORKDIR}/ubuntu-$(translate_arch "$arch")"
 
 	for arch in arm64 armhf amd64; do
+		sudo rm -rf "${WORKDIR}/ubuntu-$(translate_arch "$arch")"
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=apt \
