@@ -13,8 +13,9 @@ bootstrap_distribution() {
 			"https://dl-cdn.alpinelinux.org/alpine/v${dist_version:0:4}/releases/${arch}/alpine-minirootfs-${dist_version}-${arch}.tar.gz.sha256"
 		sha256sum -c "${WORKDIR}/alpine-minirootfs-${dist_version}-${arch}.tar.gz.sha256"
 
+		sudo rm -rf "${WORKDIR}/alpine-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/alpine-$(translate_arch "$arch")"
-		sudo tar -zxp \
+		sudo tar -zxp --acls --xattrs --xattrs-include='*' \
 			-f "${WORKDIR}/alpine-minirootfs-${dist_version}-${arch}.tar.gz" \
 			-C "${WORKDIR}/alpine-$(translate_arch "$arch")"
 
@@ -33,11 +34,8 @@ bootstrap_distribution() {
 
 		sudo rm -f "${WORKDIR:?}/alpine-$(translate_arch "$arch")"/var/cache/apk/* || true
 
-		sudo tar -J -c \
-			-f "${ROOTFS_DIR}/alpine-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			-C "$WORKDIR" \
+		archive_rootfs "${ROOTFS_DIR}/alpine-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"alpine-$(translate_arch "$arch")"
-		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/alpine-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
 	done
 }
 

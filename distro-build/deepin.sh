@@ -5,7 +5,9 @@ bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/deepin-*.tar.xz
 
 	for arch in amd64 arm64; do
-		mkdir -p ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d
+		sudo rm -rf ${WORKDIR}/deepin-$(translate_arch "$arch")
+		sudo mkdir -p ${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d
+		sudo chmod 755 ${WORKDIR}/deepin-$(translate_arch "$arch")
 		curl --fail --location \
 			--output "${WORKDIR}/deepin-$(translate_arch "$arch")/etc/apt/trusted.gpg.d/deepin.gpg" \
 			"https://github.com/deepin-community/deepin-rootfs/raw/master/deepin.gpg"
@@ -42,11 +44,8 @@ bootstrap_distribution() {
 		env DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true LC_ALL=C LANGUAGE=C LANG=C chroot "${WORKDIR}/deepin-$(translate_arch "$arch")" dpkg --configure -a
 		EOF
 
-		sudo tar -J -c \
-			-f "${ROOTFS_DIR}/deepin-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			-C "$WORKDIR" \
+		archive_rootfs "${ROOTFS_DIR}/deepin-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"deepin-$(translate_arch "$arch")"
-		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/deepin-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
 	done
 	unset arch
 }

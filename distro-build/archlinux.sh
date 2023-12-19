@@ -9,8 +9,10 @@ bootstrap_distribution() {
 			--output "${WORKDIR}/archlinux-${arch}.tar.gz" \
 			"http://os.archlinuxarm.org/os/ArchLinuxARM-${arch}-latest.tar.gz"
 
+		sudo rm -rf "${WORKDIR}/archlinux-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/archlinux-$(translate_arch "$arch")"
-		sudo tar -zxpf "${WORKDIR}/archlinux-${arch}.tar.gz" \
+		sudo tar -zxp --acls --xattrs --xattrs-include='*' \
+			-f "${WORKDIR}/archlinux-${arch}.tar.gz" \
 			-C "${WORKDIR}/archlinux-$(translate_arch "$arch")"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
@@ -32,11 +34,8 @@ bootstrap_distribution() {
 
 		sudo rm -f "${WORKDIR:?}/archlinux-$(translate_arch "$arch")"/var/cache/pacman/pkg/* || true
 
-		sudo tar -J -c \
-			-f "${ROOTFS_DIR}/archlinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			-C "$WORKDIR" \
+		archive_rootfs "${ROOTFS_DIR}/archlinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"archlinux-$(translate_arch "$arch")"
-		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/archlinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
 	done
 	unset arch
 
@@ -48,7 +47,7 @@ bootstrap_distribution() {
 		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.gz"
 
 	sudo mkdir -m 755 "${WORKDIR}/archlinux-bootstrap"
-	sudo tar -zxp --strip-components=1 \
+	sudo tar -zxp --strip-components=1 --acls --xattrs --xattrs-include='*' \
 		-f "${WORKDIR}/archlinux-x86_64.tar.gz" \
 		-C "${WORKDIR}/archlinux-bootstrap"
 
@@ -76,10 +75,8 @@ bootstrap_distribution() {
 
 	for arch in i686 x86_64; do
 		sudo rm -f "${WORKDIR:?}/archlinux-bootstrap/archlinux-${arch}"/var/cache/pacman/pkg/* || true
-		sudo tar -Jcf "${ROOTFS_DIR}/archlinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" \
-			-C "${WORKDIR}/archlinux-bootstrap" \
+		archive_rootfs "${ROOTFS_DIR}/archlinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" \
 			"archlinux-${arch}"
-		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/archlinux-${arch}-pd-${CURRENT_VERSION}.tar.xz"
 	done
 	unset arch
 }

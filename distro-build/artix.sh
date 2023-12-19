@@ -8,8 +8,10 @@ bootstrap_distribution() {
 		--output "${WORKDIR}/artix-aarch64.tar.xz" \
 			"https://armtixlinux.org/images/armtix-runit-20230401.tar.xz"
 
+	sudo rm -rf "${WORKDIR}/artix-aarch64"
 	sudo mkdir -m 755 "${WORKDIR}/artix-aarch64"
-	sudo tar -Jxpf "${WORKDIR}/artix-aarch64.tar.xz" \
+	sudo tar -Jxp --acls --xattrs --xattrs-include='*' \
+		-f "${WORKDIR}/artix-aarch64.tar.xz" \
 		-C "${WORKDIR}/artix-aarch64"
 
 	cat <<- EOF | sudo unshare -mpf bash -e -
@@ -25,11 +27,8 @@ bootstrap_distribution() {
 
 	sudo rm -f "${WORKDIR:?}/artix-aarch64"/var/cache/pacman/pkg/* || true
 
-	sudo tar -J -c \
-		-f "${ROOTFS_DIR}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz" \
-		-C "$WORKDIR" \
+	archive_rootfs "${ROOTFS_DIR}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz" \
 		"artix-aarch64"
-	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 }
 
 write_plugin() {

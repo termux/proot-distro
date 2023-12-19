@@ -9,8 +9,9 @@ bootstrap_distribution() {
 			--output "${WORKDIR}/void-${arch}.tar.xz" \
 			"https://repo-default.voidlinux.org/live/${dist_version}/void-${arch}-ROOTFS-${dist_version}.tar.xz"
 
+		sudo rm -rf "${WORKDIR}/void-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/void-$(translate_arch "$arch")"
-		sudo tar -Jxp \
+		sudo tar -Jxp --acls --xattrs --xattrs-include='*' \
 			-f "${WORKDIR}/void-${arch}.tar.xz" \
 			-C "${WORKDIR}/void-$(translate_arch "$arch")"
 
@@ -29,11 +30,8 @@ bootstrap_distribution() {
 
 		sudo rm -f "${WORKDIR}/void-$(translate_arch "$arch")"/var/cache/xbps/* || true
 
-		sudo tar -J -c \
-			-f "${ROOTFS_DIR}/void-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			-C "$WORKDIR" \
+		archive_rootfs "${ROOTFS_DIR}/void-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"void-$(translate_arch "$arch")"
-			sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/void-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz"
 	done
 }
 

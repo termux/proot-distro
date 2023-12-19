@@ -3,6 +3,7 @@ dist_version="bookworm"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/debian-*.tar.xz
+	sudo rm -rf "${WORKDIR}/debian-$(translate_arch "$arch")"
 
 	for arch in arm64 armhf i386 amd64; do
 		sudo mmdebstrap \
@@ -10,11 +11,11 @@ bootstrap_distribution() {
 			--variant=minbase \
 			--components="main,contrib" \
 			--include="ca-certificates,locales" \
-			--format=tar \
+			--format=directory \
 			"${dist_version}" \
-			"${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
-		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
-		xz "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+			"${WORKDIR}/debian-$(translate_arch "$arch")"
+		archive_rootfs "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
+			"${WORKDIR}/debian-$(translate_arch "$arch")"
 	done
 	unset arch
 }

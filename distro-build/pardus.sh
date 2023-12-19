@@ -3,6 +3,7 @@ dist_version="yirmibir"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/pardus-*.tar.xz
+	sudo rm -rf "${WORKDIR}/pardus-$(translate_arch "$arch")"
 
 	for arch in arm64 i386 amd64; do
 		wget https://depo.pardus.org.tr/pardus/pool/main/p/pardus-archive-keyring/pardus-archive-keyring_2021.1_all.deb
@@ -13,12 +14,12 @@ bootstrap_distribution() {
 			--variant=minbase \
 			--components="main,contrib,non-free" \
 			--include="ca-certificates,libsystemd0,pardus-archive-keyring,systemd-sysv" \
-			--format=tar \
+			--format=directory \
 			"${dist_version}" \
-			"${ROOTFS_DIR}/pardus-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar" \
+			"${WORKDIR}/pardus-$(translate_arch "$arch")" \
 			https://depo.pardus.org.tr/pardus
-		sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/pardus-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
-		xz "${ROOTFS_DIR}/pardus-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar"
+		archive_rootfs "${ROOTFS_DIR}/pardus-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
+			"${WORKDIR}/pardus-$(translate_arch "$arch")"
 	done
 	unset arch
 }

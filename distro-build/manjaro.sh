@@ -8,8 +8,9 @@ bootstrap_distribution() {
 		--output "${WORKDIR}/manjaro-aarch64.tar.xz" \
 		"https://github.com/manjaro-arm/rootfs/releases/download/${dist_version}/Manjaro-ARM-aarch64-latest.tar.gz"
 
-	mkdir "${WORKDIR}/manjaro-aarch64"
-	sudo tar -xp \
+	sudo rm -rf "${WORKDIR}/manjaro-aarch64"
+	sudo mkdir -m 755 "${WORKDIR}/manjaro-aarch64"
+	sudo tar -xp --acls --xattrs --xattrs-include='*' \
 		-f "${WORKDIR}/manjaro-aarch64.tar.xz" \
 		-C "${WORKDIR}/manjaro-aarch64"
 
@@ -30,9 +31,8 @@ bootstrap_distribution() {
 
 	sudo rm -f "${WORKDIR:?}"/manjaro-aarch64/var/cache/pacman/pkg/* || true
 
-	sudo tar -Jcf "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz" \
-		-C "${WORKDIR}/manjaro-aarch64" ./
-	sudo chown $(id -un):$(id -gn) "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	archive_rootfs "${ROOTFS_DIR}/manjaro-aarch64-pd-${CURRENT_VERSION}.tar.xz" \
+		"manjaro-aarch64"
 }
 
 write_plugin() {

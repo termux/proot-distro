@@ -57,6 +57,26 @@ translate_arch() {
 	esac
 }
 
+# Common way to archive the rootfs.
+# Usage: archive_rootfs /path/to/rootfs.tar.xz rootfs-dir
+# rootfs-dir is relative to $WORKDIR
+archive_rootfs() {
+	sudo tar \
+		--directory="$WORKDIR" \
+		--create \
+		--sort=name \
+		--hard-dereference \
+		--numeric-owner \
+		--preserve-permissions \
+		--acls \
+		--xattrs \
+		--xattrs-include='*' \
+		--xz \
+		--file="$1" \
+		"$2"
+	sudo chown $(id -un):$(id -gn) "$1"
+}
+
 ##############################################################################
 
 # Reset workspace. This also deletes any previously made rootfs tarballs.
