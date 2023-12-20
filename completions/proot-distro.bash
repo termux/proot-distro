@@ -26,21 +26,21 @@ _proot-distro() {
 		COMPREPLY=($(compgen -W "$pd_commands" -- "$cur"))
 	else
 		case "${words[1]}" in
-			backup)
+			backup|bak|bkp)
 				if [ "$prev" = "--output" ]; then
 					_filedir
 				else
 					COMPREPLY=($(compgen -W "${pd_installed_dists} --output" -- "$cur"))
 				fi
 			;;
-			install)
+			install|i|in|ins|add)
 				if [ "$prev" = "--override-alias" ]; then
 					COMPREPLY=($(compgen -W "new-dist-name" -- "$cur"))
 				else
 					COMPREPLY=($(compgen -W "${pd_available_dists} --override-alias" -- "$cur"))
 				fi
 			;;
-			login)
+			login|sh)
 				if [ $prev = "--user" ]; then
 					COMPREPLY=($(compgen -W "username" -- "$cur"))
 				elif [ $prev = "--bind" ]; then
@@ -51,11 +51,11 @@ _proot-distro() {
 					COMPREPLY=($(compgen -W "${pd_installed_dists} --user --fix-low-ports --isolated --termux-home --shared-tmp --bind --no-link2symlink --no-sysvipc --no-kill-on-exit --kernel" -- "$cur"))
 				fi
 			;;
-			remove)
+			remove|rm)
 				COMPREPLY=($(compgen -W "${pd_installed_dists}" -- "$cur"))
 			;;
-			rename)
-				if [ "$prev" = "rename" ]; then
+			rename|mv)
+				if [ "$prev" = "rename" ] || [ "$prev" = "mv" ]; then
 					COMPREPLY=($(compgen -W "${pd_installed_dists}" -- "$cur"))
 				else
 					COMPREPLY=($(compgen -W "new-dist-name" -- "$cur"))
