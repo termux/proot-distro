@@ -4,8 +4,8 @@
 DISTRO_NAME="Artix Linux"
 DISTRO_COMMENT="Currently available only for AArch64."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v3.18.1/artix-aarch64-pd-v3.18.1.tar.xz"
-TARBALL_SHA256['aarch64']="9801031864da6bc9dc69293695797f8aba7866c273bb7403f95c4e70be987936"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/artix-aarch64-pd-v4.6.0.tar.xz"
+TARBALL_SHA256['aarch64']="7963559a4e7f610d80823cce60743704fae61a8fce42d2b86601ae3dd28ce292"
 
 distro_setup() {
 	# Fix environment variables on login or su.

@@ -4,12 +4,12 @@
 DISTRO_NAME="Ubuntu"
 DISTRO_COMMENT="Standard release (mantic). Not available for x86 32-bit (i686) CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.5.0/ubuntu-aarch64-pd-v4.5.0.tar.xz"
-TARBALL_SHA256['aarch64']="78f6e74531c6e7c61d6b90ea9b7e25738c14f2f4f2bb07cb1614414ef06017d5"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.5.0/ubuntu-arm-pd-v4.5.0.tar.xz"
-TARBALL_SHA256['arm']="3af5171713631aa2f672602f0099d22e242a9fe19df910924dbf5e93497496c8"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.5.0/ubuntu-x86_64-pd-v4.5.0.tar.xz"
-TARBALL_SHA256['x86_64']="5a5212f5389fb805030c4db2dcde99590136291bb9f44aad62b4665b66f66669"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/ubuntu-aarch64-pd-v4.6.0.tar.xz"
+TARBALL_SHA256['aarch64']="18f4746d56d8d9d223690706febcd45bef607d6240f4d137bc80d9d42f5d764a"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.6.0/ubuntu-arm-pd-v4.6.0.tar.xz"
+TARBALL_SHA256['arm']="a37d63ba774c6d92ec54657261a9fc38b3b904a0e23aba70e1f44eae069a1c15"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/ubuntu-x86_64-pd-v4.6.0.tar.xz"
+TARBALL_SHA256['x86_64']="fc8bd25316640c12697c3960c3629dc824d725332fb5559b7c5a90b86fe5c269"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.
