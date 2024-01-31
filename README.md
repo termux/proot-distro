@@ -36,15 +36,13 @@ release, while LTS is the most preferred and rolling is the least. At our
 discretion we may choose to provide 1 or 2 of old LTS or stable releases for
 the top distributions.
 
-If you need a custom version, you will need to add it on your own.
-See [Adding distribution](#adding-distribution).
-
 Here are the supported distributions (alias: name):
 
 * `alpine`: Alpine Linux (edge)
 * `archlinux`: Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
 * `debian`: Debian (stable)
+* `debian-oldstable`: Debian (old stable)
 * `deepin`: Deepin (beige)
 * `fedora`: Fedora 39 (AArch64 only)
 * `manjaro`: Manjaro (AArch64 only)
@@ -52,12 +50,24 @@ Here are the supported distributions (alias: name):
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
 * `ubuntu`: Ubuntu (23.10)
+* `ubuntu-lts`: Ubuntu (23.04)
+* `ubuntu-oldlts`: Ubuntu (22.04)
 * `void`: Void Linux
 
 All systems come in a bare-minimum variant, typically consisting of package
 manager, shell, coreutils, util-linux and few more. Extended functionality
 like shell completion or package install suggestions should be configured
 manually.
+
+If you need a custom version, you will need to add it on your own.
+See [Adding distribution](#adding-distribution).
+
+All rootfs archives provided by this project are built using [GitHub Actions](https://github.com/termux/proot-distro/actions):
+
+* Configuration: https://github.com/termux/proot-distro/blob/master/.github/workflows/build.yml
+* Rootfs packaging scripts: https://github.com/termux/proot-distro/tree/master/distro-build
+
+Feel free to fork repository, make changes and build own distributions.
 
 ## Installing
 
@@ -476,6 +486,15 @@ of most significant differences you should be aware of.
 
    Particularly, the fake root user makes it possible to use package manager
    in chroot environment.
+
+## Hacking
+
+PROOT DISTRO DEVELOPERS CHOSE TO NOT HELP WITH INSTALLING, CONFIGURING, USING
+AND TROUBLESHOOTING ALL KINDS OF TOOLS RELATED TO HACKING, PHISHING, DENIAL OF
+SERVICE, SPAM, FRAUD, SOCIAL ENGINEERING, OSINT AND THEIR PRECURSORS.
+
+Please don't ask about Black Arch, Kali Linux, Nethunter, Parrot OS and
+similar distributions.
 
 ## Forking
 
