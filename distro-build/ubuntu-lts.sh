@@ -1,6 +1,7 @@
 dist_name="Ubuntu"
 
 # Must contain current latest LTS version.
+# After changing, update the DISTRO_NAME below.
 dist_version="lunar"
 
 bootstrap_distribution() {
@@ -27,7 +28,7 @@ write_plugin() {
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
-	DISTRO_NAME="Ubuntu"
+	DISTRO_NAME="Ubuntu (23.04 LTS)"
 	DISTRO_COMMENT="LTS release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
