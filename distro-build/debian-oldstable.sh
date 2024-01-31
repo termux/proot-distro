@@ -1,4 +1,6 @@
 dist_name="Debian"
+
+# Must contain only current old stable version.
 dist_version="bullseye"
 
 bootstrap_distribution() {
