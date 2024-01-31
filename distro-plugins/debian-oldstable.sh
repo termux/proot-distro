@@ -1,8 +1,8 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Debian"
-DISTRO_COMMENT="Old stable release (bullseye)."
+DISTRO_NAME="Debian (bullseye)"
+DISTRO_COMMENT="Old stable release."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/debian-bullseye-aarch64-pd-v4.7.0.tar.xz"
 TARBALL_SHA256['aarch64']="8dc2cb6e8ba19518ffdc5c5f6d3d7a1f7a898ebabd49b8fab0fc59d67e305754"

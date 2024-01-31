@@ -27,8 +27,8 @@ write_plugin() {
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
-	DISTRO_NAME="Debian"
-	DISTRO_COMMENT="Old stable release (${dist_version})."
+	DISTRO_NAME="Debian (${dist_version})"
+	DISTRO_COMMENT="Old stable release."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/debian-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/debian-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
