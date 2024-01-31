@@ -2773,9 +2773,9 @@ show_donate() {
 	msg "${MAGENTA}Support development by donation and motivate us to bring new${RST}"
 	msg "${MAGENTA}features. We are accepting cryptocurrency:${RST}"
 	msg
-	msg "${MAGENTA}LTC: ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua${RST}"
+	msg "${MAGENTA}LTC: ltc1q2yne7e2p5ypf2ky0j3tg3vd6yktd5u57rmlly9${RST}"
 	msg
-	msg "${MAGENTA}TRX: TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR${RST}"
+	msg "${MAGENTA}TRX: TUP941DmHfrBNxvbcYkThx9hHrskU7FyTa${RST}"
 }
 
 #############################################################################

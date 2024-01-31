@@ -18,9 +18,9 @@ before run and refuses to work if detected user id `0` (root).
 Want support developer and motivate to bring new features? Donations in
 cryptocurrency are accepted.
 
-* Ethereum: `0xDCf2f1883cbE3778F7c3EDF578cB1f7067e7cAcE`
-* Litecoin: `ltc1qcw409u0wctugjhfdf28jmyrgpxf0363sk4njua`
-* Tron: `TBQsSSsvDKCSxpYy8i1uewJqcUJbJuwbtR`
+* Ethereum: `0x76c7f1FC3C7396396fBD7e8cBDc2fc741FFa4aFa`
+* Litecoin: `ltc1q2yne7e2p5ypf2ky0j3tg3vd6yktd5u57rmlly9`
+* Tron: `TUP941DmHfrBNxvbcYkThx9hHrskU7FyTa`
 
 ***
 
