@@ -4,10 +4,10 @@ dist_name="Ubuntu"
 dist_version="jammy"
 
 bootstrap_distribution() {
-	sudo rm -f "${ROOTFS_DIR}"/ubuntu-*.tar.xz
+	sudo rm -f "${ROOTFS_DIR}"/ubuntu-"${dist_version}"-*.tar.xz
 
 	for arch in arm64 armhf amd64; do
-		sudo rm -rf "${WORKDIR}/ubuntu-$(translate_arch "$arch")"
+		sudo rm -rf "${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")"
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=apt \
@@ -15,9 +15,9 @@ bootstrap_distribution() {
 			--include="locales,passwd" \
 			--format=directory \
 			"${dist_version}" \
-			"${WORKDIR}/ubuntu-$(translate_arch "$arch")"
-		archive_rootfs "${ROOTFS_DIR}/ubuntu-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			"ubuntu-$(translate_arch "$arch")"
+			"${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")"
+		archive_rootfs "${ROOTFS_DIR}/ubuntu-${dist_version}-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
+			"ubuntu-${dist_version}-$(translate_arch "$arch")"
 	done
 	unset arch
 }
