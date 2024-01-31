@@ -2837,7 +2837,7 @@ while read -r filename; do
 
 	SUPPORTED_DISTRIBUTIONS["$distro_alias"]="$distro_name"
 	[ -n "$distro_comment" ] && SUPPORTED_DISTRIBUTIONS_COMMENTS["$distro_alias"]="$distro_comment"
-done < <(find "$DISTRO_PLUGINS_DIR" -maxdepth 1 -type f -iname "*.sh" 2>/dev/null)
+done < <(find "$DISTRO_PLUGINS_DIR" -maxdepth 1 \( -type f -o -type l \) -iname "*.sh" 2>/dev/null)
 unset distro_name distro_alias
 
 if [ $# -ge 1 ]; then
