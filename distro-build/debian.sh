@@ -1,4 +1,6 @@
 dist_name="Debian"
+
+# Put only current stable version here!
 dist_version="bookworm"
 
 bootstrap_distribution() {
