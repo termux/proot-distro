@@ -4,10 +4,10 @@ dist_name="Debian"
 dist_version="bookworm"
 
 bootstrap_distribution() {
-	sudo rm -f "${ROOTFS_DIR}"/debian-*.tar.xz
+	sudo rm -f "${ROOTFS_DIR}"/debian-"${dist_version}"-*.tar.xz
 
 	for arch in arm64 armhf i386 amd64; do
-		sudo rm -rf "${WORKDIR}/debian-$(translate_arch "$arch")"
+		sudo rm -rf "${WORKDIR}/debian-${dist_version}-$(translate_arch "$arch")"
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=minbase \
@@ -15,9 +15,9 @@ bootstrap_distribution() {
 			--include="ca-certificates,locales" \
 			--format=directory \
 			"${dist_version}" \
-			"${WORKDIR}/debian-$(translate_arch "$arch")"
-		archive_rootfs "${ROOTFS_DIR}/debian-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			"debian-$(translate_arch "$arch")"
+			"${WORKDIR}/debian-${dist_version}-$(translate_arch "$arch")"
+		archive_rootfs "${ROOTFS_DIR}/debian-${dist_version}-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
+			"debian-${dist_version}-$(translate_arch "$arch")"
 	done
 	unset arch
 }
