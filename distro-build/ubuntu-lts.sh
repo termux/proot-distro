@@ -1,7 +1,7 @@
 dist_name="Ubuntu"
 
-# Must contain current latest regular release version.
-dist_version="mantic"
+# Must contain current latest LTS version.
+dist_version="lunar"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/ubuntu-"${dist_version}"-*.tar.xz
@@ -23,12 +23,12 @@ bootstrap_distribution() {
 }
 
 write_plugin() {
-	cat <<- EOF > "${PLUGIN_DIR}/ubuntu.sh"
+	cat <<- EOF > "${PLUGIN_DIR}/ubuntu-lts.sh"
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Ubuntu"
-	DISTRO_COMMENT="Regular release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
+	DISTRO_COMMENT="LTS release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
