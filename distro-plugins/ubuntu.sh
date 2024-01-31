@@ -2,14 +2,14 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Ubuntu"
-DISTRO_COMMENT="Standard release (mantic). Not available for x86 32-bit (i686) CPUs."
+DISTRO_COMMENT="LTS release (mantic). Not available for x86 32-bit (i686) CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/ubuntu-aarch64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['aarch64']="18f4746d56d8d9d223690706febcd45bef607d6240f4d137bc80d9d42f5d764a"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.6.0/ubuntu-arm-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['arm']="a37d63ba774c6d92ec54657261a9fc38b3b904a0e23aba70e1f44eae069a1c15"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/ubuntu-x86_64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['x86_64']="fc8bd25316640c12697c3960c3629dc824d725332fb5559b7c5a90b86fe5c269"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/ubuntu-mantic-aarch64-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['aarch64']="34880b7dd5a015f71569e91fef743f426164fbe3b8da50a6f1ef8e3a4f6ec784"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.7.0/ubuntu-mantic-arm-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['arm']="1c4140f2c8af9005bbca804410cbe12500b0200edf4982bf680f78717780fdb4"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/ubuntu-mantic-x86_64-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['x86_64']="5e3d9b3cf444a76e00f672aa1ed4710ea8fcc62ddf5dc3e1beb1493ee3376a70"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.

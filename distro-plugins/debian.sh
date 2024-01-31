@@ -2,16 +2,16 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Debian"
-DISTRO_COMMENT="A stable release (bookworm)."
+DISTRO_COMMENT="Stable release (bookworm)."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/debian-aarch64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['aarch64']="68dab31b46af61114014b54876c4f317be648ce8c76c0c6cbb5d6011d420886c"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.6.0/debian-arm-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['arm']="8298f99afef34b135bc86025d65d638a234068ede00bf2e93f6cc1e1dcfc0196"
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.6.0/debian-i686-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['i686']="beb475580f74ed64b784602b27755e4178ed360a84f64e2bbeaf8372cb60ecdf"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/debian-x86_64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['x86_64']="1cdf67f0d458d6109e527415691db7b27b9d374a29b17226cdd2d9f1aa7660ef"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/debian-bookworm-aarch64-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['aarch64']="4baa32280cc70b67e2c650777c1d974349f0cdf23afaabc305ad3bc6182b8df8"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.7.0/debian-bookworm-arm-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['arm']="0eba2cb93261d6e73c2f3c32ed7ebe9de408ceef584c5e0c0b7e237d294f7a8d"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.7.0/debian-bookworm-i686-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['i686']="7425f5fe7f34c718428f235b9155adb782c29ce6347f704f4a93a9da195b9aa3"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/debian-bookworm-x86_64-pd-v4.7.0.tar.xz"
+TARBALL_SHA256['x86_64']="164932ab77a0b94a8e355c9b68158a5b76d5abef89ada509488c44ff54655d61"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.
