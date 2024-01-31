@@ -28,7 +28,7 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Ubuntu"
-	DISTRO_COMMENT="Standard release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
+	DISTRO_COMMENT="LTS release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
