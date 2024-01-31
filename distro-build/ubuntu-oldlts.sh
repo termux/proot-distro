@@ -1,7 +1,7 @@
 dist_name="Ubuntu"
 
-# Must contain current latest LTS version.
-dist_version="mantic"
+# Must contain current previous LTS version.
+dist_version="jammy"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/ubuntu-*.tar.xz
