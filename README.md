@@ -28,8 +28,16 @@ cryptocurrency are accepted.
 
 PRoot Distro provides support only one version of distribution types, i.e. one
 of stable, LTS or rolling-release. Support of versioned distributions ended
-with branch 2.x. If you need a custom version, you will need to add it on your
-own. See [Adding distribution](#adding-distribution).
+with branch 2.x.
+
+PRoot Distro tends to provide only one version of given distributions to reduce
+maintenance requirements. Thus we will choose a one of LTS, stable or rolling
+release, while LTS is the most preferred and rolling is the least. At our
+discretion we may choose to provide 1 or 2 of old LTS or stable releases for
+the top distributions.
+
+If you need a custom version, you will need to add it on your own.
+See [Adding distribution](#adding-distribution).
 
 Here are the supported distributions (alias: name):
 
