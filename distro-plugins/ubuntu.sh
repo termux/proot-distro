@@ -4,12 +4,12 @@
 DISTRO_NAME="Ubuntu (23.10)"
 DISTRO_COMMENT="Regular release (mantic). Not available for x86 32-bit (i686) CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/ubuntu-mantic-aarch64-pd-v4.7.0.tar.xz"
-TARBALL_SHA256['aarch64']="6bc671c37912fc41e230f6ed11d60c83cd1756e6c8d7051709bf8fdeff93aaa7"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.7.0/ubuntu-mantic-arm-pd-v4.7.0.tar.xz"
-TARBALL_SHA256['arm']="b249fe3c41249a37fbfe230c530bbb29e44529b2a2b2a950144b87a7bbd8b229"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.7.0/ubuntu-mantic-x86_64-pd-v4.7.0.tar.xz"
-TARBALL_SHA256['x86_64']="ac04cc6aaef18e2777d1cdaef42e666dc52634210978051181450465f4697734"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-mantic-aarch64-pd-v4.8.0.tar.xz"
+TARBALL_SHA256['aarch64']="1057ec14045fa2174e0c5a5249db59bb1206573f273c0c5ae0bcfc877fe732df"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-mantic-arm-pd-v4.8.0.tar.xz"
+TARBALL_SHA256['arm']="eb968b49e61892d8f02fcee88e130169e737838a8f94f9464e58b2c9cd84e003"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-mantic-x86_64-pd-v4.8.0.tar.xz"
+TARBALL_SHA256['x86_64']="b621afb46a182ce2aa06d06b2d3bc077bbdf08b3557b892d5ca74ff1c9afc206"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.
