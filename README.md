@@ -50,8 +50,8 @@ Here are the supported distributions (alias: name):
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
 * `ubuntu`: Ubuntu (23.10)
-* `ubuntu-lts`: Ubuntu (23.04)
-* `ubuntu-oldlts`: Ubuntu (22.04)
+* `ubuntu-lts`: Ubuntu (22.04)
+* `ubuntu-oldlts`: Ubuntu (20.04)
 * `void`: Void Linux
 
 All systems come in a bare-minimum variant, typically consisting of package
