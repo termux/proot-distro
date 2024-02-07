@@ -2,7 +2,7 @@ dist_name="Ubuntu"
 
 # Must contain current previous LTS version.
 # After changing, update the DISTRO_NAME below.
-dist_version="jammy"
+dist_version="focal"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/ubuntu-"${dist_version}"-*.tar.xz
