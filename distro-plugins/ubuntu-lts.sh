@@ -1,7 +1,7 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Ubuntu (23.04 LTS)"
+DISTRO_NAME="Ubuntu LTS"
 DISTRO_COMMENT="LTS release (jammy). Not available for x86 32-bit (i686) CPUs."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-jammy-aarch64-pd-v4.8.0.tar.xz"
