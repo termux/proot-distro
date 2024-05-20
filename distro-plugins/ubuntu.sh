@@ -1,15 +1,15 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Ubuntu (23.10)"
-DISTRO_COMMENT="Regular release (mantic). Not available for x86 32-bit (i686) CPUs."
+DISTRO_NAME="Ubuntu (24.04)"
+DISTRO_COMMENT="LTS release (noble). Not available for x86 32-bit (i686) CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-mantic-aarch64-pd-v4.8.0.tar.xz"
-TARBALL_SHA256['aarch64']="1057ec14045fa2174e0c5a5249db59bb1206573f273c0c5ae0bcfc877fe732df"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-mantic-arm-pd-v4.8.0.tar.xz"
-TARBALL_SHA256['arm']="eb968b49e61892d8f02fcee88e130169e737838a8f94f9464e58b2c9cd84e003"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.8.0/ubuntu-mantic-x86_64-pd-v4.8.0.tar.xz"
-TARBALL_SHA256['x86_64']="b621afb46a182ce2aa06d06b2d3bc077bbdf08b3557b892d5ca74ff1c9afc206"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.11.0/ubuntu-noble-aarch64-pd-v4.11.0.tar.xz"
+TARBALL_SHA256['aarch64']="a8883244a7031559a2bd8dc16b7d8afc947930b611819d8a28a09545097a6ba5"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.11.0/ubuntu-noble-arm-pd-v4.11.0.tar.xz"
+TARBALL_SHA256['arm']="dc5478e96f648e868d68c15c400338460088255d5d964bdfa33e5456ceea54ae"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.11.0/ubuntu-noble-x86_64-pd-v4.11.0.tar.xz"
+TARBALL_SHA256['x86_64']="f024b1e17413737d8b385d22736d2e3eb2af9ba665fdbda1277bcca8f397e5a2"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.
