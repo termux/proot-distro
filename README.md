@@ -49,9 +49,8 @@ Here are the supported distributions (alias: name):
 * `openkylin`: OpenKylin (Yangtze)
 * `opensuse`: OpenSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
-* `ubuntu`: Ubuntu (23.10)
-* `ubuntu-lts`: Ubuntu (22.04)
-* `ubuntu-oldlts`: Ubuntu (20.04)
+* `ubuntu`: Ubuntu (24.04)
+* `ubuntu-oldlts`: Ubuntu (22.04)
 * `void`: Void Linux
 
 All systems come in a bare-minimum variant, typically consisting of package
@@ -68,6 +67,20 @@ All rootfs archives provided by this project are built using [GitHub Actions](ht
 * Rootfs packaging scripts: https://github.com/termux/proot-distro/tree/master/distro-build
 
 Feel free to fork repository, make changes and build own distributions.
+
+### Security
+
+The distributions available in the catalog derived from the official sources.
+Tarballs include the latest system upgrades and security patches during their
+build time.
+
+It is highly recommended to check for updates using the package manager after
+installing a distribution as tarballs are updated on opportunistic basis (once
+in few months).
+
+PRoot (core of `proot-distro`) does not provide high grade isolation like
+Docker. Consider this if you suspect that your installation can be an attack
+target or your Android OS is too old.
 
 ## Installing
 
@@ -301,6 +314,11 @@ Login command supports these behavior modifying options:
 
   Set the kernel release and compatibility level to given value.
 
+* `--work-dir`
+
+  Set the working directory to given value. By default the working directory
+  is same as user home.
+
 ### Uninstall distribution
 
 Command: `remove`
@@ -457,17 +475,24 @@ Emulation mode doesn't guarantee stability. User can observe a weird behavior
 of programs and crashes. Some distributions may work while others may not.
 The performance also would be reduced due to emulator overhead.
 
-## Differences from Chroot
+## PRoot issues and differences from Chroot
 
 While PRoot is often referred as user space chroot implementation, it is much
 different from it both by implementation and features of work. Here is a list
 of most significant differences you should be aware of.
 
-1. PRoot is slow.
+1. PRoot is slow and potentially unstable due to non-native execution
 
-   Every process is hooked through `ptrace()`, so PRoot can hijack the system
-   call arguments and return values. This is typically used to translate file
-   paths so traced program will see the different file system layout.
+   Every process is hooked through `ptrace()`. This is done to be able
+   translate file paths (emulate `chroot`), fake root user identity and
+   workaround unsupported system calls.
+
+   Such intrusion into execution flow usually works properly. However under
+   certain cases user may observe "impossible" bugs such as crashes or
+   strange program behavior, that are not reproducible on native Linux
+   distribution setups (PC, Raspberry Pi).
+
+   Using debugger tools such as gdb or strace could be problematic.
 
 2. PRoot cannot detach from the running process.
 
@@ -487,6 +512,29 @@ of most significant differences you should be aware of.
    Particularly, the fake root user makes it possible to use package manager
    in chroot environment.
 
+4. PRoot does not emulate privilege separation.
+
+   Your root and non-root effectively are same. Files would appear as owned
+   by your current user, which means both root and non-root user will be able
+   to edit files of your `proot` distribution setup.
+
+   Depending on your PRoot Distro use cases, this might be a security issue.
+
+5. PRoot does not enable access to hardware and file system mounting.
+
+   You won't be able read/write to devices such as partitions of internal
+   and external drives, USB devices, Wi-Fi and Bluetooth dongles.
+
+   Mounting file systems using FUSE also not possible: Android OS doesn't
+   set world-writeable permissions on `/dev/fuse`, unlike standard Linux
+   distributions.
+
+6. Appimage, Flatpak and Snap do not work under PRoot.
+
+   Self-sufficient application containers such as Appimage, Flatpak or Snap
+   rely on file system mounting capabilities, FUSE and other features that
+   not available without real root permissions.
+
 ## Hacking
 
 PROOT DISTRO DEVELOPERS CHOSE TO NOT HELP WITH INSTALLING, CONFIGURING, USING
@@ -500,6 +548,8 @@ similar distributions.
 
 If you wish to use PRoot Distro or its part as a base for your own project,
 please make sure you comply with GNU GPL v3.0 license.
+
+Forks must be distributed under different name.
 
 [Termux]: <https://termux.com>
 [proot]: <https://github.com/termux/proot>
