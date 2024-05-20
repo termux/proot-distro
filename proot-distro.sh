@@ -1615,6 +1615,7 @@ command_login() {
 	local no_sysvipc=false
 	local no_kill_on_exit=false
 	local login_user="root"
+	local login_wd=""
 	local kernel_release="${DEFAULT_FAKE_KERNEL_VERSION}"
 	local distro_name
 
@@ -1706,6 +1707,25 @@ command_login() {
 					return 1
 				fi
 				;;
+			--work-dir)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--work-dir${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
+					login_wd="$1"
+				else
+					msg
+					msg "${BRED}Error: option '${YELLOW}--work-dir${BRED}' requires an argument.${RST}"
+					command_login_help
+					return 1
+				fi
+				;;
 			-*)
 				msg
 				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
@@ -1793,6 +1813,12 @@ command_login() {
 		msg "${BRED}Error: failed to retrieve the home of user '${login_user}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
+	if [ -z "${login_wd}" ]; then
+		login_wd="${login_home}"
+	fi
+	if [ ! -d "$(realpath "${INSTALLED_ROOTFS_DIR}/${distro_name}/${login_wd}")" ]; then
+		msg "${BRED}Warning: cannot use path '${login_wd}' as working directory.${RST}"
+	fi
 	login_shell=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 7)
 	if [ -z "${login_shell}" ]; then
 		msg "${BRED}Error: failed to retrieve the shell of user '${login_user}' from /etc/passwd of distribution.${RST}"
@@ -1869,7 +1895,7 @@ command_login() {
 
 	set -- "--rootfs=${INSTALLED_ROOTFS_DIR}/${distro_name}" "$@"
 	set -- "--change-id=${login_uid}:${login_gid}" "$@"
-	set -- "--cwd=${login_home}" "$@"
+	set -- "--cwd=${login_wd}" "$@"
 
 	# Setup QEMU when CPU architecture do not match the one of device.
 	local target_arch
@@ -2203,6 +2229,8 @@ command_login_help() {
 	msg
 	msg "  ${GREEN}--kernel [string]    ${CYAN}- Set the kernel release and compatibility${RST}"
 	msg "                         ${CYAN}level to string.${RST}"
+	msg
+	msg "  ${GREEN}--work-dir [path]    ${CYAN}- Set the working directory.${RST}"
 	msg
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
