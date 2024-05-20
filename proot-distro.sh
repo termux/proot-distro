@@ -550,15 +550,10 @@ command_install() {
 
 	if grep -qiP '(kali|parrot|nethunter|blackarch)' <<< "$distro_name" || grep -qiP '^nh$' <<< "$distro_name"; then
 		msg
-		msg "${BRED}Suspicious distribution name: '${YELLOW}${distro_name}${BRED}'.${RST}"
+		show_donate
 		msg
-		msg "${BRED}PRoot-Distro WILL NOT ALLOW you to use software associated with hacking/phishing.${RST}"
+		msg "${MAGENTA}No, you won't get a Kali Linux for this :)${RST}"
 		msg
-		msg "${BRED}Termux committed to discourage security profanation as well as propaganda of stealing accounts; call & sms bombing; making and delivering various security/privacy threats; other kinds of deliberately nefarious activity. Such destructive activity has nothing to do with legitimate penetration testing and DOES NOT contribute to the global IT security.${RST}"
-		msg
-		msg "${BRED}Visit ${GREEN}https://wiki.termux.com/wiki/Hacking${RST}"
-		msg
-		[ -n "$(command -v termux-open-url)" ] && termux-open-url "https://wiki.termux.com/wiki/Hacking" & disown
 		return 1
 	fi
 
