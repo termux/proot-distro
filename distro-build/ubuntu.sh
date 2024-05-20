@@ -28,8 +28,8 @@ write_plugin() {
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
-	DISTRO_NAME="Ubuntu (24.04 LTS)"
-	DISTRO_COMMENT="Regular release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
+	DISTRO_NAME="Ubuntu (24.04)"
+	DISTRO_COMMENT="LTS release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"

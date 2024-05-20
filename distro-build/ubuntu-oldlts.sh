@@ -28,7 +28,7 @@ write_plugin() {
 	# This is a default distribution plug-in.
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
-	DISTRO_NAME="Ubuntu (22.04 LTS)"
+	DISTRO_NAME="Ubuntu (22.04)"
 	DISTRO_COMMENT="Previous LTS release (${dist_version}). Not available for x86 32-bit (i686) CPUs."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/ubuntu-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
