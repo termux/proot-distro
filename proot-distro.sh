@@ -1816,9 +1816,9 @@ command_login() {
 	if [ -z "${login_wd}" ]; then
 		login_wd="${login_home}"
 	fi
-	if [ ! -d "$(realpath "${INSTALLED_ROOTFS_DIR}/${distro_name}/${login_wd}")" ]; then
-		msg "${BRED}Warning: cannot use path '${login_wd}' as working directory.${RST}"
-	fi
+	#if [ ! -d "$(realpath "${INSTALLED_ROOTFS_DIR}/${distro_name}/${login_wd}")" ]; then
+	#	msg "${BRED}Warning: cannot use path '${login_wd}' as working directory.${RST}"
+	#fi
 	login_shell=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 7)
 	if [ -z "${login_shell}" ]; then
 		msg "${BRED}Error: failed to retrieve the shell of user '${login_user}' from /etc/passwd of distribution.${RST}"
