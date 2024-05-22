@@ -1616,6 +1616,8 @@ command_login() {
 	local no_kill_on_exit=false
 	local login_user="root"
 	local login_wd=""
+	local -a login_env_vars
+	login_env_vars=("PATH=${DEFAULT_PATH_ENV}")
 	local kernel_release="${DEFAULT_FAKE_KERNEL_VERSION}"
 	local distro_name
 
@@ -1722,6 +1724,25 @@ command_login() {
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}--work-dir${BRED}' requires an argument.${RST}"
+					command_login_help
+					return 1
+				fi
+				;;
+			--env)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--env${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
+					login_env_vars+=("$1")
+				else
+					msg
+					msg "${BRED}Error: option '${YELLOW}--env${BRED}' requires an argument.${RST}"
 					command_login_help
 					return 1
 				fi
@@ -1853,11 +1874,6 @@ command_login() {
 	else
 		set --
 	fi
-
-	local -a login_env_vars
-	login_env_vars=(
-		"PATH=${DEFAULT_PATH_ENV}"
-	)
 
 	for var in ANDROID_ART_ROOT ANDROID_DATA ANDROID_I18N_ROOT ANDROID_ROOT \
 		ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH \
@@ -2231,6 +2247,9 @@ command_login_help() {
 	msg "                         ${CYAN}level to string.${RST}"
 	msg
 	msg "  ${GREEN}--work-dir [path]    ${CYAN}- Set the working directory.${RST}"
+	msg
+	msg "  ${GREEN}--env ENV=val        ${CYAN}- Set environment variable. Can be specified${RST}"
+	msg "                         ${CYAN}multiple times.${RST}"
 	msg
 	msg "${CYAN}Put '${GREEN}--${CYAN}' if you wish to stop command line processing and pass${RST}"
 	msg "${CYAN}options as shell arguments.${RST}"
