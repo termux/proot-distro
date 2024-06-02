@@ -847,9 +847,10 @@ run_proot_cmd() {
 		case "$DISTRO_ARCH" in
 			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
-				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+				#TODO: improve detection, some aarch64 CPU don't support 32bit arm instuctions
+				#if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
-				fi
+				#fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
@@ -1939,11 +1940,12 @@ command_login() {
 		case "$target_arch" in
 			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
-				if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+				#TODO: improve detection, some aarch64 CPU don't support 32bit arm instuctions
+				#if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
-				else
-					need_cpu_emulator=false
-				fi
+				#else
+				#	need_cpu_emulator=false
+				#fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
@@ -2840,7 +2842,8 @@ case "$(uname -m)" in
 	armv7l|armv8l) DEVICE_CPU_ARCH="arm";;
 	*) DEVICE_CPU_ARCH=$(uname -m);;
 esac
-DISTRO_ARCH=$DEVICE_CPU_ARCH
+DISTRO_ARCH=${DISTRO_ARCH:-}
+if [ -z "$DISTRO_ARCH" ]; then DISTRO_ARCH="${DEVICE_CPU_ARCH}"; fi
 
 # Verify architecture if possible - avoid running under linux32 or similar.
 if [ -x "@TERMUX_PREFIX@/bin/dpkg" ]; then
