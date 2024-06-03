@@ -847,10 +847,9 @@ run_proot_cmd() {
 		case "$DISTRO_ARCH" in
 			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
-				#TODO: improve detection, some aarch64 CPU don't support 32bit arm instuctions
-				#if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+				if [ "$DEVICE_CPU_ARCH" != "aarch64" ] || [ "$SUPPORT_32BIT" != "0" ]; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
-				#fi
+				fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
@@ -903,6 +902,11 @@ run_proot_cmd() {
 				msg
 				return 1
 			fi
+		fi
+	else
+		# Warn about CPU not supporting 32-bit instructions
+		if [ "$SUPPORT_32BIT" != "0" ]; then
+			msg "${YELLOW}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
 		fi
 	fi
 
@@ -1940,12 +1944,11 @@ command_login() {
 		case "$target_arch" in
 			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
-				#TODO: improve detection, some aarch64 CPU don't support 32bit arm instuctions
-				#if [ "$DEVICE_CPU_ARCH" != "aarch64" ]; then
+				if [ "$DEVICE_CPU_ARCH" != "aarch64" ] || [ "$SUPPORT_32BIT" != "0" ]; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
-				#else
-				#	need_cpu_emulator=false
-				#fi
+				else
+					need_cpu_emulator=false
+				fi
 				;;
 			i686)
 				if [ "$DEVICE_CPU_ARCH" != "x86_64" ]; then
@@ -2001,6 +2004,11 @@ command_login() {
 				msg
 				return 1
 			fi
+		fi
+	else
+		# Warn about CPU not supporting 32-bit instructions
+		if [ "$SUPPORT_32BIT" != "0" ]; then
+			msg "${YELLOW}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
 		fi
 	fi
 
@@ -2854,6 +2862,9 @@ if [ -x "@TERMUX_PREFIX@/bin/dpkg" ]; then
 		exit 1
 	fi
 fi
+
+# Check if architecture supports 32-bit instructions
+SUPPORT_32BIT=$(lscpu | grep -qE 'CPU op-mode\(s\):.*32-bit'; echo $?)
 
 declare -A TARBALL_URL TARBALL_SHA256
 declare -A SUPPORTED_DISTRIBUTIONS
