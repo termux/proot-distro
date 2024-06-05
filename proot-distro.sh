@@ -390,7 +390,7 @@ msg() {
 #############################################################################
 
 for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
-	head id mkdir proot rm sed tar xargs xz; do
+	head id lscpu mkdir proot rm sed tar xargs xz; do
 	if [ -z "$(command -v "$i")" ]; then
 		msg
 		msg "${BRED}Utility '${i}' is not installed. Cannot continue.${RST}"
