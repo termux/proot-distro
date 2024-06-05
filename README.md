@@ -15,8 +15,12 @@ before run and refuses to work if detected user id `0` (root).
 
 ## Donate
 
-Want support developer and motivate to bring new features? Donations in
-cryptocurrency are accepted.
+Although you get PRoot-Distro for free, remember that developers of such
+free projects have to spend their free time after work or on weekends to
+keep them up. If you found PRoot-Distro to be useful, interested in new
+features and want to support the developer, consider donating.
+
+As of now donations can be made in cryptocurrency:
 
 * Ethereum: `0x76c7f1FC3C7396396fBD7e8cBDc2fc741FFa4aFa`
 * Litecoin: `ltc1q2yne7e2p5ypf2ky0j3tg3vd6yktd5u57rmlly9`
@@ -211,6 +215,32 @@ proot-distro login alpine-test
 
 Copied plug-in has following name format `<name>.override.sh` and is stored
 in directory with others (`$PREFIX/etc/proot-distro`).
+
+It is possible to force specify a custom CPU architecture of distribution to
+install. To do this you need to set `DISTRO_ARCH` environment variable to
+one of these values: `aarch64`, `arm`, `i686`, `x86_64`. Example:
+
+```
+DISTRO_ARCH=arm proot-distro install alpine
+```
+
+Typically if your host is 64bit, the 32bit version of distribution for same
+architecture should work seamlessly, but that's not guaranteed. Thus if you
+encounter an issue while using ARM version of the system on AArch64 host,
+this would be rather a bug of [proot](https://github.com/termux/proot) utility
+or incompatibility with CPU instructions supported by host.
+
+Usage of foreign architectures, like x86_64 target on AArch64 host, always
+would require QEMU user mode packages.
+
+Install all supported QEMU user mode packages with one command:
+
+```
+pkg install qemu-user-aarch64 qemu-user-arm qemu-user-i386 qemu-user-x86-64
+```
+
+`x86_64` target also supports a Blink user mode CPU emulator (experimental).
+See [below](#experimental-blink-emulator-support) for usage details.
 
 ### Listing distributions
 
@@ -470,6 +500,11 @@ export PROOT_DISTRO_X64_EMULATOR=BLINK
 ```
 
 `PROOT_DISTRO_X64_EMULATOR` accepts values only `QEMU` or `BLINK`.
+
+Install Blink emulator package with this command:
+```
+pkg install blink
+```
 
 Emulation mode doesn't guarantee stability. User can observe a weird behavior
 of programs and crashes. Some distributions may work while others may not.
