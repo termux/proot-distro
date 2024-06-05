@@ -154,10 +154,20 @@ PROGRAM_VERSION="4.13.0"
 ##
 ##     ${BLUE}[${GREEN}*${BLUE}] ${CYAN}Message...${RST}"
 ##
-## 6.8 If the step encountered a condition where a warning or error should
-##     be printed, the following message format should be used instead:
+## 6.8 If the step encountered a condition where an error should be printed,
+##     the following message format should be used instead:
 ##
-##     ${BLUE}[${RED}!${BLUE}] ${CYAN}Warning message.${RST}
+##     ${BLUE}[${RED}!${BLUE}] ${CYAN}Error or warning message.${RST}
+##
+## 6.9 Warnings about issues happened due to unexpected circumstances rather
+##     than due to failure of PRoot-Distro actions should be printed in
+##     this format:
+##
+##     ${BRED}Warning: message.${RST}
+##
+##     Similarly to warnings, the error messages should have this format:
+##
+##     ${BRED}Error: message.${RST}
 ##
 ## ***
 ##
@@ -906,7 +916,7 @@ run_proot_cmd() {
 	else
 		# Warn about CPU not supporting 32-bit instructions
 		if [ "$SUPPORT_32BIT" != "0" ]; then
-			msg "${YELLOW}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
+			msg "${BRED}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
 		fi
 	fi
 
@@ -1819,35 +1829,35 @@ command_login() {
 
 	# Catch invalid specified user before login command will be executed.
 	if ! grep -q "${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" >/dev/null 2>&1; then
-		msg "${BRED}Error: no user '${login_user}' defined in /etc/passwd of distribution.${RST}"
+		msg "${BRED}Error: no user '${YELLOW}${login_user}${BRED}' defined in /etc/passwd of distribution.${RST}"
 		return 1
 	fi
 
 	local login_uid login_gid login_home login_shell
 	login_uid=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 3)
 	if [ -z "${login_uid}" ]; then
-		msg "${BRED}Error: failed to retrieve the id of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		msg "${BRED}Error: failed to retrieve the id of user '${YELLOW}${login_user}${BRED}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
 	login_gid=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 4)
 	if [ -z "${login_gid}" ]; then
-		msg "${BRED}Error: failed to retrieve the primary group id of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		msg "${BRED}Error: failed to retrieve the primary group id of user '${YELLOW}${login_user}${BRED}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
 	login_home=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 6)
 	if [ -z "${login_home}" ]; then
-		msg "${BRED}Error: failed to retrieve the home of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		msg "${BRED}Error: failed to retrieve the home of user '${YELLOW}${login_user}${BRED}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
 	if [ -z "${login_wd}" ]; then
 		login_wd="${login_home}"
 	fi
 	#if [ ! -d "$(realpath "${INSTALLED_ROOTFS_DIR}/${distro_name}/${login_wd}")" ]; then
-	#	msg "${BRED}Warning: cannot use path '${login_wd}' as working directory.${RST}"
+	#	msg "${BRED}Warning: cannot use path '${YELLOW}${login_wd}${BRED}' as working directory.${RST}"
 	#fi
 	login_shell=$(grep "^${login_user}:" "${INSTALLED_ROOTFS_DIR}/${distro_name}/etc/passwd" | cut -d ':' -f 7)
 	if [ -z "${login_shell}" ]; then
-		msg "${BRED}Error: failed to retrieve the shell of user '${login_user}' from /etc/passwd of distribution.${RST}"
+		msg "${BRED}Error: failed to retrieve the shell of user '${YELLOW}${login_user}${BRED}' from /etc/passwd of distribution.${RST}"
 		return 1
 	fi
 
@@ -1964,13 +1974,13 @@ command_login() {
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/blink"
 				else
 					msg
-					msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '$PROOT_DISTRO_X64_EMULATOR'. Valid values are: BLINK, QEMU."
+					msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '${YELLOW}${PROOT_DISTRO_X64_EMULATOR}${BRED}'. Valid values are: BLINK, QEMU."
 					msg
 				fi
 				;;
 			*)
 				msg
-				msg "${BRED}Error: DISTRO_ARCH has unknown value '$target_arch'. Valid values are: aarch64, arm, i686, x86_64."
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '${YELLOW}${target_arch}${BRED}'. Valid values are: aarch64, arm, i686, x86_64."
 				msg
 				return 1
 			;;
@@ -1992,7 +2002,7 @@ command_login() {
 							cpu_emulator_pkg="blink"
 						else
 							msg
-							msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '$PROOT_DISTRO_X64_EMULATOR'. Valid values are: BLINK, QEMU."
+							msg "${BRED}Error: PROOT_DISTRO_X64_EMULATOR has unknown value '${YELLOW}${PROOT_DISTRO_X64_EMULATOR}${BRED}'. Valid values are: BLINK, QEMU."
 							msg
 						fi
 						;;
@@ -2000,7 +2010,7 @@ command_login() {
 				esac
 
 				msg
-				msg "${BRED}Error: package '${cpu_emulator_pkg}' is not installed.${RST}"
+				msg "${BRED}Error: package '${YELLOW}${cpu_emulator_pkg}${BRED}' is not installed.${RST}"
 				msg
 				return 1
 			fi
@@ -2008,7 +2018,7 @@ command_login() {
 	else
 		# Warn about CPU not supporting 32-bit instructions
 		if [ "$SUPPORT_32BIT" != "0" ]; then
-			msg "${YELLOW}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
+			msg "${BRED}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
 		fi
 	fi
 
@@ -2017,7 +2027,7 @@ command_login() {
 		# proot can terminate freely.
 		set -- "--kill-on-exit" "$@"
 	else
-		msg "${BRED}Warning: option '--no-kill-on-exit' is enabled. When exiting, your session will be blocked until all processes are terminated.${RST}"
+		msg "${BRED}Warning: option '${YELLOW}--no-kill-on-exit${BRED}' is enabled. When exiting, your session will be blocked until all processes are terminated.${RST}"
 	fi
 
 	if ! $no_link2symlink; then
@@ -2914,7 +2924,7 @@ if [ $# -ge 1 ]; then
 
 		*)
 			msg
-			msg "${BRED}Error: unknown command '${YELLOW}$1${BRED}'.${RST}"
+			msg "${BRED}Error: unknown command '${YELLOW}${1}${BRED}'.${RST}"
 			msg
 			msg "${CYAN}View supported commands by: ${GREEN}${PROGRAM_NAME} help${CYAN}${RST}"
 			msg
