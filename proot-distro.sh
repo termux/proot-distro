@@ -857,7 +857,7 @@ run_proot_cmd() {
 		case "$DISTRO_ARCH" in
 			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
-				if [ "$DEVICE_CPU_ARCH" != "aarch64" ] || [ "$SUPPORT_32BIT" != "0" ]; then
+				if [ "$DEVICE_CPU_ARCH" != "aarch64" ] || ! $SUPPORT_32BIT; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
 				fi
 				;;
@@ -915,7 +915,7 @@ run_proot_cmd() {
 		fi
 	else
 		# Warn about CPU not supporting 32-bit instructions
-		if [ "$SUPPORT_32BIT" != "0" ]; then
+		if ! $SUPPORT_32BIT; then
 			msg "${BRED}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
 		fi
 	fi
@@ -1954,7 +1954,7 @@ command_login() {
 		case "$target_arch" in
 			aarch64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-aarch64";;
 			arm)
-				if [ "$DEVICE_CPU_ARCH" != "aarch64" ] || [ "$SUPPORT_32BIT" != "0" ]; then
+				if [ "$DEVICE_CPU_ARCH" != "aarch64" ] || ! $SUPPORT_32BIT; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-arm"
 				else
 					need_cpu_emulator=false
@@ -2017,7 +2017,7 @@ command_login() {
 		fi
 	else
 		# Warn about CPU not supporting 32-bit instructions
-		if [ "$SUPPORT_32BIT" != "0" ]; then
+		if ! $SUPPORT_32BIT; then
 			msg "${BRED}Warning: CPU doesn't support 32-bit instructions, some software may not work.${RST}"
 		fi
 	fi
@@ -2873,8 +2873,11 @@ if [ -x "@TERMUX_PREFIX@/bin/dpkg" ]; then
 	fi
 fi
 
-# Check if architecture supports 32-bit instructions
-SUPPORT_32BIT=$(lscpu | grep -qE 'CPU op-mode\(s\):.*32-bit'; echo $?)
+# Check if architecture supports 32-bit instructions.
+SUPPORT_32BIT=true
+if grep -q "CPU op-mode" <(lscpu) 2>/dev/null && ! grep -qE 'CPU op-mode\(s\):.*32-bit' <(lscpu) 2>/dev/null; then
+	SUPPORT_32BIT=false
+fi
 
 declare -A TARBALL_URL TARBALL_SHA256
 declare -A SUPPORTED_DISTRIBUTIONS
