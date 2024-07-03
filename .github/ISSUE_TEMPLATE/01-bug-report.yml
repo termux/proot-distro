@@ -8,7 +8,7 @@ body:
       value: |
         This is a bug tracker of the PRoot Distro - a Bash script utility for managing distribution rootfs for use with PRoot.
 
-        **DO NOT REPORT DISTRIBUTION BUGS HERE. THEY WILL NOT BE WORKED ON. EVER.**
+        **!!! DO NOT REPORT ISSUES ABOUT NETWORKING, CRASHES, BLACK SCREENS, BROKEN WINE AND SO ON. THEY WILL BE IGNORED !!! Only bugs related to `proot-distro` shell script implementation will be accepted.**
   - type: textarea
     attributes:
       label: Problem description
