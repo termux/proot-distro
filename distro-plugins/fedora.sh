@@ -2,12 +2,12 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Fedora"
-DISTRO_COMMENT="Version 39. Supports only 64-bit CPUs."
+DISTRO_COMMENT="Version 40. Supports only 64-bit CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/fedora-aarch64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['aarch64']="920caf3290ddaf9347de51ccadb0b6391c0244286072a6664fb1600eee360b9c"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/fedora-x86_64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['x86_64']="49ffa79c24db6a2ee664b2e29268e534c11e1a984b694f8c56551ddb12dde8b3"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.15.0/fedora-aarch64-pd-v4.15.0.tar.xz"
+TARBALL_SHA256['aarch64']="0aa0da1860db99a26b2ecb3996e1c39020395e882658c3e33ea5d748811b3271"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.15.0/fedora-x86_64-pd-v4.15.0.tar.xz"
+TARBALL_SHA256['x86_64']="78948fba2ba86734eb0080fdd78cb1292902df5073241e30e18313e73bfe3841"
 
 distro_setup() {
 	# Fix environment variables on login or su.
