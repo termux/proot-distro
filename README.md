@@ -48,7 +48,7 @@ Here are the supported distributions (alias: name):
 * `debian`: Debian (stable)
 * `debian-oldstable`: Debian (old stable)
 * `deepin`: Deepin (beige)
-* `fedora`: Fedora 39 (AArch64 only)
+* `fedora`: Fedora 40 (64bit only)
 * `manjaro`: Manjaro (AArch64 only)
 * `openkylin`: OpenKylin (Yangtze)
 * `opensuse`: OpenSUSE (Tumbleweed)
