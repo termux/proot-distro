@@ -465,7 +465,8 @@ tarballs store contents in a subdirectory.
 `TARBALL_URL`: a Bash associative array of root file system tarballs URLs.
 
 Should be defined at least for your CPU architecture. Valid architecture names
-are same as for `DISTRO_ARCH`.
+are same as for `DISTRO_ARCH`. Should start with proper protocol scheme.
+For example, `https://`, `file://`, `ftp://` etc. to access local or remote file.
 
 `TARBALL_SHA256`: a Bash associative array of SHA-256 checksums for each rootfs
 variant.
