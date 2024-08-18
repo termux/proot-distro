@@ -207,7 +207,9 @@ PROGRAM_VERSION="4.16.0"
 ##
 ## 7.3 The variable TARBALL_URL is a Bash associative array which contains
 ##     URLs to distribution rootfs tarball for given CPU architectures.
-##     This variable is mandatory.
+##     This variable is mandatory. The URL should start with proper protocol
+##     scheme. For example, https://, file://, ftp:// etc. to access local
+##     or remote tarball file.
 ##
 ## 7.4 The variable TARBALL_SHA256 is a Bash associative array which
 ##     contains SHA-256 checksums of rootfs tarballs for given CPU
