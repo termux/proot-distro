@@ -61,12 +61,16 @@ translate_arch() {
 # Usage: archive_rootfs /path/to/rootfs.tar.xz rootfs-dir
 # rootfs-dir is relative to $WORKDIR
 archive_rootfs() {
+	SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
+	echo "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
+
 	sudo rm -f "${1}.tmp"
 	sudo tar \
 		--directory="$WORKDIR" \
 		--create \
 		--sort=name \
 		--hard-dereference \
+		--mtime="@${SOURCE_DATE_EPOCH}" \
 		--numeric-owner \
 		--preserve-permissions \
 		--acls \
