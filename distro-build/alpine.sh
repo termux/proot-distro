@@ -1,10 +1,10 @@
 dist_name="Alpine Linux"
-dist_version="3.18.4"
+dist_version="3.20.2"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/alpine-*.tar.xz
 
-	for arch in aarch64 armv7 x86 x86_64; do
+	for arch in aarch64 armv7 riscv64 x86 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/alpine-minirootfs-${dist_version}-${arch}.tar.gz" \
 			"https://dl-cdn.alpinelinux.org/alpine/v${dist_version:0:4}/releases/${arch}/alpine-minirootfs-${dist_version}-${arch}.tar.gz"
@@ -53,6 +53,8 @@ write_plugin() {
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/alpine-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['i686']="${GIT_RELEASE_URL}/alpine-i686-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/alpine-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+	TARBALL_URL['riscv64']="${GIT_RELEASE_URL}/alpine-riscv64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_SHA256['riscv64']="$(sha256sum "${ROOTFS_DIR}/alpine-riscv64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/alpine-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/alpine-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
