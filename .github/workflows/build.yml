@@ -81,6 +81,12 @@ jobs:
           name: built-rootfs-i686
           path: rootfs/*i686*.tar.xz
           if-no-files-found: ignore
+      - name: Upload Artifacts (riscv64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-rootfs-riscv64
+          path: rootfs/*riscv64*.tar.xz
+          if-no-files-found: ignore
       - name: Upload Artifacts (x86_64)
         uses: actions/upload-artifact@v4
         with:

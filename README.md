@@ -218,7 +218,7 @@ in directory with others (`$PREFIX/etc/proot-distro`).
 
 It is possible to force specify a custom CPU architecture of distribution to
 install. To do this you need to set `DISTRO_ARCH` environment variable to
-one of these values: `aarch64`, `arm`, `i686`, `x86_64`. Example:
+one of these values: `aarch64`, `arm`, `i686`, `riscv64`, `x86_64`. Example:
 
 ```
 DISTRO_ARCH=arm proot-distro install alpine
@@ -449,7 +449,7 @@ Normally this variable is determined automatically, and you should not set it.
 Typical use case is to set a custom architecture to run the distribution under
 QEMU emulator (user mode).
 
-Supported architectures are: `aarch64`, `arm`, `i686`, `x86_64`.
+Supported architectures are: `aarch64`, `arm`, `i686`, `riscv64`, `x86_64`.
 
 `DISTRO_NAME`: a name of distribution, something like "Alpine Linux (3.14.1)".
 

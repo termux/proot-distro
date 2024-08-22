@@ -190,11 +190,13 @@ PROGRAM_VERSION="4.16.0"
 ##     TARBALL_URL['aarch64']="https://example.com/archive-aarch64.tar.gz"
 ##     TARBALL_URL['arm']="https://example.com/archive-armv7.tar.gz"
 ##     TARBALL_URL['i686']="https://example.com/archive-i386.tar.gz"
+##     TARBALL_URL['riscv64']="https://example.com/archive-riscv64.tar.gz"
 ##     TARBALL_URL['x86_64']="https://example.com/archive-amd64.tar.gz"
 ##
 ##     TARBALL_SHA256['aarch64']="0000000000000000000000000000000000000000000000000000000000000000"
 ##     TARBALL_SHA256['arm']="0000000000000000000000000000000000000000000000000000000000000000"
 ##     TARBALL_SHA256['i686']="0000000000000000000000000000000000000000000000000000000000000000"
+##     TARBALL_SHA256['riscv64']="0000000000000000000000000000000000000000000000000000000000000000"
 ##     TARBALL_SHA256['x86_64']="0000000000000000000000000000000000000000000000000000000000000000"
 ##
 ##     distro_setup() {
@@ -626,6 +628,7 @@ command_install() {
 		TARBALL_URL["aarch64"]=""
 		TARBALL_URL["arm"]=""
 		TARBALL_URL["i686"]=""
+		TARBALL_URL["riscv64"]=""
 		TARBALL_URL["x86_64"]=""
 
 		# This should be overridden in distro plug-in with valid SHA-256
@@ -633,6 +636,7 @@ command_install() {
 		TARBALL_SHA256["aarch64"]=""
 		TARBALL_SHA256["arm"]=""
 		TARBALL_SHA256["i686"]=""
+		TARBALL_SHA256["riscv64"]=""
 		TARBALL_SHA256["x86_64"]=""
 
 		# If your content inside tarball isn't stored in subdirectory,
@@ -868,6 +872,7 @@ run_proot_cmd() {
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-i386"
 				fi
 				;;
+			riscv64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-riscv64";;
 			x86_64)
 				if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-x86_64"
@@ -881,7 +886,7 @@ run_proot_cmd() {
 				;;
 			*)
 				msg
-				msg "${BRED}Error: DISTRO_ARCH has unknown value '$DISTRO_ARCH'. Valid values are: aarch64, arm, i686, x86_64."
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '$DISTRO_ARCH'. Valid values are: aarch64, arm, i686, riscv64, x86_64."
 				msg
 				return 1
 			;;
@@ -896,6 +901,7 @@ run_proot_cmd() {
 					aarch64) cpu_emulator_pkg="qemu-user-aarch64";;
 					arm) cpu_emulator_pkg="qemu-user-arm";;
 					i686) cpu_emulator_pkg="qemu-user-i386";;
+					riscv64) cpu_emulator_pkg="qemu-user-riscv64";;
 					x86_64)
 						if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
 							cpu_emulator_pkg="qemu-user-x86-64"
@@ -1969,6 +1975,7 @@ command_login() {
 					need_cpu_emulator=false
 				fi
 				;;
+			riscv64) cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-riscv64";;
 			x86_64)
 				if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
 					cpu_emulator_path="@TERMUX_PREFIX@/bin/qemu-x86_64"
@@ -1982,7 +1989,7 @@ command_login() {
 				;;
 			*)
 				msg
-				msg "${BRED}Error: DISTRO_ARCH has unknown value '${YELLOW}${target_arch}${BRED}'. Valid values are: aarch64, arm, i686, x86_64."
+				msg "${BRED}Error: DISTRO_ARCH has unknown value '${YELLOW}${target_arch}${BRED}'. Valid values are: aarch64, arm, i686, riscv64, x86_64."
 				msg
 				return 1
 			;;
@@ -1997,6 +2004,7 @@ command_login() {
 					aarch64) cpu_emulator_pkg="qemu-user-aarch64";;
 					arm) cpu_emulator_pkg="qemu-user-arm";;
 					i686) cpu_emulator_pkg="qemu-user-i386";;
+					riscv64) cpu_emulator_pkg="qemu-user-riscv64";;
 					x86_64)
 						if [ "$PROOT_DISTRO_X64_EMULATOR" = "QEMU" ]; then
 							cpu_emulator_pkg="qemu-user-x86-64"
