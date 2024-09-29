@@ -2094,7 +2094,7 @@ command_list() {
 		if $verbose; then
 			msg "${CYAN}Supported distributions:${RST}"
 		else
-			msg "${CYAN}Supported distributions (format: name <alias>):${RST}"
+			msg "${CYAN}Supported distributions (format: name < alias >):${RST}"
 		fi
 
 		local i
@@ -2103,7 +2103,7 @@ command_list() {
 				msg
 				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
 				msg
-				msg "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
+				msg "    ${CYAN}Alias: ${GREEN}${i}${RST}"
 				if [ -d "${INSTALLED_ROOTFS_DIR}/${i}" ]; then
 					msg "    ${CYAN}Installed: ${GREEN}yes${RST}"
 				else
@@ -2113,7 +2113,8 @@ command_list() {
 					msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
 				fi
 			else
-				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]} <$i>${RST}"
+				msg
+				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]} ${GREEN}< $i >${RST}"
 			fi
 		done
 
