@@ -2698,7 +2698,7 @@ if [ $# -ge 1 ]; then
 		-h|--help|help|hel|he|h) shift 1; command_help;;
 		backup|bak|bkp) shift 1; command_backup "$@";;
 		install|i|in|ins|add) shift 1; command_install "$@";;
-		list|li|ls) shift 1; command_list;;
+		list|li|ls) shift 1; command_list "$@";;
 		login|sh) shift 1; command_login "$@";;
 		remove|rm) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
 		rename|mv) shift 1; command_rename "$@";;
