@@ -2058,33 +2058,86 @@ command_login_help() {
 #############################################################################
 
 command_list() {
+	local verbose=false
+
+	while (($# >= 1)); do
+		case "$1" in
+			-h|--help)
+				command_list_help
+				return 0
+				;;
+			-v|--verbose)
+				verbose=true
+				;;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_list_help
+				return 1
+				;;
+			*)
+				msg
+				msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'.${RST}"
+				command_list_help
+				return 1
+				;;
+		esac
+		shift 1
+	done
+
 	msg
 	if [ -z "${!SUPPORTED_DISTRIBUTIONS[*]}" ]; then
 		msg "${YELLOW}No distribution plug-ins found.${RST}"
 		msg
 		msg "${YELLOW}Please check the directory '${DISTRO_PLUGINS_DIR}' and create at least one distribution plug-in.${RST}"
 	else
-		msg "${CYAN}Supported distributions:${RST}"
+		if $verbose; then
+			msg "${CYAN}Supported distributions:${RST}"
+		else
+			msg "${CYAN}Supported distributions (format: name <alias>):${RST}"
+		fi
 
 		local i
 		for i in $(echo "${!SUPPORTED_DISTRIBUTIONS[@]}" | tr ' ' '\n' | sort -d); do
-			msg
-			msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
-			msg
-			msg "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
-			if [ -d "${INSTALLED_ROOTFS_DIR}/${i}" ]; then
-				msg "    ${CYAN}Installed: ${GREEN}yes${RST}"
+			if $verbose; then
+				msg
+				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]}${RST}"
+				msg
+				msg "    ${CYAN}Alias: ${YELLOW}${i}${RST}"
+				if [ -d "${INSTALLED_ROOTFS_DIR}/${i}" ]; then
+					msg "    ${CYAN}Installed: ${GREEN}yes${RST}"
+				else
+					msg "    ${CYAN}Installed: ${RED}no${RST}"
+				fi
+				if [ -n "${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]+x}" ]; then
+					msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
+				fi
 			else
-				msg "    ${CYAN}Installed: ${RED}no${RST}"
-			fi
-			if [ -n "${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]+x}" ]; then
-				msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
+				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]} <$i>${RST}"
 			fi
 		done
 
 		msg
 		msg "${CYAN}Install selected one with: ${GREEN}${PROGRAM_NAME} install <alias>${RST}"
 	fi
+	msg
+}
+
+command_list_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}list${RST}"
+	msg
+	msg "${CYAN}Command aliases: ${GREEN}ls${RST}"
+	msg
+	msg "${CYAN}List distributions and their properties.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}--verbose            ${CYAN}- Detailed output.${RST}"
+	msg
+	show_version
 	msg
 }
 
