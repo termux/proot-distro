@@ -4,7 +4,7 @@
 DISTRO_NAME="deepin"
 DISTRO_COMMENT="Supports only 64-bit CPUs."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/deepin-aarch64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['aarch64']="a35e5b7b2e792c2b48c0c8d83584ee9543ccef20adc7d4f65fd9c3c50a71f860"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/deepin-x86_64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['x86_64']="d98c9e1245d0d4d7081c22d92d38d0f241037af7c2e6697077765bfd37402342"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/deepin-aarch64-pd-v4.16.0.tar.xz"
+TARBALL_SHA256['aarch64']="620eb208b75fe13705da3a2ef4bbb71eedae0ce90ad7fdca3566eba361c8d5f6"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/deepin-x86_64-pd-v4.16.0.tar.xz"
+TARBALL_SHA256['x86_64']="fb96f654a4d5779bcf3b02f595d4e3480f02a9a7e6746ba87bba29238cf738b1"
