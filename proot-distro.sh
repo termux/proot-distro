@@ -1694,7 +1694,7 @@ command_login() {
 
 	# Setup QEMU when CPU architecture do not match the one of device.
 	local target_arch
-	target_arch=$(detect_cpu_arch)
+	target_arch=$(detect_cpu_arch "${distro_name}")
 	if [ "$target_arch" = "unknown" ]; then
 		if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
 			# shellcheck disable=SC1090
