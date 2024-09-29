@@ -2113,6 +2113,17 @@ command_list() {
 				if [ -n "${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]+x}" ]; then
 					msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
 				fi
+
+				local supported_cpus
+				if [ -f "${DISTRO_PLUGINS_DIR}/${i}.sh" ]; then
+					supported_cpus=$(source "${DISTRO_PLUGINS_DIR}/${i}.sh"; echo "${!TARBALL_URLS[@]}")
+				elif [ -f "${DISTRO_PLUGINS_DIR}/${i}.override.sh" ]; then
+					supported_cpus=$(source "${DISTRO_PLUGINS_DIR}/${i}.override.sh"; echo "${!TARBALL_URLS[@]}")
+				else
+					supported_cpus="no data"
+				fi
+
+				msg "    ${CYAN}Architectures: ${supported_cpus// /, }${RST}"
 			else
 				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]} ${GREEN}< $i >${RST}"
 			fi
