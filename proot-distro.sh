@@ -290,15 +290,6 @@ command_install() {
 		return 1
 	fi
 
-	if grep -qiP '(kali|parrot|nethunter|blackarch)' <<< "$distro_name" || grep -qiP '^nh$' <<< "$distro_name"; then
-		msg
-		show_donate
-		msg
-		msg "${MAGENTA}No, you won't get a Kali Linux for this :)${RST}"
-		msg
-		return 1
-	fi
-
 	if [ -n "${override_alias-}" ]; then
 		if [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.sh" ] && [ ! -e "${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh" ]; then
 			msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating file '${DISTRO_PLUGINS_DIR}/${override_alias}.override.sh'...${RST}"
@@ -1552,12 +1543,6 @@ command_login() {
 		return 1
 	fi
 
-	if grep -qiP '(kali|parrot|nethunter|blackarch)' <<< "$distro_name" || grep -qiP '^nh$' <<< "$distro_name"; then
-		# Redirect user to a safe distrubution.
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Distribution '${YELLOW}${distro_name}${CYAN}' known to be used by hax and therefore is not safe. Redirecting to '${YELLOW}ubuntu${CYAN}'...${RST}"
-		distro_name="ubuntu"
-	fi
-
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
 		msg
 		msg "${BRED}Error: distribution '${YELLOW}${distro_name}${BRED}' is not installed.${RST}"
@@ -2182,12 +2167,6 @@ command_backup() {
 		msg "${CYAN}View supported distributions by: ${GREEN}${PROGRAM_NAME} list${RST}"
 		msg
 		return 1
-	fi
-
-	if grep -qiP '(kali|parrot|nethunter|blackarch)' <<< "$distro_name" || grep -qiP '^nh$' <<< "$distro_name"; then
-		# Redirect user to a safe distrubution.
-		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Distribution '${YELLOW}${distro_name}${CYAN}' known to be used by hax and therefore is not safe. Redirecting to '${YELLOW}ubuntu${CYAN}'...${RST}"
-		distro_name="ubuntu"
 	fi
 
 	if [ ! -d "${INSTALLED_ROOTFS_DIR}/${distro_name}" ]; then
