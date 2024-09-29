@@ -157,9 +157,8 @@ fi
 
 if [ "$(id -u)" = "0" ]; then
 	msg
-	msg "${BRED}Error: ${PROGRAM_NAME} should not be executed as root user.${RST}"
+	msg "${BRED}Warning: ${PROGRAM_NAME} should not be executed as root user. Do not send bug reports about messed up Termux environment, lost data and bricked devices.${RST}"
 	msg
-	exit 1
 fi
 
 #############################################################################
