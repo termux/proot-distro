@@ -121,7 +121,7 @@ msg() {
 #
 #############################################################################
 
-for i in awk basename bzip2 cat chmod cp curl cut du find grep gzip \
+for i in awk basename bzip2 cat chmod cp curl cut du file find grep gzip \
 	head id lscpu mkdir proot rm sed tar xargs xz; do
 	if [ -z "$(command -v "$i")" ]; then
 		msg
@@ -181,6 +181,38 @@ if [ "$TRACER_PID" != 0 ]; then
 	unset TRACER_NAME
 fi
 unset TRACER_PID
+
+#############################################################################
+#
+# FUNCTION TO DETECT CPU ARCHITECTURE IN GIVEN DISTRIBUTION
+#
+# Check known executable(s) and return CPU architecture.
+#
+#############################################################################
+
+detect_cpu_arch() {
+	local dist_path="${INSTALLED_ROOTFS_DIR}/${1}"
+	local cpu_arch
+
+	local i
+	for i in bash dash sh su ls sha256sum busybox; do
+		if [ "$(dd if="${dist_path}/bin/${i}" bs=1 skip=1 count=3 2>/dev/null)" = "ELF" ]; then
+			cpu_arch=$(file "$(realpath "${dist_path}/bin/${i}")")
+			[ -n "$cpu_arch" ] && break
+		fi
+	done
+
+	case "$cpu_arch" in
+		"ARM aarch64") cpu_arch="aarch64";;
+		"ARM") cpu_arch="arm";;
+		"UCB RISC-V") cpu_arch="riscv64";;
+		"Intel 80386") cpu_arch="i686";;
+		"x86-64") cpu_arch="x86_64";;
+		*) cpu_arch="unknown";;
+	esac
+
+	echo "$cpu_arch"
+}
 
 #############################################################################
 #
@@ -1662,18 +1694,21 @@ command_login() {
 
 	# Setup QEMU when CPU architecture do not match the one of device.
 	local target_arch
-	if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
-		# shellcheck disable=SC1090
-		target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
-	elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
-		# shellcheck disable=SC1090
-		target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
-	else
-		# This should never happen.
-		msg
-		msg "${BRED}Error: missing plugin for distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
-		msg
-		return 1
+	target_arch=$(detect_cpu_arch)
+	if [ "$target_arch" = "unknown" ]; then
+		if [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.sh" ]; then
+			# shellcheck disable=SC1090
+			target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.sh"; echo "${DISTRO_ARCH}")
+		elif [ -f "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh" ]; then
+			# shellcheck disable=SC1090
+			target_arch=$(. "${DISTRO_PLUGINS_DIR}/${distro_name}.override.sh"; echo "${DISTRO_ARCH}")
+		else
+			# This should never happen.
+			msg
+			msg "${BRED}Error: missing plugin for distribution '${YELLOW}${distro_name}${BRED}'.${RST}"
+			msg
+			return 1
+		fi
 	fi
 
 	local need_cpu_emulator=false
