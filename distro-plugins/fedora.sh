@@ -2,7 +2,7 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Fedora"
-DISTRO_COMMENT="Version 40. Supports only 64-bit CPUs."
+DISTRO_COMMENT="Version 40."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.15.0/fedora-aarch64-pd-v4.15.0.tar.xz"
 TARBALL_SHA256['aarch64']="0aa0da1860db99a26b2ecb3996e1c39020395e882658c3e33ea5d748811b3271"

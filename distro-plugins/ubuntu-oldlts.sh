@@ -2,7 +2,7 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Ubuntu (22.04)"
-DISTRO_COMMENT="Previous LTS release (jammy). Not available for x86 32-bit (i686) CPUs."
+DISTRO_COMMENT="Previous LTS release (jammy)."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.11.0/ubuntu-jammy-aarch64-pd-v4.11.0.tar.xz"
 TARBALL_SHA256['aarch64']="caddd5b6d4dc48fd028e369a9ecb101f96e01ad3957b46e77f637252612ec628"

@@ -2,7 +2,7 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Chimera Linux"
-DISTRO_COMMENT="Version '20240707'. Supports only 64-bit CPUs."
+DISTRO_COMMENT="Version '20240707'."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/chimera-aarch64-pd-v4.16.0.tar.xz"
 TARBALL_SHA256['aarch64']="94383f62279e3cb17970fbb8e6786570ad63391d29f68d498bd602d9387d33cd"

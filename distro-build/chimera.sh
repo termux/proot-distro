@@ -37,7 +37,7 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Chimera Linux"
-	DISTRO_COMMENT="Version '${dist_version}'. Supports only 64-bit CPUs."
+	DISTRO_COMMENT="Version '${dist_version}'."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/chimera-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/chimera-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"

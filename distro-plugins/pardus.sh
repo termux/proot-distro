@@ -2,7 +2,7 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Pardus"
-DISTRO_COMMENT="Version 'yirmibir'. Not available for ARM 32 bit."
+DISTRO_COMMENT="Version 'yirmibir'."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/pardus-aarch64-pd-v4.6.0.tar.xz"
 TARBALL_SHA256['aarch64']="a549bed5384d13ee8ab353d64c2ed8ce1d311d0b2612c5a1cb9fe664f0650a37"

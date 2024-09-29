@@ -2,7 +2,6 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="deepin"
-DISTRO_COMMENT="Supports only 64-bit CPUs."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/deepin-aarch64-pd-v4.16.0.tar.xz"
 TARBALL_SHA256['aarch64']="620eb208b75fe13705da3a2ef4bbb71eedae0ce90ad7fdca3566eba361c8d5f6"

@@ -51,7 +51,6 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="deepin"
-	DISTRO_COMMENT="Supports only 64-bit CPUs."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/deepin-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/deepin-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"

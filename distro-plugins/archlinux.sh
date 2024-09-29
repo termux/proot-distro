@@ -2,7 +2,7 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Arch Linux"
-DISTRO_COMMENT="Currently available only AArch64 and ARM ports."
+DISTRO_COMMENT="This is Arch Linux ARM project, not original Arch."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/archlinux-aarch64-pd-v4.6.0.tar.xz"
 TARBALL_SHA256['aarch64']="7e87d551845aedae5a111d1fdcc2f5a69b0805f365244f3fab3fe67cd4114f00"
