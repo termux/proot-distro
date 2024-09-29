@@ -2095,6 +2095,7 @@ command_list() {
 			msg "${CYAN}Supported distributions:${RST}"
 		else
 			msg "${CYAN}Supported distributions (format: name < alias >):${RST}"
+			msg
 		fi
 
 		local i
@@ -2113,7 +2114,6 @@ command_list() {
 					msg "    ${CYAN}Comment: ${SUPPORTED_DISTRIBUTIONS_COMMENTS["${i}"]}${RST}"
 				fi
 			else
-				msg
 				msg "  ${CYAN}* ${YELLOW}${SUPPORTED_DISTRIBUTIONS[$i]} ${GREEN}< $i >${RST}"
 			fi
 		done
