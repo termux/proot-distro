@@ -2116,9 +2116,9 @@ command_list() {
 
 				local supported_cpus
 				if [ -f "${DISTRO_PLUGINS_DIR}/${i}.sh" ]; then
-					supported_cpus=$(source "${DISTRO_PLUGINS_DIR}/${i}.sh"; echo "${!TARBALL_URLS[@]}")
+					supported_cpus=$(source "${DISTRO_PLUGINS_DIR}/${i}.sh"; echo "${!TARBALL_URL[@]}")
 				elif [ -f "${DISTRO_PLUGINS_DIR}/${i}.override.sh" ]; then
-					supported_cpus=$(source "${DISTRO_PLUGINS_DIR}/${i}.override.sh"; echo "${!TARBALL_URLS[@]}")
+					supported_cpus=$(source "${DISTRO_PLUGINS_DIR}/${i}.override.sh"; echo "${!TARBALL_URL[@]}")
 				else
 					supported_cpus="no data"
 				fi
