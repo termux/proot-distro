@@ -197,7 +197,7 @@ detect_cpu_arch() {
 	local i
 	for i in bash dash sh su ls sha256sum busybox; do
 		if [ "$(dd if="${dist_path}/bin/${i}" bs=1 skip=1 count=3 2>/dev/null)" = "ELF" ]; then
-			cpu_arch=$(file "$(realpath "${dist_path}/bin/${i}")")
+			cpu_arch=$(file "$(realpath "${dist_path}/bin/${i}")" | cut -d':' -f2- | cut -d',' -f2 | cut -d' ' -f2-)
 			[ -n "$cpu_arch" ] && break
 		fi
 	done
