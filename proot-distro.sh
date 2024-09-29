@@ -806,8 +806,8 @@ command_install() {
 			fi
 		done < <(paste <(id -Gn | tr ' ' '\n') <(id -G | tr ' ' '\n'))
 
-		# Ensure that proot will be able to bind fake /proc entries.
-		setup_fake_proc
+		# Ensure that proot will be able to bind fake /proc and /sys entries.
+		setup_fake_sysdata
 
 		# Run optional distro-specific hook.
 		if declare -f -F distro_setup >/dev/null 2>&1; then
@@ -946,6 +946,12 @@ run_proot_cmd() {
 		fi
 	fi
 
+	# Ensure that proot will be able to bind fake /proc and /sys entries.
+	setup_fake_sysdata
+
+	# With this tools should assume that no SELinux present.
+	set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" "$@"
+
 	# shellcheck disable=SC2086 # ${cpu_emulator_arg} should expand into nothing rather than into ''.
 	proot ${cpu_emulator_arg} \
 		-L \
@@ -969,6 +975,7 @@ run_proot_cmd() {
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" \
 		/usr/bin/env -i \
 			"HOME=/root" \
 			"LANG=C.UTF-8" \
@@ -978,14 +985,19 @@ run_proot_cmd() {
 			"$@"
 }
 
-# A function for preparing fake content for certain /proc entries which are
-# known to have restricted access on Android OS. All entries are based on
-# values retrieved from Arch Linux (x86_64) running on a VM with 8 CPUs and 8
-# GiB of memory. Date 2023.03.28, Linux 6.2.1. Some values edited to fit
-# the PRoot-Distro.
-setup_fake_proc() {
+# A function for preparing fake content for certain system data interfaces
+# which known to be restricted on Android OS.
+#
+# All /proc entries are based on values retrieved from Arch Linux (x86_64)
+# running on a VM with 8 CPUs and 8 GiB of memory. Date 2023.03.28, Linux 6.2.1.
+# Some values edited to fit the PRoot-Distro.
+setup_fake_sysdata() {
 	mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
 	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+
+	mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty"
+	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys"
+	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty"
 
 	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg" ]; then
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg"
@@ -2067,8 +2079,11 @@ command_login() {
 	set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 	set -- "--bind=/sys" "$@"
 
-	# Ensure that we can bind fake /proc entries.
-	setup_fake_proc
+	# Ensure that we can bind fake /proc and /sys entries.
+	setup_fake_sysdata
+
+	# With this tools should assume that no SELinux present.
+	set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" "$@"
 
 	# Fake /proc/loadavg if necessary.
 	if ! cat /proc/loadavg > /dev/null 2>&1; then
