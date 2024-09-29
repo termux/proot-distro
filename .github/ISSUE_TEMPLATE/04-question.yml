@@ -1,0 +1,10 @@
+name: "Question"
+description: "Have questions about Proot-Distro? Ask us."
+title: "[General]: "
+labels: [question]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+    validations:
+      required: true
