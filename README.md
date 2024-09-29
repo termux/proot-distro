@@ -8,11 +8,6 @@ kernel, etc. Everything you need to get started is the latest version of
 PRoot Distro is not a virtual machine. This is a container environment manager
 based on `proot` utility which able to emulate `chroot` and `mount --bind`.
 
-This script should never be run as root user. If you do so, file permissions
-and SELinux labels could get messed up. There also possibility of damaging
-system if being executed as root. For safety, PRoot Distro checks the user id
-before run and refuses to work if detected user id `0` (root).
-
 ## Donate
 
 Although you get PRoot-Distro for free, remember that developers of such
@@ -570,15 +565,6 @@ of most significant differences you should be aware of.
    Self-sufficient application containers such as Appimage, Flatpak or Snap
    rely on file system mounting capabilities, FUSE and other features that
    not available without real root permissions.
-
-## Hacking
-
-PROOT DISTRO DEVELOPERS CHOSE TO NOT HELP WITH INSTALLING, CONFIGURING, USING
-AND TROUBLESHOOTING ALL KINDS OF TOOLS RELATED TO HACKING, PHISHING, DENIAL OF
-SERVICE, SPAM, FRAUD, SOCIAL ENGINEERING, OSINT AND THEIR PRECURSORS.
-
-Please don't ask about Black Arch, Kali Linux, Nethunter, Parrot OS and
-similar distributions.
 
 ## Forking
 
