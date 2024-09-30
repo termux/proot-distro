@@ -742,12 +742,14 @@ run_proot_cmd() {
 # running on a VM with 8 CPUs and 8 GiB of memory. Date 2023.03.28, Linux 6.2.1.
 # Some values edited to fit the PRoot-Distro.
 setup_fake_sysdata() {
-	mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
-
-	mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty"
-	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys"
-	chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty"
+	local d
+	for d in proc sys sys/.empty; do
+		if [ ! -e "${INSTALLED_ROOTFS_DIR}/${distro_name}/${d}" ]; then
+			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/${d}"
+		fi
+		chmod 700 "${INSTALLED_ROOTFS_DIR}/${distro_name}/${d}"
+	done
+	unset d
 
 	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg" ]; then
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg"
