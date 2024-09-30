@@ -40,6 +40,7 @@ Here are the supported distributions (alias: name):
 * `alpine`: Alpine Linux (edge)
 * `archlinux`: Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
+* `chimera`: Chimera Linux (20240707)
 * `debian`: Debian (stable)
 * `debian-oldstable`: Debian (old stable)
 * `deepin`: Deepin (beige)
