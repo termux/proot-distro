@@ -6,9 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        This is a bug tracker of the PRoot Distro - a Bash script utility for managing distribution rootfs for use with PRoot.
-
-        **!!! DO NOT REPORT ISSUES ABOUT NETWORKING, CRASHES, BLACK SCREENS, BROKEN WINE AND SO ON. THEY WILL BE IGNORED !!! Only bugs related to `proot-distro` shell script implementation will be accepted.**
+        > [!IMPORTANT]  
+        > ### This is a bug tracker of the PRoot Distro - a Bash script utility for managing distribution rootfs for use with PRoot.
+        > 
+        > ### **!!! DO NOT REPORT ISSUES ABOUT NETWORKING, CRASHES, BLACK SCREENS, BROKEN WINE AND SO ON. THEY WILL BE IGNORED !!! Only bugs related to `proot-distro` shell script implementation will be accepted.**
   - type: textarea
     attributes:
       label: Problem description
