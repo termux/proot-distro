@@ -1643,15 +1643,10 @@ command_login() {
 		set -u
 	done
 	unset var
-
-	local -a login_shell_args
+ 
 	if [ $# -ge 1 ]; then
-		# Wrap in quotes each argument to prevent word splitting.
-		local -a login_shell_args
-		for i in "$@"; do
-			login_shell_args+=("'$i'")
-		done
-		set -- "-c" "${login_shell_args[*]}"
+		# Escape each argument to prevent word splitting.
+		set -- "-c" "$(printf " %q" "$@")"
 	else
 		set --
 	fi
