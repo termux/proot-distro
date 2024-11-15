@@ -725,6 +725,7 @@ run_proot_cmd() {
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" \
+		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_inotify_max_user_watches:/proc/sys/fs/inotify/max_user_watches" \
 		--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" \
 		/usr/bin/env -i \
 			"HOME=/root" \
@@ -976,6 +977,12 @@ setup_fake_sysdata() {
 	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap" ]; then
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap"
 		40
+		EOF
+	fi
+
+	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_inotify_max_user_watches" ]; then
+		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_inotify_max_user_watches"
+		4096
 		EOF
 	fi
 }
@@ -1829,34 +1836,28 @@ command_login() {
 	# With this tools should assume that no SELinux present.
 	set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" "$@"
 
-	# Fake /proc/loadavg if necessary.
+	# Fake various /proc entries commonly used by programs unless read access
+	# available.
 	if ! cat /proc/loadavg > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" "$@"
 	fi
-
-	# Fake /proc/stat if necessary.
 	if ! cat /proc/stat > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" "$@"
 	fi
-
-	# Fake /proc/uptime if necessary.
 	if ! cat /proc/uptime > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" "$@"
 	fi
-
-	# Fake /proc/version if necessary.
 	if ! cat /proc/version > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" "$@"
 	fi
-
-	# Fake /proc/vmstat if necessary.
 	if ! cat /proc/vmstat > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" "$@"
 	fi
-
-	# Fake /proc/sys/kernel/cap_last_cap if necessary.
 	if ! cat /proc/sys/kernel/cap_last_cap > /dev/null 2>&1; then
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" "$@"
+	fi
+	if ! cat /proc/sys/fs/inotify/max_user_watches > /dev/null 2>&1; then
+		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_inotify_max_user_watches:/proc/sys/fs/inotify/max_user_watches" "$@"
 	fi
 
 	# Bind /tmp to /dev/shm.
