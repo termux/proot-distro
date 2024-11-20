@@ -2632,8 +2632,6 @@ command_help() {
 	msg "${CYAN}If you have issues with proot during installation or login, try${RST}"
 	msg "${CYAN}to set '${GREEN}PROOT_NO_SECCOMP=1${CYAN}' environment variable.${RST}"
 	msg
-	show_donate
-	msg
 	show_version
 	msg
 }
@@ -2649,24 +2647,6 @@ command_help() {
 
 show_version() {
 	msg "${ICYAN}Proot-Distro v${PROGRAM_VERSION} by Termux (@sylirre).${RST}"
-}
-
-#############################################################################
-#
-# FUNCTION TO PRINT VERSION STRING
-#
-# Prints version & author information. Used in functions for displaying
-# usage info.
-#
-#############################################################################
-
-show_donate() {
-	msg "${MAGENTA}Support development by donation and motivate us to bring new${RST}"
-	msg "${MAGENTA}features. We are accepting cryptocurrency:${RST}"
-	msg
-	msg "${MAGENTA}LTC: ltc1q2yne7e2p5ypf2ky0j3tg3vd6yktd5u57rmlly9${RST}"
-	msg
-	msg "${MAGENTA}TRX: TUP941DmHfrBNxvbcYkThx9hHrskU7FyTa${RST}"
 }
 
 #############################################################################
