@@ -5,37 +5,16 @@ Linux distribution installations. It does not require root or any special ROM,
 kernel, etc. Everything you need to get started is the latest version of
 [Termux] application. See [Installing](#installing) for details.
 
-PRoot Distro is not a virtual machine. This is a container environment manager
-based on `proot` utility which able to emulate `chroot` and `mount --bind`.
-
-## Donate
-
-Although you get PRoot-Distro for free, remember that developers of such
-free projects have to spend their free time after work or on weekends to
-keep them up. If you found PRoot-Distro to be useful, interested in new
-features and want to support the developer, consider donating.
-
-As of now donations can be made in cryptocurrency:
-
-* Ethereum: `0x76c7f1FC3C7396396fBD7e8cBDc2fc741FFa4aFa`
-* Litecoin: `ltc1q2yne7e2p5ypf2ky0j3tg3vd6yktd5u57rmlly9`
-* Tron: `TUP941DmHfrBNxvbcYkThx9hHrskU7FyTa`
-
 ***
 
-## Supported distributions
+## Bundled distributions
 
-PRoot Distro provides support only one version of distribution types, i.e. one
-of stable, LTS or rolling-release. Support of versioned distributions ended
-with branch 2.x.
+PRoot Distro provides a set of bare-minimum root file system tarballs for
+commonly used distributions. Each distribution guaranteed to support at least
+AArch64 (ARM64) CPUs. To reduce maintenance effort, we package only single
+version of distribution (stable, lts or rolling-release) with rare exceptions.
 
-PRoot Distro tends to provide only one version of given distributions to reduce
-maintenance requirements. Thus we will choose a one of LTS, stable or rolling
-release, while LTS is the most preferred and rolling is the least. At our
-discretion we may choose to provide 1 or 2 of old LTS or stable releases for
-the top distributions.
-
-Here are the supported distributions (alias: name):
+Available distributions in format `proot-distro alias : description`: 
 
 * `alpine`: Alpine Linux (edge)
 * `archlinux`: Arch Linux ARM
@@ -53,34 +32,35 @@ Here are the supported distributions (alias: name):
 * `ubuntu-oldlts`: Ubuntu (22.04)
 * `void`: Void Linux
 
-All systems come in a bare-minimum variant, typically consisting of package
-manager, shell, coreutils, util-linux and few more. Extended functionality
-like shell completion or package install suggestions should be configured
-manually.
+Everything is provided as-is. Root file system tarballs are generated from
+content provided by repositories of selected distributions with no modification
+from our side.
 
-If you need a custom version, you will need to add it on your own.
-See [Adding distribution](#adding-distribution).
-
-All rootfs archives provided by this project are built using [GitHub Actions](https://github.com/termux/proot-distro/actions):
+Build is automated by [GitHub Actions](https://github.com/termux/proot-distro/actions):
 
 * Configuration: https://github.com/termux/proot-distro/blob/master/.github/workflows/build.yml
 * Rootfs packaging scripts: https://github.com/termux/proot-distro/tree/master/distro-build
 
-Feel free to fork repository, make changes and build own distributions.
+We don't develop packages for any of mentioned distributions, so bug reports
+about them will be ignored. Although in most cases of "bugs" you'll have to
+blame either Android OS or [proot] utility.
+
+PRoot Distro is only a wrapper (launcher) for [proot].
+
+If you need a custom version, you will need to add it on your own.
+See [Adding distribution](#adding-distribution).
 
 ### Security
 
-The distributions available in the catalog derived from the official sources.
-Tarballs include the latest system upgrades and security patches during their
-build time.
+**Users must upgrade packages after installing the distribution to ensure
+presence of all latest bug fixes and security patches.**
 
-It is highly recommended to check for updates using the package manager after
-installing a distribution as tarballs are updated on opportunistic basis (once
-in few months).
+Root file system archives for distributions from our catalog are updated
+on demand. Effectively that means newly installed distribution may be few
+months as outdated.
 
-PRoot (core of `proot-distro`) does not provide high grade isolation like
-Docker. Consider this if you suspect that your installation can be an attack
-target or your Android OS is too old.
+Remember that `proot` (core of `proot-distro`) does not provide high grade
+isolation like `docker`, `firejail` and similar well-known utilities.
 
 ## Installing
 
@@ -97,8 +77,8 @@ cd proot-distro
 ./install.sh
 ```
 
-Dependencies: bash, bzip2, coreutils, curl, findutils, gzip, ncurses-utils,
-proot, sed, tar, xz-utils
+Dependencies: bash, bzip2, coreutils, curl, file, findutils, gawk, gzip,
+ncurses-utils, proot, sed, tar, util-linux, xz-utils
 
 If you want command line auto complete, install the `bash-completion` package.
 
@@ -287,8 +267,8 @@ Login command supports these behavior modifying options:
 
 * `--isolated`
 
-  Do not mount host volumes inside chroot environment. If this option was
-  given, following mount points will not be accessible inside chroot:
+  Do not mount host volumes inside proot environment. If this option was
+  given, following mount points will not be accessible:
 
   * /apex (only Android 10+)
   * /data/dalvik-cache
@@ -298,17 +278,17 @@ Login command supports these behavior modifying options:
   * /system
   * /vendor
 
-  You will not be able to use Termux utilities inside chroot environment.
+  You will not be able to use Termux utilities inside proot environment.
 
 * `--termux-home`
 
-  Mount Termux home directory as user home inside chroot environment.
+  Mount Termux home directory as user home inside proot environment.
 
   This option takes priority over option `--isolated`.
 
 * `--shared-tmp`
 
-  Share Termux temporary directory with chroot environment. Takes priority
+  Share Termux temporary directory with proot environment. Takes priority
   over option `--isolated`.
 
 * `--bind path:path`
@@ -316,7 +296,7 @@ Login command supports these behavior modifying options:
   Create a custom file system path binding. Option expects argument in the
   given format:
   ```
-  <host path>:<chroot path>
+  <host path>:<proot path>
   ```
 
   Takes priority over option `--isolated`.
@@ -526,6 +506,11 @@ of most significant differences you should be aware of.
 
    Using debugger tools such as gdb or strace could be problematic.
 
+   **Important**: `proot-distro` may show higher performance degradation
+   comparing to other proot environment setup scripts. Reason behind this
+   is more extensive use of directory and file bindings. This is not a bug
+   and is not planned to be "fixed".
+
 2. PRoot cannot detach from the running process.
 
    Since PRoot controls the running processes via `ptrace()` it cannot detach
@@ -542,7 +527,7 @@ of most significant differences you should be aware of.
    root user.
 
    Particularly, the fake root user makes it possible to use package manager
-   in chroot environment.
+   in proot environment.
 
 4. PRoot does not emulate privilege separation.
 
