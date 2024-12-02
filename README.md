@@ -137,6 +137,8 @@ distribution to PRoot Distro.
 
 Command: `help`
 
+Aliases: `h`, `he`, `hel`
+
 This command will show the help information about `proot-distro` usage.
 * `proot-distro help` - main page.
 * `proot-distro <command> --help` - view help for specific command.

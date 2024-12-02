@@ -2172,7 +2172,7 @@ command_list_help() {
 	msg
 	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}list${RST}"
 	msg
-	msg "${CYAN}Command aliases: ${GREEN}ls${RST}"
+	msg "${CYAN}Command aliases: ${GREEN}li${CYAN}, ${GREEN}ls${RST}"
 	msg
 	msg "${CYAN}List distributions and their properties.${RST}"
 	msg
@@ -2595,20 +2595,27 @@ command_help() {
 	msg "${CYAN}List of the available commands:${RST}"
 	msg
 	msg "  ${GREEN}help         ${CYAN}- Show this help information.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}h${CYAN}, ${GREEN}he${CYAN}, ${GREEN}hel${RST}"
 	msg
 	msg "  ${GREEN}backup       ${CYAN}- Backup a specified distribution.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}bak${CYAN}, ${GREEN}bkp${RST}"
 	msg
 	msg "  ${GREEN}install      ${CYAN}- Install a specified distribution.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}add${CYAN}, ${GREEN}i${CYAN}, ${GREEN}in${CYAN}, ${GREEN}ins${RST}"
 	msg
 	msg "  ${GREEN}list         ${CYAN}- List supported distributions and their${RST}"
 	msg "                 ${CYAN}installation status.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}li${CYAN}, ${GREEN}ls${RST}"
 	msg
 	msg "  ${GREEN}login        ${CYAN}- Start login shell for the specified distribution.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}sh${RST}"
 	msg
 	msg "  ${GREEN}remove       ${CYAN}- Delete a specified distribution.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}rm${RST}"
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "  ${GREEN}rename       ${CYAN}- Rename installed distribution.${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}mv${RST}"
 	msg
 	msg "  ${GREEN}reset        ${CYAN}- Reinstall from scratch a specified distribution.${RST}"
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
@@ -2617,6 +2624,7 @@ command_help() {
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "  ${GREEN}clear-cache  ${CYAN}- Clear cache of downloaded files. ${RST}"
+	msg "                 ${CYAN}aliases: ${GREEN}clear${CYAN}, ${GREEN}cl${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
 	msg "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
