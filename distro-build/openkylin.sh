@@ -1,4 +1,4 @@
-dist_name="OpenKylin"
+dist_name="openKylin"
 dist_version="nile"
 
 bootstrap_distribution() {
