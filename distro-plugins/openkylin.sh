@@ -1,7 +1,7 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="OpenKylin"
+DISTRO_NAME="openKylin"
 DISTRO_COMMENT="Version 'nile'."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.10.0/openkylin-aarch64-pd-v4.10.0.tar.xz"

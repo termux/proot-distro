@@ -2589,7 +2589,7 @@ command_help() {
 	msg "${CYAN}a set of functions with standardized command line interface${RST}"
 	msg "${CYAN}to let user easily manage Linux PRoot containers. By default${RST}"
 	msg "${CYAN}it supports a number of well known Linux distributions such${RST}"
-	msg "${CYAN}Alpine Linux, Debian or OpenSUSE. However it is possible to${RST}"
+	msg "${CYAN}Alpine Linux, Debian or openSUSE. However it is possible to${RST}"
 	msg "${CYAN}add others with a help of plug-ins.${RST}"
 	msg
 	msg "${CYAN}List of the available commands:${RST}"

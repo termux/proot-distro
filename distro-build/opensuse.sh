@@ -1,4 +1,4 @@
-dist_name="OpenSUSE"
+dist_name="openSUSE"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/opensuse-*.tar.xz
