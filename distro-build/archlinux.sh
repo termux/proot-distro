@@ -1,5 +1,5 @@
 dist_name="Arch Linux"
-dist_version="2023.03.01"
+dist_version="2025.01.01"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/archlinux-*.tar.xz
@@ -38,9 +38,6 @@ bootstrap_distribution() {
 			"archlinux-$(translate_arch "$arch")"
 	done
 	unset arch
-
-	# Don't build x86(64) for now as there is an issue with keyring.
-	return 0
 
 	curl --fail --location \
 		--output "${WORKDIR}/archlinux-x86_64.tar.gz" \
