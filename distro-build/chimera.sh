@@ -1,5 +1,5 @@
 dist_name="Chimera Linux"
-dist_version="20240707"
+dist_version="20241204"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/chimera-*.tar.xz
