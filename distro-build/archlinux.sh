@@ -4,6 +4,41 @@ dist_version="2025.01.01"
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/archlinux-*.tar.xz
 
+	for arch in aarch64 armv7; do
+		curl --fail --location \
+			--output "${WORKDIR}/archlinux-${arch}.tar.gz" \
+			"http://os.archlinuxarm.org/os/ArchLinuxARM-${arch}-latest.tar.gz"
+
+		sudo rm -rf "${WORKDIR}/archlinux-$(translate_arch "$arch")"
+		sudo mkdir -m 755 "${WORKDIR}/archlinux-$(translate_arch "$arch")"
+		sudo tar -zxp --acls --xattrs --xattrs-include='*' \
+			-f "${WORKDIR}/archlinux-${arch}.tar.gz" \
+			-C "${WORKDIR}/archlinux-$(translate_arch "$arch")"
+
+		cat <<- EOF | sudo unshare -mpf bash -e -
+		rm -f "${WORKDIR}/archlinux-$(translate_arch "$arch")/etc/resolv.conf"
+		echo "nameserver 1.1.1.1" > "${WORKDIR}/archlinux-$(translate_arch "$arch")/etc/resolv.conf"
+		mount --bind "${WORKDIR}/archlinux-$(translate_arch "$arch")/" "${WORKDIR}/archlinux-$(translate_arch "$arch")/"
+		mount --bind /dev "${WORKDIR}/archlinux-$(translate_arch "$arch")/dev"
+		mount --bind /proc "${WORKDIR}/archlinux-$(translate_arch "$arch")/proc"
+		mount --bind /sys "${WORKDIR}/archlinux-$(translate_arch "$arch")/sys"
+		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --init
+		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --populate archlinuxarm
+		if [ "$arch" = "aarch64" ]; then
+			chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Rnsc --noconfirm linux-aarch64
+		else
+			chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Rnsc --noconfirm linux-armv7
+		fi
+		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman -Syu --noconfirm
+		EOF
+
+		sudo rm -f "${WORKDIR:?}/archlinux-$(translate_arch "$arch")"/var/cache/pacman/pkg/* || true
+
+		archive_rootfs "${ROOTFS_DIR}/archlinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
+			"archlinux-$(translate_arch "$arch")"
+	done
+	unset arch
+
 	curl --fail --location \
 		--output "${WORKDIR}/archlinux-x86_64.tar.zst" \
 		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.zst"
@@ -59,6 +94,10 @@ write_plugin() {
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/archlinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['arm']="${GIT_RELEASE_URL}/archlinux-arm-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/archlinux-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+	TARBALL_URL['i686']="${GIT_RELEASE_URL}/archlinux-i686-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/archlinux-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
+	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/archlinux-x86_64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/archlinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 
 	distro_setup() {
 	${TAB}# Fix environment variables on login or su.
