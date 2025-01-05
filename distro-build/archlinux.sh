@@ -40,7 +40,7 @@ bootstrap_distribution() {
 	unset arch
 
 	curl --fail --location \
-		--output "${WORKDIR}/archlinux-x86_64.tar.gz" \
+		--output "${WORKDIR}/archlinux-x86_64.tar.zst" \
 		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.zst"
 
 	sudo mkdir -m 755 "${WORKDIR}/archlinux-bootstrap"
