@@ -41,11 +41,11 @@ bootstrap_distribution() {
 
 	curl --fail --location \
 		--output "${WORKDIR}/archlinux-x86_64.tar.gz" \
-		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.gz"
+		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.zst"
 
 	sudo mkdir -m 755 "${WORKDIR}/archlinux-bootstrap"
-	sudo tar -zxp --strip-components=1 --acls --xattrs --xattrs-include='*' \
-		-f "${WORKDIR}/archlinux-x86_64.tar.gz" \
+	sudo tar -xp --strip-components=1 --acls --xattrs --xattrs-include='*' \
+		-f "${WORKDIR}/archlinux-x86_64.tar.zst" \
 		-C "${WORKDIR}/archlinux-bootstrap"
 
 	cat <<- EOF | sudo unshare -mpf bash -e -
