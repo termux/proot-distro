@@ -36,8 +36,8 @@ bootstrap_distribution() {
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
 	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap -K /archlinux-i686 base
 	EOF
-	mv archlinux-bootstrap/archlinux-x86_64 ./
-	mv archlinux-bootstrap/archlinux-i686 ./
+	sudo mv archlinux-bootstrap/archlinux-x86_64 ./
+	sudo mv archlinux-bootstrap/archlinux-i686 ./
 
 	for arch in i686 x86_64; do
 		sudo rm -f "${WORKDIR:?}/archlinux-bootstrap/archlinux-${arch}"/var/cache/pacman/pkg/* || true
