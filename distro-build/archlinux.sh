@@ -88,7 +88,7 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Arch Linux"
-	DISTRO_COMMENT="This is Arch Linux ARM project, not original Arch."
+	DISTRO_COMMENT="ARM(64) devices use Arch Linux ARM, i686 uses Arch Linux 32. Both are independent projects. The original Arch usable only by x86_64 devices."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/archlinux-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/archlinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
