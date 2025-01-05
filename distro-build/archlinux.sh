@@ -24,6 +24,8 @@ bootstrap_distribution() {
 	mkdir "${WORKDIR}/archlinux-bootstrap/archlinux-x86_64"
 	echo 'Server = http://mirror.rackspace.com/archlinux/\$repo/os/\$arch' > \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
+	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --init
+	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --populate
 	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap -K /archlinux-x86_64 base
 	# chroot "${WORKDIR}/archlinux-bootstrap" pacman -Scc --noconfirm
 	sed -i 's|Architecture = auto|Architecture = i686|' \
