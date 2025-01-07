@@ -17,19 +17,17 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 Available distributions in format `proot-distro alias : description`: 
 
 * `alpine`: Alpine Linux (edge)
-* `archlinux`: Arch Linux ARM
+* `archlinux`: Arch Linux / Arch Linux 32 / Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
-* `chimera`: Chimera Linux (20240707)
+* `chimera`: Chimera Linux (20241204)
 * `debian`: Debian (bookworm)
-* `debian-oldstable`: Debian (bullseye)
 * `deepin`: deepin (beige)
-* `fedora`: Fedora 40 (64bit only)
+* `fedora`: Fedora 41 (64bit only)
 * `manjaro`: Manjaro (AArch64 only)
 * `openkylin`: openKylin (nile)
 * `opensuse`: openSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmibir)
 * `ubuntu`: Ubuntu (24.04)
-* `ubuntu-oldlts`: Ubuntu (22.04)
 * `void`: Void Linux
 
 Everything is provided as-is. Root file system tarballs are generated from
