@@ -2,11 +2,11 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Chimera Linux"
-DISTRO_COMMENT="Version '20240707'."
+DISTRO_COMMENT="Version '20241204'."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/chimera-aarch64-pd-v4.16.0.tar.xz"
-TARBALL_SHA256['aarch64']="94383f62279e3cb17970fbb8e6786570ad63391d29f68d498bd602d9387d33cd"
-TARBALL_URL['riscv64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/chimera-riscv64-pd-v4.16.0.tar.xz"
-TARBALL_SHA256['riscv64']="c4be7cfbcf42fa42fe23da09a8df57e27639c7c9ae99a92f6b1d092637570e0e"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.16.0/chimera-x86_64-pd-v4.16.0.tar.xz"
-TARBALL_SHA256['x86_64']="5643effe55fd33fcbd0783de896ebeaac527eb930fa800eb52f3d91c11fb9d40"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.17.3/chimera-aarch64-pd-v4.17.3.tar.xz"
+TARBALL_SHA256['aarch64']="e0fdd16e9e941db33179e15e0f28994a364dbca6f8e3b65ec037e24b9480aa84"
+TARBALL_URL['riscv64']="https://github.com/termux/proot-distro/releases/download/v4.17.3/chimera-riscv64-pd-v4.17.3.tar.xz"
+TARBALL_SHA256['riscv64']="2664534b873cd3072a5432251619e90b866ec4c96325ea6494c7aca396b4d97e"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.17.3/chimera-x86_64-pd-v4.17.3.tar.xz"
+TARBALL_SHA256['x86_64']="e3f97eeea9f40084301ea0c6cdb666685173e1efaa4fabd4ba74b0d4ad37d83a"
