@@ -21,10 +21,10 @@ bootstrap_distribution() {
 	mount --bind /dev "${WORKDIR}/manjaro-aarch64/dev"
 	mount --bind /proc "${WORKDIR}/manjaro-aarch64/proc"
 	mount --bind /sys "${WORKDIR}/manjaro-aarch64/sys"
+	chroot "${WORKDIR}/manjaro-aarch64" pacman-mirrors -a -P http -c poland
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --init
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate manjaro
 	chroot "${WORKDIR}/manjaro-aarch64" pacman-key --populate archlinuxarm
-	chroot "${WORKDIR}/manjaro-aarch64" pacman-mirrors -c poland
 	chroot "${WORKDIR}/manjaro-aarch64" pacman -Syu --noconfirm
 	chroot "${WORKDIR}/manjaro-aarch64" pacman -S --noconfirm util-linux
 	EOF
