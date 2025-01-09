@@ -4,8 +4,8 @@
 DISTRO_NAME="Manjaro"
 DISTRO_COMMENT="Manjaro ARM64 port."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.14.1/manjaro-aarch64-pd-v4.14.1.tar.xz"
-TARBALL_SHA256['aarch64']="4045baff1c137a6f37398c99f415e7bcaec9afdca2b8ed7d9045cebedc16f3a0"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.18.0/manjaro-aarch64-pd-v4.18.0.tar.xz"
+TARBALL_SHA256['aarch64']="f0aa5f70a4ccfe00f658bf9adc4a18d8332e894591839adb990d913c9aa604b9"
 
 distro_setup() {
 	# Fix environment variables on login or su.
