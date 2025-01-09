@@ -1,12 +1,12 @@
 dist_name="Artix Linux"
-dist_version="2023.10.31"
+dist_version="20241207"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/artix-*.tar.xz
 
 	curl --fail --location \
 		--output "${WORKDIR}/artix-aarch64.tar.xz" \
-			"https://armtixlinux.org/images/armtix-runit-20231031.tar.xz"
+			"https://armtixlinux.org/images/armtix-runit-${dist_version}.tar.xz"
 
 	sudo rm -rf "${WORKDIR}/artix-aarch64"
 	sudo mkdir -m 755 "${WORKDIR}/artix-aarch64"
