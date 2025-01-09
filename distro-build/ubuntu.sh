@@ -44,7 +44,8 @@ write_plugin() {
 	${TAB}run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
 
 	${TAB}# Configure Firefox PPA.
-	${TAB}add-apt-repository ppa:mozillateam/firefox-next
+	${TAB}echo "Configuring PPA repository for Firefox..."
+	${TAB}run_proot_cmd add-apt-repository --yes ppa:mozillateam/firefox-next || true
 	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-mozilla-ppa
 	${TAB}Package: *
 	${TAB}Pin: release o=LP-PPA-mozillateam-firefox-next
@@ -52,7 +53,8 @@ write_plugin() {
 	${TAB}CONFIG_EOF
 
 	${TAB}# Configure Thunderbird PPA.
-	${TAB}add-apt-repository ppa:mozillateam/thunderbird-next
+	${TAB}echo "Configuring PPA repository for Thunderbird..."
+	${TAB}run_proot_cmd add-apt-repository --yes ppa:mozillateam/thunderbird-next || true
 	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-thunderbird-ppa
 	${TAB}Package: *
 	${TAB}Pin: release o=LP-PPA-mozillateam-thunderbird-next
