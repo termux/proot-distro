@@ -23,18 +23,13 @@ bootstrap_distribution() {
 		fi
 
 		docker pull "opensuse/tumbleweed@${digest}"
-		docker save --output "${WORKDIR}/opensuse-image-dump-${arch}.tar" \
-			"opensuse/tumbleweed@${digest}"
+		docker export --output "${WORKDIR}/opensuse-dump-${arch}.tar" \
+			$(docker create "opensuse/tumbleweed@${digest}")
 
-		sudo rm -rf "${WORKDIR}/opensuse-tmp" "${WORKDIR}/opensuse-$(translate_arch "$arch")"
-		mkdir "${WORKDIR}/opensuse-tmp"
+		sudo rm -rf "${WORKDIR}/opensuse-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/opensuse-$(translate_arch "$arch")"
-		sudo tar -x --strip-components=1 \
-			-f "${WORKDIR}/opensuse-image-dump-${arch}.tar" \
-			-C "${WORKDIR}/opensuse-tmp"
-		sudo tar -xpf "${WORKDIR}/opensuse-tmp"/layer.tar \
+		sudo tar -xpf "${WORKDIR}/opensuse-dump-${arch}.tar" \
 			-C "${WORKDIR}/opensuse-$(translate_arch "$arch")"
-		sudo rm -rf "${WORKDIR}/opensuse-tmp"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/resolv.conf"
