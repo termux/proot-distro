@@ -24,7 +24,7 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-install -Suy xbps
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-install -uy
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" env SSL_NO_VERIFY_PEER=1 xbps-install -y base-minimal
-		chroot "${WORKDIR}/void-$(translate_arch "$arch")" xbps-remove -y base-voidstrap
+		#chroot "${WORKDIR}/void-$(translate_arch "$arch")" xbps-remove -y base-voidstrap
 		chroot "${WORKDIR}/void-$(translate_arch "$arch")" xbps-reconfigure -fa
 		EOF
 
