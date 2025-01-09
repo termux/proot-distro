@@ -13,7 +13,7 @@ bootstrap_distribution() {
 			--architectures=${arch} \
 			--variant=apt \
 			--components="main,universe,multiverse" \
-			--include="locales,passwd" \
+			--include="locales,passwd,software-properties-common" \
 			--format=directory \
 			"${dist_version}" \
 			"${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")"
@@ -42,6 +42,22 @@ write_plugin() {
 	${TAB}# Configure en_US.UTF-8 locale.
 	${TAB}sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' ./etc/locale.gen
 	${TAB}run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
+
+	${TAB}# Configure Firefox PPA.
+	${TAB}add-apt-repository ppa:mozillateam/firefox-next
+	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-mozilla-ppa
+	${TAB}Package: *
+	${TAB}Pin: release o=LP-PPA-mozillateam-firefox-next
+	${TAB}Pin-Priority: 9999
+	${TAB}CONFIG_EOF
+
+	${TAB}# Configure Thunderbird PPA.
+	${TAB}add-apt-repository ppa:mozillateam/thunderbird-next
+	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-thunderbird-ppa
+	${TAB}Package: *
+	${TAB}Pin: release o=LP-PPA-mozillateam-thunderbird-next
+	${TAB}Pin-Priority: 9999
+	${TAB}CONFIG_EOF
 	}
 	EOF
 }
