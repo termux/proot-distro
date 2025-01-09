@@ -1,5 +1,5 @@
 dist_name="Void Linux"
-dist_version="20230628"
+dist_version="20240314"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/void-*.tar.xz
@@ -7,7 +7,7 @@ bootstrap_distribution() {
 	for arch in aarch64 armv7l i686 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/void-${arch}.tar.xz" \
-			"https://repo-default.voidlinux.org/live/${dist_version}/void-${arch}-ROOTFS-${dist_version}.tar.xz"
+			"https://repo-default.voidlinux.org/live/current/void-aarch64-ROOTFS-${dist_version}.tar.xz"
 
 		sudo rm -rf "${WORKDIR}/void-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/void-$(translate_arch "$arch")"
