@@ -1,5 +1,5 @@
 dist_name="Pardus"
-dist_version="yirmibir"
+dist_version="yirmiuc"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/pardus-*.tar.xz
