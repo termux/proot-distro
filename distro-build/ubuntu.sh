@@ -45,7 +45,7 @@ write_plugin() {
 
 	${TAB}# Configure Firefox PPA.
 	${TAB}echo "Configuring PPA repository for Firefox..."
-	${TAB}run_proot_cmd add-apt-repository --yes ppa:mozillateam/firefox-next || true
+	${TAB}run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/firefox-next || true
 	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-mozilla-ppa
 	${TAB}Package: *
 	${TAB}Pin: release o=LP-PPA-mozillateam-firefox-next
@@ -54,7 +54,7 @@ write_plugin() {
 
 	${TAB}# Configure Thunderbird PPA.
 	${TAB}echo "Configuring PPA repository for Thunderbird..."
-	${TAB}run_proot_cmd add-apt-repository --yes ppa:mozillateam/thunderbird-next || true
+	${TAB}run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/thunderbird-next || true
 	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-thunderbird-ppa
 	${TAB}Package: *
 	${TAB}Pin: release o=LP-PPA-mozillateam-thunderbird-next
