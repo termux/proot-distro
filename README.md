@@ -19,14 +19,14 @@ Available distributions in format `proot-distro alias : description`:
 * `alpine`: Alpine Linux (edge)
 * `archlinux`: Arch Linux / Arch Linux 32 / Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
-* `chimera`: Chimera Linux (20241204)
+* `chimera`: Chimera Linux
 * `debian`: Debian (bookworm)
 * `deepin`: deepin (beige)
 * `fedora`: Fedora 41 (64bit only)
 * `manjaro`: Manjaro (AArch64 only)
 * `openkylin`: openKylin (nile)
 * `opensuse`: openSUSE (Tumbleweed)
-* `pardus`: Pardus (yirmibir)
+* `pardus`: Pardus (yirmiuc)
 * `ubuntu`: Ubuntu (24.04)
 * `void`: Void Linux
 
