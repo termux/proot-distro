@@ -16,7 +16,8 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 
 Available distributions in format `proot-distro alias : description`: 
 
-* `alpine`: Alpine Linux (edge)
+* `adelie`: Adelie Linux
+* `alpine`: Alpine Linux (edge) \-\-\- **Recommended for low disk space!**
 * `archlinux`: Arch Linux / Arch Linux 32 / Arch Linux ARM
 * `artix`: Artix Linux (AArch64 only)
 * `chimera`: Chimera Linux
