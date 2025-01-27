@@ -28,6 +28,7 @@ Available distributions in format `proot-distro alias : description`:
 * `openkylin`: openKylin (nile)
 * `opensuse`: openSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmiuc)
+* `rockylinux`: Rocky Linux (9.5)
 * `ubuntu`: Ubuntu (24.04)
 * `void`: Void Linux
 
