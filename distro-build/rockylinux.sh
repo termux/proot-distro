@@ -13,7 +13,7 @@ bootstrap_distribution() {
 		sudo mkdir -m 755 "${WORKDIR}/rocky-$(translate_arch "$arch")"
 		sudo mv "${WORKDIR}/rocky-tmp"/* "${WORKDIR}/rocky-$(translate_arch "$arch")"
 		sudo rm -rf "${WORKDIR}/rocky-tmp"
-		
+
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/rocky-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/rocky-$(translate_arch "$arch")/etc/resolv.conf"
@@ -35,12 +35,11 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Rocky Linux"
-	DISTRO_COMMENT="Version ${dist_version}. "
+	DISTRO_COMMENT="Version ${dist_version}"
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/rocky-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/rocky-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/rocky-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/rocky-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-
 	EOF
 }
