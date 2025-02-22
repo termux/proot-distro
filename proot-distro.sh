@@ -2724,13 +2724,22 @@ command_copy() {
 
 command_copy_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}copy ${GREEN}[DIST-ALIAS]:SRC [DIST-ALIAS]:DEST${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}copy ${CYAN}[${GREEN}DIST-ALIAS:${CYAN}]${GREEN}SRC ${CYAN}[${GREEN}DIST-ALIAS:${CYAN}]${GREEN}DEST${RST}"
+	msg
+	msg "${CYAN}Command aliases: ${GREEN}cp${RST}"
 	msg
 	msg "${CYAN}Copy files from/to distribution.${RST}"
+	msg
+	msg "${CYAN}Both source and destination arguments may be either as a local${RST}"
+	msg "${CYAN}path or path of file inside distribution container.${RST}"
 	msg
 	msg "${CYAN}Options:${RST}"
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "${CYAN}Example how to copy local file to distribution:${RST}"
+	msg
+	msg "${BCYAN}${PROGRAM_NAME} ${GREEN}copy ./file.txt ubuntu:/root/file.txt${RST}"
 	msg
 	show_version
 	msg
