@@ -2733,16 +2733,16 @@ command_copy_help() {
 	msg "${CYAN}Both source and destination arguments may be either as a local${RST}"
 	msg "${CYAN}path or path of file inside distribution container.${RST}"
 	msg
-	msg "${CYAN}Glob is not supported. Only one file or directory can be copied${RST}"
-	msg "${CYAN}at a time.${RST}"
-	msg
 	msg "${CYAN}Options:${RST}"
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
 	msg
+	msg "${CYAN}Glob is not supported. Only one file or directory can be copied${RST}"
+	msg "${CYAN}at a time.${RST}"
+	msg
 	msg "${CYAN}Example how to copy local file to distribution:${RST}"
 	msg
-	msg "${BCYAN}${PROGRAM_NAME} ${GREEN}copy ./file.txt ubuntu:/root/file.txt${RST}"
+	msg "  ${GREEN}${PROGRAM_NAME} copy ./file.txt ubuntu:/root/file.txt${RST}"
 	msg
 	show_version
 	msg
