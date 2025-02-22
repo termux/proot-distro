@@ -2636,6 +2636,20 @@ command_copy() {
 		shift 1
 	done
 
+	if [ -z "${source}" ]; then
+		msg
+		msg "${BRED}Error: missing source file path argument.${RST}"
+		command_copy_help
+		return 1
+	fi
+
+	if [ -z "${destination}" ]; then
+		msg
+		msg "${BRED}Error: missing destination file path argument.${RST}"
+		command_copy_help
+		return 1
+	fi
+
 	# Evaluate source path.
 	src_distribution=$(grep -qP ':' <<< "${source}" && cut -d':' -f1 <<< "${source}" || true)
 	src_path=$(cut -d':' -f2- <<< "${source}")
