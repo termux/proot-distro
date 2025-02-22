@@ -394,6 +394,24 @@ ssh example.com 'cat /backups/pd-debian-backup.tar.xz' | xz -d | proot-distro re
 proot-distro restore ./pd-debian-backup.tar.xz
 ```
 
+### Copy file to distribution or vice versa
+
+Command: `copy`
+
+Aliases: `cp`
+
+Copy a given file or directory from/to distribution.
+
+Usage example:
+```
+proot-distro copy ./localfile.txt ubuntu:/home/user/targetfile.txt
+```
+
+It is possible to move file rather than copying if option `--move` was passed.
+
+Globs are not supported. Source and destination paths may be specified only
+once.
+
 ### Clear downloads cache
 
 Command: `clear-cache`
