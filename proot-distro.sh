@@ -2584,8 +2584,8 @@ command_clear_cache_help() {
 #
 # FUNCTION TO COPY FILES FROM/TO DISTRIBUTION
 #
-# A wrapper for "cp" coreutils command replacing distribution reference with
-# a real path.
+# A wrapper for "cp" ("mv") coreutils command replacing distribution reference
+# with a real path.
 #
 # Distribution reference format is: <dist-alias>:/absolute/path/to/file
 #
@@ -2596,6 +2596,7 @@ command_copy() {
 	local src_path dest_path
 	local src_distribution dest_distribution
 	local verbose=false
+	local mv_mode=false
 
 	while (($# >= 1)); do
 		case "$1" in
@@ -2605,6 +2606,9 @@ command_copy() {
 				;;
 			-v|--verbose)
 				verbose=true
+				;;
+			-m|--move)
+				mv_mode=true
 				;;
 			-*)
 				msg
@@ -2712,22 +2716,35 @@ command_copy() {
 		fi
 	fi
 
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Copying data, please wait...${RST}"
-	${verbose} && msg
+	if ${mv_mode}; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Moving files...${RST}"
 
-	# Always use archive mode as argument allowed to be either a file or directory.
-	local extra_cp_flags=""
-	${verbose} && extra_cp_flags="-v"
-	if ! cp -a ${extra_cp_flags} "${src_path}" "${dest_path}"; then
+		if ! mv "${src_path}" "${dest_path}"; then
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
+			msg
+			msg "${BRED}Error: unable to move file into '${YELLOW}${dest_path}${BRED}'.${RST}"
+			msg
+			return 1
+		fi
+	else
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Copying files, this may take a while...${RST}"
+		local extra_cp_flags=""
+		${verbose} && extra_cp_flags="-v"
 		${verbose} && msg
-		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
-		msg
-		msg "${BRED}Error: unable to copy file into '${YELLOW}${dest_path}${BRED}'.${RST}"
-		msg
-		return 1
+
+		# Always use archive mode as argument allowed to be either a file or directory.
+		if ! cp -a ${extra_cp_flags} "${src_path}" "${dest_path}"; then
+			${verbose} && msg
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
+			msg
+			msg "${BRED}Error: unable to copy file into '${YELLOW}${dest_path}${BRED}'.${RST}"
+			msg
+			return 1
+		fi
+
+		${verbose} && msg
 	fi
 
-	${verbose} && msg
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 }
 
@@ -2745,6 +2762,8 @@ command_copy_help() {
 	msg "${CYAN}Options:${RST}"
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}--move               ${CYAN}- Move instead of copying.${RST}"
 	msg
 	msg "  ${GREEN}--verbose            ${CYAN}- Show the log of copied files.${RST}"
 	msg
