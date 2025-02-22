@@ -2624,7 +2624,7 @@ command_copy() {
 						command_copy_help
 						return 1
 					fi
-					source="$1"
+					destination="$1"
 				else
 					msg
 					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'.${RST}"
