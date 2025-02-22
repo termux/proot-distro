@@ -39,7 +39,7 @@ bootstrap_distribution() {
 		mount --bind /proc "${WORKDIR}/opensuse-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/sys"
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper dup
-		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --force $(rpm -qa --qf '%{NAME} ')
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --force $(rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -v filesystem)
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux
 		EOF
 
