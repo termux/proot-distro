@@ -2636,14 +2636,14 @@ command_copy() {
 		shift 1
 	done
 
-	if [ -z "${source}" ]; then
+	if [ -z "${source-}" ]; then
 		msg
 		msg "${BRED}Error: missing source file path argument.${RST}"
 		command_copy_help
 		return 1
 	fi
 
-	if [ -z "${destination}" ]; then
+	if [ -z "${destination-}" ]; then
 		msg
 		msg "${BRED}Error: missing destination file path argument.${RST}"
 		command_copy_help
