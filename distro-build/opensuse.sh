@@ -40,10 +40,11 @@ bootstrap_distribution() {
 		mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/sys"
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper removerepo repo-openh264
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper dup --no-confirm
-		pkgs=$(chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -v filesystem)
-		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm --force ${pkgs}
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -v filesystem > /tmp/opensuse-pkgs.txt
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm --force $(cat /tmp/opensuse-pkgs.txt)
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux
 		EOF
+		rm -f /tmp/opensuse-pkgs.txt
 
 		archive_rootfs "${ROOTFS_DIR}/opensuse-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"opensuse-$(translate_arch "$arch")"
