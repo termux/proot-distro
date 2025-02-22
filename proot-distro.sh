@@ -2687,12 +2687,12 @@ command_copy() {
 	else
 		dest_path=$(realpath -m "${dest_path}")
 	fi
-	if [ -e "${dest_path}" ]; then
-		msg
-		msg "${BRED}Error: destination file '${YELLOW}${destination}${BRED}' already exist, refusing to overwrite.${RST}"
-		msg
-		return 1
-	fi
+	#if [ -e "${dest_path}" ]; then
+	#	msg
+	#	msg "${BRED}Error: destination file '${YELLOW}${destination}${BRED}' already exist, refusing to overwrite.${RST}"
+	#	msg
+	#	return 1
+	#fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Source: '${src_path}'${RST}"
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Destination: '${dst_path}'${RST}"
