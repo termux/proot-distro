@@ -34,7 +34,7 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/resolv.conf"
-		sed -E 's/^(rpm\.install\.excludedocs)/# \1/g' ${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/zypp/zypp.conf"
+		sed -E 's/^(rpm\.install\.excludedocs)/# \1/g' "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/zypp/zypp.conf"
 		mount --bind /dev "${WORKDIR}/opensuse-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/opensuse-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/sys"
