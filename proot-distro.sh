@@ -2595,12 +2595,16 @@ command_copy() {
 	local source destination
 	local src_path dest_path
 	local src_distribution dest_distribution
+	local verbose=false
 
 	while (($# >= 1)); do
 		case "$1" in
 			-h|--help)
 				command_copy_help
 				return 0
+				;;
+			-v|--verbose)
+				verbose=true
 				;;
 			-*)
 				msg
@@ -2709,9 +2713,13 @@ command_copy() {
 	fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Copying data, please wait...${RST}"
+	${verbose} && msg
 
 	# Always use archive mode as argument allowed to be either a file or directory.
-	if ! cp -a "${src_path}" "${dest_path}"; then
+	local extra_cp_flags=""
+	${verbose} && extra_cp_flags="-v"
+	if ! cp -a ${extra_cp_flags} "${src_path}" "${dest_path}"; then
+		${verbose} && msg
 		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
 		msg
 		msg "${BRED}Error: unable to copy file into '${YELLOW}${dest_path}${BRED}'.${RST}"
@@ -2719,12 +2727,13 @@ command_copy() {
 		return 1
 	fi
 
+	${verbose} && msg
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 }
 
 command_copy_help() {
 	msg
-	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}copy ${CYAN}[${GREEN}DIST-ALIAS:${CYAN}]${GREEN}SRC ${CYAN}[${GREEN}DIST-ALIAS:${CYAN}]${GREEN}DEST${RST}"
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}copy ${CYAN}[${GREEN}OPTIONS] ${CYAN}[${GREEN}DIST-ALIAS:${CYAN}]${GREEN}SRC ${CYAN}[${GREEN}DIST-ALIAS:${CYAN}]${GREEN}DEST${RST}"
 	msg
 	msg "${CYAN}Command aliases: ${GREEN}cp${RST}"
 	msg
@@ -2736,6 +2745,8 @@ command_copy_help() {
 	msg "${CYAN}Options:${RST}"
 	msg
 	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	msg "  ${GREEN}--verbose            ${CYAN}- Show the log of copied files.${RST}"
 	msg
 	msg "${CYAN}Glob is not supported. Only one file or directory can be copied${RST}"
 	msg "${CYAN}at a time.${RST}"
