@@ -34,12 +34,12 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/resolv.conf"
-		sed -E 's/^(rpm\.install\.excludedocs)/# \1/g' "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/zypp/zypp.conf"
+		sed -i -E 's/^(rpm\.install\.excludedocs)/# \1/g' "${WORKDIR}/opensuse-$(translate_arch "$arch")/etc/zypp/zypp.conf"
 		mount --bind /dev "${WORKDIR}/opensuse-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/opensuse-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper dup
-		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --force $(rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -v filesystem)
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper dup --no-confirm
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm --force $(rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -v filesystem)
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux
 		EOF
 
