@@ -2637,7 +2637,7 @@ command_copy() {
 	done
 
 	# Evaluate source path.
-	src_distribution=$(cut -d':' -f1 <<< "${source}")
+	src_distribution=$(grep -qP ':' <<< "${source}" && cut -d':' -f1 <<< "${source}" || true)
 	src_path=$(cut -d':' -f2- <<< "${source}")
 	if [ -n "${src_distribution}" ]; then
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${src_distribution}" ]; then
@@ -2659,7 +2659,7 @@ command_copy() {
 	fi
 
 	# Evaluate destination path.
-	dest_distribution=$(cut -d':' -f1 <<< "${destination}")
+	dest_distribution=$(grep -qP ':' <<< "${destination}" && cut -d':' -f1 <<< "${destination}" || true)
 	dest_path=$(cut -d':' -f2- <<< "${destination}")
 	if [ -n "${dest_distribution}" ]; then
 		if [ -d "${INSTALLED_ROOTFS_DIR}/${dest_distribution}" ]; then
