@@ -2695,7 +2695,7 @@ command_copy() {
 	#fi
 
 	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Source: '${src_path}'${RST}"
-	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Destination: '${dst_path}'${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Destination: '${dest_path}'${RST}"
 
 	if [ ! -e "$(dirname "${dest_path}")" ]; then
 		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$(dirname "${dest_path}")'...${RST}"
