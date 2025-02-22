@@ -2579,6 +2579,126 @@ command_clear_cache_help() {
 	msg
 }
 
+
+#############################################################################
+#
+# FUNCTION TO COPY FILES FROM/TO DISTRIBUTION
+#
+# A wrapper for "cp" coreutils command replacing distribution reference with
+# a real path.
+#
+# Distribution reference format is: <dist-alias>:/absolute/path/to/file
+#
+#############################################################################
+
+command_copy() {
+	local source destination
+	local src_path dest_path
+	local src_distribution dest_distribution
+
+	while (($# >= 1)); do
+		case "$1" in
+			-h|--help)
+				command_copy_help
+				return 0
+				;;
+			-*)
+				msg
+				msg "${BRED}Error: got unknown option '${YELLOW}${1}${BRED}'.${RST}"
+				command_copy_help
+				return 1
+				;;
+			*)
+				if [ -z "${source-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: source file argument should not be empty.${RST}"
+						command_copy_help
+						return 1
+					fi
+					source="$1"
+				elif [ -z "${destination-}" ]; then
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: destination file argument should not be empty.${RST}"
+						command_copy_help
+						return 1
+					fi
+					source="$1"
+				else
+					msg
+					msg "${BRED}Error: got excessive positional argument '${YELLOW}${1}${BRED}'.${RST}"
+					command_copy_help
+					return 1
+				fi
+				;;
+		esac
+		shift 1
+	done
+
+	# Evaluate source path.
+	src_distribution=$(cut -d':' -f1 <<< "${source}")
+	src_path=$(cut -d':' -f2- <<< "${source}")
+	if [ -n "${src_distribution}" ]; then
+		if [ -d "${INSTALLED_ROOTFS_DIR}/${src_distribution}" ]; then
+			src_path=$(realpath -m "${INSTALLED_ROOTFS_DIR}/${src_distribution}/${src_path}")
+		else
+			msg
+			msg "${BRED}Error: distribution '${YELLOW}${src_distribution}${BRED}' is not installed.${RST}"
+			msg
+			return 1
+		fi
+	else
+		src_path=$(realpath -m "${src_path}")
+	fi
+	if [ ! -e "${src_path}" ]; then
+		msg
+		msg "${BRED}Error: can't copy '${YELLOW}${source}${BRED}' because file does not exist.${RST}"
+		msg
+		return 1
+	fi
+
+	# Evaluate destination path.
+	dest_distribution=$(cut -d':' -f1 <<< "${destination}")
+	dest_path=$(cut -d':' -f2- <<< "${destination}")
+	if [ -n "${dest_distribution}" ]; then
+		if [ -d "${INSTALLED_ROOTFS_DIR}/${dest_distribution}" ]; then
+			dest_path=$(realpath -m "${INSTALLED_ROOTFS_DIR}/${dest_distribution}/${dest_path}")
+		else
+			msg
+			msg "${BRED}Error: distribution '${YELLOW}${dest_distribution}${BRED}' is not installed.${RST}"
+			msg
+			return 1
+		fi
+	else
+		dest_path=$(realpath -m "${dest_path}")
+	fi
+	if [ -e "${dest_path}" ]; then
+		msg
+		msg "${BRED}Error: destination file '${YELLOW}${destination}${BRED}' already exist, refusing to overwrite.${RST}"
+		msg
+		return 1
+	fi
+	mkdir -p "$(dirname "${dest_path}")"
+
+	# Always use archive mode as argument allowed to be either a file or directory.
+	cp -a "${src_path}" "${dest_path}"
+}
+
+command_copy_help() {
+	msg
+	msg "${BYELLOW}Usage: ${BCYAN}${PROGRAM_NAME} ${GREEN}copy ${GREEN}[DIST-ALIAS]:SRC [DIST-ALIAS]:DEST${RST}"
+	msg
+	msg "${CYAN}Copy files from/to distribution.${RST}"
+	msg
+	msg "${CYAN}Options:${RST}"
+	msg
+	msg "  ${GREEN}--help               ${CYAN}- Show this help information.${RST}"
+	msg
+	show_version
+	msg
+}
+
 #############################################################################
 #
 # FUNCTION TO PRINT UTILITY USAGE INFORMATION
@@ -2624,6 +2744,8 @@ command_help() {
 	msg "                 ${RED}WARNING: this command destroys data!${RST}"
 	msg
 	msg "  ${GREEN}clear-cache  ${CYAN}- Clear cache of downloaded files. ${RST}"
+	msg
+	msg "  ${GREEN}copy         ${CYAN}- Copy files from/to distribution. ${RST}"
 	msg
 	msg "${CYAN}Each of commands has its own help information. To view it, just${RST}"
 	msg "${CYAN}supply a '${GREEN}--help${CYAN}' argument to chosen command.${RST}"
@@ -2735,6 +2857,7 @@ if [ $# -ge 1 ]; then
 		remove|rm) shift 1; CMD_REMOVE_REQUESTED_RESET="false" command_remove "$@";;
 		rename|mv) shift 1; command_rename "$@";;
 		clear-cache|clear|cl) shift 1; command_clear_cache "$@";;
+		copy|cp) shift 1; command_copy "$@";;
 
 		# Not implementing aliases as they could be confusing.
 		# We don't have many choices for these two commands: r, re, res, rst.
