@@ -2679,10 +2679,33 @@ command_copy() {
 		msg
 		return 1
 	fi
-	mkdir -p "$(dirname "${dest_path}")"
+
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Source: '${src_path}'${RST}"
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Destination: '${dst_path}'${RST}"
+
+	if [ ! -e "$(dirname "${dest_path}")" ]; then
+		msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Creating directory '$(dirname "${dest_path}")'...${RST}"
+		if ! mkdir -p "$(dirname "${dest_path}")"; then
+			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
+			msg
+			msg "${BRED}Error: unable to create directory at '${YELLOW}$(dirname "${dest_path}")${BRED}'.${RST}"
+			msg
+			return 1
+		fi
+	fi
+
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Copying data, please wait...${RST}"
 
 	# Always use archive mode as argument allowed to be either a file or directory.
-	cp -a "${src_path}" "${dest_path}"
+	if ! cp -a "${src_path}" "${dest_path}"; then
+		msg "${BLUE}[${RED}!${BLUE}] ${CYAN}Failure.${RST}"
+		msg
+		msg "${BRED}Error: unable to copy file into '${YELLOW}${dest_path}${BRED}'.${RST}"
+		msg
+		return 1
+	fi
+
+	msg "${BLUE}[${GREEN}*${BLUE}] ${CYAN}Finished.${RST}"
 }
 
 command_copy_help() {
