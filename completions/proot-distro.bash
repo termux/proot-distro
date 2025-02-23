@@ -18,7 +18,7 @@ _proot-distro() {
 	local cur prev words cword
 	_init_completion || return
 
-	local pd_commands="help backup install list login remove rename reset restore clear-cache"
+	local pd_commands="help backup install list login remove rename reset restore clear-cache copy"
 	local pd_available_dists=$(_ls_available_dists)
 	local pd_installed_dists=$(_ls_installed_dists)
 
@@ -65,6 +65,9 @@ _proot-distro() {
 				COMPREPLY=($(compgen -W "${pd_installed_dists}" -- "$cur"))
 			;;
 			restore)
+				_filedir
+			;;
+			copy|cp)
 				_filedir
 			;;
 		esac
