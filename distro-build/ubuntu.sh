@@ -43,23 +43,14 @@ write_plugin() {
 	${TAB}sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' ./etc/locale.gen
 	${TAB}run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
 
-	${TAB}# Configure Firefox PPA.
-	${TAB}echo "Configuring PPA repository for Firefox..."
-	${TAB}run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/firefox-next || true
+	${TAB}# Configure Mozilla Team PPA.
+	${TAB}echo "Configuring PPA repository for Firefox and Thunderbird..."
+	${TAB}run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/ppa || true
 	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-mozilla-ppa
 	${TAB}Package: *
-	${TAB}Pin: release o=LP-PPA-mozillateam-firefox-next
+	${TAB}Pin: release o=LP-PPA-mozillateam
 	${TAB}Pin-Priority: 9999
 	${TAB}CONFIG_EOF
-
-	${TAB}# Configure Thunderbird PPA.
-	${TAB}echo "Configuring PPA repository for Thunderbird..."
-	${TAB}run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/thunderbird-next || true
-	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-thunderbird-ppa
-	${TAB}Package: *
-	${TAB}Pin: release o=LP-PPA-mozillateam-thunderbird-next
-	${TAB}Pin-Priority: 9999
-	${TAB}CONFIG_EOF
-	}
+        }
 	EOF
 }
