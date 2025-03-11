@@ -31,5 +31,20 @@ sed -e "s|@TERMUX_APP_PACKAGE@|$TERMUX_APP_PACKAGE|g" \
 echo "Symlinking $TERMUX_PREFIX/share/bash-completion/completions/proot-distro --> $TERMUX_PREFIX/share/bash-completion/completions/pd"
 ln -sfr "$TERMUX_PREFIX"/share/bash-completion/completions/proot-distro "$TERMUX_PREFIX"/share/bash-completion/completions/pd
 
+echo "Installing $TERMUX_PREFIX/share/fish/vendor_completions.d/proot-distro.fish"
+install -d -m 700 "$TERMUX_PREFIX"/share/fish/vendor_completions.d
+sed -e "s|@TERMUX_APP_PACKAGE@|$TERMUX_APP_PACKAGE|g" \
+	-e "s|@TERMUX_PREFIX@|$TERMUX_PREFIX|g" \
+	-e "s|@TERMUX_HOME@|$TERMUX_ANDROID_HOME|g" \
+	./completions/proot-distro.fish > "$TERMUX_PREFIX"/share/fish/vendor_completions.d/proot-distro.fish
+
+echo "Installing $TERMUX_PREFIX/share/fish/vendor_completions.d/pd.fish"
+cat << EOF > "$TERMUX_PREFIX"/share/fish/vendor_completions.d/pd.fish
+# Completions for proot-distro
+# https://github.com/termux/proot-distro
+
+complete -c pd -w proot-distro
+EOF
+
 echo "Installing $TERMUX_PREFIX/share/doc/proot-distro/README.md"
 install -Dm600 README.md "$TERMUX_PREFIX"/share/doc/proot-distro/README.md
