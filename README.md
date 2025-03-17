@@ -71,7 +71,7 @@ pkg install proot-distro
 
 With git:
 ```
-pkg install git
+pkg install git file proot
 git clone https://github.com/termux/proot-distro
 cd proot-distro
 ./install.sh
