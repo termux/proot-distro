@@ -570,6 +570,26 @@ of most significant differences you should be aware of.
    rely on file system mounting capabilities, FUSE and other features that
    not available without real root permissions.
 
+## Mirrors
+
+I do not provide own rootfs archive hosting servers. Please do not ask for
+them unless you are willing to pay hosting costs.
+
+All files are published as GitHub releases. Latter means there is no effective
+way of mirroring all available rootfs tarballs, therefore no mirrors exist
+and `proot-distro` does not have a built-in method for swithing mirrors.
+
+In case if you are unable to download rootfs archive from GitHub, you have
+these choices:
+
+1. Try to use GitHub proxy, something like `https://gh-proxy.ygxz.in/`
+
+2. Build own rootfs tarball and use own server for hosting. For local files
+   you can try specifying URL in format `file:///path/to/file.tar.gz`.
+
+Either of choices would require updating links and sha-256 checksums in files
+stored under `$PREFIX/etc/proot-distro`.
+
 ## Forking
 
 If you wish to use PRoot Distro or its part as a base for your own project,
