@@ -14,7 +14,7 @@ bootstrap_distribution() {
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=minbase \
-			--components="main,commercial,community" \
+			--components="main,cross,pty" \
 			--include="apt,ca-certificates,passwd,locales-all" \
 			--format=directory \
 			"${dist_version}" \
