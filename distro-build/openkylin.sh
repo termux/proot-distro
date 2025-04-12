@@ -1,5 +1,5 @@
 dist_name="openKylin"
-dist_version="nile"
+dist_version="huanghe"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/openkylin-*.tar.xz
@@ -25,13 +25,13 @@ bootstrap_distribution() {
 		rm -f "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/resolv.conf
 		echo "nameserver 1.1.1.1" > "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/resolv.conf
 		echo "en_US.UTF-8 UTF-8" > "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/locale.gen
-  		mount -t proc none "${WORKDIR}/openkylin-$(translate_arch "$arch")/proc"  
-        	mount --bind /sys "${WORKDIR}/openkylin-$(translate_arch "$arch")/sys"  
-        	mount --bind /dev "${WORKDIR}/openkylin-$(translate_arch "$arch")/dev"
+  		mount -t proc none "${WORKDIR}/openkylin-$(translate_arch "$arch")/proc"
+		mount --bind /sys "${WORKDIR}/openkylin-$(translate_arch "$arch")/sys"
+		mount --bind /dev "${WORKDIR}/openkylin-$(translate_arch "$arch")/dev"
 	 	echo "deb http://archive.build.openkylin.top/openkylin/ nile main cross pty" > "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
-		echo deb http://archive.build.openkylin.top/openkylin/ nile-security main cross pty >> "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
-                echo deb http://archive.build.openkylin.top/openkylin/ nile-updates main cross pty >> "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
-                echo deb http://archive.build.openkylin.top/openkylin/ nile-proposed main cross pty >> "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
+		echo deb http://archive.build.openkylin.top/openkylin/ ${dist_version}-security main cross pty >> "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
+		echo deb http://archive.build.openkylin.top/openkylin/ ${dist_version}-updates main cross pty >> "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
+		echo deb http://archive.build.openkylin.top/openkylin/ ${dist_version}-proposed main cross pty >> "${WORKDIR}"/openkylin-$(translate_arch "$arch")/etc/apt/sources.list
 		EOF
 
 		archive_rootfs "${ROOTFS_DIR}/openkylin-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
