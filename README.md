@@ -25,7 +25,6 @@ Available distributions in format `proot-distro alias : description`:
 * `deepin`: deepin (beige)
 * `fedora`: Fedora 41 (64bit only)
 * `manjaro`: Manjaro (AArch64 only)
-* `openkylin`: openKylin (nile)
 * `opensuse`: openSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmiuc)
 * `rockylinux`: Rocky Linux (9.5)
