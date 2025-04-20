@@ -23,7 +23,7 @@ Available distributions in format `proot-distro alias : description`:
 * `chimera`: Chimera Linux
 * `debian`: Debian (bookworm)
 * `deepin`: deepin (beige)
-* `fedora`: Fedora 41 (64bit only)
+* `fedora`: Fedora 42 (64bit only)
 * `manjaro`: Manjaro (AArch64 only)
 * `opensuse`: openSUSE (Tumbleweed)
 * `pardus`: Pardus (yirmiuc)
