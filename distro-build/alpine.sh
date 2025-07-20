@@ -1,5 +1,5 @@
 dist_name="Alpine Linux"
-dist_version="3.22.0"
+dist_version="3.22.1"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/alpine-*.tar.xz
@@ -25,8 +25,6 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/alpine-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/alpine-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/alpine-$(translate_arch "$arch")/sys"
-		echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
-		echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> "${WORKDIR}/alpine-$(translate_arch "$arch")/etc/apk/repositories"
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk upgrade
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add shadow-login
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" ln -sf /var/cache/apk /etc/apk/cache
@@ -45,7 +43,7 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Alpine Linux"
-	DISTRO_COMMENT="Rolling release branch (edge)."
+	DISTRO_COMMENT="Regular release v${dist_version}."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
