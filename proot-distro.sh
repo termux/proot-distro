@@ -1010,6 +1010,12 @@ command_install_help() {
 	msg "  ${GREEN}--override-alias [new alias]   ${CYAN}- Set a custom alias for installed${RST}"
 	msg "                                   ${CYAN}distribution.${RST}"
 	msg
+	msg "${CYAN}In case you want to use a custom rootfs download source (mirror),${RST}"
+	msg "${CYAN}specify environment variable '${GREEN}PD_OVERRIDE_TARBALL_URL${CYAN}' as below:${RST}"
+	msg
+	msg "  ${GREEN}export PD_OVERRIDE_TARBALL_URL=\"http://localhost:8080/dist.tar.gz\"${RST}"
+	msg "  ${GREEN}proot-distro install <alias>${RST}"
+	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"
 	msg
