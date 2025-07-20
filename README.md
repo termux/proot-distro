@@ -14,22 +14,30 @@ commonly used distributions. Each distribution guaranteed to support at least
 AArch64 (ARM64) CPUs. To reduce maintenance effort, we package only single
 version of distribution (stable, lts or rolling-release) with rare exceptions.
 
-Available distributions in format `proot-distro alias : description`: 
+| Distribution     | PD alias   | Version    | Status       |
+|------------------|------------|------------|--------------|
+| Adelie Linux     | adelie     | 1.0-beta6  | supported    |
+| Alpine Linux     | alpine     | edge       | unstable     |
+| Arch Linux (ARM) | archlinux  | rolling    | supported    |
+| Artix Linux      | artix      | rolling    | aarch64 only |
+| Chimera Linux    | chimera    | rolling    | only 64bit   |
+| Debian           | debian     | bookworm   | supported    |
+| Deepin           | deepin     | beige      | only 64bit   |
+| Fedora           | fedora     | 42         | unstable     |
+| Manjaro          | manjaro    | rolling    | aarch64 only |
+| OpenSUSE         | opensuse   | tumbleweed | supported    |
+| Pardus           | pardus     | yirmiuc    | no armv7     |
+| Rocky Linux      | rockylinux | 9.5        | only 64bit   |
+| Ubuntu           | ubuntu     | 24.04 LTS  | no i686      |
+| Void Linux       | void       | rolling    | supported    |
 
-* `adelie`: Adelie Linux
-* `alpine`: Alpine Linux (edge) \-\-\- **Recommended for low disk space!**
-* `archlinux`: Arch Linux / Arch Linux 32 / Arch Linux ARM
-* `artix`: Artix Linux (AArch64 only)
-* `chimera`: Chimera Linux
-* `debian`: Debian (bookworm)
-* `deepin`: deepin (beige)
-* `fedora`: Fedora 42 (64bit only)
-* `manjaro`: Manjaro (AArch64 only)
-* `opensuse`: openSUSE (Tumbleweed)
-* `pardus`: Pardus (yirmiuc)
-* `rockylinux`: Rocky Linux (9.5)
-* `ubuntu`: Ubuntu (24.04)
-* `void`: Void Linux
+Notes about distribution status:
+
+* `supported` means it expected to work on aarch64, arm, i686 and x86_64 devices without serious issues.
+* `only 64bit` means distribution available only for 64bit architectures: aarch64, x86_64, etc.
+* `no armv7`, `no ...` means lack of support for specific architecture(s).
+* `frozen` means that distribution may not receive release upgrade because of known issues.
+* `unstable` means distribution known to have severe issues when used with proot.
 
 Everything is provided as-is. Root file system tarballs are generated from
 content provided by repositories of selected distributions with no modification
