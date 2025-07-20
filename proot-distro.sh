@@ -401,6 +401,7 @@ command_install() {
 		# If user wants custom download URL
 		if [ -n "${PD_OVERRIDE_TARBALL_URL-}" ]; then
 			TARBALL_URL["$DISTRO_ARCH"]="${PD_OVERRIDE_TARBALL_URL}"
+			TARBALL_SHA256["$DISTRO_ARCH"]=""
 		fi
 
 		# Cannot proceed without URL and SHA-256.
