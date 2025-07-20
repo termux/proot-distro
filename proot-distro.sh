@@ -1829,10 +1829,15 @@ command_login() {
 	set -- "--bind=/dev/urandom:/dev/random" "$@"
 	set -- "--bind=/proc" "$@"
 	set -- "--bind=/proc/self/fd:/dev/fd" "$@"
-	set -- "--bind=/proc/self/fd/0:/dev/stdin" "$@"
-	set -- "--bind=/proc/self/fd/1:/dev/stdout" "$@"
-	set -- "--bind=/proc/self/fd/2:/dev/stderr" "$@"
 	set -- "--bind=/sys" "$@"
+
+	# Bind /proc/self/fd/{0,1,2} only if not launched under pipe
+	local i fds
+	fds=(stdin stdout stderr)
+	for i in "${!fds[@]}"; do
+		realpath -qe "/proc/self/fd/$i" >/dev/null && set -- "--bind=/proc/self/fd/$i:/dev/${fds[i]}" "$@"
+	done
+	unset i fds
 
 	# Ensure that we can bind fake /proc and /sys entries.
 	setup_fake_sysdata
