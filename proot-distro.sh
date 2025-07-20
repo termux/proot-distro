@@ -398,16 +398,24 @@ command_install() {
 		# shellcheck disable=SC1090
 		source "${distro_plugin_script}"
 
+		# If user wants custom download URL
+		if [ -n "${PD_OVERRIDE_TARBALL_URL-}" ]; then
+			TARBALL_URL["$DISTRO_ARCH"]="${PD_OVERRIDE_TARBALL_URL}"
+		fi
+
 		# Cannot proceed without URL and SHA-256.
 		if [ -z "${TARBALL_URL["$DISTRO_ARCH"]}" ]; then
 			msg "${BLUE}[${RED}!${BLUE}] ${CYAN}The distribution download URL is not defined for CPU architecture '${DISTRO_ARCH}'.${RST}"
 			return 1
 		fi
-		if ! grep -qP '^[0-9a-fA-F]{64}$' <<< "${TARBALL_SHA256["$DISTRO_ARCH"]}"; then
-			msg
-			msg "${BRED}Error: got malformed SHA-256 from plug-in script '${distro_plugin_script}'.${RST}"
-			msg
-			return 1
+		# But SHA-256 should be ignored for custom URLs.
+		if [ -z "${PD_OVERRIDE_TARBALL_URL-}" ]; then
+			if ! grep -qP '^[0-9a-fA-F]{64}$' <<< "${TARBALL_SHA256["$DISTRO_ARCH"]}"; then
+				msg
+				msg "${BRED}Error: got malformed SHA-256 from plug-in script '${distro_plugin_script}'.${RST}"
+				msg
+				return 1
+			fi
 		fi
 
 		if [ ! -d "$DOWNLOAD_CACHE_DIR" ]; then

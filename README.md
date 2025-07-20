@@ -202,6 +202,15 @@ proot-distro login alpine-test
 Copied plug-in has following name format `<name>.override.sh` and is stored
 in directory with others (`$PREFIX/etc/proot-distro`).
 
+You may specify a custom URL for downloading the rootfs archive with
+environment variable `PD_OVERRIDE_TARBALL_URL`, for example:
+```
+export PD_OVERRIDE_TARBALL_URL="http://localhost:8080/debian.tar.gz"
+proot-distro install debian
+```
+
+Pay attention that integrity of custom downloaded rootfs is not checked.
+
 It is possible to force specify a custom CPU architecture of distribution to
 install. To do this you need to set `DISTRO_ARCH` environment variable to
 one of these values: `aarch64`, `arm`, `i686`, `riscv64`, `x86_64`. Example:
