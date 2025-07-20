@@ -25,7 +25,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Deepin           | deepin     | beige      | only 64bit    |
 | Fedora           | fedora     | 42         | unstable      |
 | Manjaro          | manjaro    | rolling    | aarch64 only  |
-| OpenSUSE         | opensuse   | tumbleweed | supported     |
+| OpenSUSE         | opensuse   | rolling    | supported     |
 | Pardus           | pardus     | yirmiuc    | no armv7      |
 | Rocky Linux      | rockylinux | 9.5        | only 64bit    |
 | Ubuntu           | ubuntu     | 24.04 LTS  | no i686       |
