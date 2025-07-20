@@ -14,22 +14,25 @@ commonly used distributions. Each distribution guaranteed to support at least
 AArch64 (ARM64) CPUs. To reduce maintenance effort, we package only single
 version of distribution (stable, lts or rolling-release) with rare exceptions.
 
-| Distribution     | PD alias   | Version    | Status       |
-|------------------|------------|------------|--------------|
-| Adelie Linux     | adelie     | 1.0-beta6  | supported    |
-| Alpine Linux     | alpine     | edge       | unstable     |
-| Arch Linux (ARM) | archlinux  | rolling    | supported    |
-| Artix Linux      | artix      | rolling    | aarch64 only |
-| Chimera Linux    | chimera    | rolling    | only 64bit   |
-| Debian           | debian     | bookworm   | supported    |
-| Deepin           | deepin     | beige      | only 64bit   |
-| Fedora           | fedora     | 42         | unstable     |
-| Manjaro          | manjaro    | rolling    | aarch64 only |
-| OpenSUSE         | opensuse   | tumbleweed | supported    |
-| Pardus           | pardus     | yirmiuc    | no armv7     |
-| Rocky Linux      | rockylinux | 9.5        | only 64bit   |
-| Ubuntu           | ubuntu     | 24.04 LTS  | no i686      |
-| Void Linux       | void       | rolling    | supported    |
+| Distribution     | PD alias   | Version    | Status        |
+|------------------|------------|------------|---------------|
+| Adelie Linux     | adelie     | 1.0-beta6  | supported     |
+| Alpine Linux     | alpine     | edge       | unstable      |
+| Arch Linux (ARM) | archlinux  | rolling    | supported     |
+| Artix Linux      | artix      | rolling    | aarch64 only  |
+| Chimera Linux    | chimera    | rolling    | only 64bit    |
+| Debian           | debian     | bookworm   | supported     |
+| Deepin           | deepin     | beige      | only 64bit    |
+| Fedora           | fedora     | 42         | unstable      |
+| Manjaro          | manjaro    | rolling    | aarch64 only  |
+| OpenSUSE         | opensuse   | tumbleweed | supported     |
+| Pardus           | pardus     | yirmiuc    | no armv7      |
+| Rocky Linux      | rockylinux | 9.5        | only 64bit    |
+| Ubuntu           | ubuntu     | 24.04 LTS  | no i686       |
+| Void Linux       | void       | rolling    | supported     |
+| Guix             | N/A        | N/A        | not supported |
+| NixOS            | N/A        | N/A        | not supported |
+| *Others*         | *DIY*      | *DIY*      | *DIY*         |
 
 Notes about distribution status:
 
