@@ -403,6 +403,9 @@ command_install() {
 			TARBALL_URL["$DISTRO_ARCH"]="${PD_OVERRIDE_TARBALL_URL}"
 			TARBALL_SHA256["$DISTRO_ARCH"]=""
 		fi
+		if [ -n "${PD_OVERRIDE_TARBALL_STRIP_OPT-}" ]; then
+			TARBALL_STRIP_OPT="${PD_OVERRIDE_TARBALL_STRIP_OPT}"
+		fi
 
 		# Cannot proceed without URL and SHA-256.
 		if [ -z "${TARBALL_URL["$DISTRO_ARCH"]}" ]; then
@@ -1016,6 +1019,10 @@ command_install_help() {
 	msg
 	msg "  ${GREEN}export PD_OVERRIDE_TARBALL_URL=\"http://localhost:8080/dist.tar.gz\"${RST}"
 	msg "  ${GREEN}proot-distro install <alias>${RST}"
+	msg
+	msg "${CYAN}Optionally specify '${GREEN}PD_OVERRIDE_TARBALL_STRIP_OPT${CYAN}' to define how${RST}"
+	msg "${CYAN}many path components need to be stripped while extracting rootfs.${RST}"
+	msg "${CYAN}Default is 1. Specify 0 if rootfs was not stored in a sub directory.${RST}"
 	msg
 	msg "${CYAN}Selected distribution should be referenced by alias which can be${RST}"
 	msg "${CYAN}obtained by this command: ${GREEN}${PROGRAM_NAME} list${RST}"

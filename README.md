@@ -17,7 +17,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Distribution     | PD alias   | Version    | Status        |
 |------------------|------------|------------|---------------|
 | Adelie Linux     | adelie     | 1.0-beta6  | supported     |
-| Alpine Linux     | alpine     | edge       | unstable      |
+| Alpine Linux     | alpine     | 3.22.1     | supported     |
 | Arch Linux (ARM) | archlinux  | rolling    | supported     |
 | Artix Linux      | artix      | rolling    | aarch64 only  |
 | Chimera Linux    | chimera    | rolling    | only 64bit    |
@@ -208,6 +208,10 @@ environment variable `PD_OVERRIDE_TARBALL_URL`, for example:
 export PD_OVERRIDE_TARBALL_URL="http://localhost:8080/debian.tar.gz"
 proot-distro install debian
 ```
+Optionally specify `PD_OVERRIDE_TARBALL_STRIP_OPT` to define how many
+path components should be stripped when extracting tarball. Default is 1 if
+was not otherwise defined in the plug-in script of distribution. Specify to 0
+if rootfs is not stored in sub directory.
 
 Pay attention that integrity of custom downloaded rootfs is not checked.
 
