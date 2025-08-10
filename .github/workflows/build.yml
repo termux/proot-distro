@@ -50,7 +50,10 @@ jobs:
           # Remove distro plugins to filter and upload built distributions and its plugins later on
           rm -rf ./distro-plugins/*
       - name: Install Needed Dependencies
-        run: sudo apt-get update && sudo apt-get install -yq curl debian-archive-keyring jq mmdebstrap qemu-user-static binfmt-support
+        run: |
+          sudo apt-get update && sudo apt-get install -yq curl jq mmdebstrap qemu-user-static binfmt-support
+          curl -L -o /tmp/keyring.deb http://ftp.us.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
+          sudo dpkg -i /tmp/keyring.deb
       - name: Build distribution rootfs
         run: |
           distros_to_be_built=$(cat ./distributions.txt)
