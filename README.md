@@ -21,7 +21,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Arch Linux (ARM) | archlinux  | rolling    | supported     |
 | Artix Linux      | artix      | rolling    | aarch64 only  |
 | Chimera Linux    | chimera    | rolling    | only 64bit    |
-| Debian           | debian     | bookworm   | supported     |
+| Debian           | debian     | trixie     | supported     |
 | Deepin           | deepin     | beige      | only 64bit    |
 | Fedora           | fedora     | 42         | unstable      |
 | Manjaro          | manjaro    | rolling    | aarch64 only  |
