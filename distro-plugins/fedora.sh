@@ -2,7 +2,7 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Fedora"
-DISTRO_COMMENT="Version 42."
+DISTRO_COMMENT="Version 42. Broken on Android 15+."
 
 TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.25.0/fedora-aarch64-pd-v4.25.0.tar.xz"
 TARBALL_SHA256['aarch64']="9ca78013e8d51d634c0906e389e6174a816487491534385df01bee4752a5a9d8"
