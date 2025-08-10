@@ -25,7 +25,7 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/resolv.conf"
-		echo "excludepkgs=*selinux*" >> "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/dnf/dnf.conf"
+		echo "excludepkgs=*selinux* filesystem" >> "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/dnf/dnf.conf"
 		mount --bind /dev "${WORKDIR}/fedora-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/sys"
@@ -47,7 +47,7 @@ write_plugin() {
 	# Do not modify this file as your changes will be overwritten on next update.
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Fedora"
-	DISTRO_COMMENT="Version ${dist_version%%-*}."
+	DISTRO_COMMENT="Version ${dist_version%%-*}. Broken on Android 15+."
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/fedora-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/fedora-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
