@@ -1,7 +1,7 @@
 dist_name="Debian"
 
 # Put only current stable version here!
-dist_version="bookworm"
+dist_version="trixie"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/debian-"${dist_version}"-*.tar.xz
