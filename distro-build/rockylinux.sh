@@ -21,6 +21,7 @@ bootstrap_distribution() {
 		mount --bind /proc "${WORKDIR}/rocky-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/rocky-$(translate_arch "$arch")/sys"
 		chroot "${WORKDIR}/rocky-$(translate_arch "$arch")" microdnf upgrade -y
+		chroot "${WORKDIR}/rocky-$(translate_arch "$arch")" microdnf install dnf -y
 		chroot "${WORKDIR}/rocky-$(translate_arch "$arch")" microdnf clean all -y
 		EOF
 
