@@ -1,5 +1,5 @@
 dist_name="openSUSE"
-dist_version="15"
+dist_version="15.6"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/opensuse-*.tar.xz
