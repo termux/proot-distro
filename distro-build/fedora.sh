@@ -25,13 +25,15 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/resolv.conf"
+		sed -i '/tsflags=nodocs/d' "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/dnf/dnf.conf"
 		echo "excludepkgs=*selinux* filesystem" >> "${WORKDIR}/fedora-$(translate_arch "$arch")/etc/dnf/dnf.conf"
 		mount --bind /dev "${WORKDIR}/fedora-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" yum upgrade -y
-		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" yum install -y passwd util-linux
-		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" yum clean all
+		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf upgrade -y
+		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf reinstall '*'
+		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf install -y passwd util-linux
+		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf clean all
 		chmod 4755 "${WORKDIR}/fedora-$(translate_arch "$arch")"/usr/bin/sudo
 		EOF
 
