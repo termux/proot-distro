@@ -3,8 +3,8 @@
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Artix Linux"
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.6.0/artix-aarch64-pd-v4.6.0.tar.xz"
-TARBALL_SHA256['aarch64']="7963559a4e7f610d80823cce60743704fae61a8fce42d2b86601ae3dd28ce292"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/artix-aarch64-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['aarch64']="c6ef7e1cbf8dd88755b8b2c681a7830c7a79476dd47d7a43d2a7fe537c1d5b28"
 
 distro_setup() {
 	# Fix environment variables on login or su.
