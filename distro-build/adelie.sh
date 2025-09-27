@@ -19,6 +19,9 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/adelie-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/adelie-$(translate_arch "$arch")/etc/resolv.conf"
+		sed -i -E 's/(.*)/#\1/g' "${WORKDIR}/adelie-$(translate_arch "$arch")/etc/apk/repositories"
+		echo "https://adelielinux.nic.cz/adelie/adelie/current/system" >> "${WORKDIR}/adelie-$(translate_arch "$arch")/etc/apk/repositories"
+		echo "https://adelielinux.nic.cz/adelie/adelie/current/user" >> "${WORKDIR}/adelie-$(translate_arch "$arch")/etc/apk/repositories"
 		mount --bind /dev "${WORKDIR}/adelie-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/adelie-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/adelie-$(translate_arch "$arch")/sys"
