@@ -5,7 +5,7 @@ bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/opensuse-*.tar.xz
 
 	opensuse_manifest=$(docker manifest inspect opensuse/leap:"${dist_version}")
-	for arch in arm64 arm 386 amd64; do
+	for arch in arm64 386 amd64; do
 		if [ "$arch" = "arm" ]; then
 			digest=$(
 				echo "$opensuse_manifest" | \
