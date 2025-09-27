@@ -21,9 +21,9 @@ bootstrap_distribution() {
 	mount --bind /dev "${WORKDIR}/artix-aarch64/dev"
 	mount --bind /proc "${WORKDIR}/artix-aarch64/proc"
 	mount --bind /sys "${WORKDIR}/artix-aarch64/sys"
-	echo "Server = https://armtix.artixlinux.org/repos/\$repo/os/\$arch" > "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
-	echo "Server = https://repo.xdan.eu/pacman/armtix/\$repo/os/\$arch" >> "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
-	echo "Server = https://repo.armtixlinux.org/\$repo/os/\$arch" >> "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
+	echo 'Server = https://armtix.artixlinux.org/repos/\$repo/os/\$arch' > "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
+	echo 'Server = https://repo.xdan.eu/pacman/armtix/\$repo/os/\$arch' >> "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
+	echo 'Server = https://repo.armtixlinux.org/\$repo/os/\$arch' >> "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
 	chroot "${WORKDIR}/artix-aarch64" pacman -Rnsc --noconfirm linux-aarch64 linux-aarch64-lts linux-firmware
 	chroot "${WORKDIR}/artix-aarch64" pacman -Syu --noconfirm
 	EOF
