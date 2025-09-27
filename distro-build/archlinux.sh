@@ -1,5 +1,5 @@
 dist_name="Arch Linux"
-dist_version="2025.01.01"
+dist_version="2025.09.01"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/archlinux-*.tar.xz
