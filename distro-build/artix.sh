@@ -1,5 +1,5 @@
 dist_name="Artix Linux"
-dist_version="20241207"
+dist_version="20250831"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/artix-*.tar.xz
