@@ -31,7 +31,7 @@ bootstrap_distribution() {
 		mount --bind /proc "${WORKDIR}/fedora-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/fedora-$(translate_arch "$arch")/sys"
 		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf upgrade -y
-		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf reinstall '*'
+		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf reinstall -y '*'
 		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf install -y passwd util-linux
 		chroot "${WORKDIR}/fedora-$(translate_arch "$arch")" dnf clean all
 		chmod 4755 "${WORKDIR}/fedora-$(translate_arch "$arch")"/usr/bin/sudo
