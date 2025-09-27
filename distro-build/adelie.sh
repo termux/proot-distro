@@ -7,7 +7,8 @@ bootstrap_distribution() {
 	for arch in aarch64 armv7 x86_64; do
 		curl --fail --location \
 			--output "${WORKDIR}/adelie-${dist_version}-${arch}.tar.xz" \
-			"https://distfiles.adelielinux.org/adelie/${dist_version}/iso/adelie-rootfs-mini-${arch}-${dist_version}-20241223.txz"
+			"https://adelielinux.nic.cz/adelie/adelie/${dist_version}/iso/adelie-rootfs-mini-${arch}-${dist_version}-20241223.txz"
+			#"https://distfiles.adelielinux.org/adelie/${dist_version}/iso/adelie-rootfs-mini-${arch}-${dist_version}-20241223.txz"
 
 		sudo rm -rf "${WORKDIR}/adelie-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/adelie-$(translate_arch "$arch")"
