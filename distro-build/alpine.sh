@@ -25,7 +25,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/alpine-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/alpine-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/alpine-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add apk-tools=2.14.9-r2
+		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add apk-tools=2.14.9-r3
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk upgrade
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add shadow-login
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" ln -sf /var/cache/apk /etc/apk/cache
