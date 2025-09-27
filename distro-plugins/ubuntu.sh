@@ -1,15 +1,15 @@
 # This is a default distribution plug-in.
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
-DISTRO_NAME="Ubuntu (24.04)"
-DISTRO_COMMENT="LTS release (noble)."
+DISTRO_NAME="Ubuntu (25.04)"
+DISTRO_COMMENT="Regular release (plucky)."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.18.0/ubuntu-noble-aarch64-pd-v4.18.0.tar.xz"
-TARBALL_SHA256['aarch64']="91acaa786b8e2fbba56a9fd0f8a1188cee482b5c7baeed707b29ddaa9a294daa"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.18.0/ubuntu-noble-arm-pd-v4.18.0.tar.xz"
-TARBALL_SHA256['arm']="2afb7e1ff17983fa2cf4c57edeea6be427ffb0359d8628b24a147b4c8aa276d5"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.18.0/ubuntu-noble-x86_64-pd-v4.18.0.tar.xz"
-TARBALL_SHA256['x86_64']="3a769bce23985effb504140d43b6ddd73dac9e261d1932894afa31de81e45414"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/ubuntu-plucky-aarch64-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['aarch64']="63cee3aecc0473785ef761ec1127387ed2abbea0b26d74e5187601568fbb335f"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.29.0/ubuntu-plucky-arm-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['arm']="f6abc8042c5331392058dc2ec8c296b6d3c93419cb007649c34e35a170901fbb"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/ubuntu-plucky-x86_64-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['x86_64']="fcac0b71a98524e1dd10a3b1fe6753b8e85716b98207940169fe01bbd21b1538"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.

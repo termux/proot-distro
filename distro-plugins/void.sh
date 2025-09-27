@@ -3,14 +3,14 @@
 # If you want customize installation, please make a copy.
 DISTRO_NAME="Void Linux"
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.22.1/void-aarch64-pd-v4.22.1.tar.xz"
-TARBALL_SHA256['aarch64']="4430ed51e4c68252ee968c6ea19b1e00333ee9e77f1bda690901632b76322139"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.22.1/void-arm-pd-v4.22.1.tar.xz"
-TARBALL_SHA256['arm']="03c3b23d44c5c1f913c00e28204c4566a83dbf451db4d91cfb14f366950f99c8"
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.22.1/void-i686-pd-v4.22.1.tar.xz"
-TARBALL_SHA256['i686']="69903dd6ea907a17a3be43ef8163d8146227c557919058b9b014102a857f8dfa"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.22.1/void-x86_64-pd-v4.22.1.tar.xz"
-TARBALL_SHA256['x86_64']="c84e1927c584c7fa1f12662e572f6d1e2c653a4cb712faa1aaddc8e37ed46708"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/void-aarch64-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['aarch64']="7a7c449b3efe504749e40f556d13812010bccc930a820a56973a0f5fc2f16997"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.29.0/void-arm-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['arm']="5cb87c0ca8ee91047f3634789314920be6d914ce4f196157cb3949706ce18d03"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.29.0/void-i686-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['i686']="0ad014426c1e0dc7a0cfe8175157b28b2a8cb75b83d7f44b7bbc35420125a269"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/void-x86_64-pd-v4.29.0.tar.xz"
+TARBALL_SHA256['x86_64']="2853b9433b9051aa2512e7376a71736196fb3241eb90ba11110c6e867854c666"
 
 distro_setup() {
 	# Set default shell to bash.
