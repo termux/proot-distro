@@ -1,4 +1,8 @@
 name: "Build"
+run-name: >
+  ${{ github.event_name == 'push' && format('Commit: {0}', github.event.head_commit.message) 
+  || github.event_name == 'pull_request' && format('PR: {0}', github.event.pull_request.title) 
+  || format('Build rootfs: {0}', github.event.inputs.distributions) }}
 
 on:
   push:
