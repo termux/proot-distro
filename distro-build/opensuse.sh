@@ -5,23 +5,13 @@ bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/opensuse-*.tar.xz
 
 	opensuse_manifest=$(docker manifest inspect opensuse/leap:"${dist_version}")
-	for arch in arm64 386 amd64; do
-		if [ "$arch" = "arm" ]; then
-			digest=$(
-				echo "$opensuse_manifest" | \
-				jq -r ".manifests[]" | \
-				jq -r "select(.platform.architecture == \"${arch}\")" | \
-				jq -r "select(.platform.variant == \"v7\")" | \
-				jq -r ".digest"
-			)
-		else
-			digest=$(
-				echo "$opensuse_manifest" | \
-				jq -r ".manifests[]" | \
-				jq -r "select(.platform.architecture == \"${arch}\")" | \
-				jq -r ".digest"
-			)
-		fi
+	for arch in arm64 amd64; do
+		digest=$(
+			echo "$opensuse_manifest" | \
+			jq -r ".manifests[]" | \
+			jq -r "select(.platform.architecture == \"${arch}\")" | \
+			jq -r ".digest"
+		)
 
 		docker pull "opensuse/leap@${digest}"
 		docker export --output "${WORKDIR}/opensuse-dump-${arch}.tar" \
