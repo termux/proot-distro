@@ -8,10 +8,16 @@ bootstrap_distribution() {
 		curl --fail --location --output "${WORKDIR}/Rocky-Container-Minimal.${arch}-${dist_version}.tar.xz" "https://download.rockylinux.org/pub/rocky/${dist_version%%.*}/images/${arch}/Rocky-${dist_version%%.*}-Container-Minimal.latest.${arch}.tar.xz"
 		sudo rm -rf "${WORKDIR}/rocky-tmp" "${WORKDIR}/rocky-$(translate_arch "$arch")"
 		mkdir "${WORKDIR}/rocky-tmp"
-		tar -C "${WORKDIR}/rocky-tmp" -Jxf "${WORKDIR}/Rocky-Container-Minimal.${arch}-${dist_version}.tar.xz" --acls --xattrs --xattrs-include='*'
+		tar -C "${WORKDIR}/rocky-tmp" -Jxf "${WORKDIR}/Rocky-Container-Minimal.${arch}-${dist_version}.tar.xz"
+		oci_manifest=$(jq -r '.manifests[0].digest' "${WORKDIR}/rocky-tmp"/index.json | cut -d ':' -f 2)
+		oci_layers=$(jq -r '.layers[].digest' "${WORKDIR}/rocky-tmp/blobs/sha256/${oci_manifest}" | cut -d ':' -f 2)
 
 		sudo mkdir -m 755 "${WORKDIR}/rocky-$(translate_arch "$arch")"
-		sudo mv "${WORKDIR}/rocky-tmp"/* "${WORKDIR}/rocky-$(translate_arch "$arch")"
+		for layer in ${oci_layers}; do
+			sudo tar -zxp --acls --xattrs --xattrs-include='*' \
+				-f "${WORKDIR}/rocky-tmp/blobs/sha256/${layer}" \
+				-C "${WORKDIR}/rocky-$(translate_arch "$arch")"
+		done
 		sudo rm -rf "${WORKDIR}/rocky-tmp"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
