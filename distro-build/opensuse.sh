@@ -33,6 +33,7 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -Pv '(filesystem|gpg-pubkey)' > /tmp/opensuse-pkgs.txt
 		cat /tmp/opensuse-pkgs.txt | xargs chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm --force
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm util-linux
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper clean -a
 		EOF
 		sudo rm -f /tmp/opensuse-pkgs.txt
 
