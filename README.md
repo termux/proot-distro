@@ -25,10 +25,10 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Deepin           | deepin     | beige      | only 64bit    |
 | Fedora           | fedora     | 42         | unstable      |
 | Manjaro          | manjaro    | rolling    | aarch64 only  |
-| OpenSUSE         | opensuse   | rolling    | supported     |
+| OpenSUSE         | opensuse   | Leap 15.6  | only 64bit    |
 | Pardus           | pardus     | yirmiuc    | no armv7      |
-| Rocky Linux      | rockylinux | 9.5        | only 64bit    |
-| Ubuntu           | ubuntu     | 24.04 LTS  | no i686       |
+| Rocky Linux      | rockylinux | 10         | only 64bit    |
+| Ubuntu           | ubuntu     | 25.04      | no i686       |
 | Void Linux       | void       | rolling    | supported     |
 | Guix             | N/A        | N/A        | not supported |
 | NixOS            | N/A        | N/A        | not supported |
