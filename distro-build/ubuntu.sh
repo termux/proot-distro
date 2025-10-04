@@ -41,6 +41,15 @@ write_plugin() {
 	${TAB}# Configure en_US.UTF-8 locale.
 	${TAB}sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' ./etc/locale.gen
 	${TAB}run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
+
+	${TAB}# Configure Mozilla PPA.
+	${TAB}echo "Configuring PPA repository for Firefox and Thunderbird..."
+	${TAB}run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/ppa || true
+	${TAB}cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-mozilla-ppa
+	${TAB}Package: *
+	${TAB}Pin: release o=LP-PPA-mozillateam
+	${TAB}Pin-Priority: 9999
+	${TAB}CONFIG_EOF
 	}
 	EOF
 }
