@@ -18,19 +18,10 @@ distro_setup() {
 
 	# Configure Firefox PPA.
 	echo "Configuring PPA repository for Firefox..."
-	run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/firefox-next || true
+	run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/ppa || true
 	cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-mozilla-ppa
 	Package: *
-	Pin: release o=LP-PPA-mozillateam-firefox-next
-	Pin-Priority: 9999
-	CONFIG_EOF
-
-	# Configure Thunderbird PPA.
-	echo "Configuring PPA repository for Thunderbird..."
-	run_proot_cmd add-apt-repository --yes --no-update ppa:mozillateam/thunderbird-next || true
-	cat <<- CONFIG_EOF > ./etc/apt/preferences.d/pin-thunderbird-ppa
-	Package: *
-	Pin: release o=LP-PPA-mozillateam-thunderbird-next
+	Pin: release o=LP-PPA-mozillateam
 	Pin-Priority: 9999
 	CONFIG_EOF
 }
