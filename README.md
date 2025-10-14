@@ -17,7 +17,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Distribution     | PD alias   | Version    | Status        |
 |------------------|------------|------------|---------------|
 | Adelie Linux     | adelie     | 1.0-beta6  | no i686       |
-| Alpine Linux     | alpine     | 3.22.1     | frozen        |
+| Alpine Linux     | alpine     | 3.22.2     | frozen        |
 | Arch Linux       | archlinux  | rolling    | supported     |
 | Artix Linux      | artix      | rolling    | aarch64 only  |
 | Chimera Linux    | chimera    | rolling    | only 64bit    |
@@ -28,7 +28,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | OpenSUSE         | opensuse   | Leap 15.6  | only 64bit    |
 | Pardus           | pardus     | yirmiuc    | no armv7      |
 | Rocky Linux      | rockylinux | 10         | only 64bit    |
-| Ubuntu           | ubuntu     | 25.04      | no i686       |
+| Ubuntu           | ubuntu     | 25.10      | no i686       |
 | Void Linux       | void       | rolling    | supported     |
 | Guix             | N/A        | N/A        | not supported |
 | NixOS            | N/A        | N/A        | not supported |
@@ -339,9 +339,17 @@ Login command supports these behavior modifying options:
   Do not kill processes when shell session terminates. Typically will cause
   session to hang if you have any background processes running.
 
+* `--no-arch-warning`
+
+  Suppress warning about CPU not supporting 32-bit instructions.
+
 * `--kernel`
 
-  Set the kernel release and compatibility level to given value.
+  Customize Linux kernel release string shown by `uname -r` command.
+
+* `--hostname`
+
+  Customize system host name.
 
 * `--work-dir`
 
