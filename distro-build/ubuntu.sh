@@ -24,7 +24,10 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")" apt update
 		chroot "${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")" apt purge -yq --allow-remove-essential coreutils-from-uutils
 		chroot "${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")" apt purge -yq --allow-remove-essential rust-coreutils
+		chroot "${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")" apt clean
 		EOF
+
+		rm -rf "${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")"/var/lib/apt/lists/*
 
 		archive_rootfs "${ROOTFS_DIR}/ubuntu-${dist_version}-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"ubuntu-${dist_version}-$(translate_arch "$arch")"
