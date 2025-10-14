@@ -21,8 +21,7 @@ on:
 
 jobs:
   build:
-    # Ubuntu 22.04 has the up-to-date version of mmdebstrap
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
