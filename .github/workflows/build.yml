@@ -54,7 +54,7 @@ jobs:
           rm -rf ./distro-plugins/*
       - name: Install Needed Dependencies
         run: |
-          sudo apt update && sudo apt upgrade -yq && sudo apt install -yq curl jq qemu-user-static binfmt-support
+          sudo apt update && sudo apt install -yq curl jq qemu-user-static binfmt-support
           curl -L -o /tmp/mmdebstrap.deb http://ftp.us.debian.org/debian/pool/main/m/mmdebstrap/mmdebstrap_1.5.7-3_all.deb
           sudo apt install -yq /tmp/mmdebstrap.deb
           curl -L -o /tmp/keyring.deb http://ftp.us.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
