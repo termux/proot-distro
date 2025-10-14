@@ -42,13 +42,19 @@ _proot-distro() {
 			;;
 			login|sh)
 				if [ $prev = "--user" ]; then
-					COMPREPLY=($(compgen -W "username" -- "$cur"))
+					COMPREPLY=($(compgen -W "root" -- "$cur"))
 				elif [ $prev = "--bind" ]; then
 					COMPREPLY=($(compgen -W "/src:/dest" -- "$cur"))
 				elif [ $prev = "--kernel" ]; then
-					COMPREPLY=($(compgen -W "6.0.0-proot-distro" -- "$cur"))
+					COMPREPLY=($(compgen -W "6.17.0-PRoot-Distro" -- "$cur"))
+				elif [ $prev = "--hostname" ]; then
+					COMPREPLY=($(compgen -W "localhost" -- "$cur"))
+				elif [ $prev = "--work-dir" ]; then
+					COMPREPLY=($(compgen -W "/" -- "$cur"))
+				elif [ $prev = "--env" ]; then
+					COMPREPLY=($(compgen -W "ENVVAR=value" -- "$cur"))
 				else
-					COMPREPLY=($(compgen -W "${pd_installed_dists} --user --fix-low-ports --isolated --termux-home --shared-tmp --bind --no-link2symlink --no-sysvipc --no-kill-on-exit --kernel" -- "$cur"))
+					COMPREPLY=($(compgen -W "${pd_installed_dists} --user --fix-low-ports --isolated --termux-home --shared-tmp --bind --no-link2symlink --no-sysvipc --no-kill-on-exit --no-arch-warning --kernel --hostname --work-dir --env" -- "$cur"))
 				fi
 			;;
 			remove|rm)
