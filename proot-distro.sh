@@ -58,7 +58,8 @@ DEFAULT_PATH_ENV="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/
 # Default fake kernel version.
 # Note: faking kernel version is required when using PRoot-Distro on
 # old devices that are not compatible with up-to-date versions of GNU libc.
-DEFAULT_FAKE_KERNEL_VERSION="6.2.1-PRoot-Distro"
+DEFAULT_FAKE_KERNEL_RELEASE="6.17.0-PRoot-Distro"
+DEFAULT_FAKE_KERNEL_VERSION="#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025 00:00:00 +0000"
 
 # Emulator type for x86_64 systems.
 # Can be either BLINK or QEMU.
@@ -717,7 +718,7 @@ run_proot_cmd() {
 	# shellcheck disable=SC2086 # ${cpu_emulator_arg} should expand into nothing rather than into ''.
 	proot ${cpu_emulator_arg} \
 		-L \
-		--kernel-release="${DEFAULT_FAKE_KERNEL_VERSION}" \
+		--kernel-release="${DEFAULT_FAKE_KERNEL_RELEASE}" \
 		--link2symlink \
 		--kill-on-exit \
 		--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
@@ -799,7 +800,7 @@ setup_fake_sysdata() {
 
 	if [ ! -f "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version" ]; then
 		cat <<- EOF > "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version"
-		Linux version ${DEFAULT_FAKE_KERNEL_VERSION} (proot@termux) (gcc (GCC) 12.2.1 20230201, GNU ld (GNU Binutils) 2.40) #1 SMP PREEMPT_DYNAMIC Wed, 01 Mar 2023 00:00:00 +0000
+		Linux version ${DEFAULT_FAKE_KERNEL_RELEASE} (proot@termux) (gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) ${DEFAULT_FAKE_KERNEL_VERSION}
 		EOF
 	fi
 
@@ -1435,7 +1436,8 @@ command_login() {
 	local login_wd=""
 	local -a login_env_vars
 	login_env_vars=("PATH=${DEFAULT_PATH_ENV}")
-	local kernel_release="${DEFAULT_FAKE_KERNEL_VERSION}"
+	local kernel_release="${DEFAULT_FAKE_KERNEL_RELEASE}"
+	local hostname="localhost"
 	local distro_name
 
 	while (($# >= 1)); do
@@ -1522,6 +1524,25 @@ command_login() {
 					fi
 
 					kernel_release="$1"
+				else
+					msg
+					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
+					command_login_help
+					return 1
+				fi
+				;;
+			--hostname)
+				if [ $# -ge 2 ]; then
+					shift 1
+
+					if [ -z "$1" ]; then
+						msg
+						msg "${BRED}Error: argument to option '${YELLOW}--hostname${BRED}' should not be empty.${RST}"
+						command_login_help
+						return 1
+					fi
+
+					hostname="$1"
 				else
 					msg
 					msg "${BRED}Error: option '${YELLOW}$1${BRED}' requires an argument.${RST}"
@@ -1841,7 +1862,7 @@ command_login() {
 
 	# Some devices have old kernels and GNU libc refuses to work on them.
 	# Fix this behavior by reporting a fake up-to-date kernel version.
-	set -- "--kernel-release=$kernel_release" "$@"
+	set -- "--kernel-release=\\Linux\\${hostname}\\${kernel_release}\\${DEFAULT_FAKE_KERNEL_VERSION}\\$(uname -m)\\localdomain\\-1\\" "$@"
 
 	# Fix lstat to prevent dpkg symlink size warnings
 	set -- "-L" "$@"
@@ -2064,11 +2085,13 @@ command_login_help() {
 	msg "                         ${CYAN}before exiting. This will cause proot to${RST}"
 	msg "                         ${CYAN}freeze if you are running daemons.${RST}"
 	msg
-	msg "  ${GREEN}--no-arch-warning     ${CYAN}- Suppress warning about CPU not supporting 32-bit${RST}"
+	msg "  ${GREEN}--no-arch-warning    ${CYAN}- Suppress warning about CPU not supporting 32-bit${RST}"
 	msg "                         ${CYAN}instructions.${RST}"
 	msg
-	msg "  ${GREEN}--kernel [string]    ${CYAN}- Set the kernel release and compatibility${RST}"
-	msg "                         ${CYAN}level to string.${RST}"
+	msg "  ${GREEN}--kernel [string]    ${CYAN}- Customize Linux kernel release string shown by${RST}"
+	msg "                         ${CYAN}uname command.${RST}"
+	msg
+	msg "  ${GREEN}--hostname [string]  ${CYAN}- Customize system host name.${RST}"
 	msg
 	msg "  ${GREEN}--work-dir [path]    ${CYAN}- Set the working directory.${RST}"
 	msg
