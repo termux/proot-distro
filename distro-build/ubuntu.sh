@@ -12,7 +12,7 @@ bootstrap_distribution() {
 			--architectures=${arch} \
 			--variant=apt \
 			--components="main,universe,multiverse" \
-			--include="locales" \
+			--include="locales,passwd,software-properties-common" \
 			--format=directory \
 			"${dist_version}" \
 			"${WORKDIR}/ubuntu-${dist_version}-$(translate_arch "$arch")"
