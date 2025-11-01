@@ -5,6 +5,7 @@ bootstrap_distribution() {
     sudo rm -f "${ROOTFS_DIR}"/almalinux-*.tar.xz
 	curl --fail --location --output "almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/default/arm64/almalinux-${dist_version}-default-arm64.tar.xz"
 	curl --fail --location --output "almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/default/amd64/almalinux-${dist_version}-default-amd64.tar.xz"
+}
 
 write_plugin() {
 	cat <<- EOF > "${PLUGIN_DIR}/almalinux.sh"
