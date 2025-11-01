@@ -44,6 +44,8 @@ write_plugin() {
 	${TAB}# Configure en_US.UTF-8 locale.
 	${TAB}sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' ./etc/locale.gen
 	${TAB}run_proot_cmd DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales
+	${TAB}curl -L -o /tmp/devuankey.deb http://deb.devuan.org/merged/pool/DEVUAN/main/d/devuan-keyring/devuan-keyring_2025.08.09_all.deb
+    ${TAB}apt install -yq /tmp/devuankey.deb
 	}
 
 	EOF
