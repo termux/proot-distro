@@ -13,8 +13,8 @@ bootstrap_distribution() {
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/almalinux-${arch}")/etc/resolv.conf"
-		mount --bind /dev "${WORKDIR}/almalinux-${arch})/dev"
-		mount --bind /proc "${WORKDIR}/almalinux-${arch})/proc"
+		mount --bind /dev "${WORKDIR}/almalinux-${arch}/dev"
+		mount --bind /proc "${WORKDIR}/almalinux-${arch}/proc"
 		mount --bind /sys "${WORKDIR}/almalinux-${arch}/sys"
 		chroot "${WORKDIR}/almalinux-${arch}" microdnf upgrade -y
 		chroot "${WORKDIR}/almalinux-${arch}" microdnf install dnf -y
