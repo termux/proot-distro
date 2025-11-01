@@ -13,6 +13,9 @@ bootstrap_distribution() {
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/almalinux-${arch}")/etc/resolv.conf"
+		mkdir -p -m 755 ${WORKDIR}/almalinux-${arch}/dev
+		mkdir -p -m 755 ${WORKDIR}/almalinux-${arch}/proc
+		mkdir -p -m 755 ${WORKDIR}/almalinux-${arch}/sys
 		mount --bind /dev "${WORKDIR}/almalinux-${arch}/dev"
 		mount --bind /proc "${WORKDIR}/almalinux-${arch}/proc"
 		mount --bind /sys "${WORKDIR}/almalinux-${arch}/sys"
