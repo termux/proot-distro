@@ -4,7 +4,7 @@ dist_version="10"
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/almalinux-*.tar.xz
 
-	for arch in aarch64 x86_64; do
+	for arch in aarch64 amd64; do
 		curl --fail --location --output "almalinux-${dist_version}-minimal-${arch}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/minimal/${arch}/almalinux-${dist_version}-minimal-${arch}.tar.xz"
 		sudo rm -rf "${WORKDIR}/almalinux-tmp" "${WORKDIR}/almalinux-$(translate_arch "$arch")"
 		mkdir "${WORKDIR}/almalinux-tmp"
