@@ -59,6 +59,8 @@ jobs:
           sudo apt install -yq /tmp/mmdebstrap.deb
           curl -L -o /tmp/keyring.deb http://ftp.us.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
           sudo apt install -yq /tmp/keyring.deb
+          curl -L -o /tmp/devuankey.deb http://deb.devuan.org/merged/pool/DEVUAN/main/d/devuan-keyring/devuan-keyring_2025.08.09_all.deb
+          sudo apt install -yq /tmp/devuankey.deb
       - name: Build distribution rootfs
         run: |
           distros_to_be_built=$(cat ./distributions.txt)
