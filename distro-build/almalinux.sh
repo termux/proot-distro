@@ -19,9 +19,9 @@ bootstrap_distribution() {
 		sudo mount --bind /dev "${WORKDIR}/almalinux-${arch}/dev"
 		sudo mount --bind /proc "${WORKDIR}/almalinux-${arch}/proc"
 		sudo mount --bind /sys "${WORKDIR}/almalinux-${arch}/sys"
-		sudo chroot "${WORKDIR}/almalinux-${arch}" /bin/bash microdnf upgrade -y
-		sudo chroot "${WORKDIR}/almalinux-${arch}" /bin/bash microdnf install dnf -y
-		sudo chroot "${WORKDIR}/almalinux-${arch}" /bin/bash microdnf clean all -y
+		sudo chroot "${WORKDIR}/almalinux-${arch}" /usr/bin/bash microdnf upgrade -y
+		sudo chroot "${WORKDIR}/almalinux-${arch}" /usr/bin/bash microdnf install dnf -y
+		sudo chroot "${WORKDIR}/almalinux-${arch}" /usr/bin/bash microdnf clean all -y
 		EOF
 
 		archive_rootfs "${ROOTFS_DIR}/almalinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" "almalinux-${arch}"
