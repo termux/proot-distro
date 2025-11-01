@@ -15,8 +15,8 @@ bootstrap_distribution() {
 			--include="ca-certificates,locales" \
 			--format=directory \
 			"${dist_version}" \
-      http://deb.devuan.org/merged \
-			"${WORKDIR}/devuan-${dist_version}-$(translate_arch "$arch")"
+			"${WORKDIR}/devuan-${dist_version}-$(translate_arch "$arch")" \
+			http://deb.devuan.org/merged
 		archive_rootfs "${ROOTFS_DIR}/devuan-${dist_version}-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"devuan-${dist_version}-$(translate_arch "$arch")"
 	done
