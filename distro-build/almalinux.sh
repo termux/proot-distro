@@ -6,34 +6,29 @@ bootstrap_distribution() {
 
 	for arch in arm64 amd64; do
 		curl --fail --location --output "almalinux-${dist_version}-minimal-${arch}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/minimal/${arch}/almalinux-${dist_version}-minimal-${arch}.tar.xz"
-		sudo rm -rf "${WORKDIR}/almalinux-tmp" "${WORKDIR}/almalinux-$(translate_arch "$arch")"
+		sudo rm -rf "${WORKDIR}/almalinux-tmp" "${WORKDIR}/almalinux-${arch}
 		mkdir "${WORKDIR}/almalinux-tmp"
 		tar -C "${WORKDIR}/almalinux-tmp" -Jxf "${WORKDIR}/almalinux-${dist_version}-minimal-${arch}.tar.xz"
-		oci_manifest=$(jq -r '.manifests[0].digest' "${WORKDIR}/almalinux-tmp"/index.json | cut -d ':' -f 2)
-		oci_layers=$(jq -r '.layers[].digest' "${WORKDIR}/almalinux-tmp/blobs/sha256/${oci_manifest}" | cut -d ':' -f 2)
-
-		sudo mkdir -m 755 "${WORKDIR}/almalinux-$(translate_arch "$arch")"
-		for layer in ${oci_layers}; do
-			sudo tar -zxp --acls --xattrs --xattrs-include='*' \
-				-f "${WORKDIR}/almalinux-tmp/blobs/sha256/${layer}" \
-				-C "${WORKDIR}/almalinux-$(translate_arch "$arch")"
-		done
-		sudo rm -rf "${WORKDIR}/almalinux-tmp"
+		sudo mkdir -m 755 "${WORKDIR}/almalinux-${arch}"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
-		echo "nameserver 1.1.1.1" > "${WORKDIR}/almalinux-$(translate_arch "$arch")/etc/resolv.conf"
-		mount --bind /dev "${WORKDIR}/almalinux-$(translate_arch "$arch")/dev"
-		mount --bind /proc "${WORKDIR}/almalinux-$(translate_arch "$arch")/proc"
-		mount --bind /sys "${WORKDIR}/almalinux-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" microdnf upgrade -y
-		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" microdnf install dnf -y
-		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" microdnf clean all -y
+		echo "nameserver 1.1.1.1" > "${WORKDIR}/almalinux-${arch}")/etc/resolv.conf"
+		mount --bind /dev "${WORKDIR}/almalinux-${arch})/dev"
+		mount --bind /proc "${WORKDIR}/almalinux-${arch})/proc"
+		mount --bind /sys "${WORKDIR}/almalinux-${arch}/sys"
+		chroot "${WORKDIR}/almalinux-${arch}" microdnf upgrade -y
+		chroot "${WORKDIR}/almalinux-${arch}" microdnf install dnf -y
+		chroot "${WORKDIR}/almalinux-${arch}" microdnf clean all -y
 		EOF
 
-		archive_rootfs "${ROOTFS_DIR}/almalinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" "almalinux-$(translate_arch "$arch")"
+		archive_rootfs "${ROOTFS_DIR}/almalinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" "almalinux-${arch}"
 	done
 	unset arch
 }
+
+                mv almalinux-arm64-pd-${CURRENT_VERSION}.tar.xz almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz 
+                mv almalinux-amd64-pd-${CURRENT_VERSION}.tar.xz almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz 
+
 
 write_plugin() {
 	cat <<- EOF > "${PLUGIN_DIR}/almalinux.sh"
