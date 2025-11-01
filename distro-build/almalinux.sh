@@ -21,7 +21,6 @@ bootstrap_distribution() {
 		sudo rm -rf "${WORKDIR}/almalinux-tmp"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
-		rm -f "${WORKDIR}/almalinux-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/almalinux-$(translate_arch "$arch")/etc/resolv.conf"
 		mount --bind /dev "${WORKDIR}/almalinux-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/almalinux-$(translate_arch "$arch")/proc"
