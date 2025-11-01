@@ -22,13 +22,11 @@ bootstrap_distribution() {
 		EOF
 
 		archive_rootfs "${ROOTFS_DIR}/almalinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" "almalinux-${arch}"
+		mv almalinux-arm64-pd-${CURRENT_VERSION}.tar.xz almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz 
+        mv almalinux-amd64-pd-${CURRENT_VERSION}.tar.xz almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz 
 	done
 	unset arch
 }
-
-                mv almalinux-arm64-pd-${CURRENT_VERSION}.tar.xz almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz 
-                mv almalinux-amd64-pd-${CURRENT_VERSION}.tar.xz almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz 
-
 
 write_plugin() {
 	cat <<- EOF > "${PLUGIN_DIR}/almalinux.sh"
