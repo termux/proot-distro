@@ -12,7 +12,7 @@ bootstrap_distribution() {
 	tar -xJf $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}
 	rm $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz
 	rm $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz
-	cd rootfs
+	cd $GITHUB_WORKSPACE/rootfs
 	tar -cJvf $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz -C almalinux-aarch64-pd-${CURRENT_VERSION}
 	tar -cJvf $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz -C almalinux-x86_64-pd-${CURRENT_VERSION}
 	
