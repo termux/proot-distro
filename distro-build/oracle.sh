@@ -13,8 +13,8 @@ bootstrap_distribution() {
 	rm $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz
 	rm $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz
 	cd $GITHUB_WORKSPACE/rootfs
-	sudo tar -cJf --warning=no-file-ignored $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-aarch64-pd-${CURRENT_VERSION}
-	sudo tar -cJf --warning=no-file-ignored $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-x86_64-pd-${CURRENT_VERSION}
+	sudo tar -cJf --exclude=dev/* $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-aarch64-pd-${CURRENT_VERSION}
+	sudo tar -cJf --exclude=dev/* $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-x86_64-pd-${CURRENT_VERSION}
 	
 }
 
