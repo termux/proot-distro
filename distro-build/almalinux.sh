@@ -3,8 +3,19 @@ dist_version="10"
 
 bootstrap_distribution() {
     sudo rm -f "${ROOTFS_DIR}"/almalinux-*.tar.xz
-	curl --fail --location --output "almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/default/arm64/almalinux-${dist_version}-default-arm64.tar.xz"
-	curl --fail --location --output "almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/default/amd64/almalinux-${dist_version}-default-amd64.tar.xz"
+	mkdir -p $GITHUB_WORKSPACE/rootfs
+	curl --fail --location --output "$GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/default/arm64/almalinux-${dist_version}-default-arm64.tar.xz"
+	curl --fail --location --output "$GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/AlmaLinux/container-images/raw/refs/heads/${dist_version}/default/amd64/almalinux-${dist_version}-default-amd64.tar.xz"\
+    mkdir -p $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}
+	mkdir -p $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}
+	tar -xJf $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}
+	tar -xJf $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}
+	rm $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz
+	rm $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz
+	cd rootfs
+	tar -cJvf $GITHUB_WORKSPACE/rootfs/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz -C almalinux-aarch64-pd-${CURRENT_VERSION}
+	tar -cJvf $GITHUB_WORKSPACE/rootfs/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz -C almalinux-x86_64-pd-${CURRENT_VERSION}
+	
 }
 
 write_plugin() {
