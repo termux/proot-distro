@@ -9,7 +9,7 @@ bootstrap_distribution() {
   mkdir -p $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}
 	mkdir -p $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}
 	tar --exclude=dev/* -xJf $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}
-	tar --exclude=dev/* -xJf $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz. -C $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}
+	tar --exclude=dev/* -xJf $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}
 	rm $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz
 	rm $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz
 	cd $GITHUB_WORKSPACE/rootfs
