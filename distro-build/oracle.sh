@@ -8,13 +8,13 @@ bootstrap_distribution() {
 	curl --fail --location --output "$GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" "https://github.com/oracle/container-images/raw/dist-amd64/${dist_version}/oraclelinux-${dist_version}-amd64-rootfs.tar.xz"
   mkdir -p $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}
 	mkdir -p $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}
-	tar -xJf $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}
-	tar -xJf $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz. -C $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}
+	tar -xJf --exclude=dev/* $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz -C $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}
+	tar -xJf --exclude=dev/* $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz. -C $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}
 	rm $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz
 	rm $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz
 	cd $GITHUB_WORKSPACE/rootfs
-	sudo tar -cJf --exclude=dev/* $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-aarch64-pd-${CURRENT_VERSION}
-	sudo tar -cJf --exclude=dev/* $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-x86_64-pd-${CURRENT_VERSION}
+	sudo tar -cJf $GITHUB_WORKSPACE/rootfs/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-aarch64-pd-${CURRENT_VERSION}
+	sudo tar -cJf $GITHUB_WORKSPACE/rootfs/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz oraclelinux-x86_64-pd-${CURRENT_VERSION}
 	
 }
 
