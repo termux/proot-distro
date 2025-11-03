@@ -1,7 +1,7 @@
 dist_name="Devuan"
 
 # Put only current stable version here!
-dist_version="daedalus"
+dist_version="excalibur"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/devuan-"${dist_version}"-*.tar.xz
