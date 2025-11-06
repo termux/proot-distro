@@ -1,5 +1,5 @@
 dist_name="Fedora"
-dist_version="42-1.1"
+dist_version="43-1.6"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/fedora-*.tar.xz
