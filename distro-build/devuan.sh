@@ -11,12 +11,14 @@ bootstrap_distribution() {
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=minbase \
-			--components="main,contrib" \
-			--include="ca-certificates,locales" \
+			--components="main,contrib,non-free" \
+			--include="ca-certificates,locales,devuan-keyring" \
 			--format=directory \
 			"${dist_version}" \
 			"${WORKDIR}/devuan-${dist_version}-$(translate_arch "$arch")" \
-			http://deb.devuan.org/merged
+	        "deb http://deb.devuan.org/merged ${dist_version} main contrib non-free" \
+            "deb http://deb.devuan.org/merged ${dist_version}-updates main contrib non-free" \
+            "deb http://deb.devuan.org/merged ${dist_version}-security main contrib non-free"
 		archive_rootfs "${ROOTFS_DIR}/devuan-${dist_version}-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"devuan-${dist_version}-$(translate_arch "$arch")"
 	done
