@@ -18,7 +18,7 @@ bootstrap_distribution() {
 			"${WORKDIR}/trisquel-${dist_version}-$(translate_arch "$arch")" \
 	        "deb http://archive.trisquel.org/trisquel ${dist_version} main" \
             "deb http://archive.trisquel.org/trisquel ${dist_version}-updates main" \
-            "deb http://archive.trisquel.org/trisquel ${dist_version}-security main"
+            "deb http://archive.trisquel.org/trisquel ${dist_version}-security main" \
             "deb http://archive.trisquel.org/trisquel ${dist_version}-backports main"
 		archive_rootfs "${ROOTFS_DIR}/trisquel-${dist_version}-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"trisquel-${dist_version}-$(translate_arch "$arch")"
