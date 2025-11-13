@@ -11,7 +11,7 @@ bootstrap_distribution() {
 		sudo mmdebstrap \
 			--architectures=${arch} \
 			--variant=apt \
-			--components="" \
+			--components="main" \
 			--include="ca-certificates,locales,trisquel-keyring,software-properties-common,passwd" \
 			--format=directory \
 			"${dist_version}" \
