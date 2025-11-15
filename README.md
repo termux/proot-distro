@@ -5,6 +5,8 @@ Linux distribution installations. It does not require root or any special ROM,
 kernel, etc. Everything you need to get started is the latest version of
 [Termux] application. See [Installing](#installing) for details.
 
+If you like the project and want to support development, consider [donating](#donate).
+
 ***
 
 ## Bundled distributions
@@ -620,6 +622,19 @@ these choices:
 
 Either of choices would require updating links and sha-256 checksums in files
 stored under `$PREFIX/etc/proot-distro`.
+
+## Donate
+
+Support is important to keep the project up in a long term. I'm grateful for
+any amount of tip in cryptocurrency:
+
+* Bitcoin: `bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs`
+* Ethereum: `0x1F5196A5b0120D4a66FCAABBe71728239B06EC12`
+* Tron: `TEJiwRMMGV1JXvRYDRVJ1qw7kFgskEk3sJ`
+
+More convenient options will be added in future.
+
+*Who will receive the funds: [@sylirre](https://github.com/sylirre), the author and lead maintainer of PRoot-Distro project.*
 
 ## Forking
 
