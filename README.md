@@ -19,6 +19,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Distribution     | PD alias   | Version    | Status        |
 |------------------|------------|------------|---------------|
 | Adelie Linux     | adelie     | 1.0-beta6  | no i686       |
+| AlmaLinux        | almalinux  | 10         | only 64bit    |
 | Alpine Linux     | alpine     | 3.22.2     | frozen        |
 | Arch Linux       | archlinux  | rolling    | supported     |
 | Artix Linux      | artix      | rolling    | aarch64 only  |
