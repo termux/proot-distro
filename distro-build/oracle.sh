@@ -12,7 +12,7 @@ bootstrap_distribution() {
 		sudo rm -rf "${WORKDIR}/oraclelinux-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/oraclelinux-$(translate_arch "$arch")"
 		sudo tar -zxp --acls --xattrs --xattrs-include='*' \
-			-f "${WORKDIR}/oraclelinux-$(translate_arch "$arch").tar.gz" \
+			-f "${WORKDIR}/oraclelinux-$(translate_arch "$arch").tar.xz" \
 			-C "${WORKDIR}/oraclelinux-$(translate_arch "$arch")"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
