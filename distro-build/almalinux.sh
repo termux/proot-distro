@@ -15,6 +15,19 @@ bootstrap_distribution() {
 			-f "${WORKDIR}/almalinux-${arch}.tar.gz" \
 			-C "${WORKDIR}/almalinux-$(translate_arch "$arch")"
 
+		cat <<- EOF | sudo unshare -mpf bash -e -
+		rm -f "${WORKDIR}/almalinux-$(translate_arch "$arch")/etc/resolv.conf"
+		echo "nameserver 1.1.1.1" > "${WORKDIR}/almalinux-$(translate_arch "$arch")/etc/resolv.conf"
+		echo "excludepkgs=*selinux* filesystem" >> "${WORKDIR}/almalinux-$(translate_arch "$arch")/etc/dnf/dnf.conf"
+		mount --bind /dev "${WORKDIR}/almalinux-$(translate_arch "$arch")/dev"
+		mount --bind /proc "${WORKDIR}/almalinux-$(translate_arch "$arch")/proc"
+		mount --bind /sys "${WORKDIR}/almalinux-$(translate_arch "$arch")/sys"
+		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf upgrade -y
+		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf install -y passwd util-linux
+		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf clean all
+		chmod 4755 "${WORKDIR}/fedora-$(translate_arch "$arch")"/usr/bin/sudo
+		EOF
+
 		archive_rootfs "${ROOTFS_DIR}/almalinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"archlinux-$(translate_arch "$arch")"
 	done
