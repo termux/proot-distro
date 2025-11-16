@@ -32,6 +32,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Oracle Linux     | oracle     | 10         | only 64bit    |
 | Pardus           | pardus     | yirmiuc    | no armv7      |
 | Rocky Linux      | rockylinux | 10         | only 64bit    |
+| Trisquel         | trisquel   | aramo      | supported     |
 | Ubuntu           | ubuntu     | 25.10      | no i686       |
 | Void Linux       | void       | rolling    | supported     |
 | Guix             | N/A        | N/A        | not supported |
