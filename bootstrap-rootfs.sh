@@ -66,6 +66,7 @@ archive_rootfs() {
 	echo "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
 
 	sudo find "${2:?}/dev" -mindepth 1 -delete
+	sudo chmod 755 "${2}"
 
 	sudo rm -f "${1:?}.tmp"
 	sudo tar \
