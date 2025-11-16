@@ -46,7 +46,7 @@ GIT_RELEASE_URL="https://github.com/termux/proot-distro/releases/download/${CURR
 # just like used by termux-packages.
 translate_arch() {
 	case "$1" in
-		aarch64|arm64) echo "aarch64";;
+		aarch64|arm64|arm64v8) echo "aarch64";;
 		arm|armel|armhf|armhfp|armv7|armv7l|armv7a|armv8l) echo "arm";;
 		386|i386|i686|x86) echo "i686";;
 		riscv64) echo "riscv64";;
