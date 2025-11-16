@@ -25,11 +25,11 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf upgrade -y
 		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf install -y passwd util-linux
 		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf clean all
-		chmod 4755 "${WORKDIR}/fedora-$(translate_arch "$arch")"/usr/bin/sudo
+		chmod 4755 "${WORKDIR}/almalinux-$(translate_arch "$arch")"/usr/bin/sudo
 		EOF
 
 		archive_rootfs "${ROOTFS_DIR}/almalinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
-			"archlinux-$(translate_arch "$arch")"
+			"almalinux-$(translate_arch "$arch")"
 	done
 }
 
@@ -40,6 +40,7 @@ write_plugin() {
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="AlmaLinux"
 	DISTRO_COMMENT="Version ${dist_version}."
+
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/almalinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/almalinux-x86_64-pd-${CURRENT_VERSION}.tar.xz"
