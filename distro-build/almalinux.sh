@@ -12,7 +12,7 @@ bootstrap_distribution() {
 		sudo rm -rf "${WORKDIR}/almalinux-$(translate_arch "$arch")"
 		sudo mkdir -m 755 "${WORKDIR}/almalinux-$(translate_arch "$arch")"
 		sudo tar -zxp --acls --xattrs --xattrs-include='*' \
-			-f "${WORKDIR}/almalinux-${arch}.tar.gz" \
+			-f "${WORKDIR}/almalinux-$(translate_arch "$arch").tar.gz" \
 			-C "${WORKDIR}/almalinux-$(translate_arch "$arch")"
 
 		cat <<- EOF | sudo unshare -mpf bash -e -
