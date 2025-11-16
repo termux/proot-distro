@@ -25,9 +25,9 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Chimera Linux    | chimera    | rolling    | only 64bit    |
 | Debian           | debian     | trixie     | supported     |
 | Deepin           | deepin     | beige      | only 64bit    |
-| Fedora           | fedora     | 42         | unstable      |
+| Fedora           | fedora     | 43         | unstable      |
 | Manjaro          | manjaro    | rolling    | aarch64 only  |
-| OpenSUSE         | opensuse   | Leap 15.6  | only 64bit    |
+| OpenSUSE         | opensuse   | Leap 16.0  | only 64bit    |
 | Pardus           | pardus     | yirmiuc    | no armv7      |
 | Rocky Linux      | rockylinux | 10         | only 64bit    |
 | Ubuntu           | ubuntu     | 25.10      | no i686       |
