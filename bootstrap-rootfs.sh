@@ -65,7 +65,9 @@ archive_rootfs() {
 	SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 	echo "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
 
-	sudo rm -f "${1}.tmp"
+	sudo find "${2:?}/dev" -mindepth 1 -delete
+
+	sudo rm -f "${1:?}.tmp"
 	sudo tar \
 		--directory="$WORKDIR" \
 		--create \
