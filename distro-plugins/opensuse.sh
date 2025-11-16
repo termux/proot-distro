@@ -2,16 +2,16 @@
 # Do not modify this file as your changes will be overwritten on next update.
 # If you want customize installation, please make a copy.
 DISTRO_NAME="OpenSUSE"
-DISTRO_COMMENT="Leap release (15.6). No support for ARM and x86 32bit."
+DISTRO_COMMENT="Leap release (16.0). No support for ARM and x86 32bit."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/opensuse-aarch64-pd-v4.29.0.tar.xz"
-TARBALL_SHA256['aarch64']="ef16b5c6d1c9abe86c36d752ff2b4617717b7d995fdb6fff04a1150a1fbbf279"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.29.0/opensuse-arm-pd-v4.29.0.tar.xz"
+TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.31.0/opensuse-aarch64-pd-v4.31.0.tar.xz"
+TARBALL_SHA256['aarch64']="8f5accdfb6404dc3caa0487505366a19c2a0cb742839353f862b583c8033128a"
+TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.31.0/opensuse-arm-pd-v4.31.0.tar.xz"
 TARBALL_SHA256['arm']=""
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.29.0/opensuse-i686-pd-v4.29.0.tar.xz"
+TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.31.0/opensuse-i686-pd-v4.31.0.tar.xz"
 TARBALL_SHA256['i686']=""
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.29.0/opensuse-x86_64-pd-v4.29.0.tar.xz"
-TARBALL_SHA256['x86_64']="e328b69edf4e7427d5b60d6c1a46a05ebd004e993fb7b694d136a081b1485a8f"
+TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.31.0/opensuse-x86_64-pd-v4.31.0.tar.xz"
+TARBALL_SHA256['x86_64']="cc7008ce71993f4f5505a204769c7e6aca19f60da945c762b0639b7c9a00cdd5"
 
 distro_setup() {
 	# Lock package filesystem to remove issues regarding zypper dup
