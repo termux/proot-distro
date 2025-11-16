@@ -25,7 +25,6 @@ bootstrap_distribution() {
 		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf upgrade -y
 		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf install -y passwd util-linux
 		chroot "${WORKDIR}/almalinux-$(translate_arch "$arch")" dnf clean all
-		chmod 4755 "${WORKDIR}/almalinux-$(translate_arch "$arch")"/usr/bin/sudo
 		EOF
 
 		archive_rootfs "${ROOTFS_DIR}/almalinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
