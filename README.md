@@ -483,6 +483,11 @@ Supported architectures are: `aarch64`, `arm`, `i686`, `riscv64`, `x86_64`.
 
 `DISTRO_NAME`: a name of distribution, something like "Alpine Linux (3.14.1)".
 
+`DISTRO_TYPE`: a type of distribution, can be one of:
+
+  * `normal`: default, for regular distributions
+  * `termux`: special, for packaged Termux bootstrap environment
+
 `DISTRO_COMMENT`: comments for current distribution.
 
 Normally this variable is not needed. Use it to notify user that something is
