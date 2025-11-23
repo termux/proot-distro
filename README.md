@@ -18,6 +18,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 
 | Distribution     | PD alias   | Version    | Status        |
 |------------------|------------|------------|---------------|
+| Termux           | termux     | rolling    | supported     |
 | Adelie Linux     | adelie     | 1.0-beta6  | no i686       |
 | AlmaLinux        | almalinux  | 10         | only 64bit    |
 | Alpine Linux     | alpine     | 3.22.2     | frozen        |
@@ -482,6 +483,11 @@ QEMU emulator (user mode).
 Supported architectures are: `aarch64`, `arm`, `i686`, `riscv64`, `x86_64`.
 
 `DISTRO_NAME`: a name of distribution, something like "Alpine Linux (3.14.1)".
+
+`DISTRO_TYPE`: a type of distribution, can be one of:
+
+  * `normal`: default, for regular distributions
+  * `termux`: special, for packaged Termux bootstrap environment
 
 `DISTRO_COMMENT`: comments for current distribution.
 
