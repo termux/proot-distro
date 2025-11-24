@@ -30,6 +30,9 @@ PROGRAM_VERSION="4.33.1"
 
 set -e -u
 
+# Keep LD_PRELOAD value for restoring after unset.
+TERMUX_LDPRELOAD="$LD_PRELOAD"
+
 # Override user-defined PATH.
 export PATH="@TERMUX_PREFIX@/bin"
 
@@ -93,11 +96,6 @@ else
 	ICYAN=""
 	RST=""
 fi
-
-# Disable termux-exec or other things which may interfere with proot.
-# It is expected that all dependencies have fixed hardcoded paths according
-# to Termux file system layout.
-unset LD_PRELOAD
 
 # Override umask
 umask 0022
@@ -525,6 +523,9 @@ command_install() {
 					"${INSTALLED_ROOTFS_DIR}/${distro_name}/data/data/com.termux/files/usr/etc/bash.bashrc"
 			fi
 		else
+			# Prevent possible conflicts with proot.
+			unset LD_PRELOAD
+
 			# --exclude='dev' - need to exclude /dev directory which may contain device files.
 			# --delay-directory-restore - set directory permissions only when files were extracted
 			#                             to avoid issues with Arch Linux bootstrap archives.
@@ -534,6 +535,9 @@ command_install() {
 				--delay-directory-restore --preserve-permissions --strip="${TARBALL_STRIP_OPT}" \
 				-xf "${DOWNLOAD_CACHE_DIR}/${archive_name}" --exclude='dev' |& grep -v "/linkerconfig/" >&2
 			set -e
+
+			# Restore LD_PRELOAD after proot.
+			[ -n "$TERMUX_LDPRELOAD" ] && export LD_PRELOAD="$TERMUX_LDPRELOAD"
 
 			# If no /etc in rootfs, terminate installation.
 			# This usually indicates that downloaded distribution archive doesn't contain
@@ -794,6 +798,9 @@ run_proot_cmd() {
 			fi
 		done
 
+		# Prevent possible conflicts with proot.
+		unset LD_PRELOAD
+
 		# shellcheck disable=SC2086 # ${cpu_emulator_arg} should expand into nothing rather than into ''.
 		proot ${cpu_emulator_arg} \
 			-L \
@@ -805,12 +812,18 @@ run_proot_cmd() {
 			--bind=/sys \
 			"${extra_binds[@]}" \
 			/data/data/com.termux/files/usr/bin/env "$@"
+
+		# Restore LD_PRELOAD after proot.
+		[ -n "$TERMUX_LDPRELOAD" ] && export LD_PRELOAD="$TERMUX_LDPRELOAD"
 	else
 		# Ensure that proot will be able to bind fake /proc and /sys entries.
 		setup_fake_sysdata
 
 		# With this tools should assume that no SELinux present.
 		set -- "--bind=${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" "$@"
+
+		# Prevent possible conflicts with proot.
+		unset LD_PRELOAD
 
 		# shellcheck disable=SC2086 # ${cpu_emulator_arg} should expand into nothing rather than into ''.
 		proot ${cpu_emulator_arg} \
@@ -844,6 +857,9 @@ run_proot_cmd() {
 				"TERM=${TERM-xterm-256color}" \
 				"TMPDIR=/tmp" \
 				"$@"
+
+		# Restore LD_PRELOAD after proot.
+		[ -n "$TERMUX_LDPRELOAD" ] && export LD_PRELOAD="$TERMUX_LDPRELOAD"
 	fi
 }
 
@@ -2168,6 +2184,9 @@ command_login() {
 	if $fix_low_ports; then
 		set -- "-p" "$@"
 	fi
+
+	# Prevent possible conflicts with proot.
+	unset LD_PRELOAD
 
 	exec proot "$@"
 }
