@@ -2054,6 +2054,9 @@ command_login() {
 		if [ "${dist_type-normal}" != "termux" ]; then
 			set -- "--bind=/data/data/@TERMUX_APP_PACKAGE@/cache" "$@"
 			set -- "--bind=@TERMUX_HOME@" "$@"
+		else
+			# For package manager in 'termux' distribution.
+			mkdir -p "${INSTALLED_ROOTFS_DIR}/${distro_name}/data/data/com.termux/cache"
 		fi
 
 		# Bind whole /storage directory when it is readable. This gives
