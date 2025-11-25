@@ -1,5 +1,5 @@
 dist_name="Pardus"
-dist_version="yirmiuc"
+dist_version="yirmibes"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/pardus-*.tar.xz
@@ -18,9 +18,9 @@ bootstrap_distribution() {
 			--format=directory \
 			"${dist_version}-deb" \
 			"${WORKDIR}/pardus-$(translate_arch "$arch")" \
-			"deb http://depo.pardus.org.tr/pardus yirmiuc main contrib non-free non-free-firmware" \
-			"deb http://depo.pardus.org.tr/pardus yirmiuc-deb main contrib non-free non-free-firmware" \
-			"deb http://depo.pardus.org.tr/guvenlik yirmiuc-deb main contrib non-free non-free-firmware"
+			"deb http://depo.pardus.org.tr/pardus yirmibes main contrib non-free non-free-firmware" \
+			"deb http://depo.pardus.org.tr/pardus yirmibes-deb main contrib non-free non-free-firmware" \
+			"deb http://depo.pardus.org.tr/guvenlik yirmibes-deb main contrib non-free non-free-firmware"
 		archive_rootfs "${ROOTFS_DIR}/pardus-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"pardus-$(translate_arch "$arch")"
 	done
