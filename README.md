@@ -78,6 +78,18 @@ months as outdated.
 Remember that `proot` (core of `proot-distro`) does not provide high grade
 isolation like `docker`, `firejail` and similar well-known utilities.
 
+### For ARMv9 users
+
+ARMv9 compliant SoCs do not include support for 32-bit instructions set. That's
+a major difference from ARMv8.
+
+Because some users may not expect that 32-bit support was dropped at hardware
+level, `proot-distro` will show a red warning when detected missing 32-bit
+instructions. We'll remove the warning once ARMv9 will become more common.
+
+On devices with ARMv9 architecture the 32-bit distributions will be treated
+as of foreign architecture and you will need `qemu-user-arm` emulator package.
+
 ## Installing
 
 With package manager:
