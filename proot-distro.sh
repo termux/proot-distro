@@ -811,7 +811,12 @@ run_proot_cmd() {
 			--bind=/proc \
 			--bind=/sys \
 			"${extra_binds[@]}" \
-			/data/data/com.termux/files/usr/bin/env "$@"
+			/data/data/com.termux/files/usr/bin/env \
+			HOME="/data/data/com.termux/files/home" \
+			PATH="/data/data/com.termux/files/usr/bin" \
+			PREFIX="/data/data/com.termux/files/usr" \
+			TMPDIR="/data/data/com.termux/files/usr/tmp" \
+			"$@"
 
 		# Restore LD_PRELOAD after proot.
 		[ -n "$TERMUX_LDPRELOAD" ] && export LD_PRELOAD="$TERMUX_LDPRELOAD"
@@ -1784,6 +1789,10 @@ command_login() {
 		fi
 		login_shell="/data/data/com.termux/files/usr/bin/login"
 		set -- "/data/data/com.termux/files/usr/bin/env" \
+			"HOME=/data/data/com.termux/files/home" \
+			"PATH=/data/data/com.termux/files/usr/bin" \
+			"PREFIX=/data/data/com.termux/files/usr" \
+			"TMPDIR=/data/data/com.termux/filse/usr/tmp" \
 			"${login_shell}" \
 			"$@"
 	else
