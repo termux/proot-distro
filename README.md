@@ -31,7 +31,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Manjaro          | manjaro    | rolling    | aarch64 only  |
 | OpenSUSE         | opensuse   | Leap 16.0  | only 64bit    |
 | Oracle Linux     | oracle     | 10         | only 64bit    |
-| Pardus           | pardus     | yirmiuc    | no armv7      |
+| Pardus           | pardus     | yirmibes   | no armv7      |
 | Rocky Linux      | rockylinux | 10         | only 64bit    |
 | Trisquel         | trisquel   | aramo      | supported     |
 | Ubuntu           | ubuntu     | 25.10      | no i686       |
