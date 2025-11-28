@@ -1792,7 +1792,7 @@ command_login() {
 			"HOME=/data/data/com.termux/files/home" \
 			"PATH=/data/data/com.termux/files/usr/bin" \
 			"PREFIX=/data/data/com.termux/files/usr" \
-			"TMPDIR=/data/data/com.termux/filse/usr/tmp" \
+			"TMPDIR=/data/data/com.termux/files/usr/tmp" \
 			"${login_shell}" \
 			"$@"
 	else
