@@ -31,7 +31,7 @@ PROGRAM_VERSION="4.34.1"
 set -e -u
 
 # Keep LD_PRELOAD value for restoring after unset.
-TERMUX_LDPRELOAD="$LD_PRELOAD"
+TERMUX_LDPRELOAD="${LD_PRELOAD-}"
 
 # Override user-defined PATH.
 export PATH="@TERMUX_PREFIX@/bin"
