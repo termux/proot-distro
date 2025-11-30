@@ -24,7 +24,7 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Alpine Linux     | alpine     | 3.22.2     | frozen        |
 | Arch Linux       | archlinux  | rolling    | supported     |
 | Artix Linux      | artix      | rolling    | aarch64 only  |
-| Chimera Linux    | chimera    | rolling    | only 64bit    |
+| Chimera Linux    | chimera    | rolling    | unstable      |
 | Debian           | debian     | trixie     | supported     |
 | Deepin           | deepin     | beige      | only 64bit    |
 | Fedora           | fedora     | 43         | unstable      |
