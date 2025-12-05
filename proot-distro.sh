@@ -831,37 +831,52 @@ run_proot_cmd() {
 		unset LD_PRELOAD
 
 		# shellcheck disable=SC2086 # ${cpu_emulator_arg} should expand into nothing rather than into ''.
-		proot ${cpu_emulator_arg} \
-			-L \
-			--kernel-release="${DEFAULT_FAKE_KERNEL_RELEASE}" \
-			--link2symlink \
-			--kill-on-exit \
-			--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
-			--root-id \
-			--cwd=/root \
-			--bind=/dev \
-			--bind="/dev/urandom:/dev/random" \
-			--bind=/proc \
-			--bind="/proc/self/fd:/dev/fd" \
-			--bind="/proc/self/fd/0:/dev/stdin" \
-			--bind="/proc/self/fd/1:/dev/stdout" \
-			--bind="/proc/self/fd/2:/dev/stderr" \
-			--bind=/sys \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_inotify_max_user_watches:/proc/sys/fs/inotify/max_user_watches" \
-			--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" \
-			/usr/bin/env -i \
-				"HOME=/root" \
-				"LANG=C.UTF-8" \
-				"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-				"TERM=${TERM-xterm-256color}" \
-				"TMPDIR=/tmp" \
-				"$@"
+		if [ -z "${cpu_emulator_arg}" ] && command -v su >/dev/null 2>&1; then
+			su <<-EOF
+				mount --bind /dev "${INSTALLED_ROOTFS_DIR}/${distro_name}/dev"
+				mount --bind /proc "${INSTALLED_ROOTFS_DIR}/${distro_name}/proc"
+				mount --bind /sys "${INSTALLED_ROOTFS_DIR}/${distro_name}/sys'
+				chroot "${INSTALLED_ROOTFS_DIR}/${distro_name}" /usr/bin/env -i \
+					"HOME=/root" \
+					"LANG=C.UTF-8" \
+					"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+					"TERM=${TERM-xterm-256color}" \
+					"TMPDIR=/tmp" \
+					"$@"
+			EOF
+		else
+			proot ${cpu_emulator_arg} \
+				-L \
+				--kernel-release="${DEFAULT_FAKE_KERNEL_RELEASE}" \
+				--link2symlink \
+				--kill-on-exit \
+				--rootfs="${INSTALLED_ROOTFS_DIR}/${distro_name}" \
+				--root-id \
+				--cwd=/root \
+				--bind=/dev \
+				--bind="/dev/urandom:/dev/random" \
+				--bind=/proc \
+				--bind="/proc/self/fd:/dev/fd" \
+				--bind="/proc/self/fd/0:/dev/stdin" \
+				--bind="/proc/self/fd/1:/dev/stdout" \
+				--bind="/proc/self/fd/2:/dev/stderr" \
+				--bind=/sys \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.loadavg:/proc/loadavg" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.stat:/proc/stat" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.uptime:/proc/uptime" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.version:/proc/version" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.vmstat:/proc/vmstat" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_entry_cap_last_cap:/proc/sys/kernel/cap_last_cap" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/proc/.sysctl_inotify_max_user_watches:/proc/sys/fs/inotify/max_user_watches" \
+				--bind="${INSTALLED_ROOTFS_DIR}/${distro_name}/sys/.empty:/sys/fs/selinux" \
+				/usr/bin/env -i \
+					"HOME=/root" \
+					"LANG=C.UTF-8" \
+					"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+					"TERM=${TERM-xterm-256color}" \
+					"TMPDIR=/tmp" \
+					"$@"
+		fi
 
 		# Restore LD_PRELOAD after proot.
 		[ -n "$TERMUX_LDPRELOAD" ] && export LD_PRELOAD="$TERMUX_LDPRELOAD"
