@@ -29,6 +29,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/opensuse-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/opensuse-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/opensuse-$(translate_arch "$arch")/sys"
+		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper refresh
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper dup --no-confirm
 		chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" rpm -qa --qf '%{NAME} ' | xargs -n 1 | grep -Pv '(filesystem|gpg-pubkey)' > /tmp/opensuse-pkgs.txt
 		cat /tmp/opensuse-pkgs.txt | xargs chroot "${WORKDIR}/opensuse-$(translate_arch "$arch")" zypper install --no-confirm --force
