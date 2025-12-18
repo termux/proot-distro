@@ -24,4 +24,7 @@ distro_setup() {
 	Pin: release o=LP-PPA-mozillateam
 	Pin-Priority: 9999
 	CONFIG_EOF
+
+    # Update package database
+	apt update
 }
