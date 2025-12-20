@@ -194,7 +194,7 @@ detect_cpu_arch() {
 	local cpu_arch
 
 	local i
-	for i in /usr/bin/bash /usr/bin/sh /usr/bin/su /usr/bin/busybox /bin/bash /bin/sh /bin/su /bin/busybox /data/data/com.termux/files/usr/bin/bash; do
+	for i in /usr/bin/bash /usr/bin/sh /usr/bin/su /usr/bin/busybox /bin/bash /bin/sh /bin/su /bin/busybox; do
 		if [ "$(dd if="${dist_path}${i}" bs=1 skip=1 count=3 2>/dev/null)" = "ELF" ]; then
 			cpu_arch=$(file -L "${dist_path}${i}" | cut -d':' -f2- | cut -d',' -f2 | cut -d' ' -f2-)
 			[ -n "$cpu_arch" ] && break
