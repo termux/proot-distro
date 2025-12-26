@@ -21,7 +21,7 @@
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PROGRAM_VERSION="4.35.0"
+PROGRAM_VERSION="4.36.0"
 
 #############################################################################
 #
