@@ -5,14 +5,14 @@ DISTRO_NAME="Termux"
 DISTRO_TYPE="termux"
 DISTRO_COMMENT="Official Termux environment sandbox."
 
-TARBALL_URL['aarch64']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.11.23-r1%2Bapt.android-7/bootstrap-aarch64.zip"
-TARBALL_SHA256['aarch64']="bec3e2b674b6efee7ff0e2a12824eb376e3fe182cc424d3357dad72c7cdd20d5"
-TARBALL_URL['arm']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.11.23-r1%2Bapt.android-7/bootstrap-arm.zip"
-TARBALL_SHA256['arm']="8c0487ed2e9a5a43af8347646b93641ed64939c532136cd2bc8df57eed5430b0"
-TARBALL_URL['i686']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.11.23-r1%2Bapt.android-7/bootstrap-i686.zip"
-TARBALL_SHA256['i686']="043df622bc3ce19583a18d1ec89f78ed990d0a0297d24e631141817e6a17a31c"
-TARBALL_URL['x86_64']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.11.23-r1%2Bapt.android-7/bootstrap-x86_64.zip"
-TARBALL_SHA256['x86_64']="8b36eafb6bf25ae32dd1646ddd5fe5b614510b68509df4eecf5a3e66409fc7f6"
+TARBALL_URL['aarch64']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.12.21-r1%2Bapt.android-7/bootstrap-aarch64.zip"
+TARBALL_SHA256['aarch64']="4ad1ef5c7b2d6a100be9e3e4d66f22ea652cf53d0de0e518a2a515b8e65dd684"
+TARBALL_URL['arm']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.12.21-r1%2Bapt.android-7/bootstrap-arm.zip"
+TARBALL_SHA256['arm']="430417911033cef2212089eb3f87264e5cb7eaa26087a96fbdacdd42d33e29a0"
+TARBALL_URL['i686']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.12.21-r1%2Bapt.android-7/bootstrap-i686.zip"
+TARBALL_SHA256['i686']="529d51ca07bc2620b3fa2c4931cf0f034dfa6fd4026b48b3054777810c66c08c"
+TARBALL_URL['x86_64']="https://github.com/termux/termux-packages/releases/download/bootstrap-2025.12.21-r1%2Bapt.android-7/bootstrap-x86_64.zip"
+TARBALL_SHA256['x86_64']="09f81d89422c28f6313e9b903454662b7ae4f72fb1429433da301a15400589af"
 
 distro_setup() {
 	# Create cache directory used by package manager.
