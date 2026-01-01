@@ -23,4 +23,11 @@ distro_setup() {
 	# Configure en_US.UTF-8 locale.
 	sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' ./etc/locale.gen
 	run_proot_cmd locale-gen
+
+	# Download and install custom gdk-pixbuf2 package
+	run_proot_cmd pacman -Sy --noconfirm wget
+	run_proot_cmd wget -O /tmp/gdk-pixbuf2-custom.pkg.tar.xz \
+		"https://github.com/Welpyes/gdk-pixbuf2-git/releases/download/2.48.10/gdk-pixbuf2-custom-2.42.10-1-aarch64.pkg.tar.xz"
+	run_proot_cmd pacman -U --noconfirm /tmp/gdk-pixbuf2-custom.pkg.tar.xz
+	run_proot_cmd rm /tmp/gdk-pixbuf2-custom.pkg.tar.xz
 }
