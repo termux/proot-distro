@@ -30,4 +30,5 @@ distro_setup() {
 		"https://github.com/Welpyes/gdk-pixbuf2-git/releases/download/2.48.10/gdk-pixbuf2-custom-2.42.10-1-aarch64.pkg.tar.xz"
 	run_proot_cmd pacman -U --noconfirm /tmp/gdk-pixbuf2-custom.pkg.tar.xz
 	run_proot_cmd rm /tmp/gdk-pixbuf2-custom.pkg.tar.xz
+	run_proot_cmd gdk-pixbuf-query-loaders --update-cache
 }
