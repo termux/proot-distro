@@ -39,11 +39,11 @@ write_plugin() {
 	DISTRO_NAME="Chimera Linux"
 	DISTRO_COMMENT="Version '${dist_version}'."
 
-	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/chimera-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/chimera-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/chimera-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['riscv64']="${GIT_RELEASE_URL}/chimera-riscv64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['riscv64']="${ROOTFS_FILESERVER_URL}/chimera-riscv64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['riscv64']="$(sha256sum "${ROOTFS_DIR}/chimera-riscv64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/chimera-x86_64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['x86_64']="${ROOTFS_FILESERVER_URL}/chimera-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/chimera-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
 }

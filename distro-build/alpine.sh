@@ -46,15 +46,15 @@ write_plugin() {
 	DISTRO_NAME="Alpine Linux"
 	DISTRO_COMMENT="Regular release v${dist_version}."
 
-	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/alpine-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['arm']="${GIT_RELEASE_URL}/alpine-arm-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['arm']="${ROOTFS_FILESERVER_URL}/alpine-arm-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/alpine-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['i686']="${GIT_RELEASE_URL}/alpine-i686-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['i686']="${ROOTFS_FILESERVER_URL}/alpine-i686-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/alpine-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['riscv64']="${GIT_RELEASE_URL}/alpine-riscv64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['riscv64']="${ROOTFS_FILESERVER_URL}/alpine-riscv64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['riscv64']="$(sha256sum "${ROOTFS_DIR}/alpine-riscv64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/alpine-x86_64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['x86_64']="${ROOTFS_FILESERVER_URL}/alpine-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/alpine-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
 }

@@ -41,7 +41,7 @@ write_plugin() {
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="Artix Linux"
 
-	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/artix-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 
 	distro_setup() {

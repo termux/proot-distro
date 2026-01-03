@@ -40,9 +40,9 @@ write_plugin() {
 	DISTRO_NAME="Oracle Linux"
 	DISTRO_COMMENT="Version ${dist_version}."
 
-	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/oraclelinux-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['x86_64']="${ROOTFS_FILESERVER_URL}/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/oraclelinux-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	EOF
 }

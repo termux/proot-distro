@@ -4,13 +4,13 @@
 DISTRO_NAME="Arch Linux"
 DISTRO_COMMENT="ARM(64) devices use Arch Linux ARM, i686 uses Arch Linux 32. Both are independent projects. The original Arch usable only by x86_64 devices."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.34.2/archlinux-aarch64-pd-v4.34.2.tar.xz"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/archlinux-aarch64-pd-v4.34.2.tar.xz"
 TARBALL_SHA256['aarch64']="dabc2382ddcb725969cf7b9e2f3b102ec862ea6e0294198a30c71e9a4b837f81"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.34.2/archlinux-arm-pd-v4.34.2.tar.xz"
+TARBALL_URL['arm']="https://easycli.sh/proot-distro/archlinux-arm-pd-v4.34.2.tar.xz"
 TARBALL_SHA256['arm']="811bc341419c08b68f3c9ee68af546f8195f82660d9a11c54d916c1c353b8d90"
-TARBALL_URL['i686']="https://github.com/termux/proot-distro/releases/download/v4.34.2/archlinux-i686-pd-v4.34.2.tar.xz"
+TARBALL_URL['i686']="https://easycli.sh/proot-distro/archlinux-i686-pd-v4.34.2.tar.xz"
 TARBALL_SHA256['i686']="52d9167658510c504481de63594b55daf9312c169e4134eb2e65e9ce813a85e9"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.34.2/archlinux-x86_64-pd-v4.34.2.tar.xz"
+TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/archlinux-x86_64-pd-v4.34.2.tar.xz"
 TARBALL_SHA256['x86_64']="5829c102ff1789d0e026ede65685221433e0b5c18002e70471a52b752c761be2"
 
 distro_setup() {

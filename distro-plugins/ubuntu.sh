@@ -4,11 +4,11 @@
 DISTRO_NAME="Ubuntu (25.10)"
 DISTRO_COMMENT="Regular release (questing)."
 
-TARBALL_URL['aarch64']="https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
 TARBALL_SHA256['aarch64']="5ab35b90cd9a9f180656261ba400a135c4c01c2da4b74522118342f985c2d328"
-TARBALL_URL['arm']="https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-arm-pd-v4.30.1.tar.xz"
+TARBALL_URL['arm']="https://easycli.sh/proot-distro/ubuntu-questing-arm-pd-v4.30.1.tar.xz"
 TARBALL_SHA256['arm']="b074efe535b565f426219f20b35af0c4a7b3d0bc18ebd4fa11ccbd7370315b53"
-TARBALL_URL['x86_64']="https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-x86_64-pd-v4.30.1.tar.xz"
+TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/ubuntu-questing-x86_64-pd-v4.30.1.tar.xz"
 TARBALL_SHA256['x86_64']="74f7c8492a2f3e720d5aa89de6572cbb90b14c4b21dee87ab33416b6fb1088c3"
 
 distro_setup() {

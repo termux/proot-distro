@@ -30,13 +30,13 @@ write_plugin() {
 	DISTRO_NAME="Debian (${dist_version})"
 	DISTRO_COMMENT="Stable release."
 
-	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/debian-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/debian-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/debian-${dist_version}-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['arm']="${GIT_RELEASE_URL}/debian-${dist_version}-arm-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['arm']="${ROOTFS_FILESERVER_URL}/debian-${dist_version}-arm-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/debian-${dist_version}-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['i686']="${GIT_RELEASE_URL}/debian-${dist_version}-i686-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['i686']="${ROOTFS_FILESERVER_URL}/debian-${dist_version}-i686-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['i686']="$(sha256sum "${ROOTFS_DIR}/debian-${dist_version}-i686-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/debian-${dist_version}-x86_64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['x86_64']="${ROOTFS_FILESERVER_URL}/debian-${dist_version}-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/debian-${dist_version}-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 
 	distro_setup() {

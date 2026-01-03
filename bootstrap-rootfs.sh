@@ -37,9 +37,8 @@ if [ -z "$CURRENT_VERSION" ]; then
 	exit 1
 fi
 
-# Usually all newly created tarballs are uploaded into GitHub release of
-# current proot-distro version.
-GIT_RELEASE_URL="https://github.com/termux/proot-distro/releases/download/${CURRENT_VERSION}"
+# Server owned by @sylirre.
+ROOTFS_FILESERVER_URL="https://easycli.sh/proot-distro/"
 
 # Normalize architecture names.
 # Prefer aarch64, arm, i686, riscv64, x86_64 architecture names
