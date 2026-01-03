@@ -45,7 +45,7 @@ write_plugin() {
 
 	TARBALL_URL['aarch64']="${GIT_RELEASE_URL}/adelie-aarch64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/adelie-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
-	TARBALL_URL['arm']="${GIT_RELEASE_URL}/adelie-armv7-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_URL['arm']="${GIT_RELEASE_URL}/adelie-arm-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['arm']="$(sha256sum "${ROOTFS_DIR}/adelie-arm-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
 	TARBALL_URL['x86_64']="${GIT_RELEASE_URL}/adelie-x86_64-pd-${CURRENT_VERSION}.tar.xz"
 	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/adelie-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1}')"
