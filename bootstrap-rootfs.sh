@@ -38,7 +38,7 @@ if [ -z "$CURRENT_VERSION" ]; then
 fi
 
 # Server owned by @sylirre.
-ROOTFS_FILESERVER_URL="https://easycli.sh/proot-distro/"
+ROOTFS_FILESERVER_URL="https://easycli.sh/proot-distro"
 
 # Normalize architecture names.
 # Prefer aarch64, arm, i686, riscv64, x86_64 architecture names
