@@ -1,5 +1,5 @@
 dist_name="Alpine Linux"
-dist_version="3.23.2"
+dist_version="3.22.2"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/alpine-*.tar.xz
@@ -25,6 +25,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/alpine-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/alpine-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/alpine-$(translate_arch "$arch")/sys"
+		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add apk-tools=2.14.9-r3
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk upgrade
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" apk add shadow-login
 		chroot "${WORKDIR}/alpine-$(translate_arch "$arch")" ln -sf /var/cache/apk /etc/apk/cache
