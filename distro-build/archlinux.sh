@@ -33,7 +33,7 @@ bootstrap_distribution() {
 		sed -i 's/#DisableSandbox/DisableSandbox/' "${WORKDIR}/archlinux-$(translate_arch "$arch")/etc/pacman.conf"
 		EOF
 
-		sudo rm -f "${WORKDIR:?}/archlinux-$(translate_arch "$arch")"/var/cache/pacman/pkg/* || true
+		sudo rm -rf "${WORKDIR:?}/archlinux-$(translate_arch "$arch")"/var/cache/pacman/pkg
 
 		archive_rootfs "${ROOTFS_DIR}/archlinux-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"archlinux-$(translate_arch "$arch")"
@@ -76,7 +76,7 @@ bootstrap_distribution() {
 	sudo mv archlinux-bootstrap/archlinux-i686 ./
 
 	for arch in i686 x86_64; do
-		sudo rm -f "${WORKDIR:?}/archlinux-bootstrap/archlinux-${arch}"/var/cache/pacman/pkg/* || true
+		sudo rm -rf "${WORKDIR:?}/archlinux-bootstrap/archlinux-${arch}"/var/cache/pacman/pkg
 		sudo sed -i 's/#DisableSandbox/DisableSandbox/' "archlinux-${arch}/etc/pacman.conf"
 		archive_rootfs "${ROOTFS_DIR}/archlinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" \
 			"archlinux-${arch}"
