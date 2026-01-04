@@ -76,7 +76,7 @@ bootstrap_distribution() {
 	sudo mv archlinux-bootstrap/archlinux-i686 ./
 
 	for arch in i686 x86_64; do
-		sudo rm -rf "${WORKDIR:?}/archlinux-bootstrap/archlinux-${arch}"/var/cache/pacman/pkg
+		sudo rm -rf "${WORKDIR:?}/archlinux-${arch}"/var/cache/pacman/pkg
 		sudo sed -i 's/#DisableSandbox/DisableSandbox/' "archlinux-${arch}/etc/pacman.conf"
 		archive_rootfs "${ROOTFS_DIR}/archlinux-${arch}-pd-${CURRENT_VERSION}.tar.xz" \
 			"archlinux-${arch}"
