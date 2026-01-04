@@ -40,6 +40,9 @@ _proot-distro() {
 					COMPREPLY=($(compgen -W "${pd_available_dists} --override-alias" -- "$cur"))
 				fi
 			;;
+			list|li|ls)
+				COMPREPLY=($(compgen -W "--verbose" -- "$cur"))
+			;;
 			login|sh)
 				if [ $prev = "--user" ]; then
 					COMPREPLY=($(compgen -W "root" -- "$cur"))
