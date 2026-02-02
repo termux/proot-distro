@@ -1,0 +1,5 @@
+samsung/a21snnxx/a21s:11/RP1A.200720.012/A217FXXS8CVD1:user/release-keys
+{
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {}
+} 
