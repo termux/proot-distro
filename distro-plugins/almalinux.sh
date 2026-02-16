@@ -4,7 +4,7 @@
 DISTRO_NAME="AlmaLinux"
 DISTRO_COMMENT="Version 10."
 
-TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/almalinux-aarch64-pd-v4.31.0.tar.xz"
-TARBALL_SHA256['aarch64']="c01b1e2a19c4ff4cc927f625cac0c8814241fcae0d630250246b1891eff41ef5"
-TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/almalinux-x86_64-pd-v4.31.0.tar.xz"
-TARBALL_SHA256['x86_64']="60580889a052a2d1ccef4d478830a88b716b81bc934fc3ae27478dc9e13a3a55"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/almalinux-aarch64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['aarch64']="3e58affaf2b8c7c4999bb1f17bd773fe9447c6b7f8f2213caae82289b371a224"
+TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/almalinux-x86_64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['x86_64']="26ecaf5b4ff485833761cf7bf7b43ae8b563e4b508a1f418eecab0d49a7f2e78"
