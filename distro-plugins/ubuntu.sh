@@ -4,12 +4,12 @@
 DISTRO_NAME="Ubuntu (25.10)"
 DISTRO_COMMENT="Regular release (questing)."
 
-TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
-TARBALL_SHA256['aarch64']="5ab35b90cd9a9f180656261ba400a135c4c01c2da4b74522118342f985c2d328"
-TARBALL_URL['arm']="https://easycli.sh/proot-distro/ubuntu-questing-arm-pd-v4.30.1.tar.xz"
-TARBALL_SHA256['arm']="b074efe535b565f426219f20b35af0c4a7b3d0bc18ebd4fa11ccbd7370315b53"
-TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/ubuntu-questing-x86_64-pd-v4.30.1.tar.xz"
-TARBALL_SHA256['x86_64']="74f7c8492a2f3e720d5aa89de6572cbb90b14c4b21dee87ab33416b6fb1088c3"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/ubuntu-questing-aarch64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['aarch64']="37e61ce5fd8593a7d10c4e72ebe611adb7e795f7492e4c0bf3a950441c984161"
+TARBALL_URL['arm']="https://easycli.sh/proot-distro/ubuntu-questing-arm-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['arm']="8909d0942506792f08d0075341d3d5c9b6e6b2c14839082894db8878214d8a95"
+TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/ubuntu-questing-x86_64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['x86_64']="0fe0add7dff6adeaa58d5a6f44225cedf1924bd6c221c886077fa3b595319c2d"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.
