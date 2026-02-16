@@ -4,8 +4,8 @@
 DISTRO_NAME="Manjaro"
 DISTRO_COMMENT="Manjaro ARM64 port."
 
-TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/manjaro-aarch64-pd-v4.34.2.tar.xz"
-TARBALL_SHA256['aarch64']="9778ecfc6efb623a20b441b901da433d5703d570546245ee8179dcede2921544"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/manjaro-aarch64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['aarch64']="90fd86130d440b6d6ed6408b21306189eb41fe07d0026aab836ae203a1c419a4"
 
 distro_setup() {
 	# Fix environment variables on login or su.
