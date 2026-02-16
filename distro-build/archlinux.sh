@@ -18,6 +18,8 @@ bootstrap_distribution() {
 		cat <<- EOF | sudo unshare -mpf bash -e -
 		rm -f "${WORKDIR}/archlinux-$(translate_arch "$arch")/etc/resolv.conf"
 		echo "nameserver 1.1.1.1" > "${WORKDIR}/archlinux-$(translate_arch "$arch")/etc/resolv.conf"
+		sed -i 's/^#DisableSandbox/DisableSandbox/' \
+			"${WORKDIR}/archlinux-$(translate_arch "$arch")/etc/pacman.conf"
 		mount --bind "${WORKDIR}/archlinux-$(translate_arch "$arch")/" "${WORKDIR}/archlinux-$(translate_arch "$arch")/"
 		mount --bind /dev "${WORKDIR}/archlinux-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/archlinux-$(translate_arch "$arch")/proc"
@@ -60,6 +62,8 @@ bootstrap_distribution() {
 	mkdir "${WORKDIR}/archlinux-bootstrap/archlinux-x86_64"
 	echo 'Server = http://mirror.rackspace.com/archlinux/\$repo/os/\$arch' > \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
+	sed -i 's/^#DisableSandbox/DisableSandbox/' \
+		"${WORKDIR}/archlinux-bootstrap/etc/pacman.conf"
 	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --init
 	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --populate
 	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap -K /archlinux-x86_64 base
