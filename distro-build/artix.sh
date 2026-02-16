@@ -24,6 +24,7 @@ bootstrap_distribution() {
 	echo 'Server = https://armtix.artixlinux.org/repos/\$repo/os/\$arch' > "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
 	echo 'Server = https://repo.xdan.eu/pacman/armtix/\$repo/os/\$arch' >> "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
 	echo 'Server = https://repo.armtixlinux.org/\$repo/os/\$arch' >> "${WORKDIR}/artix-aarch64"/etc/pacman.d/mirrorlist
+	sed -i 's/^#DisableSandbox/DisableSandbox/' "${WORKDIR}/artix-aarch64"/etc/pacman.conf
 	chroot "${WORKDIR}/artix-aarch64" pacman -Rnsc --noconfirm linux-aarch64 linux-aarch64-lts linux-aarch64-headers linux-aarch64-lts-headers linux-firmware
 	chroot "${WORKDIR}/artix-aarch64" pacman -Syu --noconfirm
 	EOF
