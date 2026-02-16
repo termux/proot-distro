@@ -52,9 +52,6 @@ jobs:
             echo "${{ github.event.inputs.distributions }}" > ./distributions.txt
           fi
 
-          # Remove distro plugins to filter and upload built distributions and its plugins later on
-          rm -rf ./distro-plugins/*
-
 
       - name: Install Needed Dependencies
         run: |
