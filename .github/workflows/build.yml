@@ -84,7 +84,7 @@ jobs:
           rsync -e "ssh -p ${{ secrets.SSH_RSYNC_PORT }} -i ./identity" \
             -rvt --include "*-pd-*.tar.xz" --exclude "*" \
             ./rootfs/ \
-            "${{ secrets.SSH_RSYNC_USERNAME }}@${{ secrets.SSH_RSYNC_IP }}":/srv/hosting/volumes/proot-distro/
+            "${{ secrets.SSH_RSYNC_USERNAME }}@${{ secrets.SSH_RSYNC_IP }}":/
 
       #- name: Upload Artifacts (distro plugins)
       #  uses: actions/upload-artifact@v6
