@@ -27,6 +27,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+
       - name: Gather distributions that is needed to be built
         run: |
           if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
@@ -52,6 +54,8 @@ jobs:
 
           # Remove distro plugins to filter and upload built distributions and its plugins later on
           rm -rf ./distro-plugins/*
+
+
       - name: Install Needed Dependencies
         run: |
           sudo apt update && sudo apt install -yq curl jq qemu-user-static binfmt-support
@@ -61,6 +65,8 @@ jobs:
           sudo apt install -yq /tmp/keyring.deb
           curl -L -o /tmp/trisquelkey.deb https://archive.trisquel.org/trisquel/pool/main/t/trisquel-keyring/trisquel-keyring_2023.02.07_all.deb
           sudo apt install -yq /tmp/trisquelkey.deb
+
+
       - name: Build distribution rootfs
         run: |
           distros_to_be_built=$(cat ./distributions.txt)
@@ -72,6 +78,8 @@ jobs:
             fi
           done
           ./bootstrap-rootfs.sh ${distros_to_be_built}
+
+
       - name: Upload to web server
         run: |
           echo "${{ secrets.SSH_RSYNC_SECRET_KEY }}" > identity
@@ -86,8 +94,19 @@ jobs:
             ./rootfs/ \
             "${{ secrets.SSH_RSYNC_USERNAME }}@${{ secrets.SSH_RSYNC_IP }}":/
 
-      #- name: Upload Artifacts (distro plugins)
-      #  uses: actions/upload-artifact@v6
-      #  with:
-      #    name: distro-plugins
-      #    path: distro-plugins/*.sh
+
+      - name: Commit plugin update
+        run: |
+          git config user.name "Termux Github Actions"
+          git config user.email "contact@termux.dev"
+
+          echo "--------------------------------"
+          echo "Git status"
+          echo "--------------------------------"
+          git status
+          echo "--------------------------------"
+
+          git add ./distro-plugins/*.sh
+          git commit -m "update plugin scripts"
+
+          git push
