@@ -4,14 +4,14 @@
 DISTRO_NAME="Debian (trixie)"
 DISTRO_COMMENT="Stable release."
 
-TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/debian-trixie-aarch64-pd-v4.29.0.tar.xz"
-TARBALL_SHA256['aarch64']="3834a11cbc6496935760bdc20cca7e2c25724d0cd8f5e4926da8fd5ca1857918"
-TARBALL_URL['arm']="https://easycli.sh/proot-distro/debian-trixie-arm-pd-v4.29.0.tar.xz"
-TARBALL_SHA256['arm']="99bcba87d8d1c66c0de06259ac0a270eb0a20f8b4af39beb0705d28846d78b90"
-TARBALL_URL['i686']="https://easycli.sh/proot-distro/debian-trixie-i686-pd-v4.29.0.tar.xz"
-TARBALL_SHA256['i686']="a388a0531301b033ef5509ab6a50cc886f7f90e7ec9cac02569b45af1900229a"
-TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/debian-trixie-x86_64-pd-v4.29.0.tar.xz"
-TARBALL_SHA256['x86_64']="4b8f33b80a10d734ff935e5934588572f860c0c38a68bf91db59af0580370716"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/debian-trixie-aarch64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['aarch64']="9bd3b19ff7cd300c7c7bf33124b726eb199f4bab9a3b1472f34749c6d12c9195"
+TARBALL_URL['arm']="https://easycli.sh/proot-distro/debian-trixie-arm-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['arm']="af9b22fc1b82ccc665e484342af71c35a86f9f3dd525b0f423649976dded239f"
+TARBALL_URL['i686']="https://easycli.sh/proot-distro/debian-trixie-i686-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['i686']="61f4c3b55d5defc1e9885efbe3b78d476f30d146eaffe45030916a77341c6768"
+TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/debian-trixie-x86_64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['x86_64']="17eec851f40330cb3be77880aedd9e49c87d044f4ee5b02b3568c6aae0a5973b"
 
 distro_setup() {
 	# Configure en_US.UTF-8 locale.
