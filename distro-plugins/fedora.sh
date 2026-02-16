@@ -4,10 +4,10 @@
 DISTRO_NAME="Fedora"
 DISTRO_COMMENT="Version 43. Broken on Android 15+."
 
-TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/fedora-aarch64-pd-v4.31.0.tar.xz"
-TARBALL_SHA256['aarch64']="e3c0aca71572ed343a29c6f41c6150583bf840f903047bb97b1ec45cefe95865"
-TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/fedora-x86_64-pd-v4.31.0.tar.xz"
-TARBALL_SHA256['x86_64']="f8d43b3b82be1131a1a61e7bb2bfe7170a232e643855ee4fe3ac07b4c110ab97"
+TARBALL_URL['aarch64']="https://easycli.sh/proot-distro/fedora-aarch64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['aarch64']="eb86202ef9887dc315e93c627bef3b6a825da871129ab3de91466ab2c2e06019"
+TARBALL_URL['x86_64']="https://easycli.sh/proot-distro/fedora-x86_64-pd-v4.37.0.tar.xz"
+TARBALL_SHA256['x86_64']="0daac2fe47dbfcdbcc89e8e92c7a59db4a3c78b3c226e4b4a04e6c2ec582bfd4"
 
 distro_setup() {
 	# Fix environment variables on login or su.
