@@ -5,14 +5,14 @@ run-name: >
   || format('Build rootfs: {0}', github.event.inputs.distributions) }}
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - 'distro-build/**'
-  pull_request:
-    paths:
-      - 'distro-build/**'
+  #push:
+  #  branches:
+  #    - master
+  #  paths:
+  #    - 'distro-build/**'
+  #pull_request:
+  #  paths:
+  #    - 'distro-build/**'
   workflow_dispatch:
     inputs:
       distributions:
