@@ -104,6 +104,7 @@ jobs:
           echo "--------------------------------"
 
           git add ./distro-plugins/*.sh
-          git commit -m "update plugin scripts"
+          git commit -m "[skip ci] update plugin scripts"
 
+          git pull --rebase
           git push
