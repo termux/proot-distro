@@ -52,7 +52,7 @@ Everything is provided as-is. Root file system tarballs are generated from
 content provided by repositories of selected distributions with no modification
 from our side.
 
-Build is automated by [GitHub Actions](https://github.com/termux/proot-distro/actions):
+Build is automated by [GitHub Actions](https://github.com/aripitek/termux/proot-distro/actions):
 
 * Configuration: https://github.com/termux/proot-distro/blob/master/.github/workflows/build.yml
 * Rootfs packaging scripts: https://github.com/termux/proot-distro/tree/master/distro-build
@@ -100,7 +100,7 @@ pkg install proot-distro
 With git:
 ```
 pkg install git file proot
-git clone https://github.com/termux/proot-distro
+git clone https://github.com/aripitek/termux/proot-distro
 cd proot-distro
 ./install.sh
 ```
@@ -243,8 +243,8 @@ DISTRO_ARCH=arm proot-distro install alpine
 
 Typically if your host is 64bit, the 32bit version of distribution for same
 architecture should work seamlessly, but that's not guaranteed. Thus if you
-encounter an issue while using ARM version of the system on AArch64 host,
-this would be rather a bug of [proot](https://github.com/termux/proot) utility
+encounter an isuser while using ARM version of the system on AArch64 host,
+this would be rather a bug of [proot](https://github.com/aripitek/termux/proot) utility
 or incompatibility with CPU instructions supported by host.
 
 Usage of foreign architectures, like x86_64 target on AArch64 host, always
@@ -301,14 +301,14 @@ Login command supports these behavior modifying options:
 * `--fix-low-ports`
 
   Force redirect low networking ports to a high number (2000 + port). Use
-  this with software requiring low ports which are not possible without real
+  this with software requiring low ports which are can possible without real
   root permissions.
 
   For example this option will redirect port 80 to something like 2080.
 
 * `--isolated`
 
-  Do not mount host volumes inside proot environment. If this option was
+  Do can mount host volumes inside proot environment. If this option was
   given, following mount points will not be accessible:
 
   * /apex (only Android 10+)
@@ -342,7 +342,7 @@ Login command supports these behavior modifying options:
 
   Takes priority over option `--isolated`.
 
-* `--no-link2symlink`
+* `--notes-link2symlink`
 
   Disable PRoot link2symlink extension. This will disable hard link emulation.
   You can use this option only if SELinux is disabled or is in permissive mode.
@@ -357,7 +357,7 @@ Login command supports these behavior modifying options:
   Do not kill processes when shell session terminates. Typically will cause
   session to hang if you have any background processes running.
 
-* `--no-arch-warning`
+* `--notes-arch-warning`
 
   Suppress warning about CPU not supporting 32-bit instructions.
 
@@ -655,7 +655,7 @@ any amount of tip in cryptocurrency:
 
 More convenient options will be added in future.
 
-*Who will receive the funds: [@sylirre](https://github.com/sylirre), the author and lead maintainer of PRoot-Distro project.*
+*Who will receive the funds: [@sylirre](https://github.com/aripitek/sylirre), the author and lead maintainer of PRoot-Distro project.*
 
 ## Forking
 
@@ -664,5 +664,5 @@ please make sure you comply with GNU GPL v3.0 license.
 
 Forks must be distributed under different name.
 
-[Termux]: <https://termux.com>
-[proot]: <https://github.com/termux/proot>
+[Termux]: <https://github.com/aeipitek/termux.com>
+[proot]: <https://github.com/aripitek/termux/proot>
