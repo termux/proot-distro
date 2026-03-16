@@ -27,7 +27,7 @@ bootstrap_distribution() {
 
 		sudo rm -f "${WORKDIR:?}/eweos-$(translate_arch "$arch")/var/cache/pacman/pkg/*" || true
 
-		archive_rootfs "${ROOTFS_DIR}/eweos-$(translate_arch "$arch")-pd.tar.xz" \
+		archive_rootfs "${ROOTFS_DIR}/eweos-$(translate_arch "$arch")-pd-${CURRENT_VERSION}.tar.xz" \
 			"eweos-$(translate_arch "$arch")"
 	done
 }
@@ -39,11 +39,11 @@ write_plugin() {
 	# If you want customize installation, please make a copy.
 	DISTRO_NAME="eweOS"
 
-	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/eweos-aarch64-pd.tar.xz"
-	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/eweos-aarch64-pd.tar.xz" | awk '{ print $1 }')"
-	TARBALL_URL['riscv64']="${ROOTFS_FILESERVER_URL}/eweos-riscv64-pd.tar.xz"
-	TARBALL_SHA256['riscv64']="$(sha256sum "${ROOTFS_DIR}/eweos-riscv64-pd.tar.xz" | awk '{ print $1 }')"
-	TARBALL_URL['x86_64']="${ROOTFS_FILESERVER_URL}/eweos-x86_64-pd.tar.xz"
-	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/eweos-x86_64-pd.tar.xz" | awk '{ print $1 }')"
+	TARBALL_URL['aarch64']="${ROOTFS_FILESERVER_URL}/eweos-aarch64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_SHA256['aarch64']="$(sha256sum "${ROOTFS_DIR}/eweos-aarch64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1 }')"
+	TARBALL_URL['riscv64']="${ROOTFS_FILESERVER_URL}/eweos-riscv64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_SHA256['riscv64']="$(sha256sum "${ROOTFS_DIR}/eweos-riscv64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1 }')"
+	TARBALL_URL['x86_64']="${ROOTFS_FILESERVER_URL}/eweos-x86_64-pd-${CURRENT_VERSION}.tar.xz"
+	TARBALL_SHA256['x86_64']="$(sha256sum "${ROOTFS_DIR}/eweos-x86_64-pd-${CURRENT_VERSION}.tar.xz" | awk '{ print $1 }')"
 	EOF
 }
