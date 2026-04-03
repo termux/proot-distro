@@ -1,0 +1,13 @@
+name: "Debian"
+description: "One of the oldest Linux distributions, famous for its stability and versatility."
+version: "trixie"
+
+architectures:
+  - aarch64: "https://easycli.sh/proot-distro/v5.0.0/debian_trixie_aarch64_rootfs.tar.xz"
+    checksum: "fa64c3fe11e4cd65fa0c894682d551f99cc45339c0a67d2775a09d4d8998cea5"
+  - arm: "https://easycli.sh/proot-distro/v5.0.0/debian_trixie_arm_rootfs.tar.xz"
+    checksum: "0a5c2d0e7d89b04816c2d4d26f79636a62ea65dbfc4bc462747101f60309ef7f"
+  - i686: "https://easycli.sh/proot-distro/v5.0.0/debian_trixie_i686_rootfs.tar.xz"
+    checksum: "07d806e2acdc720c66803e6db45b4c126de01187bddfe3950eaa5cf564d072be"
+  - x86_64: "https://easycli.sh/proot-distro/v5.0.0/debian_trixie_x86_64_rootfs.tar.xz"
+    checksum: "17475e5a447c41792694cca24e51dad8a071f2df9e54b8f672b930b81d40f22a"

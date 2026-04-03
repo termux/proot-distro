@@ -1,0 +1,15 @@
+name: "Rocky Linux"
+name_slug: "rocky"
+description: "A free and open-source clone of Red Hat Enterprise Linux, 100% bug-to-bug compatible."
+version: "10.1"
+
+architectures:
+  - aarch64: "https://download.rockylinux.org/pub/rocky/${version}/images/${architecture}/Rocky-${version:0:2}-Container-Minimal.latest.${architecture}.tar.xz"
+  - x86_64: "https://download.rockylinux.org/pub/rocky/${version}/images/${architecture}/Rocky-${version:0:2}-Container-Minimal.latest.${architecture}.tar.xz"
+
+bootstrap_method: oci_container
+
+chroot_script: |
+  microdnf upgrade -y
+  microdnf install dnf -y
+  microdnf clean all -y

@@ -1,0 +1,37 @@
+name: "Arch Linux ARM"
+name_slug: "archlinuxarm"
+description: "Flexible rolling-release distribution emphasizing DIY philosophy. ARM(64) port."
+version: "2026.04.03"
+
+architectures:
+  - aarch64: "http://os.archlinuxarm.org/os/ArchLinuxARM-${architecture}-latest.tar.gz"
+  - armv7: "http://os.archlinuxarm.org/os/ArchLinuxARM-${architecture}-latest.tar.gz"
+
+bootstrap_method: rootfs
+
+chroot_script: |
+  # Disable sandboxing for compatibility with proot.
+  sed -i 's/#DisableSandbox/DisableSandbox/' /etc/pacman.conf
+
+  # Initialize pacman keyring.
+  pacman-key --init
+  pacman-key --populate archlinuxarm
+
+  # Linux kernel and firmware are not applicable for chroot (proot).
+  # Get rid of unneeded packages.
+  pacman -Rnsc --noconfirm linux-"${DISTRIBUTION_ARCH}" linux-firmware
+
+  # Upgrade all packages.
+  pacman -Syu --noconfirm
+
+  # Ensure that /etc/environment will be applied in su and login.
+  for f in su su-l system-local-login system-remote-login; do
+    echo "session  required  pam_env.so readenv=1" >> /etc/pam.d/${f}
+  done
+
+  # Enable en_US.UTF-8 locale
+  sed -i -E 's/#[[:space:]]?(en_US.UTF-8[[:space:]]+UTF-8)/\1/g' /etc/locale.gen
+  locale-gen
+
+  # Cleanup
+  rm -f /var/cache/pacman/pkg/* || true

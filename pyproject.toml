@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proot-distro"
+version = "5.0.0-alpha.6"
+description = "Manage Linux proot containers on Termux"
+readme = {text = "Manage Linux proot containers on Termux.", content-type = "text/plain"}
+requires-python = ">=3.9"
+license = "GPL-3.0-only"
+dependencies = ["pyyaml"]
+
+[project.scripts]
+proot-distro = "proot_distro.cli:main"
+pd = "proot_distro.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["proot_distro*"]
+
+[tool.setuptools.package-data]
+proot_distro = ["configs/*.yaml"]

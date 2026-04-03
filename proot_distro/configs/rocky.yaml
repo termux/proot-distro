@@ -1,0 +1,9 @@
+name: "Rocky Linux"
+description: "A free and open-source clone of Red Hat Enterprise Linux, 100% bug-to-bug compatible."
+version: "10.1"
+
+architectures:
+  - aarch64: "https://easycli.sh/proot-distro/v5.0.0/rocky_10.1_aarch64_rootfs.tar.xz"
+    checksum: "36c7fb6ed76e9d319c285a6124a68c8f388e1f0dab331cfb5b492ae0cc124e37"
+  - x86_64: "https://easycli.sh/proot-distro/v5.0.0/rocky_10.1_x86_64_rootfs.tar.xz"
+    checksum: "37b90e48013597958e44910c156f935c0a473666141058198e8595879bc2ab38"

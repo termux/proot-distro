@@ -1,0 +1,11 @@
+name: "Ubuntu"
+description: "User-friendly distribution based on Debian."
+version: "questing"
+
+architectures:
+  - aarch64: "https://easycli.sh/proot-distro/v5.0.0/ubuntu_questing_aarch64_rootfs.tar.xz"
+    checksum: "7d6d3a23475bbb5612d2f49480bef51e1d7541e8f9aa02d0e8fa8a28b9560a18"
+  - arm: "https://easycli.sh/proot-distro/v5.0.0/ubuntu_questing_arm_rootfs.tar.xz"
+    checksum: "d5343363369f0887f73eec4cf49756742869f86d666631cd40ba9737e5e0ac38"
+  - x86_64: "https://easycli.sh/proot-distro/v5.0.0/ubuntu_questing_x86_64_rootfs.tar.xz"
+    checksum: "b57af5f9034121e73d1afa7201fbbcb01c1bf42aaa67845c36de21e60c23a55f"

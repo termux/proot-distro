@@ -1,0 +1,15 @@
+name: "Alpine Linux"
+description: "Lightweight distribution based on Busybox and Musl Libc."
+version: "3.23.3"
+
+architectures:
+  - aarch64: "https://easycli.sh/proot-distro/v5.0.0/alpine_3.23.3_aarch64_rootfs.tar.xz"
+    checksum: "333cce6187d9caeb63c17abaefc26beefee07626fca08c16670bd62c6fb82ccc"
+  - arm: "https://easycli.sh/proot-distro/v5.0.0/alpine_3.23.3_arm_rootfs.tar.xz"
+    checksum: "423f8df7cf361faa95aa766e6219bca46953a99fb7655c795c5b632a2e858136"
+  - riscv64: "https://easycli.sh/proot-distro/v5.0.0/alpine_3.23.3_riscv64_rootfs.tar.xz"
+    checksum: "e7e30965de4d47379c4aba692d18d5be4ee40358240a308ec8f1163b829f7b18"
+  - i686: "https://easycli.sh/proot-distro/v5.0.0/alpine_3.23.3_i686_rootfs.tar.xz"
+    checksum: "4064e959c521034076ba4ce7bfb69b30c8e92aa7c33e5e4fd2c342debcda5a55"
+  - x86_64: "https://easycli.sh/proot-distro/v5.0.0/alpine_3.23.3_x86_64_rootfs.tar.xz"
+    checksum: "9b2bde9e155c4836a0deb6a3c18abaae04c7604ca6676ae7cf6fe0e0567674e4"

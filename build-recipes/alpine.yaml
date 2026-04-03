@@ -1,0 +1,23 @@
+name: "Alpine Linux"
+name_slug: "alpine"
+description: "Lightweight distribution based on Busybox and Musl Libc."
+version: "3.23.3"
+
+architectures:
+  - aarch64: "https://dl-cdn.alpinelinux.org/alpine/v${version:0:4}/releases/${architecture}/alpine-minirootfs-${version}-${architecture}.tar.gz"
+  - armv7: "https://dl-cdn.alpinelinux.org/alpine/v${version:0:4}/releases/${architecture}/alpine-minirootfs-${version}-${architecture}.tar.gz"
+  - riscv64: "https://dl-cdn.alpinelinux.org/alpine/v${version:0:4}/releases/${architecture}/alpine-minirootfs-${version}-${architecture}.tar.gz"
+  - x86: "https://dl-cdn.alpinelinux.org/alpine/v${version:0:4}/releases/${architecture}/alpine-minirootfs-${version}-${architecture}.tar.gz"
+  - x86_64: "https://dl-cdn.alpinelinux.org/alpine/v${version:0:4}/releases/${architecture}/alpine-minirootfs-${version}-${architecture}.tar.gz"
+
+bootstrap_method: rootfs
+
+chroot_script: |
+  # Upgrade all packages.
+  apk upgrade
+
+  # Install shadow-login for 'su'.
+  apk add shadow-login
+
+  # Enable package caching.
+  ln -sf /var/cache/apk /etc/apk/cache

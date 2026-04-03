@@ -1,108 +1,83 @@
-name: "Build"
-run-name: >
-  ${{ github.event_name == 'push' && format('Commit: {0}', github.event.head_commit.message) 
-  || github.event_name == 'pull_request' && format('PR: {0}', github.event.pull_request.title) 
-  || format('Build rootfs: {0}', github.event.inputs.distributions) }}
+name: Build rootfs
 
 on:
   workflow_dispatch:
     inputs:
       distributions:
-        description: 'A space-seperated values what distribution shall be built'
+        description: >
+          Space-separated list of distributions to build.
+          Available: alpine archlinuxarm debian fedora rocky ubuntu
         required: true
+        type: string
+  push:
+    paths:
+      - 'build-recipes/**.yaml'
 
 jobs:
-  build:
+  prepare:
+    name: Determine distributions
     runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-
-      - name: Gather distributions that is needed to be built
+      - name: Set build matrix
+        id: set-matrix
         run: |
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            # gather files changed on the latest HEAD commit
-            if [ "${{ github.event_name }}" == "pull_request" ]; then
-              # process latest commit made from the PR through github.event.pull_request.head.sha context
-              git diff-tree --no-commit-id --name-only ${{ github.event.pull_request.head.sha }} -r > ./files_changed.txt
-            else
-              git diff-tree --no-commit-id --name-only HEAD -r > ./files_changed.txt
-            fi
-
-            # check if files are changed or created are in distro-build directory
-            if ! grep -q distro-build ./files_changed.txt; then
-              echo "The latest commit does not have any distribution build script changed or added"
-              exit 1
-            fi
-
-            # filter only files from distro-build directory only
-            grep distro-build ./files_changed.txt | sed 's@\(distro-build/\|.sh\)@@g' > ./distributions.txt
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DISTROS="${{ inputs.distributions }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            # First push to branch — build everything
+            DISTROS=$(ls build-recipes/*.yaml | xargs -I{} basename {} .yaml | tr '\n' ' ')
           else
-            echo "${{ github.event.inputs.distributions }}" > ./distributions.txt
+            DISTROS=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
+              -- 'build-recipes/*.yaml' \
+              | sed 's|build-recipes/||; s|\.yaml$||' \
+              | tr '\n' ' ')
           fi
 
+          JSON=$(printf '%s\n' $DISTROS | grep -v '^$' | jq -R . | jq -sc .)
+          echo "matrix={\"distro\":$JSON}" >> "$GITHUB_OUTPUT"
+          echo "Will build: $DISTROS"
 
-      - name: Install Needed Dependencies
+  build:
+    name: Build ${{ matrix.distro }}
+    needs: prepare
+    if: needs.prepare.outputs.matrix != '{"distro":[]}'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
         run: |
-          sudo apt update && sudo apt install -yq curl jq qemu-user-static binfmt-support
+          sudo apt-get update -q
+          sudo apt-get install -yq qemu-user-static binfmt-support
           curl -L -o /tmp/mmdebstrap.deb http://ftp.us.debian.org/debian/pool/main/m/mmdebstrap/mmdebstrap_1.5.7-3_all.deb
           sudo apt install -yq /tmp/mmdebstrap.deb
+
+      - name: Install keyrings
+        run: |
           curl -L -o /tmp/keyring.deb http://ftp.us.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
           sudo apt install -yq /tmp/keyring.deb
-          curl -L -o /tmp/trisquelkey.deb https://archive.trisquel.org/trisquel/pool/main/t/trisquel-keyring/trisquel-keyring_2023.02.07_all.deb
-          sudo apt install -yq /tmp/trisquelkey.deb
 
+      - name: Install Python dependencies
+        run: pip install pyyaml
 
-      - name: Build distribution rootfs
+      - name: Build ${{ matrix.distro }} rootfs
         run: |
-          distros_to_be_built=$(cat ./distributions.txt)
-          for d in ${distros_to_be_built}; do
-            # check if a specified distribution build recipe exists in case for workflow dispatch inputs
-            if [ ! -f ./distro-build/${d}.sh ]; then
-              echo "Cannot build distribution ${d}: ./distro-build/${d}.sh: no such file exist"
-              exit 2
-            fi
-          done
-          ./bootstrap-rootfs.sh ${distros_to_be_built}
+          mkdir -p rootfs
+          sudo python3 bootstrap-rootfs.py build-recipes/${{ matrix.distro }}.yaml -o rootfs
 
-      - name: Check
-        run: |
-          if [ -z "$(find ./rootfs/ -mindepth 1 -type f -print -quit)" ]; then
-            echo "No tarballs in ./rootfs/ directory"
-            exit 1
-          fi
-
-      - name: Upload to web server
-        run: |
-          echo "${{ secrets.SSH_RSYNC_SECRET_KEY }}" > identity
-          chmod 600 identity
-
-          mkdir -p "${HOME}"/.ssh
-          echo "${{ secrets.SSH_RSYNC_KNOWN_HOSTS }}" > "${HOME}"/.ssh/known_hosts
-          chmod 600 "${HOME}"/.ssh/known_hosts
-
-          rsync -e "ssh -p ${{ secrets.SSH_RSYNC_PORT }} -i ./identity" \
-            -rvt --include "*-pd-*.tar.xz" --exclude "*" \
-            ./rootfs/ \
-            "${{ secrets.SSH_RSYNC_USERNAME }}@${{ secrets.SSH_RSYNC_IP }}":/
-
-
-      - name: Commit plugin update
-        run: |
-          git config user.name "Termux Github Actions"
-          git config user.email "contact@termux.dev"
-
-          echo "--------------------------------"
-          echo "Git status"
-          echo "--------------------------------"
-          git status
-          echo "--------------------------------"
-
-          git add ./distro-plugins/*.sh
-          git commit -m "[skip ci] update plugin scripts"
-
-          git pull --rebase
-          git push
+      - name: Upload rootfs artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: rootfs-${{ matrix.distro }}
+          path: rootfs/
+          if-no-files-found: error
