@@ -24,6 +24,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/archlinux-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/archlinux-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/archlinux-$(translate_arch "$arch")/sys"
+		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" useradd -r -s /usr/bin/nologin -d /var/lib/pacman alpm
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --init
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --populate archlinuxarm
 		if [ "$arch" = "aarch64" ]; then
@@ -64,6 +65,7 @@ bootstrap_distribution() {
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.d/mirrorlist"
 	sed -i 's/^#DisableSandbox/DisableSandbox/' \
 		"${WORKDIR}/archlinux-bootstrap/etc/pacman.conf"
+	chroot "${WORKDIR}/archlinux-bootstrap" useradd -r -s /usr/bin/nologin -d /var/lib/pacman alpm
 	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --init
 	chroot "${WORKDIR}/archlinux-bootstrap" pacman-key --populate
 	chroot "${WORKDIR}/archlinux-bootstrap" pacstrap -K /archlinux-x86_64 base
