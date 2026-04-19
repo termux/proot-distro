@@ -24,7 +24,7 @@ bootstrap_distribution() {
 		mount --bind /dev "${WORKDIR}/archlinux-$(translate_arch "$arch")/dev"
 		mount --bind /proc "${WORKDIR}/archlinux-$(translate_arch "$arch")/proc"
 		mount --bind /sys "${WORKDIR}/archlinux-$(translate_arch "$arch")/sys"
-		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" useradd -r -s /usr/bin/nologin -d /var/lib/pacman alpm
+		#chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" useradd -r -s /usr/bin/nologin -d /var/lib/pacman alpm
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --init
 		chroot "${WORKDIR}/archlinux-$(translate_arch "$arch")" pacman-key --populate archlinuxarm
 		if [ "$arch" = "aarch64" ]; then
