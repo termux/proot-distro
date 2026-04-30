@@ -1,5 +1,5 @@
 dist_name="Arch Linux"
-dist_version="2026.02.01"
+dist_version="latest"
 
 bootstrap_distribution() {
 	sudo rm -f "${ROOTFS_DIR}"/archlinux-*.tar.xz
@@ -44,7 +44,7 @@ bootstrap_distribution() {
 
 	curl --fail --location \
 		--output "${WORKDIR}/archlinux-x86_64.tar.zst" \
-		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-${dist_version}-x86_64.tar.zst"
+		"https://mirror.rackspace.com/archlinux/iso/${dist_version}/archlinux-bootstrap-x86_64.tar.zst"
 
 	sudo mkdir -m 755 "${WORKDIR}/archlinux-bootstrap"
 	sudo tar -xp --strip-components=1 --acls --xattrs --xattrs-include='*' \
