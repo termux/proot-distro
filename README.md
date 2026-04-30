@@ -21,17 +21,15 @@ version of distribution (stable, lts or rolling-release) with rare exceptions.
 | Termux           | termux     | rolling    | supported     |
 | Adelie Linux     | adelie     | 1.0-beta6  | no i686       |
 | AlmaLinux        | almalinux  | 10         | only 64bit    |
-| Alpine Linux     | alpine     | 3.22.2     | frozen        |
+| Alpine Linux     | alpine     | 3.23.3     | supported     |
 | Arch Linux       | archlinux  | rolling    | supported     |
 | Artix Linux      | artix      | rolling    | aarch64 only  |
 | Chimera Linux    | chimera    | rolling    | unstable      |
 | Debian           | debian     | trixie     | supported     |
 | Deepin           | deepin     | beige      | only 64bit    |
-| Fedora           | fedora     | 43         | unstable      |
+| Fedora           | fedora     | 43         | no i686       |
 | Manjaro          | manjaro    | rolling    | aarch64 only  |
 | OpenSUSE         | opensuse   | Leap 16.0  | only 64bit    |
-| Oracle Linux     | oracle     | 10         | ⛔️            |
-| Pardus           | pardus     | yirmibes   | ⛔️            |
 | Rocky Linux      | rockylinux | 10         | only 64bit    |
 | Trisquel         | trisquel   | aramo      | supported     |
 | Ubuntu           | ubuntu     | 25.10      | no i686       |
