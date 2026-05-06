@@ -53,14 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # install
     p_install = sub.add_parser("install", aliases=["add", "i", "in", "ins"], add_help=False)
-    p_install.add_argument("alias", nargs="?", default=None)
+    p_install.add_argument("alias", nargs="?", default=None, metavar="IMAGE")
     p_install.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
     p_install.add_argument("--architecture", dest="override_arch", metavar="ARCH",
                            choices=["aarch64", "arm", "i686", "riscv64", "x86_64"])
-    p_install.add_argument("--url", dest="override_url", metavar="URL")
-    p_install.add_argument("--checksum", dest="override_checksum", metavar="SHA256")
-    p_install.add_argument("--strip-path-components", dest="override_strip",
-                           metavar="N", type=int)
     p_install.add_argument("-h", "--help", action="store_true")
 
     # remove
@@ -148,7 +144,7 @@ _ALIAS_TO_CANONICAL = {
 
 # (canonical_command) -> list of (arg_name, error_message) pairs checked in order.
 _REQUIRED_ARGS = {
-    "install": [("alias",      "distribution alias is not specified.")],
+    "install": [("alias",      "Docker image reference is not specified (e.g. 'ubuntu:24.04').")],
     "remove":  [("alias",      "distribution alias is not specified.")],
     "rename":  [("orig_alias", "the original alias of distribution is not specified."),
                 ("new_alias",  "the new alias of distribution is not specified.")],
