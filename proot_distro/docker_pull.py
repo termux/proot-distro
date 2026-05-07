@@ -20,6 +20,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 """Pure-Python OCI registry client for pulling images from Docker Hub."""
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -84,6 +85,43 @@ def derive_alias(image_ref: str) -> str:
     """
     name = image_ref.split(":")[0]
     return name.split("/")[-1]
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
+
+def _layer_cache_path(digest: str) -> str:
+    return os.path.join(DOWNLOAD_CACHE_DIR, "docker-layers", digest.replace(":", "_"))
+
+
+def _manifest_cache_path(image_ref: str, arch: str) -> str:
+    safe = re.sub(r"[^\w._-]", "_", f"{image_ref}_{arch}")
+    return os.path.join(DOWNLOAD_CACHE_DIR, "docker-manifests", safe + ".json")
+
+
+def _save_manifest_cache(image_ref: str, arch: str,
+                         manifest: dict, repo: str, image_config: dict) -> None:
+    path = _manifest_cache_path(image_ref, arch)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump({"manifest": manifest, "repo": repo, "image_config": image_config}, fh)
+    os.replace(tmp, path)
+
+
+def _load_manifest_cache(image_ref: str, arch: str):
+    """Return (manifest, repo, image_config) from cache, or (None, None, {}) on miss."""
+    try:
+        with open(_manifest_cache_path(image_ref, arch)) as fh:
+            data = json.load(fh)
+        return data["manifest"], data["repo"], data.get("image_config", {})
+    except (OSError, json.JSONDecodeError, KeyError):
+        return None, None, {}
+
+
+def _all_layers_cached(layers: list) -> bool:
+    return all(os.path.isfile(_layer_cache_path(l["digest"])) for l in layers)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +236,22 @@ def _pick_platform(entries: list, arch: str, variant: str, image_ref: str) -> di
     )
 
 
+def _fetch_config_blob(repo: str, cfg_digest: str, token: str) -> dict:
+    """Fetch the image config JSON blob; return parsed dict (empty on error)."""
+    if not cfg_digest:
+        return {}
+    try:
+        url = f"{_REGISTRY_URL}/v2/{repo}/blobs/{cfg_digest}"
+        req = urllib.request.Request(url, headers={
+            **_ua(),
+            "Authorization": f"Bearer {token}",
+        })
+        with _auth_stripping_opener.open(req) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # Layer download and application
 # ---------------------------------------------------------------------------
@@ -216,9 +270,8 @@ def _download_blob(repo: str, digest: str, token: str) -> str:
     Layers are cached by digest so subsequent installs of the same image
     skip already-downloaded layers.
     """
-    layer_dir = os.path.join(DOWNLOAD_CACHE_DIR, "docker-layers")
-    os.makedirs(layer_dir, exist_ok=True)
-    dest = os.path.join(layer_dir, digest.replace(":", "_"))
+    dest = _layer_cache_path(digest)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.isfile(dest):
         return dest
 
@@ -407,31 +460,60 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
 def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
     """Pull a Docker Hub image and extract all layers into rootfs_dir.
 
-    Returns a metadata dict with 'name', 'version', 'description' keys
-    suitable for writing a proot-distro config YAML.
+    Manifest and image config are cached to disk after a successful online pull.
+    On subsequent calls, if the network is unavailable but the manifest and all
+    layers are present in the cache, the install proceeds entirely offline.
+
+    Returns a metadata dict with 'name', 'version', 'description' keys.
     """
-    manifest, token, repo = _resolve_single_manifest(image_ref, arch)
+    manifest = None
+    token = None
+    repo = None
+    image_config: dict = {}
+    offline = False
+
+    # --- Attempt to resolve manifest from the registry ---
+    try:
+        manifest, token, repo = _resolve_single_manifest(image_ref, arch)
+    except (urllib.error.URLError, OSError) as net_err:
+        # Network unavailable — try the local manifest cache.
+        manifest, repo, image_config = _load_manifest_cache(image_ref, arch)
+        if manifest is None:
+            raise RuntimeError(
+                f"Network error: {net_err}\n"
+                f"No cached manifest found for '{image_ref}' ({arch}). "
+                f"Connect to the internet and retry."
+            ) from net_err
+
+        layers = manifest.get("layers", [])
+        if not _all_layers_cached(layers):
+            missing = sum(
+                1 for l in layers
+                if not os.path.isfile(_layer_cache_path(l["digest"]))
+            )
+            raise RuntimeError(
+                f"Network error: {net_err}\n"
+                f"{missing} of {len(layers)} layer(s) for '{image_ref}' ({arch}) "
+                f"are not in the local cache. Connect to the internet and retry."
+            ) from net_err
+
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+            f"{C['CYAN']}Network unavailable — using fully cached image "
+            f"for '{image_ref}' ({arch}).{C['RST']}")
+        offline = True
 
     layers = manifest.get("layers", [])
     if not layers:
         raise RuntimeError(
             f"Manifest for '{image_ref}' contains no filesystem layers.")
 
-    # Fetch the image config blob for OCI label metadata.
-    image_config: dict = {}
-    cfg_digest = manifest.get("config", {}).get("digest", "")
-    if cfg_digest:
-        try:
-            url = f"{_REGISTRY_URL}/v2/{repo}/blobs/{cfg_digest}"
-            req = urllib.request.Request(url, headers={
-                **_ua(),
-                "Authorization": f"Bearer {token}",
-            })
-            with _auth_stripping_opener.open(req) as resp:
-                image_config = json.loads(resp.read())
-        except Exception:
-            pass
+    # --- Online path: fetch image config and persist manifest to cache ---
+    if not offline:
+        cfg_digest = manifest.get("config", {}).get("digest", "")
+        image_config = _fetch_config_blob(repo, cfg_digest, token)
+        _save_manifest_cache(image_ref, arch, manifest, repo, image_config)
 
+    # --- Download (if needed) and apply each layer ---
     n_layers = len(layers)
     for i, layer in enumerate(layers):
         digest = layer["digest"]
@@ -441,19 +523,26 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                 f"Layer {i + 1}/{n_layers} uses zstd compression which is not "
                 "supported by Python's tarfile module. "
                 "Try a different image tag that ships gzip-compressed layers.")
-        size = layer.get("size", 0)
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Downloading layer {i + 1}/{n_layers}"
-            f"{' (' + _fmt_size(size) + ')' if size else ''}...{C['RST']}")
-        layer_path = _download_blob(repo, digest, token)
+
+        cached_path = _layer_cache_path(digest)
+        if os.path.isfile(cached_path):
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Layer {i + 1}/{n_layers} already cached, skipping download.{C['RST']}")
+            layer_path = cached_path
+        else:
+            size = layer.get("size", 0)
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Downloading layer {i + 1}/{n_layers}"
+                f"{' (' + _fmt_size(size) + ')' if size else ''}...{C['RST']}")
+            layer_path = _download_blob(repo, digest, token)
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Applying layer {i + 1}/{n_layers}...{C['RST']}")
         _apply_layer(layer_path, rootfs_dir)
 
+    # --- Build return metadata from image config labels ---
     _, tag = parse_image_ref(image_ref)
     image_name = repo.split("/")[-1].capitalize()
-
     labels: dict = (image_config.get("config") or {}).get("Labels") or {}
     version = str(
         labels.get("org.opencontainers.image.version")
