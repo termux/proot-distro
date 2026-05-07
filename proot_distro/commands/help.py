@@ -141,11 +141,11 @@ _HELP_COMMANDS = {
           "\n"
           f"{C['CYAN']}Command aliases: {C['GREEN']}li{C['CYAN']}, {C['GREEN']}ls{C['RST']}\n"
           "\n"
+          f"{C['CYAN']}List installed distributions by their alias.{C['RST']}\n"
+          "\n"
           f"{C['CYAN']}Options:{C['RST']}\n"
           "\n"
           f"  {C['GREEN']}--help             {C['CYAN']}- Show this help information.{C['RST']}\n"
-          "\n"
-          f"  {C['GREEN']}--detailed         {C['CYAN']}- Show version, status and other info.{C['RST']}\n"
           "\n"
         ),
         show_version(),

@@ -40,7 +40,6 @@ PREFIX = os.environ.get("PREFIX", "/data/data/com.termux/files/usr")
 TERMUX_HOME = os.environ.get("HOME", "/data/data/com.termux/files/home")
 TERMUX_APP_PACKAGE = os.environ.get("TERMUX_APP_PACKAGE", "com.termux")
 
-PD_CONFIGS_DIR = os.path.join(PREFIX, "etc", "proot-distro")
 RUNTIME_DIR = os.path.join(PREFIX, "var", "lib", "proot-distro")
 DOWNLOAD_CACHE_DIR = os.path.join(RUNTIME_DIR, "dlcache")
 INSTALLED_ROOTFS_DIR = os.path.join(RUNTIME_DIR, "installed-rootfs")

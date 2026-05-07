@@ -1,9 +1,0 @@
-name: "Arch Linux ARM"
-description: "Flexible rolling-release distribution emphasizing DIY philosophy. ARM(64) port."
-version: "2026.04.03"
-
-architectures:
-  - aarch64: "https://easycli.sh/proot-distro/v5.0.0/archlinuxarm_2026.04.03_aarch64_rootfs.tar.xz"
-    checksum: "3836bc66644f9cb7974aa0ba53f14a9c663c3cc204db5899d89d1f7ae2290d8c"
-  - arm: "https://easycli.sh/proot-distro/v5.0.0/archlinuxarm_2026.04.03_arm_rootfs.tar.xz"
-    checksum: "0c13efe03c313a721e2da335e35348439ddaa818ad6bcd1b7cb35fa907911e1e"

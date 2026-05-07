@@ -22,7 +22,5 @@ from proot_distro.commands.install import command_install
 
 
 def command_reset(args, configs: dict) -> None:
-    args._reset_mode = True
     command_remove(args, configs)
-    args._reset_mode = False
     command_install(args, configs)

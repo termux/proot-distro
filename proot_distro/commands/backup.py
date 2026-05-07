@@ -22,7 +22,7 @@ import stat
 import sys
 import tarfile
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR, PD_CONFIGS_DIR, PROGRAM_NAME
+from proot_distro.constants import INSTALLED_ROOTFS_DIR, PROGRAM_NAME
 from proot_distro.colors import C, msg
 from proot_distro.commands.help import _HELP_COMMANDS
 
@@ -127,18 +127,10 @@ def _add_path(tf: tarfile.TarFile, src: str, arcname: str) -> None:
         tf.addfile(info)  # directories and symlinks carry no data stream
 
 
-def command_backup(args, configs: dict) -> None:
+def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
     output_path = getattr(args, "output", None)
     compression_arg = getattr(args, "compress", None)
-
-    if dist_name not in configs:
-        msg()
-        msg(f"{C['BRED']}Error: unknown distribution '{C['YELLOW']}{dist_name}{C['BRED']}' was requested for backup.{C['RST']}")
-        msg()
-        msg(f"{C['CYAN']}View supported distributions by: {C['GREEN']}{PROGRAM_NAME} list{C['RST']}")
-        msg()
-        sys.exit(1)
 
     rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     if not os.path.isdir(rootfs_dir):
@@ -148,9 +140,6 @@ def command_backup(args, configs: dict) -> None:
         msg(f"{C['CYAN']}You can install it by: {C['GREEN']}{PROGRAM_NAME} install {dist_name}{C['RST']}")
         msg()
         sys.exit(1)
-
-    cfg = configs[dist_name]
-    config_file = cfg.config_path
 
     if output_path:
         if os.path.isdir(output_path):
@@ -183,7 +172,7 @@ def command_backup(args, configs: dict) -> None:
         compression = _COMPRESSION_ARG_MAP[compression_arg] if compression_arg is not None else ''
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Tarball will be written to stdout.{C['RST']}")
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Backing up {C['YELLOW']}{cfg.name}{C['CYAN']}...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Fixing file permissions in rootfs...{C['RST']}")
 
@@ -208,22 +197,13 @@ def command_backup(args, configs: dict) -> None:
     for dirpath, _dirs, files in os.walk(rootfs_dir):
         _fix_dir(dirpath, files)
 
-    if not os.path.isfile(config_file):
-        msg()
-        msg(f"{C['BRED']}Error: config file '{C['YELLOW']}{config_file}{C['BRED']}' does not exist.{C['RST']}")
-        msg()
-        sys.exit(1)
+    rootfs_base = os.path.basename(INSTALLED_ROOTFS_DIR)
+    rootfs_rel  = os.path.join(rootfs_base, dist_name)
 
-    configs_base = os.path.basename(PD_CONFIGS_DIR)    # proot-distro
-    rootfs_base  = os.path.basename(INSTALLED_ROOTFS_DIR)  # installed-rootfs
-
-    config_rel = os.path.join(configs_base, os.path.basename(config_file))
-    rootfs_rel = os.path.join(rootfs_base, dist_name)
-
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Archiving the rootfs and plug-in...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Archiving the rootfs...{C['RST']}")
 
     rootfs_entries = list(_iter_entries(rootfs_dir, rootfs_rel))
-    total_entries  = 1 + len(rootfs_entries)   # +1 for the config file
+    total_entries  = len(rootfs_entries)
     done = 0
     use_tty = sys.stderr.isatty()
 
@@ -246,9 +226,6 @@ def command_backup(args, configs: dict) -> None:
         with tarfile.open(tar_target if output_path else None,
                           fileobj=None if output_path else tar_target,
                           mode=tar_mode) as tf:
-            _add_path(tf, config_file, config_rel)
-            _on_entry()
-
             for src, arc in rootfs_entries:
                 _add_path(tf, src, arc)
                 _on_entry()

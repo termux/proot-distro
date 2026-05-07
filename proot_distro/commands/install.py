@@ -24,13 +24,11 @@ import sys
 import tarfile
 
 from proot_distro.constants import (
-    PD_CONFIGS_DIR,
     DOWNLOAD_CACHE_DIR,
     INSTALLED_ROOTFS_DIR,
     PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
-from proot_distro.config import _write_yaml
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.docker_pull import pull_image, derive_alias
@@ -47,18 +45,6 @@ _ALIAS_RE = re.compile(r'^[a-z0-9][a-z0-9_.+\-]*$')
 
 def _validate_alias(alias: str) -> bool:
     return bool(_ALIAS_RE.match(alias)) and not alias.endswith(".yaml")
-
-
-def _write_distro_config(path: str, alias: str, metadata: dict, arch: str) -> None:
-    """Write a minimal proot-distro config YAML for a Docker-installed distro."""
-    data = {
-        "name": str(metadata.get("name", alias)),
-        "version": str(metadata.get("version", "")),
-        "description": str(metadata.get("description", "")),
-        "type": "normal",
-        "architectures": [{arch: "", "checksum": ""}],
-    }
-    _write_yaml(path, data)
 
 
 def command_install(args, configs: dict) -> None:  # noqa: ARG001
@@ -101,16 +87,11 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
         f"'{C['YELLOW']}{image_ref}{C['CYAN']}' as '{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
 
-    config_path = os.path.join(PD_CONFIGS_DIR, install_name + ".yaml")
     os.makedirs(rootfs_dir, exist_ok=True)
 
     def _cleanup() -> None:
         try:
             shutil.rmtree(rootfs_dir)
-        except OSError:
-            pass
-        try:
-            os.remove(config_path)
         except OSError:
             pass
 
@@ -145,11 +126,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         _register_android_ids(rootfs_dir)
 
         setup_fake_sysdata(install_name)
-
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Writing distribution config '{config_path}'...{C['RST']}")
-        os.makedirs(PD_CONFIGS_DIR, exist_ok=True)
-        _write_distro_config(config_path, install_name, metadata, dist_arch)
 
     except KeyboardInterrupt:
         if sys.stderr.isatty():

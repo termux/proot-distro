@@ -23,7 +23,7 @@ import stat
 import sys
 import tarfile
 
-from proot_distro.constants import PD_CONFIGS_DIR, INSTALLED_ROOTFS_DIR
+from proot_distro.constants import INSTALLED_ROOTFS_DIR
 from proot_distro.colors import C, msg
 
 
@@ -37,11 +37,7 @@ _MAGIC_COMPRESS = (
 
 
 def _detect_compression(header: bytes) -> str:
-    """Return the tarfile compression mode inferred from *header* magic bytes.
-
-    Returns the mode string ('gz', 'bz2', 'xz') on a match, or '' if the
-    header does not match any known compressed format (plain tar or unknown).
-    """
+    """Return the tarfile compression mode inferred from *header* magic bytes."""
     for magic, mode in _MAGIC_COMPRESS:
         if header.startswith(magic):
             return mode
@@ -59,21 +55,7 @@ def _remove_existing(dest: str, member: tarfile.TarInfo) -> None:
         pass
 
 
-def _route(member: tarfile.TarInfo,
-           configs_parent: str, configs_base: str,
-           rootfs_parent: str, rootfs_base: str):
-    """Return *(dest_root, dest)* for *member*, or *(None, None)* to skip."""
-    name = member.name.lstrip('/')
-    if name.startswith(configs_base + '/') or name == configs_base:
-        dest_root = configs_parent
-    elif name.startswith(rootfs_base + '/') or name == rootfs_base:
-        dest_root = rootfs_parent
-    else:
-        return None, None
-    return dest_root, os.path.join(dest_root, name)
-
-
-def command_restore(args, configs: dict) -> None:
+def command_restore(args, configs: dict) -> None:  # noqa: ARG001
     archive = getattr(args, "archive", None)
 
     if archive:
@@ -95,19 +77,16 @@ def command_restore(args, configs: dict) -> None:
             _HELP_COMMANDS["restore"]()
             sys.exit(1)
 
-    configs_parent = os.path.dirname(PD_CONFIGS_DIR)
-    configs_base   = os.path.basename(PD_CONFIGS_DIR)
-    rootfs_parent  = os.path.dirname(INSTALLED_ROOTFS_DIR)
-    rootfs_base    = os.path.basename(INSTALLED_ROOTFS_DIR)
+    rootfs_parent = os.path.dirname(INSTALLED_ROOTFS_DIR)
+    rootfs_base   = os.path.basename(INSTALLED_ROOTFS_DIR)
 
-    os.makedirs(PD_CONFIGS_DIR, exist_ok=True)
     os.makedirs(INSTALLED_ROOTFS_DIR, exist_ok=True)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Extracting distribution plug-in and rootfs from the archive...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Extracting rootfs from the archive...{C['RST']}")
 
     use_tty = sys.stderr.isatty()
     done = 0
-    cleared_rootfs: set = set()  # distro names whose old rootfs has been pre-cleared
+    cleared_rootfs: set = set()  # distro aliases whose old rootfs has been pre-cleared
 
     def _on_entry(total: int) -> None:
         nonlocal done
@@ -120,32 +99,24 @@ def command_restore(args, configs: dict) -> None:
             bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
             sys.stderr.write(f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files{C['RST']}")
         else:
-            # Streaming mode: no total known up front — show a counter.
             sys.stderr.write(f"\r{pfx}{done} files extracted...{C['RST']}")
         sys.stderr.flush()
 
     try:
         if archive:
-            # Detect compression from the first few bytes of the file.
             with open(archive, 'rb') as fh:
                 header = fh.read(6)
             comp = _detect_compression(header)
-            # Use the detected mode; fall back to tarfile auto-detection when
-            # the header is not recognised (covers plain tar and exotic formats).
             tar_mode = f'r:{comp}' if comp else 'r:*'
             open_kwargs = dict(name=archive, mode=tar_mode)
         else:
-            # Peek at the first bytes of stdin without consuming them.
-            # BufferedReader.peek() fills the internal buffer and returns up to
-            # n bytes without advancing the read position.
             header = sys.stdin.buffer.peek(6)[:6]
             comp = _detect_compression(header)
-            tar_mode = f'r|{comp}'   # 'r|gz', 'r|bz2', 'r|xz', or 'r|'
+            tar_mode = f'r|{comp}'
             open_kwargs = dict(fileobj=sys.stdin.buffer, mode=tar_mode)
 
         with tarfile.open(**open_kwargs) as tf:
             if archive:
-                # Seekable: pre-collect members for an accurate total count.
                 if use_tty:
                     sys.stderr.write(
                         f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
@@ -158,57 +129,57 @@ def command_restore(args, configs: dict) -> None:
                     sys.stderr.write("\r\033[K")
                     sys.stderr.flush()
             else:
-                all_members = tf   # lazy iterator
+                all_members = tf
                 total = 0
 
             for member in all_members:
                 if not archive and (member.isblk() or member.ischr() or member.isfifo()):
                     continue
 
-                dest_root, dest = _route(member,
-                                         configs_parent, configs_base,
-                                         rootfs_parent, rootfs_base)
-                if dest is None:
+                # Route only installed-rootfs/ entries; silently skip everything
+                # else (including legacy proot-distro/ config entries).
+                name = member.name.lstrip('/')
+                if not (name.startswith(rootfs_base + '/') or name == rootfs_base):
                     continue
 
+                dest = os.path.join(rootfs_parent, name)
+
                 # On the first entry for a given distro's rootfs, clear the
-                # existing rootfs directory entirely so that files absent from
-                # the archive are not left behind (recursive-unlink semantics).
-                if dest_root == rootfs_parent:
-                    rel = os.path.relpath(dest, INSTALLED_ROOTFS_DIR)
-                    parts = rel.split(os.sep)
-                    if parts and parts[0] not in ('', '..') \
-                            and parts[0] not in cleared_rootfs:
-                        old_dir = os.path.join(INSTALLED_ROOTFS_DIR, parts[0])
-                        if os.path.isdir(old_dir):
-                            pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                            count = 0
-                            if use_tty:
-                                sys.stderr.write("\r\033[K")
-                                sys.stderr.flush()
-                            for dp, dns, fns in os.walk(old_dir, topdown=False,
-                                                        followlinks=False):
-                                for fname in fns:
-                                    try:
-                                        os.unlink(os.path.join(dp, fname))
-                                    except OSError:
-                                        pass
-                                    count += 1
-                                    if use_tty:
-                                        sys.stderr.write(
-                                            f"\r{pfx}Removing old rootfs..."
-                                            f" {count} files{C['RST']}")
-                                        sys.stderr.flush()
-                                for dname in dns:
-                                    try:
-                                        os.rmdir(os.path.join(dp, dname))
-                                    except OSError:
-                                        pass
-                            shutil.rmtree(old_dir, ignore_errors=True)
-                            if use_tty:
-                                sys.stderr.write("\r\033[K")
-                                sys.stderr.flush()
-                        cleared_rootfs.add(parts[0])
+                # existing rootfs directory so no stale files are left behind.
+                rel = os.path.relpath(dest, INSTALLED_ROOTFS_DIR)
+                parts = rel.split(os.sep)
+                if parts and parts[0] not in ('', '..') \
+                        and parts[0] not in cleared_rootfs:
+                    old_dir = os.path.join(INSTALLED_ROOTFS_DIR, parts[0])
+                    if os.path.isdir(old_dir):
+                        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                        count = 0
+                        if use_tty:
+                            sys.stderr.write("\r\033[K")
+                            sys.stderr.flush()
+                        for dp, dns, fns in os.walk(old_dir, topdown=False,
+                                                    followlinks=False):
+                            for fname in fns:
+                                try:
+                                    os.unlink(os.path.join(dp, fname))
+                                except OSError:
+                                    pass
+                                count += 1
+                                if use_tty:
+                                    sys.stderr.write(
+                                        f"\r{pfx}Removing old rootfs..."
+                                        f" {count} files{C['RST']}")
+                                    sys.stderr.flush()
+                            for dname in dns:
+                                try:
+                                    os.rmdir(os.path.join(dp, dname))
+                                except OSError:
+                                    pass
+                        shutil.rmtree(old_dir, ignore_errors=True)
+                        if use_tty:
+                            sys.stderr.write("\r\033[K")
+                            sys.stderr.flush()
+                    cleared_rootfs.add(parts[0])
 
                 _remove_existing(dest, member)
 
@@ -226,7 +197,7 @@ def command_restore(args, configs: dict) -> None:
                     os.symlink(member.linkname, dest)
 
                 elif member.islnk():
-                    link_src = os.path.join(dest_root, member.linkname.lstrip('/'))
+                    link_src = os.path.join(rootfs_parent, member.linkname.lstrip('/'))
                     parent = os.path.dirname(dest)
                     if parent:
                         os.makedirs(parent, exist_ok=True)
@@ -257,7 +228,6 @@ def command_restore(args, configs: dict) -> None:
                         fobj.close()
 
                 else:
-                    # Skip device files, FIFOs, sockets, etc.
                     continue
 
                 _on_entry(total)
@@ -265,6 +235,7 @@ def command_restore(args, configs: dict) -> None:
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
+
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Finished restoring the distribution.{C['RST']}")
 
     except KeyboardInterrupt:

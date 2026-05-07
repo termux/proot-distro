@@ -21,9 +21,8 @@ import os
 import stat
 import sys
 
-from proot_distro.constants import PD_CONFIGS_DIR, INSTALLED_ROOTFS_DIR, PROGRAM_NAME
+from proot_distro.constants import INSTALLED_ROOTFS_DIR
 from proot_distro.colors import C, msg
-from proot_distro.config import is_bundled_config
 
 
 def _remove_path(path: str, on_remove=None) -> bool:
@@ -77,18 +76,9 @@ def _remove_path(path: str, on_remove=None) -> bool:
     return ok
 
 
-def command_remove(args, configs: dict) -> None:
+def command_remove(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
-    reset_mode = getattr(args, "_reset_mode", False)
     verbose = getattr(args, "verbose", False)
-
-    if dist_name not in configs:
-        msg()
-        msg(f"{C['BRED']}Error: unknown distribution '{C['YELLOW']}{dist_name}{C['BRED']}' was requested to be removed.{C['RST']}")
-        msg()
-        msg(f"{C['CYAN']}View supported distributions by: {C['GREEN']}{PROGRAM_NAME} list{C['RST']}")
-        msg()
-        sys.exit(1)
 
     rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     if not os.path.isdir(rootfs_dir):
@@ -97,7 +87,7 @@ def command_remove(args, configs: dict) -> None:
         msg()
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Wiping the rootfs of {C['YELLOW']}{configs[dist_name].name}{C['CYAN']}...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Wiping the rootfs of '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
     on_remove = None
     if verbose:
@@ -107,11 +97,5 @@ def command_remove(args, configs: dict) -> None:
     if not _remove_path(rootfs_dir, on_remove):
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}Finished with errors. Some files probably were not deleted.{C['RST']}")
         sys.exit(1)
-
-    if not reset_mode and not is_bundled_config(dist_name):
-        cfg_file = os.path.join(PD_CONFIGS_DIR, dist_name + ".yaml")
-        if os.path.isfile(cfg_file):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Deleting file '{cfg_file}'...{C['RST']}")
-            os.remove(cfg_file)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Finished removing the distribution.{C['RST']}")

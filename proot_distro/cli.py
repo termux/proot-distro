@@ -25,7 +25,6 @@ import sys
 
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.colors import C, msg
-from proot_distro.config import discover_configs, _ensure_config, _ensure_all_configs
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.rename import command_rename
@@ -99,7 +98,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # list
     p_list = sub.add_parser("list", aliases=["li", "ls"], add_help=False)
-    p_list.add_argument("--detailed", action="store_true")
     p_list.add_argument("-h", "--help", action="store_true")
 
     # backup
@@ -280,16 +278,7 @@ def main() -> None:
     elif canonical == "login":
         args.login_cmd = []
 
-    # Populate PD_CONFIGS_DIR on demand before discovery.
-    if canonical in ("list", "help"):
-        _ensure_all_configs()
-    else:
-        for _attr in ("alias", "orig_alias"):
-            _val = getattr(args, _attr, None)
-            if _val:
-                _ensure_config(_val)
-
-    configs = discover_configs()
+    configs = {}
 
     handler = _COMMAND_HANDLERS.get(canonical)
     if handler is None:

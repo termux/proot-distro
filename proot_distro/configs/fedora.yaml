@@ -1,9 +1,0 @@
-name: "Fedora"
-description: "A community-driven, upstream-focused Linux distribution sponsored by Red Hat."
-version: "43-1.6"
-
-architectures:
-  - aarch64: "https://easycli.sh/proot-distro/v5.0.0/fedora_43-1.6_aarch64_rootfs.tar.xz"
-    checksum: "3a3edfb8167dd52513df10c6a22f80f65c701aed18d1f850aa770836c6670d47"
-  - x86_64: "https://easycli.sh/proot-distro/v5.0.0/fedora_43-1.6_x86_64_rootfs.tar.xz"
-    checksum: "7c9e5162ddf7566074f34ed1890d635daf5286995bd09cc131080406af2b942f"

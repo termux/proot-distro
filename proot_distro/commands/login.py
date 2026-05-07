@@ -30,7 +30,6 @@ from proot_distro.constants import (
     DEFAULT_PATH_ENV,
     DEFAULT_FAKE_KERNEL_RELEASE,
     DEFAULT_FAKE_KERNEL_VERSION,
-    PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
 from proot_distro.arch import (
@@ -147,16 +146,8 @@ def _system_bindings(force: bool = False) -> list:
     return binds
 
 
-def command_login(args, configs: dict) -> None:
+def command_login(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
-
-    if dist_name not in configs:
-        msg()
-        msg(f"{C['BRED']}Error: unknown distribution '{C['YELLOW']}{dist_name}{C['BRED']}' was requested for logging in.{C['RST']}")
-        msg()
-        msg(f"{C['CYAN']}View supported distributions by: {C['GREEN']}{PROGRAM_NAME} list{C['RST']}")
-        msg()
-        sys.exit(1)
 
     rootfs = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     if not os.path.isdir(rootfs):
@@ -165,8 +156,8 @@ def command_login(args, configs: dict) -> None:
         msg()
         sys.exit(1)
 
-    cfg = configs[dist_name]
-    dist_type = cfg.dist_type
+    _termux_usr = os.path.join(rootfs, "data", "data", "com.termux", "files", "usr")
+    dist_type = "termux" if os.path.isdir(_termux_usr) else "normal"
 
     login_user = getattr(args, "user", "root") or "root"
     kernel_release = getattr(args, "kernel", DEFAULT_FAKE_KERNEL_RELEASE) or DEFAULT_FAKE_KERNEL_RELEASE
