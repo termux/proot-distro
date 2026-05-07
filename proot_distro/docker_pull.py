@@ -460,58 +460,63 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
 def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
     """Pull a Docker Hub image and extract all layers into rootfs_dir.
 
-    Manifest and image config are cached to disk after a successful online pull.
-    On subsequent calls, if the network is unavailable but the manifest and all
-    layers are present in the cache, the install proceeds entirely offline.
+    The manifest is checked in the local cache first.  If cached and all layers
+    are present, the install runs entirely without network access.  If the
+    manifest is cached but some layers are missing, only an auth token is
+    fetched (no manifest resolution) before downloading the missing layers.
+    The manifest cache is populated on the first successful online pull.
 
     Returns a metadata dict with 'name', 'version', 'description' keys.
     """
-    manifest = None
     token = None
-    repo = None
-    image_config: dict = {}
-    offline = False
 
-    # --- Attempt to resolve manifest from the registry ---
-    try:
-        manifest, token, repo = _resolve_single_manifest(image_ref, arch)
-    except (urllib.error.URLError, OSError) as net_err:
-        # Network unavailable — try the local manifest cache.
-        manifest, repo, image_config = _load_manifest_cache(image_ref, arch)
-        if manifest is None:
+    # --- Check manifest cache first ---
+    manifest, repo, image_config = _load_manifest_cache(image_ref, arch)
+
+    if manifest is not None:
+        layers = manifest.get("layers", [])
+        if _all_layers_cached(layers):
+            # Every layer is on disk — no network contact needed at all.
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                f"{C['CYAN']}Manifest and all layers are cached — "
+                f"skipping network for '{image_ref}' ({arch}).{C['RST']}")
+        else:
+            # Manifest is known; only fetch an auth token to download layers.
+            missing = sum(
+                1 for l in layers
+                if not os.path.isfile(_layer_cache_path(l["digest"]))
+            )
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                f"{C['CYAN']}Manifest cached — downloading {missing} missing "
+                f"layer(s) for '{image_ref}' ({arch})...{C['RST']}")
+            try:
+                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                    f"{C['CYAN']}Authenticating with Docker Hub...{C['RST']}")
+                token = _get_auth_token(repo)
+            except (urllib.error.URLError, OSError) as net_err:
+                raise RuntimeError(
+                    f"Network error: {net_err}\n"
+                    f"{missing} of {len(layers)} layer(s) for '{image_ref}' ({arch}) "
+                    f"are not in the local cache. Connect to the internet and retry."
+                ) from net_err
+    else:
+        # No cached manifest — resolve from the registry.
+        try:
+            manifest, token, repo = _resolve_single_manifest(image_ref, arch)
+        except (urllib.error.URLError, OSError) as net_err:
             raise RuntimeError(
                 f"Network error: {net_err}\n"
                 f"No cached manifest found for '{image_ref}' ({arch}). "
                 f"Connect to the internet and retry."
             ) from net_err
-
-        layers = manifest.get("layers", [])
-        if not _all_layers_cached(layers):
-            missing = sum(
-                1 for l in layers
-                if not os.path.isfile(_layer_cache_path(l["digest"]))
-            )
-            raise RuntimeError(
-                f"Network error: {net_err}\n"
-                f"{missing} of {len(layers)} layer(s) for '{image_ref}' ({arch}) "
-                f"are not in the local cache. Connect to the internet and retry."
-            ) from net_err
-
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-            f"{C['CYAN']}Network unavailable — using fully cached image "
-            f"for '{image_ref}' ({arch}).{C['RST']}")
-        offline = True
+        cfg_digest = manifest.get("config", {}).get("digest", "")
+        image_config = _fetch_config_blob(repo, cfg_digest, token)
+        _save_manifest_cache(image_ref, arch, manifest, repo, image_config)
 
     layers = manifest.get("layers", [])
     if not layers:
         raise RuntimeError(
             f"Manifest for '{image_ref}' contains no filesystem layers.")
-
-    # --- Online path: fetch image config and persist manifest to cache ---
-    if not offline:
-        cfg_digest = manifest.get("config", {}).get("digest", "")
-        image_config = _fetch_config_blob(repo, cfg_digest, token)
-        _save_manifest_cache(image_ref, arch, manifest, repo, image_config)
 
     # --- Download (if needed) and apply each layer ---
     n_layers = len(layers)
