@@ -18,33 +18,45 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 import os
-import sys
+import shutil
 
 from proot_distro.constants import DOWNLOAD_CACHE_DIR
 from proot_distro.colors import C, msg
 
 
-def command_clear_cache(args, configs: dict) -> None:
+def command_clear_cache(args, configs: dict) -> None:  # noqa: ARG001
     if not os.path.isdir(DOWNLOAD_CACHE_DIR):
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Download cache is empty.{C['RST']}")
         return
 
-    cached_files = [
-        os.path.join(DOWNLOAD_CACHE_DIR, f)
-        for f in os.listdir(DOWNLOAD_CACHE_DIR)
-        if os.path.isfile(os.path.join(DOWNLOAD_CACHE_DIR, f))
-    ]
+    total = 0
+    for dirpath, _dirs, filenames in os.walk(DOWNLOAD_CACHE_DIR):
+        for fname in filenames:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, fname))
+            except OSError:
+                pass
 
-    if not cached_files:
+    if total == 0 and not any(True for _ in os.scandir(DOWNLOAD_CACHE_DIR)):
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Download cache is empty.{C['RST']}")
         return
 
-    total = sum(os.path.getsize(f) for f in cached_files)
-    total_str = f"{total // (1024*1024)} MiB" if total >= 1024*1024 else f"{total // 1024} KiB"
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Clearing download cache...{C['RST']}")
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Clearing cache files...{C['RST']}")
-    for fpath in cached_files:
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Deleting '{fpath}'{C['RST']}")
-        os.remove(fpath)
+    for entry in os.scandir(DOWNLOAD_CACHE_DIR):
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.remove(entry.path)
+        except OSError as exc:
+            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}Failed to remove '{entry.path}': {exc}{C['RST']}")
+
+    if total >= 1 << 20:
+        total_str = f"{total / (1 << 20):.1f} MiB"
+    elif total >= 1 << 10:
+        total_str = f"{total / (1 << 10):.1f} KiB"
+    else:
+        total_str = f"{total} B"
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Reclaimed {total_str} of disk space.{C['RST']}")
