@@ -398,13 +398,22 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
         )
         sys.stderr.flush()
 
+    def _log(text: str) -> None:
+        # The progress bar leaves the cursor at the end of its line with no
+        # trailing newline. Clear the line before printing so that log
+        # messages and the redrawn progress bar never mix on the same line.
+        if use_tty:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+        msg(text)
+
     try:
         for abs_path, rel_path in entries:
             try:
                 item_st = os.lstat(abs_path)
             except OSError as exc:
-                msg(f"{C['BLUE']}[{C['YELLOW']}!{C['BLUE']}] {C['CYAN']}"
-                    f"Warning: cannot stat '{abs_path}': {exc}{C['RST']}")
+                _log(f"{C['BLUE']}[{C['YELLOW']}!{C['BLUE']}] {C['CYAN']}"
+                     f"Warning: cannot stat '{abs_path}': {exc}{C['RST']}")
                 done += 1
                 _show_progress()
                 continue
@@ -424,26 +433,26 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
             if stat.S_ISDIR(m):
                 created = _sync_dir(dst_item, item_st)
                 if verbose and created:
-                    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        f"Dir:  '{dst_item}'{C['RST']}")
+                    _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                         f"Dir:  '{dst_item}'{C['RST']}")
 
             elif stat.S_ISLNK(m):
                 changed = _sync_symlink(abs_path, dst_item)
                 if verbose and changed:
                     target = os.readlink(abs_path)
-                    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        f"Link: '{dst_item}' -> '{target}'{C['RST']}")
+                    _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                         f"Link: '{dst_item}' -> '{target}'{C['RST']}")
 
             elif stat.S_ISREG(m):
                 if not os.access(abs_path, os.R_OK):
-                    msg(f"{C['BLUE']}[{C['YELLOW']}!{C['BLUE']}] {C['CYAN']}"
-                        f"Warning: '{abs_path}' is not readable, "
-                        f"skipping.{C['RST']}")
+                    _log(f"{C['BLUE']}[{C['YELLOW']}!{C['BLUE']}] {C['CYAN']}"
+                         f"Warning: '{abs_path}' is not readable, "
+                         f"skipping.{C['RST']}")
                 elif _needs_update(abs_path, item_st, dst_item, use_checksum):
                     _sync_file(abs_path, item_st, dst_item)
                     if verbose:
-                        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                            f"Copy: '{abs_path}' -> '{dst_item}'{C['RST']}")
+                        _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                             f"Copy: '{abs_path}' -> '{dst_item}'{C['RST']}")
 
             done += 1
             _show_progress()
