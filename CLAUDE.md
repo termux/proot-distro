@@ -203,7 +203,8 @@ attributes.
 - Installed arch detected by `detect_installed_arch(rootfs_path)` in
   `arch.py`: reads the first 20 bytes of candidate ELF binaries, checks
   magic, reads endianness from `EI_DATA`, unpacks `e_machine` with `struct`,
-  and maps via `_ELF_MACHINE_MAP`. Accepts a full rootfs path or dist name.
+  and maps via `_ELF_MACHINE_MAP`. Accepts either a full rootfs path or a
+  bare container name (resolved as `CONTAINERS_DIR/<name>/rootfs`).
 - 32-bit support on AArch64 probed via `ctypes.CDLL(None).personality(PER_LINUX32)`
 - Cross-arch: proot `-q qemu-*` (QEMU user-mode)
 - 32-bit guests on 64-bit hosts run natively when supported
@@ -231,6 +232,16 @@ After `pull_image()` returns, `command_install()` writes:
 URLs. CDN hosts reject `Bearer` tokens (HTTP 400).
 `_AuthStrippingRedirectHandler` strips the `Authorization` header on
 cross-host redirects.
+
+**Layer integrity:** `_download_blob()` streams the blob through a
+`hashlib.sha256` hasher while writing it. After the body is fully read the
+computed digest is compared to the expected one from the manifest; on
+mismatch the temp file is unlinked and `RuntimeError` is raised before any
+data is promoted into the cache. Only `sha256` digests are accepted (the
+only algorithm currently used by Docker Hub and the OCI distribution
+spec). Cached layers are trusted because the cache only ever contains
+verified blobs — verification happens before `os.replace` moves the temp
+file to its final location.
 
 **`parse_image_ref(image_ref)`** returns `(registry, repo, tag)` where
 `registry` is empty for Docker Hub images.
@@ -330,9 +341,20 @@ Uses `os.scandir` for iteration, `shutil.rmtree` for subdirectories,
 
 ### Fake sysdata
 
-On login, fake `/proc` and `/sys` entries are written to `$PREFIX/var/lib/proot-distro/`
-and bind-mounted read-only. Constants `_FAKE_LOADAVG`, `_FAKE_STAT`,
-`_FAKE_UPTIME`, `_FAKE_VMSTAT` are hardcoded in `proot_distro/sysdata.py`.
+On install and on every login of a `normal`-type container, fake `/proc`
+and `/sys` stub files are written **inside the container's own rootfs**
+(`containers/<name>/rootfs/proc/.loadavg`, `…/.stat`, `…/.uptime`,
+`…/.version`, `…/.vmstat`, `…/.sysctl_entry_cap_last_cap`,
+`…/.sysctl_inotify_max_user_watches`, plus `…/sys/.empty`) and then
+bind-mounted by proot over the corresponding `/proc/*` and
+`/sys/fs/selinux` paths. Storing them inside the rootfs keeps them
+co-located with the container, so `remove` cleans them up automatically.
+Both `setup_fake_sysdata(rootfs)` and `fake_proc_bindings(rootfs)` take
+the absolute rootfs path as their argument. Constants `_FAKE_LOADAVG`,
+`_FAKE_STAT`, `_FAKE_UPTIME`, `_FAKE_VMSTAT` are hardcoded in
+`proot_distro/sysdata.py`. `termux`-type containers do not get fake
+sysdata (they share the host's `/proc` and `/sys` via the existing
+`--bind=/proc` / `--bind=/sys`).
 
 ### Subcommand help
 

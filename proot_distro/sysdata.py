@@ -21,13 +21,14 @@
 # Architecture: Supplies fake /proc and /sys content that proot bind-mounts
 # read-only into the container. Android restricts or blocks several /proc
 # files; providing static replacements ensures distro tools that read them
-# (top, htop, etc.) work correctly. setup_fake_sysdata() takes a dist_name
-# and resolves the path internally for backward compatibility.
+# (top, htop, etc.) work correctly. The fake files live inside the
+# container's own rootfs (containers/<name>/rootfs/proc/.* and sys/.empty)
+# so they are removed together with the container and stay aligned with the
+# new storage layout.
 
 import os
 
 from proot_distro.constants import (
-    INSTALLED_ROOTFS_DIR,
     DEFAULT_FAKE_KERNEL_RELEASE,
     DEFAULT_FAKE_KERNEL_VERSION,
 )
@@ -243,11 +244,14 @@ def _write_if_missing(path: str, content: str) -> None:
             fh.write(content)
 
 
-def setup_fake_sysdata(dist_name: str) -> None:
-    """Create fake /proc and /sys stubs required by proot on Android."""
-    root = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
+def setup_fake_sysdata(rootfs: str) -> None:
+    """Create fake /proc and /sys stubs required by proot on Android.
+
+    *rootfs* is the absolute path to the container's rootfs directory
+    (e.g. ``$RUNTIME_DIR/containers/<name>/rootfs``).
+    """
     for d in ("proc", "sys", "sys/.empty"):
-        p = os.path.join(root, d)
+        p = os.path.join(rootfs, d)
         os.makedirs(p, exist_ok=True)
         os.chmod(p, 0o700)
 
@@ -257,22 +261,25 @@ def setup_fake_sysdata(dist_name: str) -> None:
         f"{DEFAULT_FAKE_KERNEL_VERSION}\n"
     )
 
-    _write_if_missing(os.path.join(root, "proc/.loadavg"), _FAKE_LOADAVG)
-    _write_if_missing(os.path.join(root, "proc/.stat"), _FAKE_STAT)
-    _write_if_missing(os.path.join(root, "proc/.uptime"), _FAKE_UPTIME)
-    _write_if_missing(os.path.join(root, "proc/.version"), fake_version)
-    _write_if_missing(os.path.join(root, "proc/.vmstat"), _FAKE_VMSTAT)
+    _write_if_missing(os.path.join(rootfs, "proc/.loadavg"), _FAKE_LOADAVG)
+    _write_if_missing(os.path.join(rootfs, "proc/.stat"), _FAKE_STAT)
+    _write_if_missing(os.path.join(rootfs, "proc/.uptime"), _FAKE_UPTIME)
+    _write_if_missing(os.path.join(rootfs, "proc/.version"), fake_version)
+    _write_if_missing(os.path.join(rootfs, "proc/.vmstat"), _FAKE_VMSTAT)
     _write_if_missing(
-        os.path.join(root, "proc/.sysctl_entry_cap_last_cap"), "40\n"
+        os.path.join(rootfs, "proc/.sysctl_entry_cap_last_cap"), "40\n"
     )
     _write_if_missing(
-        os.path.join(root, "proc/.sysctl_inotify_max_user_watches"), "4096\n"
+        os.path.join(rootfs, "proc/.sysctl_inotify_max_user_watches"),
+        "4096\n",
     )
 
 
-def fake_proc_bindings(dist_name: str) -> list:
-    """Return --bind args for fake /proc entries that are unreadable on Android."""
-    root = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
+def fake_proc_bindings(rootfs: str) -> list:
+    """Return --bind args for fake /proc entries unreadable on Android.
+
+    *rootfs* is the absolute path to the container's rootfs directory.
+    """
     bindings = []
     checks = [
         ("/proc/loadavg",                        "proc/.loadavg"),
@@ -289,6 +296,6 @@ def fake_proc_bindings(dist_name: str) -> list:
                 fh.read(1)
         except OSError:
             bindings.append(
-                f"--bind={os.path.join(root, fake_rel)}:{real}"
+                f"--bind={os.path.join(rootfs, fake_rel)}:{real}"
             )
     return bindings

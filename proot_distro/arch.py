@@ -29,7 +29,7 @@ import os
 import struct
 import sys
 
-from proot_distro.constants import PREFIX, INSTALLED_ROOTFS_DIR
+from proot_distro.constants import PREFIX, CONTAINERS_DIR
 from proot_distro.colors import C, msg
 
 
@@ -89,15 +89,15 @@ def _elf_arch(path: str) -> str:
 
 
 def detect_installed_arch(dist_name_or_rootfs: str) -> str:
-    """Detect CPU architecture of an installed distro by reading ELF headers.
+    """Detect CPU architecture of an installed container by reading ELF headers.
 
-    Accepts either a plain distribution name (looked up under INSTALLED_ROOTFS_DIR)
-    or a full path to the rootfs directory.
+    Accepts either a plain container name (resolved as
+    ``CONTAINERS_DIR/<name>/rootfs``) or a full path to the rootfs directory.
     """
     if os.sep in dist_name_or_rootfs or dist_name_or_rootfs.startswith("/"):
         root = dist_name_or_rootfs
     else:
-        root = os.path.join(INSTALLED_ROOTFS_DIR, dist_name_or_rootfs)
+        root = os.path.join(CONTAINERS_DIR, dist_name_or_rootfs, "rootfs")
 
     candidates = [
         "/usr/bin/bash", "/usr/bin/sh", "/usr/bin/su", "/usr/bin/busybox",

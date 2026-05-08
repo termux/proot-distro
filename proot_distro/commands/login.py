@@ -365,7 +365,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             + shell_args
         )
 
-        setup_fake_sysdata(dist_name)
+        setup_fake_sysdata(rootfs)
 
     # Architecture detection.
     target_arch = detect_installed_arch(rootfs)
@@ -425,7 +425,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
                 proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
 
         proot_args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
-        proot_args += fake_proc_bindings(dist_name)
+        proot_args += fake_proc_bindings(rootfs)
 
         tmp_dir = os.path.join(rootfs, "tmp")
         os.makedirs(tmp_dir, exist_ok=True)

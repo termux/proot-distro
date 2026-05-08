@@ -193,14 +193,3 @@ def register_android_ids(rootfs: str) -> None:
                     )
         except OSError:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible aliases (kept for callers still using old names)
-# ---------------------------------------------------------------------------
-
-_write_environment = write_environment
-_fix_path_in_configs = fix_path_in_configs
-_write_resolv_conf = write_resolv_conf
-_write_hosts = write_hosts
-_register_android_ids = register_android_ids

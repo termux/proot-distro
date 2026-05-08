@@ -156,7 +156,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             f"Registering Android-specific UIDs and GIDs...{C['RST']}")
         register_android_ids(rootfs_dir)
 
-        setup_fake_sysdata(install_name)
+        setup_fake_sysdata(rootfs_dir)
 
         image_env = metadata.get("env", [])
         if image_env:

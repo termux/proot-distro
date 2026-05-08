@@ -57,9 +57,6 @@ CONTAINERS_DIR = os.path.join(RUNTIME_DIR, "containers")
 # Legacy rootfs path — used only for migrating old installations.
 LEGACY_ROOTFS_DIR = os.path.join(RUNTIME_DIR, "installed-rootfs")
 
-# Kept for backward compatibility during transition; points to legacy path.
-INSTALLED_ROOTFS_DIR = LEGACY_ROOTFS_DIR
-
 # Layer and manifest caches (subdirectories of the download cache).
 LAYER_CACHE_DIR = os.path.join(DOWNLOAD_CACHE_DIR, "layers")
 MANIFEST_CACHE_DIR = os.path.join(DOWNLOAD_CACHE_DIR, "manifests")

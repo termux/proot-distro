@@ -25,6 +25,7 @@
 # tokens are stripped on cross-host redirects because CDN pre-signed URLs
 # reject them with HTTP 400.
 
+import hashlib
 import json
 import os
 import re
@@ -322,7 +323,12 @@ def _fetch_config_blob(
 def _download_blob(
     repo: str, digest: str, token: str, registry: str = ""
 ) -> str:
-    """Download a blob to the layer cache; return the local file path."""
+    """Download a blob to the layer cache; return the local file path.
+
+    Computes the SHA-256 of the blob while it streams to disk and verifies
+    it against the expected *digest* before promoting the temp file to its
+    final location. The cache therefore only ever contains intact layers.
+    """
     dest = _layer_cache_path(digest)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.isfile(dest):
@@ -336,6 +342,17 @@ def _download_blob(
     req = urllib.request.Request(url, headers=headers)
     tmp = dest + ".tmp"
     use_tty = sys.stderr.isatty()
+
+    if ":" not in digest:
+        raise RuntimeError(f"Malformed layer digest '{digest}'.")
+    algo, expected_hex = digest.split(":", 1)
+    if algo.lower() != "sha256":
+        raise RuntimeError(
+            f"Unsupported layer digest algorithm '{algo}' (only sha256 "
+            f"is supported)."
+        )
+    hasher = hashlib.sha256()
+
     try:
         with _auth_stripping_opener.open(req) as resp, open(tmp, "wb") as fh:
             total = int(resp.headers.get("Content-Length", 0))
@@ -345,6 +362,7 @@ def _download_blob(
                 if not chunk:
                     break
                 fh.write(chunk)
+                hasher.update(chunk)
                 downloaded += len(chunk)
                 if use_tty:
                     pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
@@ -363,6 +381,14 @@ def _download_blob(
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
+
+        actual_hex = hasher.hexdigest()
+        if actual_hex != expected_hex.lower():
+            raise RuntimeError(
+                f"Layer integrity check failed for digest '{digest}': "
+                f"expected {expected_hex}, got {actual_hex}."
+            )
+
         os.replace(tmp, dest)
     except BaseException:
         if use_tty:
