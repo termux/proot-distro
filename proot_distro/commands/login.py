@@ -217,17 +217,28 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     _TERMUX_USR = f"{_TERMUX_FILES}/usr"
     _TERMUX_HOME_INNER = f"{_TERMUX_FILES}/home"
 
+    # Environment variables that will be inherited by proot and then by the
+    # spawned guest process. Insertion order matters: later assignments win.
+    child_env: dict = {}
+
     if dist_type == "termux":
         if not login_wd:
             login_wd = _TERMUX_HOME_INNER
-        inner = [
-            f"{_TERMUX_USR}/bin/env",
-            f"HOME={_TERMUX_HOME_INNER}",
-            f"PATH={_TERMUX_USR}/bin",
-            f"PREFIX={_TERMUX_USR}",
-            f"TMPDIR={_TERMUX_USR}/tmp",
-            f"{_TERMUX_USR}/bin/login",
-        ]
+        child_env["HOME"] = _TERMUX_HOME_INNER
+        child_env["PATH"] = f"{_TERMUX_USR}/bin"
+        child_env["PREFIX"] = _TERMUX_USR
+        child_env["TMPDIR"] = f"{_TERMUX_USR}/tmp"
+        host_term = os.environ.get("TERM", "")
+        if host_term:
+            child_env["TERM"] = host_term
+        host_colorterm = os.environ.get("COLORTERM", "")
+        if host_colorterm:
+            child_env["COLORTERM"] = host_colorterm
+        for entry in extra_env:
+            key, _, val = entry.partition("=")
+            if key:
+                child_env[key] = val
+        inner = [f"{_TERMUX_USR}/bin/login"]
         if login_cmd:
             inner += ["-c", shlex.join(login_cmd)]
         login_uid = login_gid = login_home = None
@@ -274,12 +285,19 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         if not login_shell:
             login_shell = "/bin/sh"
 
-        env_vars = [
-            f"PATH={DEFAULT_PATH_ENV}",
-            "MOZ_FAKE_NO_SANDBOX=1",
-            "PULSE_SERVER=127.0.0.1",
-        ]
-        env_vars += _read_image_env(rootfs)
+        # Baseline guest env. Always exported on every login.
+        child_env["PATH"] = DEFAULT_PATH_ENV
+        child_env["MOZ_FAKE_NO_SANDBOX"] = "1"
+        child_env["PULSE_SERVER"] = "127.0.0.1"
+
+        # Image-defined Env entries (Docker manifest). Lower precedence than
+        # Android system vars and the user's --env flags.
+        for entry in _read_image_env(rootfs):
+            key, _, val = entry.partition("=")
+            if key:
+                child_env[key] = val
+
+        # Android system vars are exported only when not running --isolated.
         if not isolated:
             for var in (
                 "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
@@ -288,26 +306,26 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             ):
                 val = os.environ.get(var, "")
                 if val:
-                    env_vars.append(f"{var}={val}")
-        env_vars += extra_env
+                    child_env[var] = val
+
+        # User-supplied --env=VAR=VALUE entries.
+        for entry in extra_env:
+            key, _, val = entry.partition("=")
+            if key:
+                child_env[key] = val
+
+        # Per-user identity and host-inherited terminal vars (always last).
+        child_env["HOME"] = login_home
+        child_env["USER"] = login_user
+        child_env["TERM"] = os.environ.get("TERM", "") or "xterm-256color"
+        host_colorterm = os.environ.get("COLORTERM", "")
+        if host_colorterm:
+            child_env["COLORTERM"] = host_colorterm
 
         if login_cmd:
-            shell_args = ["-c", shlex.join(login_cmd)]
+            inner = [login_shell, "-c", shlex.join(login_cmd)]
         else:
-            shell_args = ["-l"]
-
-        inner = (
-            ["/usr/bin/env", "-i"]
-            + env_vars
-            + [
-                f"COLORTERM={os.environ.get('COLORTERM', '')}",
-                f"HOME={login_home}",
-                f"USER={login_user}",
-                f"TERM={os.environ.get('TERM', 'xterm-256color')}",
-                login_shell,
-            ]
-            + shell_args
-        )
+            inner = [login_shell, "-l"]
 
         setup_fake_sysdata(rootfs)
 
@@ -459,9 +477,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
     proot_args += inner
 
-    env = os.environ.copy()
-    env.pop("LD_PRELOAD", None)
+    # Proot itself reads a few env vars to toggle its own behavior. They are
+    # passed through to proot (and therefore to the spawned guest process).
+    for var in ("PROOT_NO_SECCOMP", "PROOT_DUMP", "PROOT_VERBOSE"):
+        val = os.environ.get(var)
+        if val:
+            child_env[var] = val
     if dist_type != "termux" and os.path.isdir(os.path.join(rootfs, ".l2s")):
-        env["PROOT_L2S_DIR"] = os.path.join(rootfs, ".l2s")
+        child_env["PROOT_L2S_DIR"] = os.path.join(rootfs, ".l2s")
+    child_env.pop("LD_PRELOAD", None)
 
-    os.execvpe("proot", proot_args, env)
+    os.execvpe("proot", proot_args, child_env)

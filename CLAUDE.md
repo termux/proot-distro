@@ -127,7 +127,8 @@ Detected from the rootfs filesystem layout at login time:
 **`termux` type** differences in `login`:
 - No `--link2symlink`, no `--change-id`.
 - Working directory defaults to `/data/data/com.termux/files/home`.
-- Inner command is `/data/data/com.termux/files/usr/bin/login`.
+- Inner command is `/data/data/com.termux/files/usr/bin/login` (exec'd directly; no `/usr/bin/env` wrapper).
+- Guest env is hardcoded to `HOME`, `PATH`, `PREFIX`, `TMPDIR` for the Termux layout, plus host-inherited `TERM`/`COLORTERM` and any user `--env` entries.
 - Android system bindings are always enabled; Termux `PREFIX` is not bound into the guest.
 
 ### Commands and aliases
@@ -269,13 +270,17 @@ tag=`tag`).
 
 **`/etc/passwd` symlink resolution** — `_resolve_rootfs_path(rootfs, guest_path)` resolves an absolute guest path to its real host path by following symlinks within the rootfs namespace. Absolute symlink targets are re-rooted under `rootfs` via `os.path.normpath(target)` (prevents `..` escapes past `/`). The loop runs at most 40 times; exceeding this raises `OSError(ELOOP)`.
 
+**Environment delivery** — `command_login()` builds a clean `child_env` dict and passes it to `os.execvpe("proot", ...)`. Proot inherits this dict and propagates it to the spawned shell. There is **no `/usr/bin/env -i` wrapper** in the inner command — the shell is exec'd directly. The host's environment is **not** carried into the guest; only the entries below are exported.
+
 **Environment variable precedence** (later entries win):
 
 1. `PATH=<DEFAULT_PATH_ENV>`, `MOZ_FAKE_NO_SANDBOX=1`, `PULSE_SERVER=127.0.0.1` — baseline always exported
 2. Image `Env` — reads `rootfs/.proot-distro/image-env`
 3. Android system vars (`ANDROID_ART_ROOT`, `ANDROID_DATA`, `ANDROID_I18N_ROOT`, `ANDROID_ROOT`, `ANDROID_RUNTIME_ROOT`, `ANDROID_TZDATA_ROOT`, `BOOTCLASSPATH`, `DEX2OATBOOTCLASSPATH`, `EXTERNAL_STORAGE`) — exported only when `--isolated` is **not** set
 4. `--env` flags from the command line
-5. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last; `TERM` and `COLORTERM` inherit from host
+5. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last; `TERM` and `COLORTERM` inherit from host (`COLORTERM` only when set on the host; `TERM` falls back to `xterm-256color` when the host has none)
+
+Proot's own toggle env vars (`PROOT_NO_SECCOMP`, `PROOT_DUMP`, `PROOT_VERBOSE`, plus `PROOT_L2S_DIR` for normal dists with an `.l2s` directory) are added to `child_env` after the user-facing precedence above so proot can read them. `LD_PRELOAD` is removed from `child_env` before the exec.
 
 ### Remove
 
