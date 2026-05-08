@@ -1,22 +1,29 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: Creates a TAR archive of an installed proot container.
+# Compression is determined by file extension or by --compress flag.
+# Progress is written to stderr so it doesn't corrupt piped archive data.
+# The archive structure is: installed-rootfs/<name>/... (legacy; updated in
+# later tasks to use containers/<name>/).
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
 import os
 import stat
 import sys
@@ -72,7 +79,7 @@ def _iter_entries(root: str, arcroot: str):
     """Yield *(src_path, arcname)* for every entry under *root*.
 
     Symlinks to subdirectories are yielded as single entries; os.walk is
-    prevented from descending into them.  All sibling entries are sorted.
+    prevented from descending into them. All sibling entries are sorted.
     """
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False, topdown=True):
         rel = os.path.relpath(dirpath, root)
@@ -130,26 +137,33 @@ def _add_path(tf: tarfile.TarFile, src: str, arcname: str) -> None:
 def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
     output_path = getattr(args, "output", None)
-    compression_arg = getattr(args, "compress", None)
+    compression_arg = getattr(args, "compression", None)
+    verbose = getattr(args, "verbose", False)
 
     rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     if not os.path.isdir(rootfs_dir):
         msg()
-        msg(f"{C['BRED']}Error: distribution '{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
+        msg(f"{C['BRED']}Error: distribution "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
         msg()
-        msg(f"{C['CYAN']}You can install it by: {C['GREEN']}{PROGRAM_NAME} install {dist_name}{C['RST']}")
+        msg(f"{C['CYAN']}You can install it by: "
+            f"{C['GREEN']}{PROGRAM_NAME} install {dist_name}{C['RST']}")
         msg()
         sys.exit(1)
 
     if output_path:
         if os.path.isdir(output_path):
             msg()
-            msg(f"{C['BRED']}Error: cannot write to '{C['YELLOW']}{output_path}{C['BRED']}' because this path is a directory.{C['RST']}")
+            msg(f"{C['BRED']}Error: cannot write to "
+                f"'{C['YELLOW']}{output_path}{C['BRED']}' because this path "
+                f"is a directory.{C['RST']}")
             _HELP_COMMANDS["backup"]()
             sys.exit(1)
         if os.path.isfile(output_path):
             msg()
-            msg(f"{C['BRED']}Error: file '{C['YELLOW']}{output_path}{C['BRED']}' already exists. Please specify a different name.{C['RST']}")
+            msg(f"{C['BRED']}Error: file "
+                f"'{C['YELLOW']}{output_path}{C['BRED']}' already exists. "
+                f"Please specify a different name.{C['RST']}")
             _HELP_COMMANDS["backup"]()
             sys.exit(1)
         if compression_arg is not None:
@@ -162,19 +176,26 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
                 msg(f"{C['BRED']}Error: {exc}{C['RST']}")
                 msg()
                 sys.exit(1)
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Tarball will be written to '{output_path}'.{C['RST']}")
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Tarball will be written to '{output_path}'.{C['RST']}")
     else:
         if sys.stdout.isatty():
             msg()
-            msg(f"{C['BRED']}Error: archive data cannot be printed to console. Please use option '{C['YELLOW']}--output{C['BRED']}' to specify a file or pipe the output to another command.{C['RST']}")
+            msg(f"{C['BRED']}Error: archive data cannot be printed to console. "
+                f"Please use option '{C['YELLOW']}--output{C['BRED']}' to "
+                f"specify a file or pipe the output to another "
+                f"command.{C['RST']}")
             msg()
             sys.exit(1)
         compression = _COMPRESSION_ARG_MAP[compression_arg] if compression_arg is not None else ''
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Tarball will be written to stdout.{C['RST']}")
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Tarball will be written to stdout.{C['RST']}")
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Fixing file permissions in rootfs...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Fixing file permissions in rootfs...{C['RST']}")
 
     def _fix_dir(dirpath: str, files: list) -> None:
         try:
@@ -198,48 +219,58 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
         _fix_dir(dirpath, files)
 
     rootfs_base = os.path.basename(INSTALLED_ROOTFS_DIR)
-    rootfs_rel  = os.path.join(rootfs_base, dist_name)
+    rootfs_rel = os.path.join(rootfs_base, dist_name)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Archiving the rootfs...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Archiving the rootfs...{C['RST']}")
 
     rootfs_entries = list(_iter_entries(rootfs_dir, rootfs_rel))
-    total_entries  = len(rootfs_entries)
+    total_entries = len(rootfs_entries)
     done = 0
     use_tty = sys.stderr.isatty()
 
-    def _on_entry() -> None:
+    def _on_entry(src: str, arc: str) -> None:
         nonlocal done
         done += 1
+        if verbose:
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Adding: '{arc}'{C['RST']}")
         if not use_tty:
             return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         pct = done * 100 // total_entries if total_entries else 100
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total_entries} files{C['RST']}")
+            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total_entries} files"
+            f"{C['RST']}"
+        )
         sys.stderr.flush()
 
     try:
         tar_mode = f'w:{compression}' if output_path else f'w|{compression}'
         tar_target = output_path if output_path else sys.stdout.buffer
 
-        with tarfile.open(tar_target if output_path else None,
-                          fileobj=None if output_path else tar_target,
-                          mode=tar_mode) as tf:
+        with tarfile.open(
+            tar_target if output_path else None,
+            fileobj=None if output_path else tar_target,
+            mode=tar_mode,
+        ) as tf:
             for src, arc in rootfs_entries:
                 _add_path(tf, src, arc)
-                _on_entry()
+                _on_entry(src, arc)
 
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Finished backing up.{C['RST']}")
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Finished backing up.{C['RST']}")
 
     except KeyboardInterrupt:
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}Aborted by user.{C['RST']}")
+        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+            f"Aborted by user.{C['RST']}")
         if output_path:
             try:
                 os.remove(output_path)
@@ -250,7 +281,8 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}Failed to create archive: {exc}{C['RST']}")
+        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+            f"Failed to create archive: {exc}{C['RST']}")
         if output_path:
             try:
                 os.remove(output_path)

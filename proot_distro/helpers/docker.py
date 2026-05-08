@@ -1,23 +1,30 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: Pure-Python OCI/Docker registry client. Pulls images from
+# Docker Hub (or any OCI-compatible registry) without spawning external
+# processes. Manifest and layer data are cached locally to support fully
+# offline re-installs. Authentication tokens are fetched on demand; bearer
+# tokens are stripped on cross-host redirects because CDN pre-signed URLs
+# reject them with HTTP 400.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
-"""Pure-Python OCI registry client for pulling images from Docker Hub."""
 import json
 import os
 import re
@@ -29,8 +36,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from proot_distro.constants import DOWNLOAD_CACHE_DIR, PROGRAM_VERSION
+from proot_distro.constants import (
+    LAYER_CACHE_DIR,
+    MANIFEST_CACHE_DIR,
+    PROGRAM_VERSION,
+)
 from proot_distro.colors import C, msg
+from proot_distro.helpers.download import fmt_size
 
 _REGISTRY_URL = "https://registry-1.docker.io"
 _AUTH_URL = "https://auth.docker.io/token"
@@ -63,25 +75,44 @@ _ARCH_TO_DOCKER = {
 # ---------------------------------------------------------------------------
 
 def parse_image_ref(image_ref: str) -> tuple:
-    """Parse an image reference into (repo, tag).
+    """Parse an image reference into (registry, repo, tag).
 
-    'ubuntu'          → ('library/ubuntu', 'latest')
-    'ubuntu:24.04'    → ('library/ubuntu', '24.04')
-    'myuser/img:1.0'  → ('myuser/img', '1.0')
+    Docker Hub images (no registry host):
+      'ubuntu'           → ('', 'library/ubuntu', 'latest')
+      'ubuntu:24.04'     → ('', 'library/ubuntu', '24.04')
+      'myuser/img:1.0'   → ('', 'myuser/img', '1.0')
+
+    Custom registry images (host contains a dot or colon):
+      'ghcr.io/foo/bar:latest' → ('ghcr.io', 'foo/bar', 'latest')
     """
-    if ":" in image_ref:
-        name, tag = image_ref.rsplit(":", 1)
+    # Detect a registry host: first path component contains '.' or ':'
+    parts = image_ref.split("/", 1)
+    if len(parts) == 2 and ("." in parts[0] or ":" in parts[0]):
+        registry = parts[0]
+        remainder = parts[1]
     else:
-        name, tag = image_ref, "latest"
-    repo = name if "/" in name else f"library/{name}"
-    return repo, tag
+        registry = ""
+        remainder = image_ref
+
+    if ":" in remainder:
+        name, tag = remainder.rsplit(":", 1)
+    else:
+        name, tag = remainder, "latest"
+
+    if not registry:
+        repo = name if "/" in name else f"library/{name}"
+    else:
+        repo = name
+
+    return registry, repo, tag
 
 
 def derive_alias(image_ref: str) -> str:
     """Derive a short local alias from an image reference.
 
-    'ubuntu:24.04'    → 'ubuntu'
-    'myuser/img:tag'  → 'img'
+    'ubuntu:24.04'         → 'ubuntu'
+    'myuser/img:tag'       → 'img'
+    'ghcr.io/foo/bar:tag'  → 'bar'
     """
     name = image_ref.split(":")[0]
     return name.split("/")[-1]
@@ -92,26 +123,31 @@ def derive_alias(image_ref: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _layer_cache_path(digest: str) -> str:
-    return os.path.join(DOWNLOAD_CACHE_DIR, "docker-layers", digest.replace(":", "_"))
+    return os.path.join(LAYER_CACHE_DIR, digest.replace(":", "_"))
 
 
 def _manifest_cache_path(image_ref: str, arch: str) -> str:
     safe = re.sub(r"[^\w._-]", "_", f"{image_ref}_{arch}")
-    return os.path.join(DOWNLOAD_CACHE_DIR, "docker-manifests", safe + ".json")
+    return os.path.join(MANIFEST_CACHE_DIR, safe + ".json")
 
 
-def _save_manifest_cache(image_ref: str, arch: str,
-                         manifest: dict, repo: str, image_config: dict) -> None:
+def _save_manifest_cache(
+    image_ref: str, arch: str,
+    manifest: dict, repo: str, image_config: dict,
+) -> None:
     path = _manifest_cache_path(image_ref, arch)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
-        json.dump({"manifest": manifest, "repo": repo, "image_config": image_config}, fh)
+        json.dump(
+            {"manifest": manifest, "repo": repo, "image_config": image_config},
+            fh,
+        )
     os.replace(tmp, path)
 
 
 def _load_manifest_cache(image_ref: str, arch: str):
-    """Return (manifest, repo, image_config) from cache, or (None, None, {}) on miss."""
+    """Return (manifest, repo, image_config) from cache, or None on miss."""
     try:
         with open(_manifest_cache_path(image_ref, arch)) as fh:
             data = json.load(fh)
@@ -121,7 +157,9 @@ def _load_manifest_cache(image_ref: str, arch: str):
 
 
 def _all_layers_cached(layers: list) -> bool:
-    return all(os.path.isfile(_layer_cache_path(l["digest"])) for l in layers)
+    return all(
+        os.path.isfile(_layer_cache_path(layer["digest"])) for layer in layers
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +171,15 @@ def _ua() -> dict:
 
 
 class _AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Drop the Authorization header when following a cross-host redirect.
+    """Strip the Authorization header when following a cross-host redirect.
 
-    Docker Hub's blob endpoints redirect to CDN pre-signed URLs.  Those CDN
-    hosts reject requests that carry a Bearer token with HTTP 400.  Python's
-    default redirect handler forwards all headers unchanged, so we override it
-    to strip Authorization whenever the target host differs from the source.
+    Docker Hub blob endpoints redirect to CDN pre-signed URLs. Those CDN
+    hosts return HTTP 400 when they receive a Bearer token. Python's default
+    redirect handler forwards all headers unchanged, so we override it to
+    drop Authorization whenever the redirect target host differs from the
+    source host.
     """
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new_req is None:
@@ -154,55 +194,75 @@ class _AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
 _auth_stripping_opener = urllib.request.build_opener(_AuthStrippingRedirectHandler)
 
 
-def _get_auth_token(repo: str) -> str:
-    url = (f"{_AUTH_URL}?service=registry.docker.io"
-           f"&scope=repository:{repo}:pull")
+def _get_auth_token(repo: str, registry: str = "") -> str:
+    """Obtain a pull token for *repo* from the appropriate auth endpoint."""
+    if registry:
+        # Custom registry — try unauthenticated first; fall back to no token.
+        return ""
+    url = (
+        f"{_AUTH_URL}?service=registry.docker.io"
+        f"&scope=repository:{repo}:pull"
+    )
     req = urllib.request.Request(url, headers=_ua())
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read())
     return data.get("token") or data.get("access_token", "")
 
 
-def _get_manifest(repo: str, ref: str, token: str) -> dict:
-    url = f"{_REGISTRY_URL}/v2/{repo}/manifests/{ref}"
-    req = urllib.request.Request(url, headers={
-        **_ua(),
-        "Authorization": f"Bearer {token}",
-        "Accept": _ACCEPT_HEADER,
-    })
+def _registry_base_url(registry: str) -> str:
+    if registry:
+        return f"https://{registry}"
+    return _REGISTRY_URL
+
+
+def _get_manifest(
+    repo: str, ref: str, token: str, registry: str = ""
+) -> dict:
+    base = _registry_base_url(registry)
+    url = f"{base}/v2/{repo}/manifests/{ref}"
+    headers = {**_ua(), "Accept": _ACCEPT_HEADER}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req) as resp:
         body = resp.read()
         ct = resp.headers.get("Content-Type", "")
     data = json.loads(body)
-    # Prefer the Content-Type header; fall back to the mediaType body field.
+    # Prefer Content-Type header; fall back to the mediaType body field.
     data["_ct"] = ct.split(";")[0].strip() or data.get("mediaType", "")
     return data
 
 
 def _resolve_single_manifest(image_ref: str, arch: str) -> tuple:
-    """Return (single_image_manifest, token, repo) for the requested arch."""
-    repo, tag = parse_image_ref(image_ref)
+    """Return (single_image_manifest, token, repo, registry) for the arch."""
+    registry, repo, tag = parse_image_ref(image_ref)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-        f"{C['CYAN']}Authenticating with Docker Hub...{C['RST']}")
-    token = _get_auth_token(repo)
+        f"{C['CYAN']}Authenticating with registry...{C['RST']}")
+    token = _get_auth_token(repo, registry)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
         f"{C['CYAN']}Fetching manifest for '{image_ref}'...{C['RST']}")
-    manifest = _get_manifest(repo, tag, token)
+    manifest = _get_manifest(repo, tag, token, registry)
 
     if manifest["_ct"] in _MANIFEST_LIST_TYPES or "manifests" in manifest:
         docker_arch, docker_variant = _ARCH_TO_DOCKER.get(arch, (arch, ""))
         target = _pick_platform(
-            manifest.get("manifests", []), docker_arch, docker_variant, image_ref)
+            manifest.get("manifests", []),
+            docker_arch,
+            docker_variant,
+            image_ref,
+        )
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
             f"{C['CYAN']}Fetching {arch} manifest...{C['RST']}")
-        manifest = _get_manifest(repo, target["digest"], token)
+        manifest = _get_manifest(repo, target["digest"], token, registry)
 
-    return manifest, token, repo
+    return manifest, token, repo, registry
 
 
-def _pick_platform(entries: list, arch: str, variant: str, image_ref: str) -> dict:
+def _pick_platform(
+    entries: list, arch: str, variant: str, image_ref: str
+) -> dict:
     """Find the manifest list entry matching arch (and optionally variant)."""
     # First pass: exact match (arch + non-empty variant must match).
     for entry in entries:
@@ -236,16 +296,19 @@ def _pick_platform(entries: list, arch: str, variant: str, image_ref: str) -> di
     )
 
 
-def _fetch_config_blob(repo: str, cfg_digest: str, token: str) -> dict:
+def _fetch_config_blob(
+    repo: str, cfg_digest: str, token: str, registry: str = ""
+) -> dict:
     """Fetch the image config JSON blob; return parsed dict (empty on error)."""
     if not cfg_digest:
         return {}
     try:
-        url = f"{_REGISTRY_URL}/v2/{repo}/blobs/{cfg_digest}"
-        req = urllib.request.Request(url, headers={
-            **_ua(),
-            "Authorization": f"Bearer {token}",
-        })
+        base = _registry_base_url(registry)
+        url = f"{base}/v2/{repo}/blobs/{cfg_digest}"
+        headers = {**_ua()}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers)
         with _auth_stripping_opener.open(req) as resp:
             return json.loads(resp.read())
     except Exception:
@@ -256,33 +319,21 @@ def _fetch_config_blob(repo: str, cfg_digest: str, token: str) -> dict:
 # Layer download and application
 # ---------------------------------------------------------------------------
 
-def _fmt_size(n: int) -> str:
-    if n >= 1 << 20:
-        return f"{n / (1 << 20):.1f} MiB"
-    if n >= 1 << 10:
-        return f"{n / (1 << 10):.1f} KiB"
-    return f"{n} B"
-
-
-def _download_blob(repo: str, digest: str, token: str) -> str:
-    """Download a blob to the layer cache; return the local file path.
-
-    Layers are cached by digest so subsequent installs of the same image
-    skip already-downloaded layers.
-    """
+def _download_blob(
+    repo: str, digest: str, token: str, registry: str = ""
+) -> str:
+    """Download a blob to the layer cache; return the local file path."""
     dest = _layer_cache_path(digest)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.isfile(dest):
         return dest
 
-    url = f"{_REGISTRY_URL}/v2/{repo}/blobs/{digest}"
-    # Docker Hub redirects blob downloads to CDN pre-signed URLs.  The CDN
-    # hosts return 400 if they receive an Authorization header, so we use a
-    # custom opener that strips that header on cross-host redirects.
-    req = urllib.request.Request(url, headers={
-        **_ua(),
-        "Authorization": f"Bearer {token}",
-    })
+    base = _registry_base_url(registry)
+    url = f"{base}/v2/{repo}/blobs/{digest}"
+    headers = {**_ua()}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     tmp = dest + ".tmp"
     use_tty = sys.stderr.isatty()
     try:
@@ -301,9 +352,12 @@ def _download_blob(repo: str, digest: str, token: str) -> str:
                         pct = downloaded * 100 // total
                         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
                         line = (f"\r{pfx}[{bar}] {pct:3d}%"
-                                f"  {_fmt_size(downloaded)} / {_fmt_size(total)}{C['RST']}")
+                                f"  {fmt_size(downloaded)}"
+                                f" / {fmt_size(total)}{C['RST']}")
                     else:
-                        line = f"\r{pfx}{_fmt_size(downloaded)} downloaded...{C['RST']}"
+                        line = (f"\r{pfx}"
+                                f"{fmt_size(downloaded)} downloaded..."
+                                f"{C['RST']}")
                     sys.stderr.write(line)
                     sys.stderr.flush()
         if use_tty:
@@ -337,10 +391,11 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
     """Apply one OCI/Docker layer (gzipped tar) onto rootfs_dir.
 
     Whiteout semantics (OCI image spec §6.1.2):
-      .wh..wh..opq   opaque whiteout — delete all contents of the parent dir
+      .wh..wh..opq   opaque whiteout — delete all parent dir contents
       .wh.<name>     regular whiteout — delete sibling <name>
-    Hard links are copied rather than linked to keep the rootfs self-contained.
-    Block/character devices and FIFOs are silently skipped.
+
+    Hard links are copied rather than linked to keep the rootfs
+    self-contained. Block/character devices and FIFOs are silently skipped.
     """
     use_tty = sys.stderr.isatty()
     done = 0
@@ -354,7 +409,8 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} entries{C['RST']}")
+            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} entries{C['RST']}"
+        )
         sys.stderr.flush()
 
     with tarfile.open(layer_path, "r:*") as tf:
@@ -458,51 +514,55 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
-    """Pull a Docker Hub image and extract all layers into rootfs_dir.
+    """Pull an OCI/Docker image and extract all layers into rootfs_dir.
 
-    The manifest is checked in the local cache first.  If cached and all layers
-    are present, the install runs entirely without network access.  If the
+    The manifest is checked in the local cache first. If cached and all layers
+    are present, the install runs entirely without network access. If the
     manifest is cached but some layers are missing, only an auth token is
-    fetched (no manifest resolution) before downloading the missing layers.
-    The manifest cache is populated on the first successful online pull.
+    fetched before downloading the missing layers. The manifest cache is
+    populated on the first successful online pull.
 
-    Returns a metadata dict with 'name', 'version', 'description' keys.
+    Returns a metadata dict with 'name', 'version', 'description', 'env',
+    'manifest', and 'image_config' keys.
     """
     token = None
 
     # --- Check manifest cache first ---
     manifest, repo, image_config = _load_manifest_cache(image_ref, arch)
 
+    registry = parse_image_ref(image_ref)[0]
+
     if manifest is not None:
         layers = manifest.get("layers", [])
         if _all_layers_cached(layers):
-            # Every layer is on disk — no network contact needed at all.
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
                 f"{C['CYAN']}Manifest and all layers are cached — "
                 f"skipping network for '{image_ref}' ({arch}).{C['RST']}")
         else:
-            # Manifest is known; only fetch an auth token to download layers.
             missing = sum(
-                1 for l in layers
-                if not os.path.isfile(_layer_cache_path(l["digest"]))
+                1 for layer in layers
+                if not os.path.isfile(_layer_cache_path(layer["digest"]))
             )
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
                 f"{C['CYAN']}Manifest cached — downloading {missing} missing "
                 f"layer(s) for '{image_ref}' ({arch})...{C['RST']}")
             try:
                 msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                    f"{C['CYAN']}Authenticating with Docker Hub...{C['RST']}")
-                token = _get_auth_token(repo)
+                    f"{C['CYAN']}Authenticating with registry...{C['RST']}")
+                token = _get_auth_token(repo, registry)
             except (urllib.error.URLError, OSError) as net_err:
                 raise RuntimeError(
                     f"Network error: {net_err}\n"
-                    f"{missing} of {len(layers)} layer(s) for '{image_ref}' ({arch}) "
-                    f"are not in the local cache. Connect to the internet and retry."
+                    f"{missing} of {len(layers)} layer(s) for '{image_ref}'"
+                    f" ({arch}) are not in the local cache. "
+                    f"Connect to the internet and retry."
                 ) from net_err
     else:
         # No cached manifest — resolve from the registry.
         try:
-            manifest, token, repo = _resolve_single_manifest(image_ref, arch)
+            manifest, token, repo, registry = _resolve_single_manifest(
+                image_ref, arch
+            )
         except (urllib.error.URLError, OSError) as net_err:
             raise RuntimeError(
                 f"Network error: {net_err}\n"
@@ -510,13 +570,14 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                 f"Connect to the internet and retry."
             ) from net_err
         cfg_digest = manifest.get("config", {}).get("digest", "")
-        image_config = _fetch_config_blob(repo, cfg_digest, token)
+        image_config = _fetch_config_blob(repo, cfg_digest, token, registry)
         _save_manifest_cache(image_ref, arch, manifest, repo, image_config)
 
     layers = manifest.get("layers", [])
     if not layers:
         raise RuntimeError(
-            f"Manifest for '{image_ref}' contains no filesystem layers.")
+            f"Manifest for '{image_ref}' contains no filesystem layers."
+        )
 
     # --- Download (if needed) and apply each layer ---
     n_layers = len(layers)
@@ -525,32 +586,36 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
         media_type = layer.get("mediaType", "")
         if "zstd" in media_type:
             raise RuntimeError(
-                f"Layer {i + 1}/{n_layers} uses zstd compression which is not "
-                "supported by Python's tarfile module. "
-                "Try a different image tag that ships gzip-compressed layers.")
+                f"Layer {i + 1}/{n_layers} uses zstd compression which is "
+                "not supported by Python's tarfile module. "
+                "Try a different image tag that ships gzip-compressed layers."
+            )
 
+        short_id = digest.split(":")[-1][:12]
         cached_path = _layer_cache_path(digest)
         if os.path.isfile(cached_path):
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Layer {i + 1}/{n_layers} already cached, skipping download.{C['RST']}")
+                f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
+                f"skipping download.{C['RST']}")
             layer_path = cached_path
         else:
             size = layer.get("size", 0)
+            size_str = f" ({fmt_size(size)})" if size else ""
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Downloading layer {i + 1}/{n_layers}"
-                f"{' (' + _fmt_size(size) + ')' if size else ''}...{C['RST']}")
-            layer_path = _download_blob(repo, digest, token)
+                f"{short_id}: Downloading layer "
+                f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
+            layer_path = _download_blob(repo, digest, token or "", registry)
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Applying layer {i + 1}/{n_layers}...{C['RST']}")
+            f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
         _apply_layer(layer_path, rootfs_dir)
 
     # --- Build return metadata from image config labels ---
-    _, tag = parse_image_ref(image_ref)
+    _, _, tag = parse_image_ref(image_ref)
     image_name = repo.split("/")[-1].capitalize()
     img_cfg: dict = image_config.get("config") or {}
     labels: dict = img_cfg.get("Labels") or {}
-    version = str(
+    version_str = str(
         labels.get("org.opencontainers.image.version")
         or labels.get("version")
         or (tag if tag != "latest" else "")
@@ -560,7 +625,15 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
         or f"Installed from Docker Hub: {image_ref}"
     )
     # Env is a list of "KEY=VALUE" strings defined by the image author.
-    image_env: list = [e for e in (img_cfg.get("Env") or [])
-                       if isinstance(e, str) and "=" in e]
-    return {"name": image_name, "version": version,
-            "description": description, "env": image_env}
+    image_env: list = [
+        e for e in (img_cfg.get("Env") or [])
+        if isinstance(e, str) and "=" in e
+    ]
+    return {
+        "name": image_name,
+        "version": version_str,
+        "description": description,
+        "env": image_env,
+        "manifest": manifest,
+        "image_config": image_config,
+    }

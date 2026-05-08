@@ -1,22 +1,29 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: Spawns an interactive shell (or custom command) inside a
+# proot container. Builds the full proot command line including all bindings,
+# emulator selection, and environment variable setup, then exec's into proot.
+# Legacy installed-rootfs paths are migrated to the new containers layout on
+# first login. Architecture is detected from ELF headers, not config files.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
 import errno
 import os
 import shlex
@@ -43,16 +50,14 @@ from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
 
 
 def _resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
-    """Resolve an absolute guest path to its real host path, following symlinks
-    within the rootfs namespace.
+    """Resolve an absolute guest path to its real host path.
 
-    Absolute symlink targets are re-rooted under rootfs instead of being
-    resolved on the host filesystem.  This handles images (e.g. Nix) where
-    /etc/passwd is a symlink to an absolute store path like
-    /nix/store/xxxx-etc/passwd that only exists inside the guest.
+    Follows symlinks within the rootfs namespace. Absolute symlink targets
+    are re-rooted under rootfs to handle images (e.g. Nix) where /etc/passwd
+    is a symlink to an absolute store path that only exists inside the guest.
 
-    Raises OSError if the path does not exist, a symlink target is missing,
-    or the chain exceeds 40 levels (ELOOP).
+    Raises OSError if the path is missing, a target is missing, or the chain
+    exceeds 40 levels (ELOOP).
     """
     for _ in range(40):
         host_path = rootfs + guest_path
@@ -91,7 +96,10 @@ def _read_passwd_field(rootfs: str, user: str, field_index: int) -> str:
 def _update_android_env_in_environment(rootfs: str) -> None:
     env_path = os.path.join(rootfs, "etc", "environment")
     try:
-        os.chmod(env_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+        os.chmod(
+            env_path,
+            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
+        )
     except OSError:
         pass
 
@@ -108,7 +116,10 @@ def _update_android_env_in_environment(rootfs: str) -> None:
         return
 
     updated = {var: os.environ.get(var, "") for var in android_vars}
-    new_lines = [l for l in lines if not any(l.startswith(f"{v}=") for v in android_vars)]
+    new_lines = [
+        line for line in lines
+        if not any(line.startswith(f"{v}=") for v in android_vars)
+    ]
     for var, val in updated.items():
         if val:
             new_lines.append(f"{var}={val}\n")
@@ -118,7 +129,7 @@ def _update_android_env_in_environment(rootfs: str) -> None:
 
 
 def _read_image_env(rootfs: str) -> list:
-    """Return the image-defined Env list written by install into .proot-distro/image-env."""
+    """Return the image-defined Env list from .proot-distro/image-env."""
     env_file = os.path.join(rootfs, ".proot-distro", "image-env")
     result = []
     try:
@@ -139,7 +150,6 @@ def _read_environment_vars(rootfs: str) -> list:
         with open(env_path) as fh:
             for line in fh:
                 line = line.strip()
-                # Strip surrounding quotes, skip empty/non-assignment lines.
                 if not line or "=" not in line:
                     continue
                 key, _, val = line.partition("=")
@@ -159,15 +169,17 @@ def _storage_bindings() -> list:
     else:
         for p in ("/storage/self/primary", "/storage/emulated/0", "/sdcard"):
             if os.access(p, os.R_OK):
-                binds += [f"--bind={p}:/sdcard",
-                          f"--bind={p}:/storage/emulated/0",
-                          f"--bind={p}:/storage/self/primary"]
+                binds += [
+                    f"--bind={p}:/sdcard",
+                    f"--bind={p}:/storage/emulated/0",
+                    f"--bind={p}:/storage/self/primary",
+                ]
                 break
     return binds
 
 
-def _system_bindings(force: bool = False) -> list:
-    """Return --bind args for Android system paths (apex, system, vendor, …)."""
+def _system_bindings() -> list:
+    """Return --bind args for Android system paths."""
     binds = []
     for path in (
         "/apex", "/odm", "/product", "/system", "/system_ext", "/vendor",
@@ -201,15 +213,21 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     rootfs = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     if not os.path.isdir(rootfs):
         msg()
-        msg(f"{C['BRED']}Error: distribution '{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
+        msg(f"{C['BRED']}Error: distribution "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
         msg()
         sys.exit(1)
 
-    _termux_usr = os.path.join(rootfs, "data", "data", "com.termux", "files", "usr")
+    _termux_usr = os.path.join(
+        rootfs, "data", "data", "com.termux", "files", "usr"
+    )
     dist_type = "termux" if os.path.isdir(_termux_usr) else "normal"
 
     login_user = getattr(args, "user", "root") or "root"
-    kernel_release = getattr(args, "kernel", DEFAULT_FAKE_KERNEL_RELEASE) or DEFAULT_FAKE_KERNEL_RELEASE
+    kernel_release = (
+        getattr(args, "kernel", DEFAULT_FAKE_KERNEL_RELEASE)
+        or DEFAULT_FAKE_KERNEL_RELEASE
+    )
     hostname = getattr(args, "hostname", "localhost") or "localhost"
     login_wd = getattr(args, "work_dir", "") or ""
     redirect_ports = getattr(args, "redirect_ports", False)
@@ -224,7 +242,6 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     extra_env = getattr(args, "env", []) or []
     login_cmd = getattr(args, "login_cmd", []) or []
 
-    # Constants for the Termux filesystem layout inside the distro rootfs.
     _TERMUX_FILES = "/data/data/com.termux/files"
     _TERMUX_USR = f"{_TERMUX_FILES}/usr"
     _TERMUX_HOME_INNER = f"{_TERMUX_FILES}/home"
@@ -244,27 +261,30 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             inner += ["-c", shlex.join(login_cmd)]
         login_uid = login_gid = login_home = None
     else:
-        # Validate user and read passwd fields.
-        # Resolve /etc/passwd within the rootfs namespace: some images (e.g. Nix)
-        # make it a symlink whose absolute target only exists inside the guest.
         try:
             passwd_path = _resolve_rootfs_path(rootfs, "/etc/passwd")
         except OSError:
-            msg(f"{C['BRED']}Error: the selected distribution doesn't have /etc/passwd.{C['RST']}")
+            msg(f"{C['BRED']}Error: the selected distribution doesn't have "
+                f"/etc/passwd.{C['RST']}")
             sys.exit(1)
 
         if not os.path.isfile(passwd_path):
-            msg(f"{C['BRED']}Error: the selected distribution doesn't have /etc/passwd.{C['RST']}")
+            msg(f"{C['BRED']}Error: the selected distribution doesn't have "
+                f"/etc/passwd.{C['RST']}")
             sys.exit(1)
 
         try:
             with open(passwd_path) as fh:
-                user_found = any(l.startswith(f"{login_user}:") for l in fh)
+                user_found = any(
+                    line.startswith(f"{login_user}:") for line in fh
+                )
         except OSError:
             user_found = False
 
         if not user_found:
-            msg(f"{C['BRED']}Error: no user '{C['YELLOW']}{login_user}{C['BRED']}' defined in /etc/passwd.{C['RST']}")
+            msg(f"{C['BRED']}Error: no user "
+                f"'{C['YELLOW']}{login_user}{C['BRED']}' defined in "
+                f"/etc/passwd.{C['RST']}")
             sys.exit(1)
 
         login_uid = _read_passwd_field(rootfs, login_user, 2)
@@ -273,7 +293,8 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         login_shell = _read_passwd_field(rootfs, login_user, 6)
 
         if not login_uid:
-            msg(f"{C['BRED']}Error: failed to retrieve UID for user '{login_user}'.{C['RST']}")
+            msg(f"{C['BRED']}Error: failed to retrieve UID for user "
+                f"'{login_user}'.{C['RST']}")
             sys.exit(1)
         if not login_home:
             login_home = f"/home/{login_user}" if login_user != "root" else "/root"
@@ -282,17 +303,16 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         if not login_shell:
             login_shell = "/bin/sh"
 
-        # Update /etc/environment with current Android vars.
         _update_android_env_in_environment(rootfs)
 
-        # Build environment variables list.
-        # Later entries override earlier ones (env -i semantics).
         env_vars = [f"PATH={DEFAULT_PATH_ENV}"]
         env_vars += _read_environment_vars(rootfs)
-        env_vars += _read_image_env(rootfs)  # image Env overrides proot-distro defaults
-        for var in ("ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
-                    "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
-                    "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE"):
+        env_vars += _read_image_env(rootfs)
+        for var in (
+            "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
+            "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
+            "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+        ):
             val = os.environ.get(var, "")
             if val:
                 env_vars.append(f"{var}={val}")
@@ -306,38 +326,43 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         inner = (
             ["/usr/bin/env", "-i"]
             + env_vars
-            + [f"COLORTERM={os.environ.get('COLORTERM', '')}",
-               f"HOME={login_home}",
-               f"USER={login_user}",
-               f"TERM={os.environ.get('TERM', 'xterm-256color')}",
-               login_shell]
+            + [
+                f"COLORTERM={os.environ.get('COLORTERM', '')}",
+                f"HOME={login_home}",
+                f"USER={login_user}",
+                f"TERM={os.environ.get('TERM', 'xterm-256color')}",
+                login_shell,
+            ]
             + shell_args
         )
 
         setup_fake_sysdata(dist_name)
 
     # Architecture detection.
-    target_arch = detect_installed_arch(dist_name)
+    target_arch = detect_installed_arch(rootfs)
     if target_arch == "unknown":
         target_arch = get_device_cpu_arch()
 
     device_arch = get_device_cpu_arch()
 
-    if target_arch != device_arch and not no_arch_warning and not supports_32bit():
-        msg(f"{C['BRED']}Warning: CPU doesn't support 32-bit instructions, some software may not work.{C['RST']}")
+    if (target_arch != device_arch and not no_arch_warning
+            and not supports_32bit()):
+        msg(f"{C['BRED']}Warning: CPU doesn't support 32-bit instructions, "
+            f"some software may not work.{C['RST']}")
 
     emulator_override = getattr(args, "emulator", None) or ""
     emu_args = get_emulator_args(target_arch, device_arch, emulator_override)
     need_emu = bool(emu_args)
 
-    # Core proot flags.
     proot_args = ["proot"] + emu_args
 
     if not no_kill_on_exit:
         proot_args.append("--kill-on-exit")
     else:
-        msg(f"{C['BRED']}Warning: option '{C['YELLOW']}--no-kill-on-exit{C['BRED']}' is enabled. "
-            f"When exiting, your session will be blocked until all processes are terminated.{C['RST']}")
+        msg(f"{C['BRED']}Warning: option "
+            f"'{C['YELLOW']}--no-kill-on-exit{C['BRED']}' is enabled. "
+            f"When exiting, your session will be blocked until all processes "
+            f"are terminated.{C['RST']}")
 
     if dist_type != "termux" and not no_link2symlink:
         proot_args.append("--link2symlink")
@@ -359,7 +384,6 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     proot_args.append(f"--rootfs={rootfs}")
     proot_args.append(f"--cwd={login_wd}")
 
-    # Core file system bindings.
     proot_args += ["--bind=/dev", "--bind=/proc", "--bind=/sys"]
 
     if dist_type != "termux":
@@ -382,7 +406,6 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             pass
         proot_args.append(f"--bind={tmp_dir}:/dev/shm")
 
-    # Non-isolated host bindings.
     if not isolated:
         for data_dir in (
             "/data/app", "/data/dalvik-cache",
@@ -399,23 +422,25 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             proot_args.append(f"--bind={apps_dir}")
 
         if dist_type != "termux":
-            proot_args.append(f"--bind=/data/data/{TERMUX_APP_PACKAGE}/cache")
+            proot_args.append(
+                f"--bind=/data/data/{TERMUX_APP_PACKAGE}/cache"
+            )
             proot_args.append(f"--bind={TERMUX_HOME}")
         else:
             os.makedirs(
-                os.path.join(rootfs, "data", "data", "com.termux", "cache"),
+                os.path.join(
+                    rootfs, "data", "data", "com.termux", "cache"
+                ),
                 exist_ok=True,
             )
 
         proot_args += _storage_bindings()
 
-    # System / emulator bindings — always enabled for termux distros.
     if dist_type == "termux" or not isolated or need_emu:
         proot_args += _system_bindings()
         if dist_type != "termux":
             proot_args.append(f"--bind={PREFIX}")
 
-    # --termux-home: mount Termux home into the distro.
     if use_termux_home:
         if dist_type == "termux":
             proot_args.append(f"--bind={TERMUX_HOME}:{_TERMUX_HOME_INNER}")
@@ -424,11 +449,9 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         else:
             proot_args.append(f"--bind={TERMUX_HOME}:{login_home}")
 
-    # --shared-tmp (not applicable to termux distros).
     if shared_tmp and dist_type != "termux":
         proot_args.append(f"--bind={PREFIX}/tmp:/tmp")
 
-    # Custom bindings.
     for bnd in custom_binds:
         if ":" in bnd:
             src, dst = bnd.split(":", 1)
@@ -439,11 +462,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
         if dst in (".", ".."):
             msg()
-            msg(f"{C['BRED']}Error: '.' and '..' are not allowed as binding destination.{C['RST']}")
+            msg(f"{C['BRED']}Error: '.' and '..' are not allowed as binding "
+                f"destination.{C['RST']}")
             msg()
             sys.exit(1)
 
-        proot_args.append(f"--bind={src}:{dst}" if dst else f"--bind={src}")
+        proot_args.append(
+            f"--bind={src}:{dst}" if dst else f"--bind={src}"
+        )
 
     if redirect_ports:
         proot_args.append("-p")

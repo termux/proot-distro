@@ -1,22 +1,29 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: CPU architecture detection and emulator selection. Keeps all
+# machine-specific knowledge (ELF header parsing, QEMU binary names, 32-bit
+# support probing) in one place so the rest of the codebase stays
+# arch-agnostic. detect_installed_arch() accepts a rootfs path so callers
+# are not coupled to the container storage layout.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
 import ctypes
 import os
 import struct
@@ -33,7 +40,6 @@ def get_device_cpu_arch() -> str:
     return machine
 
 
-
 def supports_32bit() -> bool:
     """Return True if the host CPU supports 32-bit userspace execution."""
     machine = os.uname().machine
@@ -44,12 +50,10 @@ def supports_32bit() -> bool:
 
     if machine in ("aarch64", "arm64"):
         # Mirror lscpu's technique: call personality(PER_LINUX32) and check
-        # whether the kernel accepts it, which it only does when the CPU
-        # implements AArch32 EL0.  The previous personality is restored
-        # immediately so the probe has no lasting effect on the process.
+        # whether the kernel accepts it (only when CPU implements AArch32 EL0).
         PER_LINUX32 = 0x0008
         try:
-            libc = ctypes.CDLL(None)  # resolves to the in-process C library
+            libc = ctypes.CDLL(None)
             prev = libc.personality(PER_LINUX32)
             if prev == -1:
                 return False
@@ -84,9 +88,17 @@ def _elf_arch(path: str) -> str:
         return ""
 
 
-def detect_installed_arch(dist_name: str) -> str:
-    """Detect CPU architecture of an installed distro by reading ELF headers."""
-    root = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
+def detect_installed_arch(dist_name_or_rootfs: str) -> str:
+    """Detect CPU architecture of an installed distro by reading ELF headers.
+
+    Accepts either a plain distribution name (looked up under INSTALLED_ROOTFS_DIR)
+    or a full path to the rootfs directory.
+    """
+    if os.sep in dist_name_or_rootfs or dist_name_or_rootfs.startswith("/"):
+        root = dist_name_or_rootfs
+    else:
+        root = os.path.join(INSTALLED_ROOTFS_DIR, dist_name_or_rootfs)
+
     candidates = [
         "/usr/bin/bash", "/usr/bin/sh", "/usr/bin/su", "/usr/bin/busybox",
         "/data/data/com.termux/files/usr/bin/bash",
@@ -120,9 +132,10 @@ _QEMU_PKGS = {
 }
 
 
-def get_emulator_args(dist_arch: str, device_arch: str,
-                      emulator_override: str = "") -> list:
-    """Return proot -q <emulator> args, or [] if no emulation needed.
+def get_emulator_args(
+    dist_arch: str, device_arch: str, emulator_override: str = ""
+) -> list:
+    """Return proot -q <emulator> args, or [] if no emulation is needed.
 
     When emulator_override is given it is used as the emulator path directly,
     bypassing default selection and native-run checks.
@@ -131,7 +144,9 @@ def get_emulator_args(dist_arch: str, device_arch: str,
         emu_path = emulator_override
         if not os.path.isfile(emu_path) or not os.access(emu_path, os.X_OK):
             msg()
-            msg(f"{C['BRED']}Error: emulator '{C['YELLOW']}{emu_path}{C['BRED']}' is not found or not executable.{C['RST']}")
+            msg(f"{C['BRED']}Error: emulator "
+                f"'{C['YELLOW']}{emu_path}{C['BRED']}' is not found or "
+                f"not executable.{C['RST']}")
             msg()
             sys.exit(1)
     else:
@@ -147,23 +162,29 @@ def get_emulator_args(dist_arch: str, device_arch: str,
         emu_path = _QEMU_BINS.get(dist_arch, "")
         if not emu_path:
             msg()
-            msg(f"{C['BRED']}Error: unsupported architecture '{C['YELLOW']}{dist_arch}{C['BRED']}'. "
-                f"Valid values are: aarch64, arm, i686, riscv64, x86_64.{C['RST']}")
+            msg(f"{C['BRED']}Error: unsupported architecture "
+                f"'{C['YELLOW']}{dist_arch}{C['BRED']}'. "
+                f"Valid values are: aarch64, arm, i686, riscv64, "
+                f"x86_64.{C['RST']}")
             msg()
             sys.exit(1)
 
         if not os.path.isfile(emu_path) or not os.access(emu_path, os.X_OK):
             pkg = _QEMU_PKGS.get(dist_arch, f"qemu-user-{dist_arch}")
             msg()
-            msg(f"{C['BRED']}Error: your distribution requires package '{C['YELLOW']}{pkg}{C['BRED']}' which is not installed.{C['RST']}")
+            msg(f"{C['BRED']}Error: your distribution requires package "
+                f"'{C['YELLOW']}{pkg}{C['BRED']}' which is not "
+                f"installed.{C['RST']}")
             msg()
             sys.exit(1)
 
     args = ["-q", emu_path]
     # Extra bindings needed for QEMU to locate Android system libraries.
-    for path in ("/apex", "/linkerconfig/ld.config.txt",
-                 f"{PREFIX}", "/system", "/vendor",
-                 "/plat_property_contexts", "/property_contexts"):
+    for path in (
+        "/apex", "/linkerconfig/ld.config.txt",
+        f"{PREFIX}", "/system", "/vendor",
+        "/plat_property_contexts", "/property_contexts",
+    ):
         if os.path.exists(path):
             args += [f"--bind={path}"]
     return args

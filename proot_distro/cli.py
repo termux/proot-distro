@@ -1,22 +1,30 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: Entry point for all CLI parsing. Uses argparse with
+# add_help=False so --help is handled manually, avoiding "required argument"
+# errors when a subcommand's --help is invoked without positional args.
+# Command aliases are resolved before dispatch so handlers always see the
+# canonical command name. Missing required positionals are caught manually
+# and trigger per-command help text.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
 import argparse
 import os
 import shutil
@@ -48,14 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     # help
-    p_help = sub.add_parser("help", aliases=["hel", "he", "h"], add_help=False)
+    sub.add_parser("help", aliases=["hel", "he", "h"], add_help=False)
 
     # install
-    p_install = sub.add_parser("install", aliases=["add", "i", "in", "ins"], add_help=False)
+    p_install = sub.add_parser(
+        "install", aliases=["add", "i", "in", "ins"], add_help=False
+    )
     p_install.add_argument("alias", nargs="?", default=None, metavar="IMAGE")
     p_install.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
-    p_install.add_argument("--architecture", dest="override_arch", metavar="ARCH",
-                           choices=["aarch64", "arm", "i686", "riscv64", "x86_64"])
+    p_install.add_argument(
+        "--architecture", dest="override_arch", metavar="ARCH",
+        choices=["aarch64", "arm", "i686", "riscv64", "x86_64"],
+    )
     p_install.add_argument("-h", "--help", action="store_true")
 
     # remove
@@ -65,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_remove.add_argument("-h", "--help", action="store_true")
 
     # rename
-    p_rename = sub.add_parser("rename", aliases=["mv"], add_help=False)
+    p_rename = sub.add_parser("rename", add_help=False)
     p_rename.add_argument("orig_alias", nargs="?", default=None)
     p_rename.add_argument("new_alias", nargs="?", default=None)
     p_rename.add_argument("-h", "--help", action="store_true")
@@ -79,15 +91,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_login = sub.add_parser("login", aliases=["sh"], add_help=False)
     p_login.add_argument("alias", nargs="?", default=None)
     p_login.add_argument("--user", default="root")
-    p_login.add_argument("--redirect-ports", dest="redirect_ports", action="store_true")
+    p_login.add_argument(
+        "--redirect-ports", dest="redirect_ports", action="store_true"
+    )
     p_login.add_argument("--isolated", action="store_true")
-    p_login.add_argument("--termux-home", dest="termux_home", action="store_true")
-    p_login.add_argument("--shared-tmp", dest="shared_tmp", action="store_true")
-    p_login.add_argument("--bind", action="append", metavar="PATH[:PATH]")
-    p_login.add_argument("--no-link2symlink", dest="no_link2symlink", action="store_true")
-    p_login.add_argument("--no-sysvipc", dest="no_sysvipc", action="store_true")
-    p_login.add_argument("--no-kill-on-exit", dest="no_kill_on_exit", action="store_true")
-    p_login.add_argument("--no-arch-warning", dest="no_arch_warning", action="store_true")
+    p_login.add_argument(
+        "--termux-home", dest="termux_home", action="store_true"
+    )
+    p_login.add_argument(
+        "--shared-tmp", dest="shared_tmp", action="store_true"
+    )
+    p_login.add_argument(
+        "--bind", action="append", metavar="PATH[:PATH]"
+    )
+    p_login.add_argument(
+        "--no-link2symlink", dest="no_link2symlink", action="store_true"
+    )
+    p_login.add_argument(
+        "--no-sysvipc", dest="no_sysvipc", action="store_true"
+    )
+    p_login.add_argument(
+        "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
+    )
+    p_login.add_argument(
+        "--no-arch-warning", dest="no_arch_warning", action="store_true"
+    )
     p_login.add_argument("--emulator", dest="emulator", metavar="PATH")
     p_login.add_argument("--kernel", metavar="STRING")
     p_login.add_argument("--hostname", metavar="STRING")
@@ -101,20 +129,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("-h", "--help", action="store_true")
 
     # backup
-    p_backup = sub.add_parser("backup", aliases=["bak", "bkp"], add_help=False)
+    p_backup = sub.add_parser(
+        "backup", aliases=["bak", "bkp"], add_help=False
+    )
     p_backup.add_argument("alias", nargs="?", default=None)
     p_backup.add_argument("--output", metavar="FILE")
-    p_backup.add_argument("--compression", dest="compression",
-                          choices=["gzip", "bzip2", "xz", "none"], metavar="TYPE")
+    p_backup.add_argument(
+        "--compress", dest="compression",
+        choices=["gzip", "bzip2", "xz", "none"], metavar="TYPE",
+    )
+    p_backup.add_argument("-v", "--verbose", action="store_true")
     p_backup.add_argument("-h", "--help", action="store_true")
 
     # restore
     p_restore = sub.add_parser("restore", add_help=False)
     p_restore.add_argument("archive", nargs="?")
+    p_restore.add_argument("-v", "--verbose", action="store_true")
     p_restore.add_argument("-h", "--help", action="store_true")
 
     # clear-cache
-    p_clear = sub.add_parser("clear-cache", aliases=["clear", "cl"], add_help=False)
+    p_clear = sub.add_parser(
+        "clear-cache", aliases=["clear", "cl"], add_help=False
+    )
+    p_clear.add_argument("-v", "--verbose", action="store_true")
     p_clear.add_argument("-h", "--help", action="store_true")
 
     # copy
@@ -123,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_copy.add_argument("destination", nargs="?", default=None)
     p_copy.add_argument("-v", "--verbose", action="store_true")
     p_copy.add_argument("-m", "--move", action="store_true")
+    p_copy.add_argument("-r", "--recursive", action="store_true")
     p_copy.add_argument("-h", "--help", action="store_true")
 
     return parser
@@ -131,7 +169,6 @@ def build_parser() -> argparse.ArgumentParser:
 _ALIAS_TO_CANONICAL = {
     "add": "install", "i": "install", "in": "install", "ins": "install",
     "rm": "remove",
-    "mv": "rename",
     "sh": "login",
     "li": "list", "ls": "list",
     "bak": "backup", "bkp": "backup",
@@ -140,15 +177,16 @@ _ALIAS_TO_CANONICAL = {
     "h": "help", "he": "help", "hel": "help",
 }
 
-# (canonical_command) -> list of (arg_name, error_message) pairs checked in order.
+# Maps each canonical command to required (arg_name, error_message) pairs.
 _REQUIRED_ARGS = {
-    "install": [("alias",      "Docker image reference is not specified (e.g. 'ubuntu:24.04').")],
-    "remove":  [("alias",      "distribution alias is not specified.")],
-    "rename":  [("orig_alias", "the original alias of distribution is not specified."),
-                ("new_alias",  "the new alias of distribution is not specified.")],
-    "reset":   [("alias",      "distribution alias is not specified.")],
-    "login":   [("alias",      "distribution alias is not specified.")],
-    "backup":  [("alias",      "distribution alias is not specified.")],
+    "install": [("alias", "Docker image reference is not specified"
+                 " (e.g. 'ubuntu:24.04').")],
+    "remove":  [("alias", "container name is not specified.")],
+    "rename":  [("orig_alias", "the original container name is not specified."),
+                ("new_alias",  "the new container name is not specified.")],
+    "reset":   [("alias", "container name is not specified.")],
+    "login":   [("alias", "container name is not specified.")],
+    "backup":  [("alias", "container name is not specified.")],
     "copy":    [("source",      "source path is not specified."),
                 ("destination", "destination path is not specified.")],
 }
@@ -172,8 +210,9 @@ def main() -> None:
     # Warn if running as root.
     if os.getuid() == 0:
         msg()
-        msg(f"{C['BRED']}Warning: {PROGRAM_NAME} should not be executed as root user. "
-            f"Do not send bug reports about messed up Termux environment, lost data and bricked devices.{C['RST']}")
+        msg(f"{C['BRED']}Warning: {PROGRAM_NAME} should not be executed as "
+            f"root user. Do not send bug reports about messed up Termux "
+            f"environment, lost data and bricked devices.{C['RST']}")
         msg()
 
     # Warn if running inside proot (nested proot).
@@ -187,7 +226,9 @@ def main() -> None:
                             for tline in tfh:
                                 if tline.startswith("Name:") and "proot" in tline:
                                     msg()
-                                    msg(f"{C['BRED']}Error: {PROGRAM_NAME} should not be executed under PRoot.{C['RST']}")
+                                    msg(f"{C['BRED']}Error: {PROGRAM_NAME} "
+                                        f"should not be executed under "
+                                        f"PRoot.{C['RST']}")
                                     msg()
                                     sys.exit(1)
                     break
@@ -200,7 +241,9 @@ def main() -> None:
         msg(f"{C['BRED']}Error: unable to find proot utility.{C['RST']}")
         msg()
         if sys.stdin.isatty():
-            sys.stderr.write(f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}")
+            sys.stderr.write(
+                f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}"
+            )
             sys.stderr.flush()
             try:
                 answer = input().strip().lower()
@@ -209,31 +252,38 @@ def main() -> None:
             if answer in ("y", "yes"):
                 msg()
                 try:
-                    subprocess.run(["pkg", "install", "-y", "-q", "proot"], check=True)
+                    subprocess.run(
+                        ["pkg", "install", "-y", "-q", "proot"], check=True
+                    )
                 except (subprocess.CalledProcessError, FileNotFoundError) as exc:
                     msg()
-                    msg(f"{C['BRED']}Error: failed to install proot: {exc}{C['RST']}")
+                    msg(f"{C['BRED']}Error: failed to install proot: "
+                        f"{exc}{C['RST']}")
                     msg()
                     sys.exit(1)
             else:
                 msg()
-                msg(f"{C['CYAN']}Install it manually with: {C['GREEN']}pkg install proot{C['RST']}")
+                msg(f"{C['CYAN']}Install it manually with: "
+                    f"{C['GREEN']}pkg install proot{C['RST']}")
                 msg()
                 sys.exit(1)
         else:
-            msg(f"{C['CYAN']}Install it with: {C['GREEN']}pkg install proot{C['RST']}")
+            msg(f"{C['CYAN']}Install it with: "
+                f"{C['GREEN']}pkg install proot{C['RST']}")
             msg()
             sys.exit(1)
 
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help", "hel", "he", "h"):
+    if len(sys.argv) < 2 or sys.argv[1] in (
+        "-h", "--help", "help", "hel", "he", "h"
+    ):
         command_help()
         sys.exit(0)
 
     raw_args = sys.argv[1:]
 
-    # Intercept subcommand-level --help/-h before argparse runs, so that
+    # Intercept subcommand-level --help/-h before argparse runs so that
     # missing required positionals don't produce an error instead of help.
-    if len(raw_args) >= 2 and raw_args[1] in ("-h", "--help"):
+    if len(raw_args) >= 2 and raw_args[1] in ("-h", "--help", "--usage"):
         cmd = _ALIAS_TO_CANONICAL.get(raw_args[0], raw_args[0])
         if cmd in _HELP_COMMANDS:
             _HELP_COMMANDS[cmd]()
@@ -245,13 +295,13 @@ def main() -> None:
     command = args.command
     if command is None:
         msg()
-        msg(f"{C['BRED']}Error: unknown command '{C['YELLOW']}{raw_args[0]}{C['BRED']}'.{C['RST']}")
+        msg(f"{C['BRED']}Error: unknown command "
+            f"'{C['YELLOW']}{raw_args[0]}{C['BRED']}'.{C['RST']}")
         msg()
-        msg(f"{C['CYAN']}View supported commands by: {C['GREEN']}{PROGRAM_NAME} help{C['RST']}")
+        command_help()
         msg()
         sys.exit(1)
 
-    # Resolve aliases.
     canonical = _ALIAS_TO_CANONICAL.get(command, command)
 
     # Show per-command help.
@@ -259,10 +309,10 @@ def main() -> None:
         if canonical in _HELP_COMMANDS:
             _HELP_COMMANDS[canonical]()
         else:
-            command_help(args, {})
+            command_help()
         sys.exit(0)
 
-    # Validate required positional arguments and show command help on missing ones.
+    # Validate required positional arguments.
     for arg_name, error_msg in _REQUIRED_ARGS.get(canonical, []):
         if getattr(args, arg_name, None) is None:
             msg()
@@ -283,7 +333,8 @@ def main() -> None:
     handler = _COMMAND_HANDLERS.get(canonical)
     if handler is None:
         msg()
-        msg(f"{C['BRED']}Error: unknown command '{C['YELLOW']}{command}{C['BRED']}'.{C['RST']}")
+        msg(f"{C['BRED']}Error: unknown command "
+            f"'{C['YELLOW']}{command}{C['BRED']}'.{C['RST']}")
         msg()
         sys.exit(1)
 

@@ -17,3 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
+
+# Architecture: Helper sub-package grouping reusable utilities that are shared
+# across multiple proot-distro commands (download, Docker/OCI registry access,
+# rootfs fixup). Keeping them here avoids coupling command modules to each other.

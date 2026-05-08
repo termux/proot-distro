@@ -1,29 +1,36 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: Supplies fake /proc and /sys content that proot bind-mounts
+# read-only into the container. Android restricts or blocks several /proc
+# files; providing static replacements ensures distro tools that read them
+# (top, htop, etc.) work correctly. setup_fake_sysdata() takes a dist_name
+# and resolves the path internally for backward compatibility.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
 import os
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR, DEFAULT_FAKE_KERNEL_RELEASE, DEFAULT_FAKE_KERNEL_VERSION
-
-# ---------------------------------------------------------------------------
-# Fake /proc and /sys data
-# ---------------------------------------------------------------------------
+from proot_distro.constants import (
+    INSTALLED_ROOTFS_DIR,
+    DEFAULT_FAKE_KERNEL_RELEASE,
+    DEFAULT_FAKE_KERNEL_VERSION,
+)
 
 _FAKE_LOADAVG = "0.12 0.07 0.02 2/165 765\n"
 
@@ -37,7 +44,7 @@ cpu4 295 0 268 11772 10 12 2 12 0 0
 cpu5 270 0 251 11833 15 3 1 10 0 0
 cpu6 430 0 520 11386 30 8 1 12 0 0
 cpu7 30 0 172 12108 50 8 1 13 0 0
-intr 127541 38 290 0 0 0 0 4 0 1 0 0 25329 258 0 5777 277 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+intr 127541 38 290 0 0 0 0 4 0 1 0 0 25329 258 0 5777 277 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 ctxt 140223
 btime 1680020856
 processes 772
@@ -246,7 +253,8 @@ def setup_fake_sysdata(dist_name: str) -> None:
 
     fake_version = (
         f"Linux version {DEFAULT_FAKE_KERNEL_RELEASE} (proot@termux) "
-        f"(gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) {DEFAULT_FAKE_KERNEL_VERSION}\n"
+        f"(gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) "
+        f"{DEFAULT_FAKE_KERNEL_VERSION}\n"
     )
 
     _write_if_missing(os.path.join(root, "proc/.loadavg"), _FAKE_LOADAVG)
@@ -254,12 +262,16 @@ def setup_fake_sysdata(dist_name: str) -> None:
     _write_if_missing(os.path.join(root, "proc/.uptime"), _FAKE_UPTIME)
     _write_if_missing(os.path.join(root, "proc/.version"), fake_version)
     _write_if_missing(os.path.join(root, "proc/.vmstat"), _FAKE_VMSTAT)
-    _write_if_missing(os.path.join(root, "proc/.sysctl_entry_cap_last_cap"), "40\n")
-    _write_if_missing(os.path.join(root, "proc/.sysctl_inotify_max_user_watches"), "4096\n")
+    _write_if_missing(
+        os.path.join(root, "proc/.sysctl_entry_cap_last_cap"), "40\n"
+    )
+    _write_if_missing(
+        os.path.join(root, "proc/.sysctl_inotify_max_user_watches"), "4096\n"
+    )
 
 
 def fake_proc_bindings(dist_name: str) -> list:
-    """Return --bind args for fake /proc entries that are unreadable on this device."""
+    """Return --bind args for fake /proc entries that are unreadable on Android."""
     root = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     bindings = []
     checks = [
@@ -276,5 +288,7 @@ def fake_proc_bindings(dist_name: str) -> list:
             with open(real, "rb") as fh:
                 fh.read(1)
         except OSError:
-            bindings.append(f"--bind={os.path.join(root, fake_rel)}:{real}")
+            bindings.append(
+                f"--bind={os.path.join(root, fake_rel)}:{real}"
+            )
     return bindings

@@ -1,22 +1,28 @@
-"""
-Proot-Distro - manage proot containers on Termux.
+#
+# Proot-Distro - manage proot containers on Termux.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
 
-Created by Sylirre <sylirre@termux.dev> for Termux project.
-Development assisted by Claude Code (https://claude.ai/code).
+# Architecture: Removes a container's rootfs directory recursively, fixing
+# permissions on the fly to handle subtrees that were chmod-000'd inside the
+# container. No config files are involved; the rootfs directory is the sole
+# data store.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""
 import os
 import stat
 import sys
@@ -26,7 +32,12 @@ from proot_distro.colors import C, msg
 
 
 def _remove_path(path: str, on_remove=None) -> bool:
-    """Remove path recursively, fixing permissions on the fly. Returns True on full success."""
+    """Remove path recursively, fixing permissions on the fly.
+
+    Returns True on full success. Any failure returns False and the partial
+    state is left on disk. The optional on_remove callback is called with the
+    path of each successfully removed entry.
+    """
     try:
         st = os.lstat(path)
     except OSError:
@@ -83,19 +94,26 @@ def command_remove(args, configs: dict) -> None:  # noqa: ARG001
     rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
     if not os.path.isdir(rootfs_dir):
         msg()
-        msg(f"{C['BRED']}Error: distribution '{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
+        msg(f"{C['BRED']}Error: distribution "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
         msg()
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Wiping the rootfs of '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Wiping the rootfs of "
+        f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
     on_remove = None
     if verbose:
         def on_remove(path):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Removed: '{path}'{C['RST']}")
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Removed: '{path}'{C['RST']}")
 
     if not _remove_path(rootfs_dir, on_remove):
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}Finished with errors. Some files probably were not deleted.{C['RST']}")
+        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+            f"Finished with errors. Some files probably were not "
+            f"deleted.{C['RST']}")
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Finished removing the distribution.{C['RST']}")
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Finished removing the distribution.{C['RST']}")
