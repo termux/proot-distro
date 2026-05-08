@@ -92,41 +92,6 @@ def _read_passwd_field(rootfs: str, user: str, field_index: int) -> str:
     return ""
 
 
-def _update_android_env_in_environment(rootfs: str) -> None:
-    env_path = os.path.join(rootfs, "etc", "environment")
-    try:
-        os.chmod(
-            env_path,
-            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
-        )
-    except OSError:
-        pass
-
-    android_vars = (
-        "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
-        "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
-        "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH",
-    )
-
-    try:
-        with open(env_path) as fh:
-            lines = fh.readlines()
-    except OSError:
-        return
-
-    updated = {var: os.environ.get(var, "") for var in android_vars}
-    new_lines = [
-        line for line in lines
-        if not any(line.startswith(f"{v}=") for v in android_vars)
-    ]
-    for var, val in updated.items():
-        if val:
-            new_lines.append(f"{var}={val}\n")
-
-    with open(env_path, "w") as fh:
-        fh.writelines(new_lines)
-
-
 def _read_image_env(rootfs: str) -> list:
     """Return the image-defined Env list from .proot-distro/image-env."""
     env_file = os.path.join(rootfs, ".proot-distro", "image-env")
@@ -137,24 +102,6 @@ def _read_image_env(rootfs: str) -> list:
                 line = line.strip()
                 if line and "=" in line:
                     result.append(line)
-    except OSError:
-        pass
-    return result
-
-
-def _read_environment_vars(rootfs: str) -> list:
-    env_path = os.path.join(rootfs, "etc", "environment")
-    result = []
-    try:
-        with open(env_path) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                val = val.strip("'\"")
-                if key and val:
-                    result.append(f"{key}={val}")
     except OSError:
         pass
     return result
@@ -327,19 +274,21 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         if not login_shell:
             login_shell = "/bin/sh"
 
-        _update_android_env_in_environment(rootfs)
-
-        env_vars = [f"PATH={DEFAULT_PATH_ENV}"]
-        env_vars += _read_environment_vars(rootfs)
+        env_vars = [
+            f"PATH={DEFAULT_PATH_ENV}",
+            "MOZ_FAKE_NO_SANDBOX=1",
+            "PULSE_SERVER=127.0.0.1",
+        ]
         env_vars += _read_image_env(rootfs)
-        for var in (
-            "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
-            "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
-            "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
-        ):
-            val = os.environ.get(var, "")
-            if val:
-                env_vars.append(f"{var}={val}")
+        if not isolated:
+            for var in (
+                "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
+                "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
+                "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+            ):
+                val = os.environ.get(var, "")
+                if val:
+                    env_vars.append(f"{var}={val}")
         env_vars += extra_env
 
         if login_cmd:

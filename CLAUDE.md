@@ -53,7 +53,7 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | `arch.py` | CPU arch detection, ELF-based installed arch detection, QEMU/emulator helpers |
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()` |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` — with TTY progress bars |
-| `helpers/rootfs.py` | Install helpers: `write_environment()`, `write_resolv_conf()`, `write_hosts()`, `register_android_ids()` |
+| `helpers/rootfs.py` | Install helpers: `write_resolv_conf()`, `write_hosts()`, `register_android_ids()` |
 | `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, cache helpers, layer application |
 | `commands/install.py` | `command_install()`, `_validate_alias()` |
 | `commands/remove.py` | `command_remove()`, `_remove_path()` |
@@ -221,7 +221,7 @@ attributes.
    - If not cached → full online resolution: auth → manifest list → arch manifest → image config blob; saved to cache.
 2. **Apply layers** in order via `_apply_layer()`. Cached layers skip download.
 3. **Whiteout semantics** (OCI spec §6.1.2): `.wh..wh..opq` clears parent dir; `.wh.<name>` deletes the named sibling. Hard links are copied (`shutil.copy2`), deferred until all regular files are written. Block/character devices and FIFOs are silently skipped.
-4. **After layer application**: `write_environment`, `write_resolv_conf`, `write_hosts`, `register_android_ids`, `setup_fake_sysdata` are run.
+4. **After layer application**: `write_resolv_conf`, `write_hosts`, `register_android_ids`, `setup_fake_sysdata` are run. `/etc/environment` is **not** created — env vars are set at login time.
 5. Returns dict with `name`, `version`, `description`, `env`, `manifest`, `image_config`.
 
 After `pull_image()` returns, `command_install()` writes:
@@ -271,12 +271,11 @@ tag=`tag`).
 
 **Environment variable precedence** (later entries win):
 
-1. `PATH=<DEFAULT_PATH_ENV>` — baseline PATH
-2. `/etc/environment` — distro-defined vars
-3. Image `Env` — reads `rootfs/.proot-distro/image-env`
-4. Android system vars (`ANDROID_ART_ROOT`, `ANDROID_DATA`, etc.) — always wins over image
-5. `--env` flags from the command line
-6. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last
+1. `PATH=<DEFAULT_PATH_ENV>`, `MOZ_FAKE_NO_SANDBOX=1`, `PULSE_SERVER=127.0.0.1` — baseline always exported
+2. Image `Env` — reads `rootfs/.proot-distro/image-env`
+3. Android system vars (`ANDROID_ART_ROOT`, `ANDROID_DATA`, `ANDROID_I18N_ROOT`, `ANDROID_ROOT`, `ANDROID_RUNTIME_ROOT`, `ANDROID_TZDATA_ROOT`, `BOOTCLASSPATH`, `DEX2OATBOOTCLASSPATH`, `EXTERNAL_STORAGE`) — exported only when `--isolated` is **not** set
+4. `--env` flags from the command line
+5. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last; `TERM` and `COLORTERM` inherit from host
 
 ### Remove
 

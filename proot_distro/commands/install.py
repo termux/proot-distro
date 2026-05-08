@@ -42,7 +42,6 @@ from proot_distro.arch import get_device_cpu_arch
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import pull_image, derive_alias
 from proot_distro.helpers.rootfs import (
-    write_environment,
     write_resolv_conf,
     write_hosts,
     register_android_ids,
@@ -137,10 +136,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         except OSError as exc:
             msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
                 f"Warning: could not write manifest.json: {exc}{C['RST']}")
-
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Writing file '{rootfs_dir}/etc/environment'...{C['RST']}")
-        write_environment(rootfs_dir)
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Creating file '{rootfs_dir}/etc/resolv.conf'...{C['RST']}")

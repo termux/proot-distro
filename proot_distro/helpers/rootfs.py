@@ -30,46 +30,9 @@ import pwd
 import stat
 
 from proot_distro.constants import (
-    DEFAULT_PATH_ENV,
     DEFAULT_PRIMARY_NS,
     DEFAULT_SECONDARY_NS,
 )
-
-
-def write_environment(rootfs: str) -> None:
-    """Write Android-specific variables and Termux defaults to /etc/environment."""
-    env_path = os.path.join(rootfs, "etc", "environment")
-    try:
-        os.chmod(
-            env_path,
-            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
-        )
-    except OSError:
-        pass
-
-    lines = []
-    for var in (
-        "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
-        "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
-        "BOOTCLASSPATH", "COLORTERM", "DEX2OATBOOTCLASSPATH",
-        "EXTERNAL_STORAGE",
-    ):
-        val = os.environ.get(var, "")
-        if val:
-            lines.append(f"{var}={val}\n")
-
-    lines += [
-        "LANG=en_US.UTF-8\n",
-        "MOZ_FAKE_NO_SANDBOX=1\n",
-        f"PATH={DEFAULT_PATH_ENV}\n",
-        "PULSE_SERVER=127.0.0.1\n",
-        f"TERM={os.environ.get('TERM', 'xterm-256color')}\n",
-        "TMPDIR=/tmp\n",
-    ]
-
-    os.makedirs(os.path.dirname(env_path), exist_ok=True)
-    with open(env_path, "a") as fh:
-        fh.writelines(lines)
 
 
 def write_resolv_conf(rootfs: str) -> None:
