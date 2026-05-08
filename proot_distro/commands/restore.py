@@ -19,11 +19,13 @@
 #
 
 # Architecture: Extracts a proot container backup from a TAR archive.
-# Compression is detected from file header magic bytes. For seekable file
-# input, member count is pre-collected so an accurate progress percentage
-# can be shown. For stdin streaming, only a counter is shown. Old rootfs
-# contents are cleared before extraction so the result exactly matches
-# the archive.
+# Expected archive structure: <name>/manifest.json + <name>/rootfs/*.
+# Legacy archives with installed-rootfs/<name> layout are also accepted:
+# contents are re-rooted to containers/<name>/rootfs/. Archives with no
+# subdirectory are rejected. Compression is detected from file header
+# magic bytes. For seekable file input the member count is pre-collected
+# so an accurate progress percentage is shown; for stdin streaming only a
+# counter is shown.
 
 import os
 import shutil
@@ -31,7 +33,7 @@ import stat
 import sys
 import tarfile
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR
+from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 
 
@@ -43,9 +45,12 @@ _MAGIC_COMPRESS = (
     (b'\x5d\x00',      'xz'),   # lzma legacy (lzma.open handles both)
 )
 
+# Legacy archive prefix.
+_LEGACY_PREFIX = "installed-rootfs"
+
 
 def _detect_compression(header: bytes) -> str:
-    """Return the tarfile compression mode inferred from *header* magic bytes."""
+    """Return the tarfile mode suffix inferred from *header* magic bytes."""
     for magic, mode in _MAGIC_COMPRESS:
         if header.startswith(magic):
             return mode
@@ -61,6 +66,63 @@ def _remove_existing(dest: str, member: tarfile.TarInfo) -> None:
             shutil.rmtree(dest)
     except OSError:
         pass
+
+
+def _dest_path(member_name: str) -> tuple:
+    """Map a TAR member name to (container_name, dest_path_in_containers).
+
+    Returns (None, None) if the member should be skipped.
+
+    Supports three archive layouts:
+      1. New format:    <name>/manifest.json or <name>/rootfs/...
+      2. Legacy format: installed-rootfs/<name>/...
+      3. No subdir or bare ./: rejected (returns skip sentinel).
+    """
+    name = member_name.lstrip('/')
+    if not name or name in ('.', ''):
+        return (None, None)
+
+    parts = name.split('/')
+
+    # Archive starts at root with no real subdirectory — reject.
+    if len(parts) == 1 and not name.endswith('/'):
+        return (None, None)
+
+    # Legacy format: installed-rootfs/<distro_name>/...
+    if parts[0] == _LEGACY_PREFIX:
+        if len(parts) < 2:
+            return (None, None)
+        dist_name = parts[1]
+        if len(parts) == 2:
+            # Entry is the legacy rootfs dir itself.
+            new_path = os.path.join(CONTAINERS_DIR, dist_name, "rootfs")
+            return (dist_name, new_path)
+        # Re-root: installed-rootfs/<name>/X → containers/<name>/rootfs/X
+        rel = '/'.join(parts[2:])
+        new_path = os.path.join(CONTAINERS_DIR, dist_name, "rootfs", rel)
+        return (dist_name, new_path)
+
+    # New format: <name>/manifest.json or <name>/rootfs/...
+    dist_name = parts[0]
+
+    if len(parts) == 1:
+        # Top-level container directory entry.
+        return (dist_name, os.path.join(CONTAINERS_DIR, dist_name))
+
+    sub = parts[1]
+
+    if sub == "manifest.json" and len(parts) == 2:
+        return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "manifest.json"))
+
+    if sub == "rootfs":
+        if len(parts) == 2:
+            return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "rootfs"))
+        rel = '/'.join(parts[2:])
+        return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "rootfs", rel))
+
+    # <name>/something_else — treat as going inside rootfs for compatibility.
+    rel = '/'.join(parts[1:])
+    return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "rootfs", rel))
 
 
 def command_restore(args, configs: dict) -> None:  # noqa: ARG001
@@ -90,17 +152,15 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             _HELP_COMMANDS["restore"]()
             sys.exit(1)
 
-    rootfs_parent = os.path.dirname(INSTALLED_ROOTFS_DIR)
-    rootfs_base = os.path.basename(INSTALLED_ROOTFS_DIR)
-
-    os.makedirs(INSTALLED_ROOTFS_DIR, exist_ok=True)
+    os.makedirs(CONTAINERS_DIR, exist_ok=True)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Extracting rootfs from the archive...{C['RST']}")
+        f"Extracting container from the archive...{C['RST']}")
 
     use_tty = sys.stderr.isatty()
     done = 0
-    cleared_rootfs: set = set()
+    cleared: set = set()
+    rejected_bare = False
 
     def _on_entry(total: int, member_name: str) -> None:
         nonlocal done
@@ -122,6 +182,14 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 f"\r{pfx}{done} files extracted...{C['RST']}"
             )
         sys.stderr.flush()
+
+    def _check_bare_root(member_name: str) -> bool:
+        """Return True if this member has no real subdirectory (reject)."""
+        name = member_name.lstrip('/')
+        if not name:
+            return False
+        parts = name.split('/')
+        return len(parts) == 1 and not name.endswith('/')
 
     try:
         if archive:
@@ -148,6 +216,19 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                     m for m in tf.getmembers()
                     if not (m.isblk() or m.ischr() or m.isfifo())
                 ]
+                # Check for bare-root archives before doing anything.
+                for m in all_members:
+                    if _check_bare_root(m.name):
+                        if use_tty:
+                            sys.stderr.write("\r\033[K")
+                            sys.stderr.flush()
+                        msg()
+                        msg(f"{C['BRED']}Error: archive is not compatible "
+                            f"with proot-distro. Files must be stored under "
+                            f"a container name subdirectory "
+                            f"(e.g. ubuntu/rootfs/...).{C['RST']}")
+                        msg()
+                        sys.exit(1)
                 total = len(all_members)
                 if use_tty:
                     sys.stderr.write("\r\033[K")
@@ -157,32 +238,46 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 total = 0
 
             for member in all_members:
-                if not archive and (member.isblk() or member.ischr() or member.isfifo()):
+                if not archive and (
+                    member.isblk() or member.ischr() or member.isfifo()
+                ):
                     continue
 
-                # Route only installed-rootfs/ entries; silently skip all
-                # else (including legacy proot-distro/ config entries).
-                name = member.name.lstrip('/')
-                if not (name.startswith(rootfs_base + '/') or name == rootfs_base):
+                if not archive and _check_bare_root(member.name):
+                    if not rejected_bare:
+                        rejected_bare = True
+                        if use_tty:
+                            sys.stderr.write("\r\033[K")
+                            sys.stderr.flush()
+                        msg()
+                        msg(f"{C['BRED']}Error: archive is not compatible "
+                            f"with proot-distro. Files must be stored under "
+                            f"a container name subdirectory "
+                            f"(e.g. ubuntu/rootfs/...).{C['RST']}")
+                        msg()
+                        sys.exit(1)
+
+                dist_name, dest = _dest_path(member.name)
+                if dist_name is None:
                     continue
 
-                dest = os.path.join(rootfs_parent, name)
-
-                # On the first entry for a given distro's rootfs, clear the
-                # existing rootfs directory so no stale files remain.
-                rel = os.path.relpath(dest, INSTALLED_ROOTFS_DIR)
-                parts = rel.split(os.sep)
-                if (parts and parts[0] not in ('', '..')
-                        and parts[0] not in cleared_rootfs):
-                    old_dir = os.path.join(INSTALLED_ROOTFS_DIR, parts[0])
-                    if os.path.isdir(old_dir):
-                        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                # On the first entry for a given container's rootfs, clear it.
+                clear_key = dist_name
+                if clear_key not in cleared:
+                    rootfs_dir = os.path.join(
+                        CONTAINERS_DIR, dist_name, "rootfs"
+                    )
+                    if os.path.isdir(rootfs_dir):
+                        pfx = (
+                            f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                            f"{C['CYAN']}"
+                        )
                         count = 0
                         if use_tty:
                             sys.stderr.write("\r\033[K")
                             sys.stderr.flush()
                         for dp, dns, fns in os.walk(
-                            old_dir, topdown=False, followlinks=False
+                            rootfs_dir, topdown=False, followlinks=False
                         ):
                             for fname in fns:
                                 try:
@@ -201,11 +296,11 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                                     os.rmdir(os.path.join(dp, dname))
                                 except OSError:
                                     pass
-                        shutil.rmtree(old_dir, ignore_errors=True)
+                        shutil.rmtree(rootfs_dir, ignore_errors=True)
                         if use_tty:
                             sys.stderr.write("\r\033[K")
                             sys.stderr.flush()
-                    cleared_rootfs.add(parts[0])
+                    cleared.add(clear_key)
 
                 _remove_existing(dest, member)
 
@@ -223,9 +318,10 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                     os.symlink(member.linkname, dest)
 
                 elif member.islnk():
-                    link_src = os.path.join(
-                        rootfs_parent, member.linkname.lstrip('/')
-                    )
+                    # Resolve hard link within the containers dir.
+                    link_src_name, link_src = _dest_path(member.linkname)
+                    if link_src is None:
+                        continue
                     parent = os.path.dirname(dest)
                     if parent:
                         os.makedirs(parent, exist_ok=True)
@@ -265,7 +361,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             sys.stderr.flush()
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Finished restoring the distribution.{C['RST']}")
+            f"Finished restoring the container.{C['RST']}")
 
     except KeyboardInterrupt:
         if use_tty:
@@ -279,7 +375,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Failed to restore distribution: {exc}{C['RST']}")
+            f"Failed to restore container: {exc}{C['RST']}")
         msg()
         msg(f"{C['BRED']}The archive may be corrupted or was not created by "
             f"PRoot-Distro.{C['RST']}")

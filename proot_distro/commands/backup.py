@@ -19,17 +19,17 @@
 #
 
 # Architecture: Creates a TAR archive of an installed proot container.
-# Compression is determined by file extension or by --compress flag.
-# Progress is written to stderr so it doesn't corrupt piped archive data.
-# The archive structure is: installed-rootfs/<name>/... (legacy; updated in
-# later tasks to use containers/<name>/).
+# Archive structure is <name>/manifest.json + <name>/rootfs/... so that
+# restore can faithfully reconstruct the container directory. Compression
+# is determined by file extension or by --compress flag. Progress is
+# written to stderr so it doesn't corrupt piped archive data on stdout.
 
 import os
 import stat
 import sys
 import tarfile
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR, PROGRAM_NAME
+from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.colors import C, msg
 from proot_distro.commands.help import _HELP_COMMANDS
 
@@ -81,7 +81,9 @@ def _iter_entries(root: str, arcroot: str):
     Symlinks to subdirectories are yielded as single entries; os.walk is
     prevented from descending into them. All sibling entries are sorted.
     """
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, topdown=True):
+    for dirpath, dirnames, filenames in os.walk(
+        root, followlinks=False, topdown=True
+    ):
         rel = os.path.relpath(dirpath, root)
         arc_dir = arcroot if rel == '.' else os.path.join(arcroot, rel)
 
@@ -114,7 +116,8 @@ def _add_path(tf: tarfile.TarFile, src: str, arcname: str) -> None:
     except OSError:
         return
     m = st.st_mode
-    if stat.S_ISBLK(m) or stat.S_ISCHR(m) or stat.S_ISFIFO(m) or stat.S_ISSOCK(m):
+    if (stat.S_ISBLK(m) or stat.S_ISCHR(m)
+            or stat.S_ISFIFO(m) or stat.S_ISSOCK(m)):
         return
     try:
         info = tf.gettarinfo(src, arcname=arcname)
@@ -134,19 +137,46 @@ def _add_path(tf: tarfile.TarFile, src: str, arcname: str) -> None:
         tf.addfile(info)  # directories and symlinks carry no data stream
 
 
+def _fix_permissions(rootfs_dir: str) -> None:
+    """Ensure all dirs and files in *rootfs_dir* are readable by owner."""
+    for dirpath, _dirs, files in os.walk(rootfs_dir):
+        try:
+            os.chmod(
+                dirpath,
+                os.stat(dirpath).st_mode | stat.S_IRUSR | stat.S_IXUSR,
+            )
+        except OSError:
+            pass
+        for fname in files:
+            fpath = os.path.join(dirpath, fname)
+            try:
+                fst = os.lstat(fpath)
+                if stat.S_ISREG(fst.st_mode):
+                    mode = fst.st_mode
+                    if mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+                        os.chmod(fpath, mode | stat.S_IRUSR | stat.S_IXUSR)
+                    else:
+                        os.chmod(fpath, mode | stat.S_IRUSR)
+            except OSError:
+                pass
+
+
 def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
     output_path = getattr(args, "output", None)
     compression_arg = getattr(args, "compression", None)
     verbose = getattr(args, "verbose", False)
 
-    rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
+    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
+    rootfs_dir = os.path.join(container_dir, "rootfs")
+    manifest_path = os.path.join(container_dir, "manifest.json")
+
     if not os.path.isdir(rootfs_dir):
         msg()
-        msg(f"{C['BRED']}Error: distribution "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
+        msg(f"{C['BRED']}Error: container "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' does not exist.{C['RST']}")
         msg()
-        msg(f"{C['CYAN']}You can install it by: "
+        msg(f"{C['CYAN']}You can create it with: "
             f"{C['GREEN']}{PROGRAM_NAME} install {dist_name}{C['RST']}")
         msg()
         sys.exit(1)
@@ -181,13 +211,17 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     else:
         if sys.stdout.isatty():
             msg()
-            msg(f"{C['BRED']}Error: archive data cannot be printed to console. "
-                f"Please use option '{C['YELLOW']}--output{C['BRED']}' to "
-                f"specify a file or pipe the output to another "
-                f"command.{C['RST']}")
+            msg(f"{C['BRED']}Error: archive data cannot be printed to "
+                f"console. Please use option "
+                f"'{C['YELLOW']}--output{C['BRED']}' to specify a file or "
+                f"pipe the output to another command.{C['RST']}")
             msg()
             sys.exit(1)
-        compression = _COMPRESSION_ARG_MAP[compression_arg] if compression_arg is not None else ''
+        compression = (
+            _COMPRESSION_ARG_MAP[compression_arg]
+            if compression_arg is not None
+            else ''
+        )
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Tarball will be written to stdout.{C['RST']}")
 
@@ -196,40 +230,28 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Fixing file permissions in rootfs...{C['RST']}")
+    _fix_permissions(rootfs_dir)
 
-    def _fix_dir(dirpath: str, files: list) -> None:
-        try:
-            os.chmod(dirpath, os.stat(dirpath).st_mode | stat.S_IRUSR | stat.S_IXUSR)
-        except OSError:
-            pass
-        for fname in files:
-            fpath = os.path.join(dirpath, fname)
-            try:
-                fstat = os.lstat(fpath)
-                if stat.S_ISREG(fstat.st_mode):
-                    mode = fstat.st_mode
-                    if mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
-                        os.chmod(fpath, mode | stat.S_IRUSR | stat.S_IXUSR)
-                    else:
-                        os.chmod(fpath, mode | stat.S_IRUSR)
-            except OSError:
-                pass
+    # Build the list of entries: manifest.json first, then rootfs tree.
+    # Archive prefix is just the container name (e.g. "ubuntu/").
+    arc_prefix = dist_name
+    entries = []
+    # Container directory entry.
+    entries.append((container_dir, arc_prefix))
+    # manifest.json (optional — may not exist for legacy containers).
+    if os.path.isfile(manifest_path):
+        entries.append((manifest_path, os.path.join(arc_prefix, "manifest.json")))
+    # rootfs tree.
+    entries.extend(_iter_entries(rootfs_dir, os.path.join(arc_prefix, "rootfs")))
 
-    for dirpath, _dirs, files in os.walk(rootfs_dir):
-        _fix_dir(dirpath, files)
-
-    rootfs_base = os.path.basename(INSTALLED_ROOTFS_DIR)
-    rootfs_rel = os.path.join(rootfs_base, dist_name)
-
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Archiving the rootfs...{C['RST']}")
-
-    rootfs_entries = list(_iter_entries(rootfs_dir, rootfs_rel))
-    total_entries = len(rootfs_entries)
+    total_entries = len(entries)
     done = 0
     use_tty = sys.stderr.isatty()
 
-    def _on_entry(src: str, arc: str) -> None:
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Archiving the container...{C['RST']}")
+
+    def _on_entry(arc: str) -> None:
         nonlocal done
         done += 1
         if verbose:
@@ -255,9 +277,9 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             fileobj=None if output_path else tar_target,
             mode=tar_mode,
         ) as tf:
-            for src, arc in rootfs_entries:
+            for src, arc in entries:
                 _add_path(tf, src, arc)
-                _on_entry(src, arc)
+                _on_entry(arc)
 
         if use_tty:
             sys.stderr.write("\r\033[K")

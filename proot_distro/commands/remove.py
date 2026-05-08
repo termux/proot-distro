@@ -18,16 +18,15 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Removes a container's rootfs directory recursively, fixing
-# permissions on the fly to handle subtrees that were chmod-000'd inside the
-# container. No config files are involved; the rootfs directory is the sole
-# data store.
+# Architecture: Removes an entire container directory (rootfs + manifest)
+# recursively, fixing permissions on the fly to handle subtrees that were
+# chmod-000'd inside the container.
 
 import os
 import stat
 import sys
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR
+from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 
 
@@ -91,16 +90,18 @@ def command_remove(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
     verbose = getattr(args, "verbose", False)
 
-    rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
+    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
+    rootfs_dir = os.path.join(container_dir, "rootfs")
+
     if not os.path.isdir(rootfs_dir):
         msg()
-        msg(f"{C['BRED']}Error: distribution "
+        msg(f"{C['BRED']}Error: container "
             f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
         msg()
         sys.exit(1)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Wiping the rootfs of "
+        f"Removing container "
         f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
     on_remove = None
@@ -109,11 +110,11 @@ def command_remove(args, configs: dict) -> None:  # noqa: ARG001
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
                 f"Removed: '{path}'{C['RST']}")
 
-    if not _remove_path(rootfs_dir, on_remove):
+    if not _remove_path(container_dir, on_remove):
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
             f"Finished with errors. Some files probably were not "
             f"deleted.{C['RST']}")
         sys.exit(1)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished removing the distribution.{C['RST']}")
+        f"Finished removing the container.{C['RST']}")

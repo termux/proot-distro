@@ -27,7 +27,7 @@ import os
 import shutil
 import sys
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR
+from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 
 
@@ -35,7 +35,7 @@ def _resolve_copy_path(spec: str) -> str:
     """Resolve a 'dist:path' or plain path to a real host path."""
     if ":" in spec:
         dist, _, rel_path = spec.partition(":")
-        rootfs = os.path.join(INSTALLED_ROOTFS_DIR, dist)
+        rootfs = os.path.join(CONTAINERS_DIR, dist, "rootfs")
         if not os.path.isdir(rootfs):
             msg()
             msg(f"{C['BRED']}Error: distribution "

@@ -31,7 +31,8 @@ import stat
 import sys
 
 from proot_distro.constants import (
-    INSTALLED_ROOTFS_DIR,
+    CONTAINERS_DIR,
+    LEGACY_ROOTFS_DIR,
     PREFIX,
     TERMUX_HOME,
     TERMUX_APP_PACKAGE,
@@ -207,13 +208,41 @@ def _system_bindings() -> list:
     return binds
 
 
+def _migrate_legacy_rootfs(dist_name: str) -> None:
+    """Move legacy installed-rootfs/<name> to containers/<name>/rootfs."""
+    legacy_path = os.path.join(LEGACY_ROOTFS_DIR, dist_name)
+    if not os.path.isdir(legacy_path):
+        return
+
+    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
+    new_rootfs = os.path.join(container_dir, "rootfs")
+
+    if os.path.isdir(new_rootfs):
+        return  # already migrated
+
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Migrating legacy container "
+        f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    try:
+        os.makedirs(container_dir, exist_ok=True)
+        os.rename(legacy_path, new_rootfs)
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Migration complete.{C['RST']}")
+    except OSError as exc:
+        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+            f"Migration failed: {exc}{C['RST']}")
+
+
 def command_login(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
 
-    rootfs = os.path.join(INSTALLED_ROOTFS_DIR, dist_name)
+    # Migrate legacy rootfs layout on first login if applicable.
+    _migrate_legacy_rootfs(dist_name)
+
+    rootfs = os.path.join(CONTAINERS_DIR, dist_name, "rootfs")
     if not os.path.isdir(rootfs):
         msg()
-        msg(f"{C['BRED']}Error: distribution "
+        msg(f"{C['BRED']}Error: container "
             f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
         msg()
         sys.exit(1)

@@ -18,15 +18,15 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Renames a container directory and updates any proot
-# link2symlink (l2s) symlinks that point into the old rootfs path.
-# Validation reuses _validate_alias() from install.py so that alias
-# format rules are enforced in one place.
+# Architecture: Renames a container directory (containers/<old> to
+# containers/<new>) and updates any proot link2symlink (l2s) symlinks
+# that point into the old rootfs path. Validation reuses _validate_alias()
+# from install.py so that name format rules are enforced in one place.
 
 import os
 import sys
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR
+from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.commands.install import _validate_alias
 
@@ -37,39 +37,46 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
 
     if orig == new:
         msg()
-        msg(f"{C['BRED']}Error: original and new aliases must differ.{C['RST']}")
+        msg(f"{C['BRED']}Error: original and new names must differ.{C['RST']}")
         msg()
         sys.exit(1)
 
     if not _validate_alias(new):
         msg()
-        msg(f"{C['BRED']}Error: invalid new alias "
+        msg(f"{C['BRED']}Error: invalid new name "
             f"'{C['YELLOW']}{new}{C['BRED']}'. "
             f"Must start with alphanumeric and contain only "
             f"[a-z0-9_.+-].{C['RST']}")
         msg()
         sys.exit(1)
 
-    orig_rootfs = os.path.join(INSTALLED_ROOTFS_DIR, orig)
-    new_rootfs = os.path.join(INSTALLED_ROOTFS_DIR, new)
+    orig_dir = os.path.join(CONTAINERS_DIR, orig)
+    new_dir = os.path.join(CONTAINERS_DIR, new)
+    orig_rootfs = os.path.join(orig_dir, "rootfs")
+    new_rootfs = os.path.join(new_dir, "rootfs")
 
     if not os.path.isdir(orig_rootfs):
         msg()
-        msg(f"{C['BRED']}Error: distribution "
+        msg(f"{C['BRED']}Error: container "
             f"'{C['YELLOW']}{orig}{C['BRED']}' is not installed.{C['RST']}")
         msg()
         sys.exit(1)
 
-    if os.path.isdir(new_rootfs):
+    if os.path.isdir(new_dir):
         msg()
-        msg(f"{C['BRED']}Error: rootfs directory for "
+        msg(f"{C['BRED']}Error: container "
             f"'{C['YELLOW']}{new}{C['BRED']}' already exists.{C['RST']}")
         msg()
         sys.exit(1)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Renaming '{orig_rootfs}' to '{new_rootfs}'...{C['RST']}")
-    os.rename(orig_rootfs, new_rootfs)
+        f"Renaming '{orig}' to '{new}'...{C['RST']}")
+    try:
+        os.rename(orig_dir, new_dir)
+    except OSError as exc:
+        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+            f"Failed to rename container: {exc}{C['RST']}")
+        sys.exit(1)
 
     # Update proot link2symlink (l2s) symlinks that point into the old path.
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
@@ -89,4 +96,4 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
                 pass
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished renaming the distribution.{C['RST']}")
+        f"Finished renaming the container.{C['RST']}")

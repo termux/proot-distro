@@ -18,12 +18,13 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Lists installed proot containers by scanning the containers
-# directory. When no containers exist, prints an install suggestion.
+# Architecture: Lists installed proot containers by scanning CONTAINERS_DIR
+# for subdirectories that contain a rootfs/ entry. When none are found,
+# prints an install suggestion.
 
 import os
 
-from proot_distro.constants import INSTALLED_ROOTFS_DIR, PROGRAM_NAME
+from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.colors import C, msg
 
 
@@ -31,23 +32,23 @@ def command_list(args, configs: dict) -> None:  # noqa: ARG001
     msg()
     try:
         entries = sorted(
-            e for e in os.listdir(INSTALLED_ROOTFS_DIR)
-            if os.path.isdir(os.path.join(INSTALLED_ROOTFS_DIR, e))
+            e for e in os.listdir(CONTAINERS_DIR)
+            if os.path.isdir(os.path.join(CONTAINERS_DIR, e, "rootfs"))
         )
     except OSError:
         entries = []
 
     if not entries:
-        msg(f"{C['YELLOW']}No distributions are installed.{C['RST']}")
+        msg(f"{C['YELLOW']}No containers are installed.{C['RST']}")
         msg()
         msg(f"{C['CYAN']}Install one with: "
             f"{C['GREEN']}{PROGRAM_NAME} install ubuntu:24.04{C['RST']}")
     else:
-        msg(f"{C['CYAN']}Installed distributions:{C['RST']}")
+        msg(f"{C['CYAN']}Installed containers:{C['RST']}")
         msg()
-        for alias in entries:
-            msg(f"  {C['CYAN']}* {C['GREEN']}{alias}{C['RST']}")
+        for name in entries:
+            msg(f"  {C['CYAN']}* {C['GREEN']}{name}{C['RST']}")
         msg()
         msg(f"{C['CYAN']}Log in with: "
-            f"{C['GREEN']}{PROGRAM_NAME} login <alias>{C['RST']}")
+            f"{C['GREEN']}{PROGRAM_NAME} login <name>{C['RST']}")
     msg()

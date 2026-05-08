@@ -19,10 +19,13 @@
 #
 
 # Architecture: Handles pulling a Docker/OCI image and setting up a new
-# proot container. Image references are resolved against Docker Hub or a
-# custom registry. All network and filesystem work is delegated to helpers;
-# this module only owns the argument validation and top-level install flow.
+# proot container. The container is stored at containers/<name>/rootfs
+# with containers/<name>/manifest.json recording image_ref and arch for
+# later use by the reset command. All network and filesystem work is
+# delegated to helpers; this module only owns argument validation and the
+# top-level install flow.
 
+import json
 import os
 import re
 import shutil
@@ -30,8 +33,8 @@ import sys
 import tarfile
 
 from proot_distro.constants import (
+    CONTAINERS_DIR,
     DOWNLOAD_CACHE_DIR,
-    INSTALLED_ROOTFS_DIR,
     PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
@@ -54,13 +57,12 @@ def _validate_alias(alias: str) -> bool:
 
 
 def command_install(args, configs: dict) -> None:  # noqa: ARG001
-    """Install a distribution by pulling it from a Docker/OCI registry."""
     image_ref = args.alias
     custom_dist_name = getattr(args, "custom_dist_name", None)
 
     if custom_dist_name is not None and not custom_dist_name:
         msg()
-        msg(f"{C['BRED']}Error: distribution name can't be empty.{C['RST']}")
+        msg(f"{C['BRED']}Error: container name can't be empty.{C['RST']}")
         msg()
         sys.exit(1)
 
@@ -68,19 +70,22 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
 
     if custom_dist_name and not _validate_alias(custom_dist_name):
         msg()
-        msg(f"{C['BRED']}Error: invalid alias "
+        msg(f"{C['BRED']}Error: invalid container name "
             f"'{C['YELLOW']}{custom_dist_name}{C['BRED']}'. "
             f"Must start with alphanumeric and contain only "
             f"[a-z0-9_.+-].{C['RST']}")
         msg()
         sys.exit(1)
 
-    rootfs_dir = os.path.join(INSTALLED_ROOTFS_DIR, install_name)
+    container_dir = os.path.join(CONTAINERS_DIR, install_name)
+    rootfs_dir = os.path.join(container_dir, "rootfs")
+
     if os.path.isdir(rootfs_dir):
         msg()
-        msg(f"{C['BRED']}Error: distribution "
-            f"'{C['YELLOW']}{install_name}{C['BRED']}' is already "
-            f"installed.{C['RST']}")
+        msg(f"{C['BRED']}Error: container "
+            f"'{C['YELLOW']}{install_name}{C['BRED']}' already exists. "
+            f"Use a different name with "
+            f"'{C['YELLOW']}--name custom_name{C['BRED']}'.{C['RST']}")
         msg()
         msg(f"{C['CYAN']}Log in:     "
             f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['RST']}")
@@ -102,7 +107,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
 
     def _cleanup() -> None:
         try:
-            shutil.rmtree(rootfs_dir)
+            shutil.rmtree(container_dir)
         except OSError:
             pass
 
@@ -118,6 +123,21 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             msg()
             _cleanup()
             sys.exit(1)
+
+        # Write manifest.json alongside the rootfs so reset can re-pull.
+        manifest_data = {
+            "image_ref": image_ref,
+            "arch": dist_arch,
+            "manifest": metadata.get("manifest", {}),
+            "image_config": metadata.get("image_config", {}),
+        }
+        manifest_path = os.path.join(container_dir, "manifest.json")
+        try:
+            with open(manifest_path, "w") as fh:
+                json.dump(manifest_data, fh, indent=2)
+        except OSError as exc:
+            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+                f"Warning: could not write manifest.json: {exc}{C['RST']}")
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Writing file '{rootfs_dir}/etc/environment'...{C['RST']}")
