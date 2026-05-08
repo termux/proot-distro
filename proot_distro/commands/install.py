@@ -43,7 +43,6 @@ from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import pull_image, derive_alias
 from proot_distro.helpers.rootfs import (
     write_environment,
-    fix_path_in_configs,
     write_resolv_conf,
     write_hosts,
     register_android_ids,
@@ -142,7 +141,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Writing file '{rootfs_dir}/etc/environment'...{C['RST']}")
         write_environment(rootfs_dir)
-        fix_path_in_configs(rootfs_dir)
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Creating file '{rootfs_dir}/etc/resolv.conf'...{C['RST']}")

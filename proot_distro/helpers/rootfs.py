@@ -27,7 +27,6 @@
 import grp
 import os
 import pwd
-import re
 import stat
 
 from proot_distro.constants import (
@@ -35,7 +34,6 @@ from proot_distro.constants import (
     DEFAULT_PRIMARY_NS,
     DEFAULT_SECONDARY_NS,
 )
-from proot_distro.colors import C, msg
 
 
 def write_environment(rootfs: str) -> None:
@@ -72,29 +70,6 @@ def write_environment(rootfs: str) -> None:
     os.makedirs(os.path.dirname(env_path), exist_ok=True)
     with open(env_path, "a") as fh:
         fh.writelines(lines)
-
-
-def fix_path_in_configs(rootfs: str) -> None:
-    """Rewrite PATH= lines in common shell config files to use DEFAULT_PATH_ENV."""
-    for rel in ("/etc/bash.bashrc", "/etc/profile", "/etc/login.defs"):
-        path = rootfs + rel
-        if not os.path.exists(path):
-            continue
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Updating PATH in '{path}'...{C['RST']}")
-        try:
-            with open(path) as fh:
-                content = fh.read()
-            new = re.sub(
-                r'\b(PATH=)("?[^"\s]+("|\Z|\b))',
-                f'\\1"{DEFAULT_PATH_ENV}"',
-                content,
-            )
-            if new != content:
-                with open(path, "w") as fh:
-                    fh.write(new)
-        except OSError:
-            pass
 
 
 def write_resolv_conf(rootfs: str) -> None:
