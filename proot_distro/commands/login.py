@@ -17,6 +17,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
+import errno
 import os
 import shlex
 import stat
@@ -41,8 +42,41 @@ from proot_distro.arch import (
 from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
 
 
+def _resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
+    """Resolve an absolute guest path to its real host path, following symlinks
+    within the rootfs namespace.
+
+    Absolute symlink targets are re-rooted under rootfs instead of being
+    resolved on the host filesystem.  This handles images (e.g. Nix) where
+    /etc/passwd is a symlink to an absolute store path like
+    /nix/store/xxxx-etc/passwd that only exists inside the guest.
+
+    Raises OSError if the path does not exist, a symlink target is missing,
+    or the chain exceeds 40 levels (ELOOP).
+    """
+    for _ in range(40):
+        host_path = rootfs + guest_path
+        try:
+            st = os.lstat(host_path)
+        except OSError:
+            raise
+        if not stat.S_ISLNK(st.st_mode):
+            return host_path
+        target = os.readlink(host_path)
+        if os.path.isabs(target):
+            guest_path = os.path.normpath(target)
+        else:
+            guest_path = os.path.normpath(
+                os.path.join(os.path.dirname(guest_path), target)
+            )
+    raise OSError(errno.ELOOP, "Too many levels of symbolic links", guest_path)
+
+
 def _read_passwd_field(rootfs: str, user: str, field_index: int) -> str:
-    passwd = os.path.join(rootfs, "etc", "passwd")
+    try:
+        passwd = _resolve_rootfs_path(rootfs, "/etc/passwd")
+    except OSError:
+        return ""
     try:
         with open(passwd) as fh:
             for line in fh:
@@ -81,6 +115,21 @@ def _update_android_env_in_environment(rootfs: str) -> None:
 
     with open(env_path, "w") as fh:
         fh.writelines(new_lines)
+
+
+def _read_image_env(rootfs: str) -> list:
+    """Return the image-defined Env list written by install into .proot-distro/image-env."""
+    env_file = os.path.join(rootfs, ".proot-distro", "image-env")
+    result = []
+    try:
+        with open(env_file) as fh:
+            for line in fh:
+                line = line.strip()
+                if line and "=" in line:
+                    result.append(line)
+    except OSError:
+        pass
+    return result
 
 
 def _read_environment_vars(rootfs: str) -> list:
@@ -196,12 +245,25 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         login_uid = login_gid = login_home = None
     else:
         # Validate user and read passwd fields.
-        passwd_path = os.path.join(rootfs, "etc", "passwd")
+        # Resolve /etc/passwd within the rootfs namespace: some images (e.g. Nix)
+        # make it a symlink whose absolute target only exists inside the guest.
+        try:
+            passwd_path = _resolve_rootfs_path(rootfs, "/etc/passwd")
+        except OSError:
+            msg(f"{C['BRED']}Error: the selected distribution doesn't have /etc/passwd.{C['RST']}")
+            sys.exit(1)
+
         if not os.path.isfile(passwd_path):
             msg(f"{C['BRED']}Error: the selected distribution doesn't have /etc/passwd.{C['RST']}")
             sys.exit(1)
 
-        if not any(l.startswith(f"{login_user}:") for l in open(passwd_path)):
+        try:
+            with open(passwd_path) as fh:
+                user_found = any(l.startswith(f"{login_user}:") for l in fh)
+        except OSError:
+            user_found = False
+
+        if not user_found:
             msg(f"{C['BRED']}Error: no user '{C['YELLOW']}{login_user}{C['BRED']}' defined in /etc/passwd.{C['RST']}")
             sys.exit(1)
 
@@ -224,8 +286,10 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         _update_android_env_in_environment(rootfs)
 
         # Build environment variables list.
+        # Later entries override earlier ones (env -i semantics).
         env_vars = [f"PATH={DEFAULT_PATH_ENV}"]
         env_vars += _read_environment_vars(rootfs)
+        env_vars += _read_image_env(rootfs)  # image Env overrides proot-distro defaults
         for var in ("ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
                     "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
                     "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE"):

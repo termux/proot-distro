@@ -548,7 +548,8 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
     # --- Build return metadata from image config labels ---
     _, tag = parse_image_ref(image_ref)
     image_name = repo.split("/")[-1].capitalize()
-    labels: dict = (image_config.get("config") or {}).get("Labels") or {}
+    img_cfg: dict = image_config.get("config") or {}
+    labels: dict = img_cfg.get("Labels") or {}
     version = str(
         labels.get("org.opencontainers.image.version")
         or labels.get("version")
@@ -558,4 +559,8 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
         labels.get("org.opencontainers.image.description")
         or f"Installed from Docker Hub: {image_ref}"
     )
-    return {"name": image_name, "version": version, "description": description}
+    # Env is a list of "KEY=VALUE" strings defined by the image author.
+    image_env: list = [e for e in (img_cfg.get("Env") or [])
+                       if isinstance(e, str) and "=" in e]
+    return {"name": image_name, "version": version,
+            "description": description, "env": image_env}

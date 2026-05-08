@@ -127,6 +127,13 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
 
         setup_fake_sysdata(install_name)
 
+        image_env = metadata.get("env", [])
+        if image_env:
+            meta_dir = os.path.join(rootfs_dir, ".proot-distro")
+            os.makedirs(meta_dir, exist_ok=True)
+            with open(os.path.join(meta_dir, "image-env"), "w") as fh:
+                fh.write("\n".join(image_env) + "\n")
+
     except KeyboardInterrupt:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")
