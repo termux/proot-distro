@@ -385,7 +385,9 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
     entries = _collect_entries(src_path)
     total = max(len(entries), 1)
     done = 0
-    use_tty = sys.stderr.isatty()
+    # Suppress the bar in verbose mode: log lines already provide per-file
+    # feedback and the bar would flicker between every line, clogging output.
+    use_tty = sys.stderr.isatty() and not verbose
 
     def _show_progress() -> None:
         if not use_tty:
