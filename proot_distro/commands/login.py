@@ -238,9 +238,13 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             key, _, val = entry.partition("=")
             if key:
                 child_env[key] = val
-        inner = [f"{_TERMUX_USR}/bin/login"]
-        if login_cmd:
-            inner += ["-c", shlex.join(login_cmd)]
+        run_inner = getattr(args, "_run_inner", None)
+        if run_inner is not None:
+            inner = run_inner
+        else:
+            inner = [f"{_TERMUX_USR}/bin/login"]
+            if login_cmd:
+                inner += ["-c", shlex.join(login_cmd)]
         login_uid = login_gid = login_home = None
     else:
         try:
@@ -322,7 +326,10 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         if host_colorterm:
             child_env["COLORTERM"] = host_colorterm
 
-        if login_cmd:
+        run_inner = getattr(args, "_run_inner", None)
+        if run_inner is not None:
+            inner = run_inner
+        elif login_cmd:
             inner = [login_shell, "-c", shlex.join(login_cmd)]
         else:
             inner = [login_shell, "-l"]

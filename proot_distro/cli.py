@@ -43,6 +43,8 @@ from proot_distro.commands.backup import command_backup
 from proot_distro.commands.restore import command_restore
 from proot_distro.commands.clear_cache import command_clear_cache
 from proot_distro.commands.copy import command_copy
+from proot_distro.commands.sync import command_sync
+from proot_distro.commands.run import command_run
 from proot_distro.commands.help import command_help, _HELP_COMMANDS
 
 
@@ -163,6 +165,50 @@ def build_parser() -> argparse.ArgumentParser:
     p_copy.add_argument("-r", "--recursive", action="store_true")
     p_copy.add_argument("-h", "--help", action="store_true")
 
+    # sync
+    p_sync = sub.add_parser("sync", add_help=False)
+    p_sync.add_argument("source", nargs="?", default=None)
+    p_sync.add_argument("destination", nargs="?", default=None)
+    p_sync.add_argument("-v", "--verbose", action="store_true")
+    p_sync.add_argument("--checksum", action="store_true")
+    p_sync.add_argument("-h", "--help", action="store_true")
+
+    # run
+    p_run = sub.add_parser("run", add_help=False)
+    p_run.add_argument("alias", nargs="?", default=None)
+    p_run.add_argument("--user", default="root")
+    p_run.add_argument(
+        "--redirect-ports", dest="redirect_ports", action="store_true"
+    )
+    p_run.add_argument("--isolated", action="store_true")
+    p_run.add_argument(
+        "--termux-home", dest="termux_home", action="store_true"
+    )
+    p_run.add_argument(
+        "--shared-tmp", dest="shared_tmp", action="store_true"
+    )
+    p_run.add_argument(
+        "--bind", action="append", metavar="PATH[:PATH]"
+    )
+    p_run.add_argument(
+        "--no-link2symlink", dest="no_link2symlink", action="store_true"
+    )
+    p_run.add_argument(
+        "--no-sysvipc", dest="no_sysvipc", action="store_true"
+    )
+    p_run.add_argument(
+        "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
+    )
+    p_run.add_argument(
+        "--no-arch-warning", dest="no_arch_warning", action="store_true"
+    )
+    p_run.add_argument("--emulator", dest="emulator", metavar="PATH")
+    p_run.add_argument("--kernel", metavar="STRING")
+    p_run.add_argument("--hostname", metavar="STRING")
+    p_run.add_argument("--work-dir", dest="work_dir", metavar="PATH")
+    p_run.add_argument("--env", action="append", metavar="VAR=VALUE")
+    p_run.add_argument("-h", "--help", action="store_true")
+
     return parser
 
 
@@ -189,6 +235,9 @@ _REQUIRED_ARGS = {
     "backup":  [("alias", "container name is not specified.")],
     "copy":    [("source",      "source path is not specified."),
                 ("destination", "destination path is not specified.")],
+    "sync":    [("source",      "source path is not specified."),
+                ("destination", "destination path is not specified.")],
+    "run":     [("alias", "container name is not specified.")],
 }
 
 _COMMAND_HANDLERS = {
@@ -202,6 +251,8 @@ _COMMAND_HANDLERS = {
     "restore":     command_restore,
     "clear-cache": command_clear_cache,
     "copy":        command_copy,
+    "sync":        command_sync,
+    "run":         command_run,
     "help":        command_help,
 }
 
@@ -327,6 +378,13 @@ def main() -> None:
         args.login_cmd = raw_args[sep_idx + 1:]
     elif canonical == "login":
         args.login_cmd = []
+
+    # For run, handle the -- separator to split run_args.
+    if canonical == "run" and "--" in raw_args:
+        sep_idx = raw_args.index("--")
+        args.run_args = raw_args[sep_idx + 1:]
+    elif canonical == "run":
+        args.run_args = []
 
     configs = {}
 

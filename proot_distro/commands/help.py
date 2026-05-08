@@ -407,6 +407,81 @@ _HELP_COMMANDS = {
         msg(),
     ),
 
+    "run": lambda: (
+        msg(
+            "\n"
+            f"{C['BYELLOW']}Usage: {C['BCYAN']}{PROGRAM_NAME}"
+            f" {C['GREEN']}run"
+            f" {C['CYAN']}[OPTIONS] CONTAINER [-- ARG ...]{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Run the Entrypoint and/or Cmd defined in the\n"
+            f"container's Docker image manifest. Arguments given\n"
+            f"after '--' are appended to Entrypoint (replacing the\n"
+            f"image-defined Cmd). If neither Entrypoint nor Cmd is\n"
+            f"defined and no arguments are given, an error is\n"
+            f"reported.{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Accepts the same options as the login command.\n"
+            f"See: {C['GREEN']}{PROGRAM_NAME} login --help{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Examples:{C['RST']}\n"
+            "\n"
+            f"  {C['GREEN']}{PROGRAM_NAME} run ubuntu{C['RST']}\n"
+            f"  {C['GREEN']}{PROGRAM_NAME} run ubuntu -- --version{C['RST']}\n"
+            f"  {C['GREEN']}{PROGRAM_NAME} run ubuntu"
+            f" --isolated -- /bin/echo hi{C['RST']}\n"
+        ),
+        show_version(),
+        msg(),
+    ),
+
+    "sync": lambda: (
+        msg(
+            "\n"
+            f"{C['BYELLOW']}Usage: {C['BCYAN']}{PROGRAM_NAME}"
+            f" {C['GREEN']}sync"
+            f" {C['CYAN']}[OPTIONS] [DIST:]SRC [DIST:]DEST{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Synchronize SRC to DEST, copying only files that\n"
+            f"differ. Both paths may be plain host paths or container\n"
+            f"references in 'container:path' form. Always recursive;\n"
+            f"no --recursive flag is needed.{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Comparison: size + modification time by default;\n"
+            f"size + CRC32 checksum with --checksum.{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Symlinks are copied as-is. Hard links become\n"
+            f"independent copies. Block/char devices, FIFOs, and\n"
+            f"sockets are silently skipped. File ownership is never\n"
+            f"changed. Access modes and timestamps are preserved.{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Options:{C['RST']}\n"
+            "\n"
+            f"  {C['GREEN']}--help{C['RST']}\n"
+            "\n"
+            f"    {C['CYAN']}Show this help information.{C['RST']}\n"
+            "\n"
+            f"  {C['GREEN']}--checksum{C['RST']}\n"
+            "\n"
+            f"    {C['CYAN']}Compare files by size and CRC32 checksum\n"
+            f"    instead of size and modification time.{C['RST']}\n"
+            "\n"
+            f"  {C['GREEN']}--verbose{C['RST']}\n"
+            "\n"
+            f"    {C['CYAN']}Log each synced file.{C['RST']}\n"
+            "\n"
+            f"{C['CYAN']}Examples:{C['RST']}\n"
+            "\n"
+            f"  {C['GREEN']}{PROGRAM_NAME} sync ./app ubuntu:/opt/app{C['RST']}\n"
+            f"  {C['GREEN']}{PROGRAM_NAME} sync ubuntu:/etc ./backup/etc"
+            f"{C['RST']}\n"
+            f"  {C['GREEN']}{PROGRAM_NAME} sync --checksum"
+            f" ./data ubuntu:/data{C['RST']}\n"
+        ),
+        show_version(),
+        msg(),
+    ),
+
     "restore": lambda: (
         msg(
             "\n"
@@ -481,6 +556,10 @@ def command_help(args=None, configs=None) -> None:  # noqa: ARG001
         f"  {C['GREEN']}clear-cache {C['CYAN']}- Delete cached Docker layers.{C['RST']}\n"
         "\n"
         f"  {C['GREEN']}copy        {C['CYAN']}- Copy files from/to container.{C['RST']}\n"
+        "\n"
+        f"  {C['GREEN']}sync        {C['CYAN']}- Sync files from/to container.{C['RST']}\n"
+        "\n"
+        f"  {C['GREEN']}run         {C['CYAN']}- Run container image entrypoint.{C['RST']}\n"
         "\n"
         f"{C['CYAN']}Each command has its own help page:\n"
         f"  {C['GREEN']}{PROGRAM_NAME} <command> --help{C['RST']}\n"

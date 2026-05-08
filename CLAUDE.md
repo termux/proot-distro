@@ -65,6 +65,8 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | `commands/restore.py` | `command_restore()`, `_detect_compression()`, `_remove_existing()`, `_dest_path()` |
 | `commands/clear_cache.py` | `command_clear_cache()`, `_ensure_readable()` |
 | `commands/copy.py` | `command_copy()`, `_resolve_copy_path()` |
+| `commands/sync.py` | `command_sync()`, `_resolve_sync_path()`, `_collect_entries()`, `_needs_update()`, `_sync_dir()`, `_sync_symlink()`, `_sync_file()`, `_file_checksum()` |
+| `commands/run.py` | `command_run()`, `_read_image_config()` |
 | `commands/help.py` | `command_help()`, `_HELP_COMMANDS` |
 | `cli.py` | `build_parser()`, `_ALIAS_TO_CANONICAL`, `_COMMAND_HANDLERS`, `_REQUIRED_ARGS`, `main()` |
 
@@ -145,6 +147,8 @@ Detected from the rootfs filesystem layout at login time:
 | `restore` | — |
 | `clear-cache` | `clear`, `cl` |
 | `copy` | `cp` |
+| `sync` | — |
+| `run` | — |
 | `help` | `h`, `he`, `hel` |
 
 Note: the `mv` alias for `rename` was removed.
@@ -301,6 +305,47 @@ Container paths resolve to `containers/<name>/rootfs/<path>`.
 - **`--recursive`** (`-r`): required for directory copying.
 - **`--move`** (`-m`): uses `shutil.move`.
 - **`--verbose`** (`-v`): logs each file.
+
+### Sync
+
+`command_sync()` synchronizes a source path to a destination path, skipping
+files that are already up to date. Both paths support `dist:path` notation.
+Always recursive — no flag needed.
+
+- **Comparison**: size + integer mtime by default; size + CRC32 (via
+  `zlib.crc32`) with `--checksum`. CRC32 is used for speed since the
+  check is not security-sensitive.
+- **Symlinks**: copied as-is via `os.symlink`.
+- **Hard links**: treated as independent regular files (no inode tracking).
+- **Special files**: block/char devices, FIFOs, sockets silently skipped.
+- **Ownership**: never changed (`chown` is never called).
+- **Modes and mtime**: preserved on every written file via `os.chmod`
+  and `os.utime`.
+- **Permission errors on source**: warned and skipped.
+- **Permission errors on destination**: `chmod` attempted; exits with
+  error if that also fails.
+- **Atomic writes**: regular files written to a `.~pd_sync` temp file
+  then `os.replace`d to avoid partial writes.
+- **Progress bar**: TTY-only stderr, format `[*] [####----] XX%  N / Total files`.
+- **`--verbose`** (`-v`): logs each synced entry.
+- **`--checksum`**: enables CRC32-based comparison.
+
+### Run
+
+`command_run()` runs the Entrypoint and/or Cmd defined in a container's
+Docker image manifest (`containers/<name>/manifest.json`), read from
+`image_config.config`. Delegates entirely to `command_login()` after
+injecting the pre-built inner command via `args._run_inner`.
+
+**Entrypoint/Cmd resolution:**
+- If args are given after `--`: inner = `Entrypoint + args` (Cmd replaced).
+- Otherwise: inner = `Entrypoint + Cmd`.
+- If both are empty and no args: error.
+
+`command_login()` checks `args._run_inner` (via `getattr`) in both the
+`termux` and `normal` dist branches, bypassing shell wrapping when set.
+All other login options (`--user`, `--isolated`, `--bind`, etc.) work
+unchanged.
 
 ### Backup
 

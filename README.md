@@ -349,6 +349,94 @@ destination.
 
 ---
 
+### `sync` — Synchronize files to or from a container
+
+```
+proot-distro sync [OPTIONS] [CONTAINER:]SRC [CONTAINER:]DEST
+```
+
+Synchronize SRC to DEST, copying only files that differ. Both paths may
+be plain host paths or `container:path` references. Always recursive —
+no flag needed.
+
+**Comparison method:**
+
+| Mode | What is compared |
+|---|---|
+| Default | File size and modification time |
+| `--checksum` | File size and CRC32 checksum |
+
+**Behavior:**
+
+- Symlinks are copied as-is (not followed).
+- Hard links become independent file copies.
+- Block/char devices, FIFOs, and sockets are silently skipped.
+- File ownership is never changed.
+- Access modes and modification timestamps are preserved.
+- If a source file is not readable, a warning is printed and it is skipped.
+- If the destination lacks write permission, `sync` attempts to chmod it.
+  If that also fails, the command exits with an error.
+
+**Options:**
+
+| Option | Description |
+|---|---|
+| `--checksum` | Compare by size + CRC32 instead of size + mtime |
+| `--verbose` | Log each synced entry |
+
+**Examples:**
+
+```sh
+# Sync a local directory into a container
+proot-distro sync ./app ubuntu:/opt/app
+
+# Sync a directory out of a container
+proot-distro sync ubuntu:/etc ./backup/etc
+
+# Use checksum-based comparison
+proot-distro sync --checksum ./data ubuntu:/data
+```
+
+---
+
+### `run` — Run the image-defined entrypoint
+
+```
+proot-distro run [OPTIONS] CONTAINER [-- ARG ...]
+```
+
+Run the `Entrypoint` and/or `Cmd` defined in the container's Docker
+image manifest. This is equivalent to `docker run` in non-interactive
+mode: the container starts, executes the image-defined command, and
+exits.
+
+**Entrypoint and Cmd resolution:**
+
+| Manifest | Command after `--` | Executed |
+|---|---|---|
+| `Entrypoint` + `Cmd` defined | _(none)_ | `Entrypoint` + `Cmd` |
+| `Entrypoint` + `Cmd` defined | `ARG ...` | `Entrypoint` + `ARG ...` |
+| Only `Cmd` defined | _(none)_ | `Cmd` |
+| Only `Cmd` defined | `ARG ...` | `ARG ...` |
+| Neither defined | _(none)_ | Error |
+
+Accepts the same options as `login`. See `proot-distro login --help`.
+
+**Examples:**
+
+```sh
+# Run the image's default entrypoint
+proot-distro run ubuntu
+
+# Pass arguments to the entrypoint (override Cmd)
+proot-distro run ubuntu -- --version
+
+# Run isolated with a custom environment variable
+proot-distro run ubuntu --isolated --env MY_VAR=hello
+```
+
+---
+
 ## Storage layout
 
 All runtime data is stored under:
