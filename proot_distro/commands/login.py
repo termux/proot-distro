@@ -193,11 +193,30 @@ def _migrate_legacy_rootfs(dist_name: str) -> None:
     try:
         os.makedirs(container_dir, exist_ok=True)
         os.rename(legacy_path, new_rootfs)
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Migration complete.{C['RST']}")
     except OSError as exc:
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
             f"Migration failed: {exc}{C['RST']}")
+        return
+
+    # Rewrite l2s symlinks whose targets still point at the old rootfs path.
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Updating PRoot link2symlink extension files "
+        f"(may take a long time)...{C['RST']}")
+    for dirpath, _dirs, filenames in os.walk(new_rootfs):
+        for fname in filenames:
+            fpath = os.path.join(dirpath, fname)
+            try:
+                if os.path.islink(fpath):
+                    target = os.readlink(fpath)
+                    if target.startswith(legacy_path):
+                        new_target = new_rootfs + target[len(legacy_path):]
+                        os.unlink(fpath)
+                        os.symlink(new_target, fpath)
+            except OSError:
+                pass
+
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Migration complete.{C['RST']}")
 
 
 def command_login(args, configs: dict) -> None:  # noqa: ARG001
