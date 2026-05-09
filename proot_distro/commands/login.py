@@ -217,7 +217,16 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     _termux_usr = os.path.join(
         rootfs, "data", "data", "com.termux", "files", "usr"
     )
-    dist_type = "termux" if os.path.isdir(_termux_usr) else "normal"
+    # Check for a specific binary rather than just directory presence.
+    # When another session is already running, proot may create the bind-mount
+    # target directory (<rootfs>/data/data/com.termux/files/usr/) on the host
+    # filesystem as an empty directory. Checking only isdir() would then
+    # incorrectly classify a normal container as termux type.
+    dist_type = (
+        "termux"
+        if os.path.isfile(os.path.join(_termux_usr, "bin", "login"))
+        else "normal"
+    )
 
     login_user = getattr(args, "user", "root") or "root"
     kernel_release = getattr(args, "kernel", None) or ""
@@ -525,8 +534,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         val = os.environ.get(var)
         if val:
             child_env[var] = val
-    if dist_type != "termux" and os.path.isdir(os.path.join(rootfs, ".l2s")):
-        child_env["PROOT_L2S_DIR"] = os.path.join(rootfs, ".l2s")
+    if dist_type != "termux":
+        # Always pin PROOT_L2S_DIR to a fixed path and create the directory
+        # upfront. Without this, the first session lets proot choose the
+        # location implicitly while simultaneous sessions set it explicitly,
+        # which can cause conflicts when both instances start at the same time.
+        l2s_dir = os.path.join(rootfs, ".l2s")
+        os.makedirs(l2s_dir, exist_ok=True)
+        child_env["PROOT_L2S_DIR"] = l2s_dir
     child_env.pop("LD_PRELOAD", None)
 
     debug = getattr(args, "debug", False)
