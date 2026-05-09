@@ -374,7 +374,8 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     emu_args = get_emulator_args(target_arch, device_arch, emulator_override)
     need_emu = bool(emu_args)
 
-    proot_args = ["proot"] + emu_args
+    proot_bin = shutil.which("proot") or "proot"
+    proot_args = [proot_bin] + emu_args
 
     if not no_kill_on_exit:
         proot_args.append("--kill-on-exit")
@@ -518,16 +519,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
     debug = getattr(args, "debug", False)
     if debug:
-        proot_bin = shutil.which("proot") or "proot"
-        debug_args = [proot_bin] + proot_args[1:]
         parts = ["env"]
         for k, v in child_env.items():
             parts.append(f"{k}={_dq(v)}")
-        parts.extend(_dq(a) for a in debug_args)
+        parts.extend(_dq(a) for a in proot_args)
         cmd_line = " \\\n  ".join(parts)
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Proot command line:{C['RST']}")
         msg(cmd_line)
         sys.exit(0)
 
-    os.execvpe("proot", proot_args, child_env)
+    os.execvpe(proot_bin, proot_args, child_env)
