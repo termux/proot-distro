@@ -443,6 +443,7 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
         members = tf.getmembers()
         total = len(members)
         deferred_links: list = []  # list of (dest, src_path)
+        deferred_dirs: list = []   # list of (path, mtime) — set after all writes
 
         for m in members:
             name = m.name.lstrip("/").rstrip("/")
@@ -483,11 +484,16 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                     os.chmod(dest, stat.S_IMODE(m.mode) | stat.S_IRWXU)
                 except OSError:
                     pass
+                deferred_dirs.append((dest, m.mtime))
 
             elif m.issym():
                 if os.path.lexists(dest):
                     os.remove(dest)
                 os.symlink(m.linkname, dest)
+                try:
+                    os.utime(dest, (m.mtime, m.mtime), follow_symlinks=False)
+                except OSError:
+                    pass
 
             elif m.islnk():
                 src = os.path.join(rootfs_dir, m.linkname.lstrip("/"))
@@ -511,12 +517,17 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                         os.chmod(dest, stat.S_IMODE(m.mode))
                     except OSError:
                         pass
+                    try:
+                        os.utime(dest, (m.mtime, m.mtime))
+                    except OSError:
+                        pass
                 finally:
                     fobj.close()
 
             _tick(total)
 
         # All regular files are written; now copy hard links.
+        # shutil.copy2 preserves the source mtime, which was already set above.
         for dest, src in deferred_links:
             if os.path.lexists(dest):
                 try:
@@ -529,6 +540,14 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                 except OSError:
                     pass
             _tick(total)
+
+        # Apply directory timestamps last. Writing files into a directory
+        # updates its mtime, so this must happen after all file writes.
+        for path, mtime in reversed(deferred_dirs):
+            try:
+                os.utime(path, (mtime, mtime))
+            except OSError:
+                pass
 
     if use_tty:
         sys.stderr.write("\r\033[K")
