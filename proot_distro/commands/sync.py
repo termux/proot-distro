@@ -341,6 +341,40 @@ def _rmtree_robust(path: str) -> None:
         sys.exit(1)
 
 
+def _collect_extras(dest_path: str, src_rels: set) -> list:
+    """Return (path, is_tree) for every destination entry absent from src_rels.
+
+    is_tree is True for real directories (to be removed recursively) and
+    False for plain files and symlinks. Extra directories are not descended
+    into — the whole subtree is captured as a single is_tree=True entry.
+    """
+    extras = []
+    for dirpath, dirnames, filenames in os.walk(
+        dest_path, followlinks=False, topdown=True
+    ):
+        rel_dir = os.path.relpath(dirpath, dest_path)
+        dirnames.sort()
+        i = 0
+        while i < len(dirnames):
+            d = dirnames[i]
+            full = os.path.join(dirpath, d)
+            rel_d = os.path.join(rel_dir, d) if rel_dir != "." else d
+            is_link = os.path.islink(full)
+            if rel_d not in src_rels:
+                extras.append((full, not is_link))
+                dirnames.pop(i)
+            elif is_link:
+                dirnames.pop(i)
+            else:
+                i += 1
+        for fname in sorted(filenames):
+            fpath = os.path.join(dirpath, fname)
+            rel_f = os.path.join(rel_dir, fname) if rel_dir != "." else fname
+            if rel_f not in src_rels:
+                extras.append((fpath, False))
+    return extras
+
+
 def _collect_entries(src: str) -> list:
     """Return (abs_path, rel_path) pairs for every syncable entry under src.
 
@@ -493,14 +527,15 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
                 created = _sync_dir(dst_item, item_st)
                 if verbose and created:
                     _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                         f"({done + 1}/{total}) "
+                         f"({done + 1}/{total}) Add: "
                          f"{abs_path} -> {dst_item}{C['RST']}")
 
             elif stat.S_ISLNK(m):
+                op = "Update" if os.path.lexists(dst_item) else "Add"
                 changed = _sync_symlink(abs_path, dst_item)
                 if verbose and changed:
                     _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                         f"({done + 1}/{total}) "
+                         f"({done + 1}/{total}) {op}: "
                          f"{abs_path} -> {dst_item}{C['RST']}")
 
             elif stat.S_ISREG(m):
@@ -509,10 +544,11 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
                          f"Warning: '{abs_path}' is not readable, "
                          f"skipping.{C['RST']}")
                 elif _needs_update(abs_path, item_st, dst_item, use_checksum):
+                    op = "Update" if os.path.lexists(dst_item) else "Add"
                     _sync_file(abs_path, item_st, dst_item)
                     if verbose:
                         _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                             f"({done + 1}/{total}) "
+                             f"({done + 1}/{total}) {op}: "
                              f"{abs_path} -> {dst_item}{C['RST']}")
 
             done += 1
@@ -534,42 +570,16 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
     # Only meaningful when source is a directory; silently skipped otherwise.
     if delete and src_is_dir:
         src_rels = {rel for _, rel in entries if rel}
-
-        for dirpath, dirnames, filenames in os.walk(
-            dest_path, followlinks=False, topdown=True
-        ):
-            rel_dir = os.path.relpath(dirpath, dest_path)
-
-            dirnames.sort()
-            i = 0
-            while i < len(dirnames):
-                d = dirnames[i]
-                full = os.path.join(dirpath, d)
-                rel_d = os.path.join(rel_dir, d) if rel_dir != "." else d
-                is_link = os.path.islink(full)
-
-                if rel_d not in src_rels:
-                    if verbose:
-                        _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                             f"(deleted) {full}{C['RST']}")
-                    if is_link:
-                        _unlink_robust(full)
-                    else:
-                        _rmtree_robust(full)
-                    dirnames.pop(i)
-                elif is_link:
-                    dirnames.pop(i)  # don't descend into symlinks
-                else:
-                    i += 1
-
-            for fname in sorted(filenames):
-                fpath = os.path.join(dirpath, fname)
-                rel_f = os.path.join(rel_dir, fname) if rel_dir != "." else fname
-                if rel_f not in src_rels:
-                    if verbose:
-                        _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                             f"(deleted) {fpath}{C['RST']}")
-                    _unlink_robust(fpath)
+        extras = _collect_extras(dest_path, src_rels)
+        del_total = len(extras)
+        for del_n, (path, is_tree) in enumerate(extras, start=1):
+            if verbose:
+                _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                     f"({del_n}/{del_total}) Delete: {path}{C['RST']}")
+            if is_tree:
+                _rmtree_robust(path)
+            else:
+                _unlink_robust(path)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Finished synchronizing.{C['RST']}")
