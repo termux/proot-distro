@@ -171,6 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("destination", nargs="?", default=None)
     p_sync.add_argument("-v", "--verbose", action="store_true")
     p_sync.add_argument("--checksum", action="store_true")
+    p_sync.add_argument("--delete", action="store_true")
     p_sync.add_argument("-h", "--help", action="store_true")
 
     # run

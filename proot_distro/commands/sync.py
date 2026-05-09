@@ -19,14 +19,15 @@
 #
 
 # Architecture: Synchronizes a source path to a destination path, comparing
-# by file size and modification time (or MD5 checksum with --checksum).
+# by file size and modification time (or CRC32 checksum with --checksum).
 # Always recursive — both files and directories are accepted as source.
 # Symlinks are copied as-is; hard links become independent file copies;
 # special files (block/char/FIFO/socket) are silently skipped. Ownership
 # is never changed. Modes and timestamps are preserved. When the destination
 # lacks write permission the command attempts to chmod it; failing that it
-# exits with an error. Paths may be plain host paths or container-prefixed
-# ('ubuntu:/etc') references.
+# exits with an error. With --delete, destination entries that have no
+# counterpart in the source are removed after the sync pass. Paths may be
+# plain host paths or container-prefixed ('ubuntu:/etc') references.
 
 import hashlib
 import os
@@ -285,6 +286,61 @@ def _sync_file(src_path: str, src_st: os.stat_result, dst_path: str) -> None:
         sys.exit(1)
 
 
+def _unlink_robust(path: str) -> None:
+    """Unlink a file or symlink, retrying with a chmod on PermissionError."""
+    try:
+        os.unlink(path)
+    except PermissionError:
+        _ensure_parent_writable(path)
+        try:
+            os.unlink(path)
+        except OSError as exc:
+            msg()
+            msg(f"{C['BRED']}Error: cannot delete "
+                f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
+            msg()
+            sys.exit(1)
+    except OSError as exc:
+        msg()
+        msg(f"{C['BRED']}Error: cannot delete "
+            f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
+        msg()
+        sys.exit(1)
+
+
+def _rmtree_robust(path: str) -> None:
+    """Remove a directory tree, retrying with chmod on PermissionError."""
+    try:
+        shutil.rmtree(path)
+    except PermissionError:
+        for root, _dirs, files in os.walk(path, followlinks=False, topdown=False):
+            try:
+                os.chmod(root, os.stat(root).st_mode | stat.S_IRWXU)
+            except OSError:
+                pass
+            for fname in files:
+                try:
+                    fpath = os.path.join(root, fname)
+                    os.chmod(fpath,
+                             os.stat(fpath).st_mode | stat.S_IRUSR | stat.S_IWUSR)
+                except OSError:
+                    pass
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            msg()
+            msg(f"{C['BRED']}Error: cannot remove "
+                f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
+            msg()
+            sys.exit(1)
+    except OSError as exc:
+        msg()
+        msg(f"{C['BRED']}Error: cannot remove "
+            f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
+        msg()
+        sys.exit(1)
+
+
 def _collect_entries(src: str) -> list:
     """Return (abs_path, rel_path) pairs for every syncable entry under src.
 
@@ -338,6 +394,7 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
     dest = args.destination
     verbose = getattr(args, "verbose", False)
     use_checksum = getattr(args, "checksum", False)
+    delete = getattr(args, "delete", False)
 
     src_path = _resolve_sync_path(src)
     dest_path = _resolve_sync_path(dest)
@@ -472,6 +529,47 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
     if use_tty:
         sys.stderr.write("\r\033[K")
         sys.stderr.flush()
+
+    # --delete pass: remove destination entries absent from the source.
+    # Only meaningful when source is a directory; silently skipped otherwise.
+    if delete and src_is_dir:
+        src_rels = {rel for _, rel in entries if rel}
+
+        for dirpath, dirnames, filenames in os.walk(
+            dest_path, followlinks=False, topdown=True
+        ):
+            rel_dir = os.path.relpath(dirpath, dest_path)
+
+            dirnames.sort()
+            i = 0
+            while i < len(dirnames):
+                d = dirnames[i]
+                full = os.path.join(dirpath, d)
+                rel_d = os.path.join(rel_dir, d) if rel_dir != "." else d
+                is_link = os.path.islink(full)
+
+                if rel_d not in src_rels:
+                    if verbose:
+                        _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                             f"(deleted) {full}{C['RST']}")
+                    if is_link:
+                        _unlink_robust(full)
+                    else:
+                        _rmtree_robust(full)
+                    dirnames.pop(i)
+                elif is_link:
+                    dirnames.pop(i)  # don't descend into symlinks
+                else:
+                    i += 1
+
+            for fname in sorted(filenames):
+                fpath = os.path.join(dirpath, fname)
+                rel_f = os.path.join(rel_dir, fname) if rel_dir != "." else fname
+                if rel_f not in src_rels:
+                    if verbose:
+                        _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                             f"(deleted) {fpath}{C['RST']}")
+                    _unlink_robust(fpath)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Finished synchronizing.{C['RST']}")

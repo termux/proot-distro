@@ -382,7 +382,8 @@ no flag needed.
 | Option | Description |
 |---|---|
 | `--checksum` | Compare by size + CRC32 instead of size + mtime |
-| `--verbose` | Log each synced entry |
+| `--delete` | Remove destination files and directories that have no counterpart in the source (applied after the sync pass; only effective when source is a directory) |
+| `--verbose` | Log each synced or deleted entry |
 
 **Examples:**
 

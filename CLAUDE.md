@@ -65,7 +65,7 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | `commands/restore.py` | `command_restore()`, `_detect_compression()`, `_remove_existing()`, `_dest_path()` |
 | `commands/clear_cache.py` | `command_clear_cache()`, `_ensure_readable()` |
 | `commands/copy.py` | `command_copy()`, `_resolve_copy_path()` |
-| `commands/sync.py` | `command_sync()`, `_resolve_sync_path()`, `_collect_entries()`, `_needs_update()`, `_sync_dir()`, `_sync_symlink()`, `_sync_file()`, `_file_checksum()` |
+| `commands/sync.py` | `command_sync()`, `_resolve_sync_path()`, `_collect_entries()`, `_needs_update()`, `_sync_dir()`, `_sync_symlink()`, `_sync_file()`, `_file_checksum()`, `_unlink_robust()`, `_rmtree_robust()` |
 | `commands/run.py` | `command_run()`, `_read_image_config()` |
 | `commands/help.py` | `command_help()`, `_HELP_COMMANDS` |
 | `cli.py` | `build_parser()`, `_ALIAS_TO_CANONICAL`, `_COMMAND_HANDLERS`, `_REQUIRED_ARGS`, `main()` |
@@ -327,8 +327,16 @@ Always recursive — no flag needed.
 - **Atomic writes**: regular files written to a `.~pd_sync` temp file
   then `os.replace`d to avoid partial writes.
 - **Progress bar**: TTY-only stderr, format `[*] [####----] XX%  N / Total files`.
-- **`--verbose`** (`-v`): logs each synced entry.
+- **`--verbose`** (`-v`): logs each synced or deleted entry.
 - **`--checksum`**: enables CRC32-based comparison.
+- **`--delete`**: after the sync pass, walks the destination and removes any
+  entry (file, symlink, or directory tree) whose relative path has no
+  counterpart in the source. Only active when source is a directory.
+  Directories are removed with `_rmtree_robust()` (chmod-retry on error);
+  files and symlinks with `_unlink_robust()`. The walk uses `topdown=True`
+  so that when an entire extra directory is found, it is removed via
+  `_rmtree_robust` and popped from `dirnames` — os.walk never descends into
+  it, avoiding redundant per-file checks.
 
 ### Run
 
