@@ -48,6 +48,27 @@ from proot_distro.arch import (
 from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
 
 
+_SAFE_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    "_-+./:@="
+)
+
+
+def _dq(s: str) -> str:
+    """Return s in double quotes for a POSIX shell, quoting only when needed."""
+    if s and all(c in _SAFE_CHARS for c in s):
+        return s
+    escaped = (
+        s.replace("\\", "\\\\")
+         .replace('"', '\\"')
+         .replace("$", "\\$")
+         .replace("`", "\\`")
+    )
+    return f'"{escaped}"'
+
+
 def _resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
     """Resolve an absolute guest path to its real host path.
 
@@ -493,5 +514,17 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     if dist_type != "termux" and os.path.isdir(os.path.join(rootfs, ".l2s")):
         child_env["PROOT_L2S_DIR"] = os.path.join(rootfs, ".l2s")
     child_env.pop("LD_PRELOAD", None)
+
+    debug = getattr(args, "debug", False)
+    if debug:
+        parts = ["env"]
+        for k, v in child_env.items():
+            parts.append(f"{k}={_dq(v)}")
+        parts.extend(_dq(a) for a in proot_args)
+        cmd_line = " \\\n  ".join(parts)
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Proot command line:{C['RST']}")
+        msg(cmd_line)
+        sys.exit(0)
 
     os.execvpe("proot", proot_args, child_env)
