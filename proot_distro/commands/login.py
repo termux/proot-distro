@@ -27,6 +27,7 @@
 import errno
 import os
 import shlex
+import shutil
 import stat
 import sys
 
