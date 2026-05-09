@@ -358,6 +358,18 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
         setup_fake_sysdata(rootfs)
 
+    # Ensure Termux bin is always last in PATH so guest tools can invoke
+    # host Termux utilities. Skipped in --isolated mode where PREFIX is not
+    # bound into the guest. De-duplicates any existing occurrence first.
+    if not isolated:
+        termux_bin = f"{PREFIX}/bin"
+        components = [
+            c for c in child_env.get("PATH", "").split(":")
+            if c and c != termux_bin
+        ]
+        components.append(termux_bin)
+        child_env["PATH"] = ":".join(components)
+
     # Architecture detection.
     target_arch = detect_installed_arch(rootfs)
     if target_arch == "unknown":
