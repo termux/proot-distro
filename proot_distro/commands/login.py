@@ -517,10 +517,12 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
     debug = getattr(args, "debug", False)
     if debug:
+        proot_bin = shutil.which("proot") or "proot"
+        debug_args = [proot_bin] + proot_args[1:]
         parts = ["env"]
         for k, v in child_env.items():
             parts.append(f"{k}={_dq(v)}")
-        parts.extend(_dq(a) for a in proot_args)
+        parts.extend(_dq(a) for a in debug_args)
         cmd_line = " \\\n  ".join(parts)
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Proot command line:{C['RST']}")
