@@ -436,14 +436,15 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
                 created = _sync_dir(dst_item, item_st)
                 if verbose and created:
                     _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                         f"Dir:  '{dst_item}'{C['RST']}")
+                         f"({done + 1}/{total}) "
+                         f"{abs_path} -> {dst_item}{C['RST']}")
 
             elif stat.S_ISLNK(m):
                 changed = _sync_symlink(abs_path, dst_item)
                 if verbose and changed:
-                    target = os.readlink(abs_path)
                     _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                         f"Link: '{dst_item}' -> '{target}'{C['RST']}")
+                         f"({done + 1}/{total}) "
+                         f"{abs_path} -> {dst_item}{C['RST']}")
 
             elif stat.S_ISREG(m):
                 if not os.access(abs_path, os.R_OK):
@@ -454,7 +455,8 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
                     _sync_file(abs_path, item_st, dst_item)
                     if verbose:
                         _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                             f"Copy: '{abs_path}' -> '{dst_item}'{C['RST']}")
+                             f"({done + 1}/{total}) "
+                             f"{abs_path} -> {dst_item}{C['RST']}")
 
             done += 1
             _show_progress()
