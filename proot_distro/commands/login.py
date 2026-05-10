@@ -26,6 +26,7 @@
 
 import errno
 import os
+import re
 import shlex
 import shutil
 import stat
@@ -248,8 +249,20 @@ def _inject_termux_profile(rootfs: str) -> None:
         pass
 
 
+_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
+
+
 def command_login(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
+
+    if not _NAME_RE.match(dist_name):
+        msg()
+        msg(f"{C['BRED']}Error: container name "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
+            f"It must begin with a letter or digit and contain only "
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
+        msg()
+        sys.exit(1)
 
     # Migrate legacy rootfs layout on first login if applicable.
     _migrate_legacy_rootfs(dist_name)

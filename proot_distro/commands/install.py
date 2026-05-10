@@ -49,7 +49,7 @@ from proot_distro.helpers.rootfs import (
     register_android_ids,
 )
 
-_ALIAS_RE = re.compile(r'^[a-z0-9][a-z0-9_.+\-]*$')
+_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
 
 # Top-level directory names that indicate a rootfs filesystem root.
 _ROOTFS_DIRS = frozenset({
@@ -65,8 +65,8 @@ _ARCHIVE_EXTS = (
 )
 
 
-def _validate_alias(alias: str) -> bool:
-    return bool(_ALIAS_RE.match(alias))
+def _validate_name(name: str) -> bool:
+    return bool(_NAME_RE.match(name))
 
 
 def _is_local_path(ref: str) -> bool:
@@ -87,7 +87,7 @@ def _derive_local_name(path: str) -> str:
         if low.endswith(ext):
             base = base[:-len(ext)]
             break
-    base = re.sub(r'[^a-z0-9_.+\-]', '-', base.lower())
+    base = re.sub(r'[^a-z0-9_.\-]', '-', base.lower())
     base = re.sub(r'^[^a-z0-9]+', '', base)
     base = re.sub(r'-{2,}', '-', base).strip('-')
     return base
@@ -274,12 +274,12 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         msg()
         sys.exit(1)
 
-    if custom_dist_name and not _validate_alias(custom_dist_name):
+    if custom_dist_name and not _validate_name(custom_dist_name):
         msg()
-        msg(f"{C['BRED']}Error: invalid container name "
-            f"'{C['YELLOW']}{custom_dist_name}{C['BRED']}'. "
-            f"Must start with alphanumeric and contain only "
-            f"[a-z0-9_.+-].{C['RST']}")
+        msg(f"{C['BRED']}Error: container name "
+            f"'{C['YELLOW']}{custom_dist_name}{C['BRED']}' is not valid. "
+            f"It must begin with a letter or digit and contain only "
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
         msg()
         sys.exit(1)
 
@@ -298,7 +298,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             install_name = custom_dist_name
         else:
             install_name = _derive_local_name(local_path)
-            if not install_name or not _validate_alias(install_name):
+            if not install_name or not _validate_name(install_name):
                 msg()
                 msg(f"{C['BRED']}Error: cannot determine a valid container "
                     f"name from "
