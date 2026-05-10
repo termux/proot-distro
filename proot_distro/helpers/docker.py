@@ -195,19 +195,62 @@ class _AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
 _auth_stripping_opener = urllib.request.build_opener(_AuthStrippingRedirectHandler)
 
 
+def _parse_bearer_challenge(header_value: str) -> dict:
+    """Return the key=value pairs from a Bearer WWW-Authenticate header."""
+    return dict(re.findall(r'(\w+)="([^"]*)"', header_value))
+
+
 def _get_auth_token(repo: str, registry: str = "") -> str:
-    """Obtain a pull token for *repo* from the appropriate auth endpoint."""
-    if registry:
-        # Custom registry — try unauthenticated first; fall back to no token.
-        return ""
-    url = (
-        f"{_AUTH_URL}?service=registry.docker.io"
-        f"&scope=repository:{repo}:pull"
+    """Obtain a pull token for *repo* from the appropriate auth endpoint.
+
+    Docker Hub uses a well-known auth endpoint. For any other registry
+    (e.g. ghcr.io) the Bearer realm is discovered by probing /v2/ and
+    following the standard OCI auth challenge, allowing public images to
+    be pulled with an anonymous token.
+    """
+    if not registry:
+        url = (
+            f"{_AUTH_URL}?service=registry.docker.io"
+            f"&scope=repository:{repo}:pull"
+        )
+        req = urllib.request.Request(url, headers=_ua())
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+        return data.get("token") or data.get("access_token", "")
+
+    # Custom registry: probe /v2/ to discover the Bearer realm, then fetch
+    # an anonymous pull token. Registries that serve public images (e.g.
+    # ghcr.io) still require this token dance — they always return 401 on
+    # unauthenticated requests and embed the token endpoint in the challenge.
+    probe_req = urllib.request.Request(
+        f"https://{registry}/v2/", headers=_ua()
     )
-    req = urllib.request.Request(url, headers=_ua())
-    with urllib.request.urlopen(req) as resp:
-        data = json.loads(resp.read())
-    return data.get("token") or data.get("access_token", "")
+    try:
+        with urllib.request.urlopen(probe_req) as resp:
+            resp.read()
+        return ""  # registry is wide open; no token required
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            raise
+        www_auth = exc.headers.get("WWW-Authenticate", "")
+        if not www_auth.lower().startswith("bearer "):
+            return ""  # unsupported auth scheme
+        params = _parse_bearer_challenge(www_auth.split(" ", 1)[1])
+        realm = params.get("realm", "")
+        if not realm:
+            return ""
+        service = params.get("service", "")
+        qs_parts = []
+        if service:
+            qs_parts.append(f"service={urllib.parse.quote(service, safe='')}")
+        qs_parts.append(f"scope=repository:{repo}:pull")
+        sep = "&" if "?" in realm else "?"
+        token_req = urllib.request.Request(
+            f"{realm}{sep}{'&'.join(qs_parts)}", headers=_ua()
+        )
+        with urllib.request.urlopen(token_req) as resp:
+            data = json.loads(resp.read())
+        return data.get("token") or data.get("access_token", "")
 
 
 def _registry_base_url(registry: str) -> str:
