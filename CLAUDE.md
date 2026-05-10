@@ -53,13 +53,13 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | `arch.py` | CPU arch detection, ELF-based installed arch detection, QEMU/emulator helpers |
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()` |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` — with TTY progress bars |
-| `helpers/rootfs.py` | Install helpers: `write_resolv_conf()`, `write_hosts()`, `register_android_ids()` |
+| `helpers/rootfs.py` | Install helpers: `write_resolv_conf()`, `register_android_ids()` |
 | `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, cache helpers, layer application |
-| `commands/install.py` | `command_install()`, `_validate_alias()` |
+| `commands/install.py` | `command_install()`, `_validate_name()`, `_is_local_path()`, `_derive_local_name()`, `_detect_strip_count()`, `_extract_plain_tar()`, `_extract_oci()`, `_install_from_local_file()` |
 | `commands/remove.py` | `command_remove()`, `_remove_path()` |
 | `commands/rename.py` | `command_rename()` |
 | `commands/reset.py` | `command_reset()` |
-| `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_image_env()`, and other private helpers |
+| `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_manifest_env()`, `_IMAGE_ENV_BLOCKED`, and other private helpers |
 | `commands/list.py` | `command_list()` |
 | `commands/backup.py` | `command_backup()`, `_compression_mode()`, `_COMPRESSION_ARG_MAP`, `_iter_entries()`, `_add_path()`, `_fix_permissions()` |
 | `commands/restore.py` | `command_restore()`, `_detect_compression()`, `_remove_existing()`, `_dest_path()` |
@@ -97,8 +97,10 @@ containers/<name>/rootfs/etc/
 containers/<name>/rootfs/...
 ```
 
-`manifest.json` records `image_ref`, `arch`, and the full OCI manifest so
-that `reset` can re-pull the exact same image later.
+`manifest.json` records `image_ref`, `arch`, the full OCI manifest, and
+`image_config` (the full image config blob) so that `reset` can re-pull the
+exact same image later and `login` can read image-defined environment
+variables. Plain tarball local installs do not write `manifest.json`.
 
 ### Legacy format migration
 
@@ -176,13 +178,18 @@ failure: blank line, error message, then the command's help text (via
 `_HELP_COMMANDS`). `restore` handles its own missing-input error inside
 `command_restore()` (depends on stdin TTY state).
 
-`install` treats `args.alias` as a Docker image reference (e.g.
-`ubuntu:24.04`, `alpine:3.21`, `myuser/myimage:tag`,
-`ghcr.io/org/image:tag`). Options: `--name ALIAS` (stored as
+`install` accepts either a Docker image reference (e.g. `ubuntu:24.04`,
+`alpine:3.21`, `myuser/myimage:tag`, `ghcr.io/org/image:tag`) or a local
+archive path (detected by `_is_local_path()`: starts with `/`, `./`, `../`,
+or resolves to an existing file). Options: `--name ALIAS` (stored as
 `args.custom_dist_name`) installs under a custom local name; an empty
 `--name ''` is rejected immediately. `--architecture ARCH` (stored as
 `args.override_arch`; choices: `aarch64`, `arm`, `i686`, `riscv64`,
 `x86_64`) overrides the target CPU architecture (defaults to device arch).
+
+Container names (whether derived automatically or supplied via `--name`) are
+validated by `_validate_name()` against `^[A-Za-z0-9][A-Za-z0-9_.\-]*$`.
+`login` applies the same validation to its positional argument.
 
 `login` always detects architecture automatically from the installed rootfs
 ELF binaries; there is no architecture override for login. `login --emulator
@@ -220,6 +227,29 @@ attributes.
 - Cross-arch: proot `-q qemu-*` (QEMU user-mode)
 - 32-bit guests on 64-bit hosts run natively when supported
 
+### Install: local archive file
+
+When the positional argument is a local path, `command_install()` calls
+`_install_from_local_file(archive_path, rootfs_dir, dist_arch)`:
+
+1. Opens the archive with `tarfile.open(..., 'r:*')`.
+2. Collects all members (shows "Counting archive entries..." on TTY).
+3. **OCI detection**: if `oci-layout` is a member at the archive root → OCI image layout path; otherwise → plain tarball path.
+
+**Plain tarball path** (`_extract_plain_tar`):
+- **Strip count**: `_detect_strip_count()` scores strip levels 0–4 by counting members whose first remaining component is in `_ROOTFS_DIRS` (standard rootfs directory names). The level with the highest score is used.
+- Extraction mirrors `_apply_layer()` treatment: hard links deferred and copied via `shutil.copy2`, block/character devices and FIFOs skipped, mtime preserved, directory mtimes set in reverse order after all writes, `| stat.S_IRWXU` on all directories.
+- No `manifest.json` is written.
+
+**OCI image layout path** (`_extract_oci`):
+- Reads `index.json` → selects manifest for target arch via `_oci_find_manifest_entry()` (tries `platform` field first; falls back to reading each config blob).
+- Caches layer blobs into `LAYER_CACHE_DIR` via `_oci_cache_layer()` (atomic `.tmp` → `os.replace`).
+- Applies layers in order via `_apply_layer()`.
+- Returns a metadata dict (`manifest`, `image_config`, `image_ref`, `arch`, `env`).
+- `command_install()` writes `containers/<name>/manifest.json` with the same schema as Docker pull.
+
+**Container name for local installs**: derived by `_derive_local_name()` (strips archive extensions defined in `_ARCHIVE_EXTS`, lowercases, sanitizes). If the derived name is invalid and `--name` is not given, an error is shown.
+
 ### Install: Docker Hub OCI pull
 
 `command_install()` calls `pull_image()` from `helpers/docker.py`.
@@ -232,12 +262,11 @@ attributes.
    - If not cached → full online resolution: auth → manifest list → arch manifest → image config blob; saved to cache.
 2. **Apply layers** in order via `_apply_layer()`. Cached layers skip download.
 3. **Whiteout semantics** (OCI spec §6.1.2): `.wh..wh..opq` clears parent dir; `.wh.<name>` deletes the named sibling. Hard links are copied (`shutil.copy2`), deferred until all regular files are written. Block/character devices and FIFOs are silently skipped.
-4. **After layer application**: `write_resolv_conf`, `write_hosts`, `register_android_ids`, `setup_fake_sysdata` are run. `/etc/environment` is **not** created — env vars are set at login time.
+4. **After layer application**: `write_resolv_conf`, `register_android_ids`, `setup_fake_sysdata` are run. `/etc/environment` and `/etc/hosts` are **not** written — env vars are set at login time; `/etc/hosts` is left as provided by the image.
 5. Returns dict with `name`, `version`, `description`, `env`, `manifest`, `image_config`.
 
 After `pull_image()` returns, `command_install()` writes:
 - `containers/<name>/manifest.json` with `image_ref`, `arch`, `manifest`, `image_config`
-- `containers/<name>/rootfs/.proot-distro/image-env` with image `Env` lines
 
 **Auth stripping:** Docker Hub blob endpoints redirect to CDN pre-signed
 URLs. CDN hosts reject `Bearer` tokens (HTTP 400).
@@ -293,10 +322,12 @@ tag=`tag`).
 **Environment variable precedence** (later entries win):
 
 1. `PATH=<DEFAULT_PATH_ENV>`, `MOZ_FAKE_NO_SANDBOX=1`, `PULSE_SERVER=127.0.0.1` — baseline always exported
-2. Image `Env` — reads `rootfs/.proot-distro/image-env`
+2. Image `Env` — read from `containers/<name>/manifest.json` → `image_config["config"]["Env"]` via `_read_manifest_env()`. If `manifest.json` is absent (plain tarball install, legacy container) no image env is applied. Entries whose key is in `_IMAGE_ENV_BLOCKED` are silently skipped.
 3. Android system vars (`ANDROID_ART_ROOT`, `ANDROID_DATA`, `ANDROID_I18N_ROOT`, `ANDROID_ROOT`, `ANDROID_RUNTIME_ROOT`, `ANDROID_TZDATA_ROOT`, `BOOTCLASSPATH`, `DEX2OATBOOTCLASSPATH`, `EXTERNAL_STORAGE`) — exported only when `--isolated` is **not** set
 4. `--env` flags from the command line
 5. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last; `TERM` and `COLORTERM` inherit from host (`COLORTERM` only when set on the host; `TERM` falls back to `xterm-256color` when the host has none)
+
+`_IMAGE_ENV_BLOCKED` prevents image Env from overriding: all Android system vars listed in step 3, `MOZ_FAKE_NO_SANDBOX`, `PULSE_SERVER`, `TERM`, `COLORTERM`. `PATH` is not blocked — images may define a base `PATH`, but `PREFIX/bin` is unconditionally appended afterward in non-isolated mode.
 
 After building `child_env`, when not in `--isolated` mode, `PREFIX/bin` is appended to `PATH` (deduplicating any existing occurrence) so Termux host tools are always reachable from the guest. For `normal`-type containers this is also written into `rootfs/etc/profile.d/termux-prefix.sh` via `_inject_termux_profile()` — a POSIX `case`-guard snippet that re-appends `PREFIX/bin` after `/etc/profile` reinitialises `PATH` during interactive login-shell startup. The snippet is a no-op if `/etc/profile.d/` does not exist in the container.
 
