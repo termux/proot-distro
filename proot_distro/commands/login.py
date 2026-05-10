@@ -489,7 +489,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     if not no_sysvipc:
         proot_args.append("--sysvipc")
 
-    uname_m = os.uname().machine
+    _ARCH_UNAME_M = {
+        "aarch64": "aarch64",
+        "arm":     "armv7l",
+        "i686":    "i686",
+        "x86_64":  "x86_64",
+        "riscv64": "riscv64",
+    }
+    uname_m = _ARCH_UNAME_M.get(target_arch, os.uname().machine)
     proot_args.append(
         f"--kernel-release=\\Linux\\{hostname}\\{kernel_release}"
         f"\\{DEFAULT_FAKE_KERNEL_VERSION}\\{uname_m}\\localdomain\\-1\\"
