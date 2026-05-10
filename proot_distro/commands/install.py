@@ -172,7 +172,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
             f"Failed to install: {exc}{C['RST']}")
-        msg()
         _cleanup()
         sys.exit(1)
     except Exception:
