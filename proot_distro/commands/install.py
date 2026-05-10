@@ -19,12 +19,13 @@
 #
 
 # Architecture: Handles pulling a Docker/OCI image and setting up a new
-# proot container, or extracting a local rootfs archive. The container is
-# stored at containers/<name>/rootfs with containers/<name>/manifest.json
-# recording image_ref and arch (Docker mode only). Local-file mode detects
-# the rootfs start depth heuristically and skips manifest/cache. All network
-# and filesystem work is delegated to helpers; this module owns argument
-# validation and the top-level install flow.
+# proot container, or extracting a local rootfs archive (plain tarball or OCI
+# image layout). The container is stored at containers/<name>/rootfs with
+# containers/<name>/manifest.json recording image metadata (skipped for plain
+# tarballs). Local OCI images cache their layer blobs in LAYER_CACHE_DIR using
+# the same path convention as the Docker pull path. All network and filesystem
+# work is delegated to helpers; this module owns argument validation and the
+# top-level install flow.
 
 import json
 import os
@@ -37,17 +38,25 @@ import tarfile
 from proot_distro.constants import (
     CONTAINERS_DIR,
     DOWNLOAD_CACHE_DIR,
+    LAYER_CACHE_DIR,
     PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.sysdata import setup_fake_sysdata
-from proot_distro.helpers.docker import pull_image, derive_alias
+from proot_distro.helpers.docker import (
+    pull_image,
+    derive_alias,
+    _apply_layer,
+    _layer_cache_path,
+    _ARCH_TO_DOCKER,
+)
 from proot_distro.helpers.rootfs import (
     write_resolv_conf,
     write_hosts,
     register_android_ids,
 )
+from proot_distro.helpers.download import fmt_size
 
 _NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
 
@@ -61,9 +70,17 @@ _ROOTFS_DIRS = frozenset({
 # Archive extensions stripped when deriving a container name from a filename.
 _ARCHIVE_EXTS = (
     '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz',
+    '.oci.tar.xz', '.oci.tar.gz', '.oci.tar',
     '.tar.lzma', '.tlzma', '.tar',
 )
 
+# Reverse of _ARCH_TO_DOCKER: Docker architecture name → proot-distro arch.
+_DOCKER_TO_ARCH = {docker: pd for pd, (docker, _) in _ARCH_TO_DOCKER.items()}
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 def _validate_name(name: str) -> bool:
     return bool(_NAME_RE.match(name))
@@ -93,6 +110,10 @@ def _derive_local_name(path: str) -> str:
     return base
 
 
+# ---------------------------------------------------------------------------
+# Plain tarball extraction
+# ---------------------------------------------------------------------------
+
 def _detect_strip_count(members: list) -> int:
     """Return how many leading path components to strip so the first remaining
     component lands at the rootfs root (e.g. 'etc', 'usr', 'bin', ...).
@@ -113,17 +134,342 @@ def _detect_strip_count(members: list) -> int:
     return best_strip
 
 
-def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
-    """Extract a local rootfs archive into rootfs_dir with a progress bar.
+def _extract_plain_tar(
+    tf: tarfile.TarFile, raw_members: list, rootfs_dir: str
+) -> None:
+    """Extract a plain rootfs tarball (tf already open, raw_members collected).
 
-    Follows the same extraction rules as _apply_layer() in helpers/docker.py
-    (minus OCI whiteout semantics, which don't apply to plain tarballs):
     - Block/character devices and FIFOs are silently skipped.
     - Hard links are copied via shutil.copy2 after all regular files are
       written, so the link source is guaranteed to exist.
     - mtimes are preserved on regular files and symlinks.
     - Directory mtimes are applied last (writing into a dir updates its mtime).
     - Directories get at least S_IRWXU so subsequent writes into them succeed.
+    """
+    use_tty = sys.stderr.isatty()
+
+    members = [
+        m for m in raw_members
+        if not (m.isblk() or m.ischr() or m.isfifo())
+    ]
+    strip = _detect_strip_count(members)
+    total = len(members)
+    done = 0
+
+    def _on_entry() -> None:
+        nonlocal done
+        done += 1
+        if not use_tty:
+            return
+        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        pct = done * 100 // total if total else 100
+        bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+        sys.stderr.write(
+            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
+        )
+        sys.stderr.flush()
+
+    deferred_links: list = []  # (dest, src) — copied after all regular files
+    deferred_dirs: list = []   # (dest, mtime) — stamped after all writes
+
+    for member in members:
+        parts = member.name.lstrip('/').rstrip('/').split('/')
+        if len(parts) <= strip:
+            _on_entry()
+            continue
+        rel_parts = parts[strip:]
+        rel_path = '/'.join(rel_parts)
+        if not rel_path or rel_path == '.':
+            _on_entry()
+            continue
+
+        parent = (
+            os.path.join(rootfs_dir, *rel_parts[:-1])
+            if len(rel_parts) > 1 else rootfs_dir
+        )
+        dest = os.path.join(rootfs_dir, rel_path)
+
+        os.makedirs(parent, exist_ok=True)
+
+        if member.isdir():
+            os.makedirs(dest, exist_ok=True)
+            try:
+                os.chmod(dest, stat.S_IMODE(member.mode) | stat.S_IRWXU)
+            except OSError:
+                pass
+            deferred_dirs.append((dest, member.mtime))
+
+        elif member.issym():
+            if os.path.lexists(dest):
+                os.remove(dest)
+            try:
+                os.symlink(member.linkname, dest)
+                try:
+                    os.utime(dest, (member.mtime, member.mtime),
+                             follow_symlinks=False)
+                except OSError:
+                    pass
+            except OSError:
+                pass
+
+        elif member.islnk():
+            lparts = member.linkname.lstrip('/').rstrip('/').split('/')
+            if len(lparts) > strip:
+                link_src = os.path.join(rootfs_dir, '/'.join(lparts[strip:]))
+                deferred_links.append((dest, link_src))
+            continue  # ticked in the deferred pass below
+
+        elif member.isreg():
+            fobj = tf.extractfile(member)
+            if fobj is None:
+                _on_entry()
+                continue
+            if os.path.lexists(dest):
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+            try:
+                with open(dest, 'wb') as out:
+                    shutil.copyfileobj(fobj, out)
+                try:
+                    os.chmod(dest, stat.S_IMODE(member.mode))
+                except OSError:
+                    pass
+                try:
+                    os.utime(dest, (member.mtime, member.mtime))
+                except OSError:
+                    pass
+            finally:
+                fobj.close()
+
+        else:
+            continue
+
+        _on_entry()
+
+    # All regular files written — now copy hard links (shutil.copy2 preserves mtime).
+    for dest, src in deferred_links:
+        if os.path.lexists(dest):
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+        if os.path.isfile(src):
+            try:
+                shutil.copy2(src, dest)
+            except OSError:
+                pass
+        _on_entry()
+
+    # Apply directory timestamps last.
+    for path, mtime in reversed(deferred_dirs):
+        try:
+            os.utime(path, (mtime, mtime))
+        except OSError:
+            pass
+
+    if use_tty:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+
+# ---------------------------------------------------------------------------
+# OCI image layout extraction
+# ---------------------------------------------------------------------------
+
+def _oci_blob_path(digest: str) -> str:
+    """Convert 'sha256:abc123' to 'blobs/sha256/abc123'."""
+    algo, hex_val = digest.split(':', 1)
+    return f"blobs/{algo}/{hex_val}"
+
+
+def _oci_read_json(tf: tarfile.TarFile, member_map: dict, path: str) -> dict:
+    """Extract a member from the outer archive and parse it as JSON."""
+    member = member_map.get(path)
+    if member is None:
+        raise RuntimeError(f"OCI archive is missing required file: {path}")
+    fobj = tf.extractfile(member)
+    if fobj is None:
+        raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
+    try:
+        return json.loads(fobj.read())
+    finally:
+        fobj.close()
+
+
+def _oci_find_manifest_entry(
+    tf: tarfile.TarFile,
+    member_map: dict,
+    index_manifests: list,
+    dist_arch: str,
+) -> dict:
+    """Pick the index manifest entry that matches dist_arch.
+
+    Strategy:
+    1. Single entry — use it regardless of arch (trust the caller knows).
+    2. Multiple entries with platform.architecture — filter by docker arch.
+    3. Multiple entries without platform — read each config blob to check.
+
+    Raises RuntimeError when no matching entry is found.
+    """
+    if len(index_manifests) == 1:
+        return index_manifests[0]
+
+    docker_arch = _ARCH_TO_DOCKER.get(dist_arch, (dist_arch, ''))[0]
+
+    # Try fast path: platform field present in index entries.
+    platform_entries = [
+        e for e in index_manifests if 'platform' in e
+    ]
+    if platform_entries:
+        for entry in platform_entries:
+            p = entry['platform']
+            if p.get('architecture') == docker_arch and p.get('os') == 'linux':
+                return entry
+        raise RuntimeError(
+            f"No manifest found for architecture '{dist_arch}' "
+            f"in OCI index (tried {docker_arch})."
+        )
+
+    # Slow path: read each manifest → config to detect architecture.
+    for entry in index_manifests:
+        manifest = _oci_read_json(
+            tf, member_map, _oci_blob_path(entry['digest'])
+        )
+        config_digest = manifest.get('config', {}).get('digest', '')
+        if not config_digest:
+            continue
+        config = _oci_read_json(
+            tf, member_map, _oci_blob_path(config_digest)
+        )
+        if config.get('architecture') == docker_arch:
+            return entry
+
+    raise RuntimeError(
+        f"No manifest found for architecture '{dist_arch}' "
+        f"in OCI image (tried {docker_arch})."
+    )
+
+
+def _oci_cache_layer(
+    tf: tarfile.TarFile, member_map: dict, digest: str
+) -> str:
+    """Extract a layer blob from the outer archive into LAYER_CACHE_DIR.
+
+    Returns the cache path. The blob is written atomically via a .tmp file.
+    """
+    blob_path = _oci_blob_path(digest)
+    member = member_map.get(blob_path)
+    if member is None:
+        raise RuntimeError(f"OCI archive is missing layer blob: {blob_path}")
+    os.makedirs(LAYER_CACHE_DIR, exist_ok=True)
+    cache_path = _layer_cache_path(digest)
+    tmp = cache_path + '.tmp'
+    fobj = tf.extractfile(member)
+    if fobj is None:
+        raise RuntimeError(f"OCI layer blob is not a regular file: {blob_path}")
+    try:
+        with open(tmp, 'wb') as out:
+            shutil.copyfileobj(fobj, out)
+    finally:
+        fobj.close()
+    os.replace(tmp, cache_path)
+    return cache_path
+
+
+def _extract_oci(
+    tf: tarfile.TarFile,
+    member_map: dict,
+    rootfs_dir: str,
+    dist_arch: str,
+) -> dict:
+    """Install from an OCI image layout (tf already open).
+
+    Reads index.json, selects the manifest for dist_arch, caches each layer
+    blob in LAYER_CACHE_DIR, and applies the layers via _apply_layer().
+
+    Returns a metadata dict compatible with the manifest.json schema:
+      manifest, image_config, image_ref, arch, env.
+    """
+    index = _oci_read_json(tf, member_map, 'index.json')
+    index_manifests = index.get('manifests', [])
+    if not index_manifests:
+        raise RuntimeError("OCI index.json contains no manifests.")
+
+    manifest_entry = _oci_find_manifest_entry(
+        tf, member_map, index_manifests, dist_arch
+    )
+
+    manifest = _oci_read_json(
+        tf, member_map, _oci_blob_path(manifest_entry['digest'])
+    )
+
+    config_digest = manifest.get('config', {}).get('digest', '')
+    if not config_digest:
+        raise RuntimeError("OCI image manifest has no config digest.")
+    image_config = _oci_read_json(tf, member_map, _oci_blob_path(config_digest))
+
+    # Determine the actual arch from the image config.
+    docker_arch = image_config.get('architecture', '')
+    actual_arch = _DOCKER_TO_ARCH.get(docker_arch, dist_arch)
+
+    layers = manifest.get('layers', [])
+    if not layers:
+        raise RuntimeError("OCI image manifest contains no layers.")
+
+    n_layers = len(layers)
+    for i, layer in enumerate(layers):
+        digest = layer['digest']
+        short_id = digest[:19]
+        size = layer.get('size', 0)
+        size_str = f" ({fmt_size(size)})" if size else ""
+        cache_path = _layer_cache_path(digest)
+
+        if os.path.isfile(cache_path):
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
+                f"skipping.{C['RST']}")
+        else:
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"{short_id}: Caching layer "
+                f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
+            _oci_cache_layer(tf, member_map, digest)
+
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
+        _apply_layer(cache_path, rootfs_dir)
+
+    # Derive image_ref from index entry annotations if available.
+    annotations = manifest_entry.get('annotations', {})
+    image_ref = (
+        annotations.get('io.containerd.image.name')
+        or annotations.get('org.opencontainers.image.ref.name')
+        or ''
+    )
+
+    env = (image_config.get('config') or {}).get('Env') or []
+
+    return {
+        'manifest': manifest,
+        'image_config': image_config,
+        'image_ref': image_ref,
+        'arch': actual_arch,
+        'env': env,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Local-file entry point (dispatches to plain tar or OCI)
+# ---------------------------------------------------------------------------
+
+def _install_from_local_file(
+    archive_path: str, rootfs_dir: str, dist_arch: str
+) -> dict | None:
+    """Open archive_path, detect its format, and extract into rootfs_dir.
+
+    Returns a metadata dict for OCI images (same schema as pull_image()), or
+    None for plain tarballs (no manifest.json is written for those).
     """
     use_tty = sys.stderr.isatty()
 
@@ -134,135 +480,24 @@ def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
                 f"{C['CYAN']}Counting archive entries...{C['RST']}"
             )
             sys.stderr.flush()
-        all_members = [
-            m for m in tf.getmembers()
-            if not (m.isblk() or m.ischr() or m.isfifo())
-        ]
+        raw_members = tf.getmembers()
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
 
-        strip = _detect_strip_count(all_members)
-        total = len(all_members)
-        done = 0
+        member_names = {m.name for m in raw_members}
 
-        def _on_entry() -> None:
-            nonlocal done
-            done += 1
-            if not use_tty:
-                return
-            pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            pct = done * 100 // total if total else 100
-            bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-            sys.stderr.write(
-                f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
-            )
-            sys.stderr.flush()
+        if 'oci-layout' in member_names:
+            member_map = {m.name: m for m in raw_members}
+            return _extract_oci(tf, member_map, rootfs_dir, dist_arch)
 
-        deferred_links: list = []  # (dest, src) — copied after all regular files
-        deferred_dirs: list = []   # (dest, mtime) — stamped after all writes
+        _extract_plain_tar(tf, raw_members, rootfs_dir)
+        return None
 
-        for member in all_members:
-            parts = member.name.lstrip('/').rstrip('/').split('/')
-            if len(parts) <= strip:
-                _on_entry()
-                continue
-            rel_parts = parts[strip:]
-            rel_path = '/'.join(rel_parts)
-            if not rel_path or rel_path == '.':
-                _on_entry()
-                continue
 
-            parent = (
-                os.path.join(rootfs_dir, *rel_parts[:-1])
-                if len(rel_parts) > 1 else rootfs_dir
-            )
-            dest = os.path.join(rootfs_dir, rel_path)
-
-            os.makedirs(parent, exist_ok=True)
-
-            if member.isdir():
-                os.makedirs(dest, exist_ok=True)
-                try:
-                    os.chmod(dest, stat.S_IMODE(member.mode) | stat.S_IRWXU)
-                except OSError:
-                    pass
-                deferred_dirs.append((dest, member.mtime))
-
-            elif member.issym():
-                if os.path.lexists(dest):
-                    os.remove(dest)
-                try:
-                    os.symlink(member.linkname, dest)
-                    try:
-                        os.utime(dest, (member.mtime, member.mtime),
-                                 follow_symlinks=False)
-                    except OSError:
-                        pass
-                except OSError:
-                    pass
-
-            elif member.islnk():
-                lparts = member.linkname.lstrip('/').rstrip('/').split('/')
-                if len(lparts) > strip:
-                    link_src = os.path.join(rootfs_dir, '/'.join(lparts[strip:]))
-                    deferred_links.append((dest, link_src))
-                continue  # ticked in the deferred pass below
-
-            elif member.isreg():
-                fobj = tf.extractfile(member)
-                if fobj is None:
-                    _on_entry()
-                    continue
-                if os.path.lexists(dest):
-                    try:
-                        os.remove(dest)
-                    except OSError:
-                        pass
-                try:
-                    with open(dest, 'wb') as out:
-                        shutil.copyfileobj(fobj, out)
-                    try:
-                        os.chmod(dest, stat.S_IMODE(member.mode))
-                    except OSError:
-                        pass
-                    try:
-                        os.utime(dest, (member.mtime, member.mtime))
-                    except OSError:
-                        pass
-                finally:
-                    fobj.close()
-
-            else:
-                continue
-
-            _on_entry()
-
-        # All regular files written — now copy hard links (shutil.copy2 preserves mtime).
-        for dest, src in deferred_links:
-            if os.path.lexists(dest):
-                try:
-                    os.remove(dest)
-                except OSError:
-                    pass
-            if os.path.isfile(src):
-                try:
-                    shutil.copy2(src, dest)
-                except OSError:
-                    pass
-            _on_entry()
-
-        # Apply directory timestamps last.
-        for path, mtime in reversed(deferred_dirs):
-            try:
-                os.utime(path, (mtime, mtime))
-            except OSError:
-                pass
-
-        if use_tty:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-
+# ---------------------------------------------------------------------------
+# Command
+# ---------------------------------------------------------------------------
 
 def command_install(args, configs: dict) -> None:  # noqa: ARG001
     image_ref = args.alias
@@ -282,6 +517,9 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
         msg()
         sys.exit(1)
+
+    device_arch = get_device_cpu_arch()
+    dist_arch = getattr(args, "override_arch", None) or device_arch
 
     # Decide between local-file mode and Docker-pull mode.
     local_path = os.path.expanduser(image_ref) if _is_local_path(image_ref) else None
@@ -334,8 +572,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             f"from '{C['YELLOW']}{os.path.basename(local_path)}{C['CYAN']}' "
             f"as '{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
     else:
-        device_arch = get_device_cpu_arch()
-        dist_arch = getattr(args, "override_arch", None) or device_arch
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
             f"'{C['YELLOW']}{image_ref}{C['CYAN']}' as "
             f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
@@ -352,7 +588,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         if local_path is not None:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
                 f"Extracting rootfs from archive...{C['RST']}")
-            _install_from_local(local_path, rootfs_dir)
+            metadata = _install_from_local_file(local_path, rootfs_dir, dist_arch)
         else:
             os.makedirs(DOWNLOAD_CACHE_DIR, exist_ok=True)
             metadata = pull_image(image_ref, rootfs_dir, dist_arch)
@@ -365,10 +601,15 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             _cleanup()
             sys.exit(1)
 
-        if local_path is None:
+        # Write manifest.json when metadata is available (Docker pull or OCI
+        # local). Skipped for plain tarballs (metadata is None).
+        if metadata is not None:
             manifest_data = {
-                "image_ref": image_ref,
-                "arch": dist_arch,
+                "image_ref": (
+                    metadata.get("image_ref") or
+                    (image_ref if local_path is None else "")
+                ),
+                "arch": metadata.get("arch") or dist_arch,
                 "manifest": metadata.get("manifest", {}),
                 "image_config": metadata.get("image_config", {}),
             }
@@ -394,7 +635,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
 
         setup_fake_sysdata(rootfs_dir)
 
-        if local_path is None:
+        if metadata is not None:
             image_env = metadata.get("env", [])
             if image_env:
                 meta_dir = os.path.join(rootfs_dir, ".proot-distro")
