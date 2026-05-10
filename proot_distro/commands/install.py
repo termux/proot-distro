@@ -621,7 +621,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
                     f"Warning: could not write manifest.json: {exc}{C['RST']}")
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Creating file '{rootfs_dir}/etc/resolv.conf'...{C['RST']}")
+            f"Updating /etc/resolv.conf...{C['RST']}")
         write_resolv_conf(rootfs_dir)
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
