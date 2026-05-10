@@ -118,7 +118,7 @@ def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
 
     Follows the same extraction rules as _apply_layer() in helpers/docker.py
     (minus OCI whiteout semantics, which don't apply to plain tarballs):
-    - Block/character devices, FIFOs and sockets are silently skipped.
+    - Block/character devices and FIFOs are silently skipped.
     - Hard links are copied via shutil.copy2 after all regular files are
       written, so the link source is guaranteed to exist.
     - mtimes are preserved on regular files and symlinks.
@@ -136,7 +136,7 @@ def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
             sys.stderr.flush()
         all_members = [
             m for m in tf.getmembers()
-            if not (m.isblk() or m.ischr() or m.isfifo() or m.issock())
+            if not (m.isblk() or m.ischr() or m.isfifo())
         ]
         if use_tty:
             sys.stderr.write("\r\033[K")
