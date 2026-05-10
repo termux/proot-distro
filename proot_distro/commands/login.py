@@ -25,6 +25,7 @@
 # first login. Architecture is detected from ELF headers, not config files.
 
 import errno
+import json
 import os
 import re
 import shlex
@@ -117,19 +118,28 @@ def _read_passwd_field(rootfs: str, user: str, field_index: int) -> str:
     return ""
 
 
-def _read_image_env(rootfs: str) -> list:
-    """Return the image-defined Env list from .proot-distro/image-env."""
-    env_file = os.path.join(rootfs, ".proot-distro", "image-env")
-    result = []
+# Variables that the image Env must not override. These are either
+# proot-distro-defined values or host-inherited terminal variables that must
+# remain under the launcher's control regardless of image configuration.
+_IMAGE_ENV_BLOCKED = frozenset({
+    "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
+    "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
+    "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+    "MOZ_FAKE_NO_SANDBOX", "PULSE_SERVER",
+    "TERM", "COLORTERM",
+})
+
+
+def _read_manifest_env(container_dir: str) -> list:
+    """Return image Env entries from manifest.json, or [] if absent/invalid."""
+    manifest_path = os.path.join(container_dir, "manifest.json")
     try:
-        with open(env_file) as fh:
-            for line in fh:
-                line = line.strip()
-                if line and "=" in line:
-                    result.append(line)
-    except OSError:
-        pass
-    return result
+        with open(manifest_path) as fh:
+            data = json.load(fh)
+        env = (data.get("image_config") or {}).get("config", {}).get("Env") or []
+        return [e for e in env if isinstance(e, str) and "=" in e]
+    except (OSError, ValueError):
+        return []
 
 
 def _storage_bindings() -> list:
@@ -389,11 +399,11 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         child_env["MOZ_FAKE_NO_SANDBOX"] = "1"
         child_env["PULSE_SERVER"] = "127.0.0.1"
 
-        # Image-defined Env entries (Docker manifest). Lower precedence than
-        # Android system vars and the user's --env flags.
-        for entry in _read_image_env(rootfs):
+        # Image-defined Env entries. Blocked vars cannot be overridden by image.
+        container_dir = os.path.dirname(rootfs)
+        for entry in _read_manifest_env(container_dir):
             key, _, val = entry.partition("=")
-            if key:
+            if key and key not in _IMAGE_ENV_BLOCKED:
                 child_env[key] = val
 
         # Android system vars are exported only when not running --isolated.
