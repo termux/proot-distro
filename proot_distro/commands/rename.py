@@ -20,7 +20,7 @@
 
 # Architecture: Renames a container directory (containers/<old> to
 # containers/<new>) and updates any proot link2symlink (l2s) symlinks
-# that point into the old rootfs path. Validation reuses _validate_alias()
+# that point into the old rootfs path. Validation reuses _validate_name()
 # from install.py so that name format rules are enforced in one place.
 
 import os
@@ -28,7 +28,7 @@ import sys
 
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
-from proot_distro.commands.install import _validate_alias
+from proot_distro.commands.install import _validate_name
 
 
 def command_rename(args, configs: dict) -> None:  # noqa: ARG001
@@ -41,12 +41,12 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
         msg()
         sys.exit(1)
 
-    if not _validate_alias(new):
+    if not _validate_name(new):
         msg()
         msg(f"{C['BRED']}Error: invalid new name "
             f"'{C['YELLOW']}{new}{C['BRED']}'. "
             f"Must start with alphanumeric and contain only "
-            f"[a-z0-9_.+-].{C['RST']}")
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
         msg()
         sys.exit(1)
 
