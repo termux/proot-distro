@@ -59,7 +59,7 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | `commands/remove.py` | `command_remove()`, `_remove_path()` |
 | `commands/rename.py` | `command_rename()` |
 | `commands/reset.py` | `command_reset()` |
-| `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_resolve_rootfs_path()`, `_read_image_env()`, and other private helpers |
+| `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_image_env()`, and other private helpers |
 | `commands/list.py` | `command_list()` |
 | `commands/backup.py` | `command_backup()`, `_compression_mode()`, `_COMPRESSION_ARG_MAP`, `_iter_entries()`, `_add_path()`, `_fix_permissions()` |
 | `commands/restore.py` | `command_restore()`, `_detect_compression()`, `_remove_existing()`, `_dest_path()` |
@@ -107,6 +107,12 @@ The old storage layout placed the rootfs at
 `manifest.json`). `login` detects this on first use and automatically moves
 the rootfs to `containers/<name>/rootfs` via `_migrate_legacy_rootfs()`.
 
+After the rename, `_migrate_legacy_rootfs()` walks the new rootfs and
+rewrites any proot link2symlink symlinks whose targets still point at the
+old `installed-rootfs/<name>` path, replacing the prefix with the new
+`containers/<name>/rootfs` path. This mirrors the same rewrite done by
+`command_rename()`.
+
 The constant `LEGACY_ROOTFS_DIR` is kept exclusively for this migration path.
 No command other than `login` reads from it.
 
@@ -123,7 +129,7 @@ inside. All other commands validate existence by checking for
 
 Detected from the rootfs filesystem layout at login time:
 
-- **`termux`**: `rootfs/data/data/com.termux/files/usr/` exists inside rootfs.
+- **`termux`**: `rootfs/data/data/com.termux/files/usr/bin/login` **file** exists inside rootfs (file check, not directory, to avoid false positives when proot creates the bind-mount target dir during a concurrent session).
 - **`normal`**: all other rootfs layouts.
 
 **`termux` type** differences in `login`:
@@ -238,6 +244,14 @@ URLs. CDN hosts reject `Bearer` tokens (HTTP 400).
 `_AuthStrippingRedirectHandler` strips the `Authorization` header on
 cross-host redirects.
 
+**Custom registry auth:** For non-Docker-Hub registries, `_get_auth_token()`
+probes `https://<registry>/v2/`. If the registry responds `401` with a
+`WWW-Authenticate: Bearer` header, `_parse_bearer_challenge()` extracts
+`realm` and `service` from it and fetches an anonymous token from the realm
+URL. This handles public OCI registries (e.g. `ghcr.io`) that require a
+Bearer exchange even for unauthenticated pulls. If the probe returns `200`
+(no auth needed) an empty token is used.
+
 **Layer integrity:** `_download_blob()` streams the blob through a
 `hashlib.sha256` hasher while writing it. After the body is fully read the
 computed digest is compared to the expected one from the manifest; on
@@ -284,7 +298,9 @@ tag=`tag`).
 4. `--env` flags from the command line
 5. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last; `TERM` and `COLORTERM` inherit from host (`COLORTERM` only when set on the host; `TERM` falls back to `xterm-256color` when the host has none)
 
-Proot's own toggle env vars (`PROOT_NO_SECCOMP`, `PROOT_DUMP`, `PROOT_VERBOSE`, plus `PROOT_L2S_DIR` for normal dists with an `.l2s` directory) are added to `child_env` after the user-facing precedence above so proot can read them. `LD_PRELOAD` is removed from `child_env` before the exec.
+After building `child_env`, when not in `--isolated` mode, `PREFIX/bin` is appended to `PATH` (deduplicating any existing occurrence) so Termux host tools are always reachable from the guest. For `normal`-type containers this is also written into `rootfs/etc/profile.d/termux-prefix.sh` via `_inject_termux_profile()` — a POSIX `case`-guard snippet that re-appends `PREFIX/bin` after `/etc/profile` reinitialises `PATH` during interactive login-shell startup. The snippet is a no-op if `/etc/profile.d/` does not exist in the container.
+
+Proot's own toggle env vars (`PROOT_NO_SECCOMP`, `PROOT_DUMP`, `PROOT_VERBOSE`, plus `PROOT_L2S_DIR` set to `rootfs/.l2s` for normal-type dists — the directory is always created upfront via `os.makedirs(..., exist_ok=True)` so concurrent sessions agree on the same path) are added to `child_env` after the user-facing precedence above so proot can read them. `LD_PRELOAD` is removed from `child_env` before the exec.
 
 ### Remove
 
