@@ -221,6 +221,33 @@ def _migrate_legacy_rootfs(dist_name: str) -> None:
         f"Migration complete.{C['RST']}")
 
 
+def _inject_termux_profile(rootfs: str) -> None:
+    """Write a profile.d snippet that appends Termux bin to PATH.
+
+    Login shells source /etc/profile which overwrites PATH from scratch,
+    discarding whatever proot inherited. Dropping a snippet into profile.d
+    ensures the Termux bin dir survives that reset without modifying any
+    distro-owned file.
+    """
+    profile_d = os.path.join(rootfs, "etc", "profile.d")
+    if not os.path.isdir(profile_d):
+        return
+    snippet = os.path.join(profile_d, "termux-prefix.sh")
+    termux_bin = f"{PREFIX}/bin"
+    content = (
+        f'case ":${{PATH}}:" in\n'
+        f'  *":{termux_bin}:"*) ;;\n'
+        f'  *) export PATH="${{PATH}}:{termux_bin}" ;;\n'
+        f'esac\n'
+    )
+    try:
+        with open(snippet, "w") as fh:
+            fh.write(content)
+        os.chmod(snippet, 0o644)
+    except OSError:
+        pass
+
+
 def command_login(args, configs: dict) -> None:  # noqa: ARG001
     dist_name = args.alias
 
@@ -402,6 +429,9 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         ]
         components.append(termux_bin)
         child_env["PATH"] = ":".join(components)
+
+    if dist_type == "normal" and not isolated:
+        _inject_termux_profile(rootfs)
 
     # Architecture detection.
     target_arch = detect_installed_arch(rootfs)
