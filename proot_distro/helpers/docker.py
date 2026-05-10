@@ -483,7 +483,16 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
         sys.stderr.flush()
 
     with tarfile.open(layer_path, "r:*") as tf:
+        if use_tty:
+            sys.stderr.write(
+                f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                f"{C['CYAN']}Counting archive entries...{C['RST']}"
+            )
+            sys.stderr.flush()
         members = tf.getmembers()
+        if use_tty:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
         total = len(members)
         deferred_links: list = []  # list of (dest, src_path)
         deferred_dirs: list = []   # list of (path, mtime) — set after all writes

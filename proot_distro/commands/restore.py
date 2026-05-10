@@ -209,7 +209,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 if use_tty:
                     sys.stderr.write(
                         f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                        f"{C['CYAN']}Estimating progress...{C['RST']}"
+                        f"{C['CYAN']}Counting archive entries...{C['RST']}"
                     )
                     sys.stderr.flush()
                 all_members = [
