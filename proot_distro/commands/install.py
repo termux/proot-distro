@@ -114,7 +114,17 @@ def _detect_strip_count(members: list) -> int:
 
 
 def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
-    """Extract a local rootfs archive into rootfs_dir with a progress bar."""
+    """Extract a local rootfs archive into rootfs_dir with a progress bar.
+
+    Follows the same extraction rules as _apply_layer() in helpers/docker.py
+    (minus OCI whiteout semantics, which don't apply to plain tarballs):
+    - Block/character devices, FIFOs and sockets are silently skipped.
+    - Hard links are copied via shutil.copy2 after all regular files are
+      written, so the link source is guaranteed to exist.
+    - mtimes are preserved on regular files and symlinks.
+    - Directory mtimes are applied last (writing into a dir updates its mtime).
+    - Directories get at least S_IRWXU so subsequent writes into them succeed.
+    """
     use_tty = sys.stderr.isatty()
 
     with tarfile.open(archive_path, 'r:*') as tf:
@@ -126,7 +136,7 @@ def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
             sys.stderr.flush()
         all_members = [
             m for m in tf.getmembers()
-            if not (m.isblk() or m.ischr() or m.isfifo())
+            if not (m.isblk() or m.ischr() or m.isfifo() or m.issock())
         ]
         if use_tty:
             sys.stderr.write("\r\033[K")
@@ -149,74 +159,75 @@ def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
             )
             sys.stderr.flush()
 
+        deferred_links: list = []  # (dest, src) — copied after all regular files
+        deferred_dirs: list = []   # (dest, mtime) — stamped after all writes
+
         for member in all_members:
             parts = member.name.lstrip('/').rstrip('/').split('/')
             if len(parts) <= strip:
                 _on_entry()
                 continue
-            rel_path = '/'.join(parts[strip:])
+            rel_parts = parts[strip:]
+            rel_path = '/'.join(rel_parts)
             if not rel_path or rel_path == '.':
                 _on_entry()
                 continue
 
+            parent = (
+                os.path.join(rootfs_dir, *rel_parts[:-1])
+                if len(rel_parts) > 1 else rootfs_dir
+            )
             dest = os.path.join(rootfs_dir, rel_path)
 
-            try:
-                if os.path.islink(dest) or os.path.isfile(dest):
-                    os.remove(dest)
-                elif os.path.isdir(dest) and not member.isdir():
-                    shutil.rmtree(dest)
-            except OSError:
-                pass
+            os.makedirs(parent, exist_ok=True)
 
             if member.isdir():
                 os.makedirs(dest, exist_ok=True)
                 try:
-                    os.chmod(dest, stat.S_IMODE(member.mode))
+                    os.chmod(dest, stat.S_IMODE(member.mode) | stat.S_IRWXU)
                 except OSError:
                     pass
+                deferred_dirs.append((dest, member.mtime))
 
             elif member.issym():
-                parent = os.path.dirname(dest)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
+                if os.path.lexists(dest):
+                    os.remove(dest)
                 try:
                     os.symlink(member.linkname, dest)
+                    try:
+                        os.utime(dest, (member.mtime, member.mtime),
+                                 follow_symlinks=False)
+                    except OSError:
+                        pass
                 except OSError:
                     pass
 
             elif member.islnk():
                 lparts = member.linkname.lstrip('/').rstrip('/').split('/')
-                link_src = (
-                    os.path.join(rootfs_dir, '/'.join(lparts[strip:]))
-                    if len(lparts) > strip else None
-                )
-                parent = os.path.dirname(dest)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                if link_src:
-                    try:
-                        os.link(link_src, dest)
-                    except OSError:
-                        pass
+                if len(lparts) > strip:
+                    link_src = os.path.join(rootfs_dir, '/'.join(lparts[strip:]))
+                    deferred_links.append((dest, link_src))
+                continue  # ticked in the deferred pass below
 
             elif member.isreg():
                 fobj = tf.extractfile(member)
                 if fobj is None:
                     _on_entry()
                     continue
-                parent = os.path.dirname(dest)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
+                if os.path.lexists(dest):
+                    try:
+                        os.remove(dest)
+                    except OSError:
+                        pass
                 try:
                     with open(dest, 'wb') as out:
-                        while True:
-                            chunk = fobj.read(1 << 17)
-                            if not chunk:
-                                break
-                            out.write(chunk)
+                        shutil.copyfileobj(fobj, out)
                     try:
                         os.chmod(dest, stat.S_IMODE(member.mode))
+                    except OSError:
+                        pass
+                    try:
+                        os.utime(dest, (member.mtime, member.mtime))
                     except OSError:
                         pass
                 finally:
@@ -226,6 +237,27 @@ def _install_from_local(archive_path: str, rootfs_dir: str) -> None:
                 continue
 
             _on_entry()
+
+        # All regular files written — now copy hard links (shutil.copy2 preserves mtime).
+        for dest, src in deferred_links:
+            if os.path.lexists(dest):
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+            if os.path.isfile(src):
+                try:
+                    shutil.copy2(src, dest)
+                except OSError:
+                    pass
+            _on_entry()
+
+        # Apply directory timestamps last.
+        for path, mtime in reversed(deferred_dirs):
+            try:
+                os.utime(path, (mtime, mtime))
+            except OSError:
+                pass
 
         if use_tty:
             sys.stderr.write("\r\033[K")
