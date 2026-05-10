@@ -53,7 +53,6 @@ from proot_distro.helpers.docker import (
 )
 from proot_distro.helpers.rootfs import (
     write_resolv_conf,
-    write_hosts,
     register_android_ids,
 )
 from proot_distro.helpers.download import fmt_size
@@ -624,10 +623,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Creating file '{rootfs_dir}/etc/resolv.conf'...{C['RST']}")
         write_resolv_conf(rootfs_dir)
-
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Creating file '{rootfs_dir}/etc/hosts'...{C['RST']}")
-        write_hosts(rootfs_dir)
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Registering Android-specific UIDs and GIDs...{C['RST']}")
