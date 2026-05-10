@@ -264,7 +264,7 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         sys.stderr.write(
             f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total_entries} files"
-            f"{C['RST']}"
+            f"\033[K{C['RST']}"
         )
         sys.stderr.flush()
 

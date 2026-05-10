@@ -61,9 +61,9 @@ def sha256_file(path: str) -> str:
                     bar = "#" * bar_filled + "-" * (20 - bar_filled)
                     line = (f"\r{pfx}[{bar}] {pct:3d}%"
                             f"  {fmt_size(processed)} / {fmt_size(total)}"
-                            f"{C['RST']}")
+                            f"\033[K{C['RST']}")
                 else:
-                    line = f"\r{pfx}{fmt_size(processed)} processed...{C['RST']}"
+                    line = f"\r{pfx}{fmt_size(processed)} processed...\033[K{C['RST']}"
                 sys.stderr.write(line)
                 sys.stderr.flush()
     if use_tty:
@@ -101,11 +101,11 @@ def download_file(
                             bar = "#" * bar_filled + "-" * (20 - bar_filled)
                             line = (f"\r{pfx}[{bar}] {pct:3d}%"
                                     f"  {fmt_size(downloaded)}"
-                                    f" / {fmt_size(total)}{C['RST']}")
+                                    f" / {fmt_size(total)}\033[K{C['RST']}")
                         else:
                             line = (f"\r{pfx}"
                                     f"{fmt_size(downloaded)} downloaded..."
-                                    f"{C['RST']}")
+                                    f"\033[K{C['RST']}")
                         sys.stderr.write(line)
                         sys.stderr.flush()
                 if use_tty:

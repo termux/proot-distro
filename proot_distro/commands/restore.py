@@ -175,11 +175,11 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             pct = done * 100 // total
             bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
             sys.stderr.write(
-                f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files{C['RST']}"
+                f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
             )
         else:
             sys.stderr.write(
-                f"\r{pfx}{done} files extracted...{C['RST']}"
+                f"\r{pfx}{done} files extracted...\033[K{C['RST']}"
             )
         sys.stderr.flush()
 

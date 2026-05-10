@@ -414,11 +414,11 @@ def _download_blob(
                         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
                         line = (f"\r{pfx}[{bar}] {pct:3d}%"
                                 f"  {fmt_size(downloaded)}"
-                                f" / {fmt_size(total)}{C['RST']}")
+                                f" / {fmt_size(total)}\033[K{C['RST']}")
                     else:
                         line = (f"\r{pfx}"
                                 f"{fmt_size(downloaded)} downloaded..."
-                                f"{C['RST']}")
+                                f"\033[K{C['RST']}")
                     sys.stderr.write(line)
                     sys.stderr.flush()
         if use_tty:
@@ -478,7 +478,7 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} entries{C['RST']}"
+            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} entries\033[K{C['RST']}"
         )
         sys.stderr.flush()
 

@@ -487,7 +487,7 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files{C['RST']}"
+            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
         )
         sys.stderr.flush()
 
