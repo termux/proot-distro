@@ -38,6 +38,8 @@ from proot_distro.constants import (
     TERMUX_HOME,
     TERMUX_APP_PACKAGE,
     DEFAULT_PATH_ENV,
+    DEFAULT_FAKE_KERNEL_RELEASE,
+    DEFAULT_FAKE_KERNEL_VERSION,
 )
 from proot_distro.colors import C, msg
 from proot_distro.arch import (
@@ -248,8 +250,11 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     )
 
     login_user = getattr(args, "user", "root") or "root"
-    kernel_release = getattr(args, "kernel", None) or ""
-    hostname = getattr(args, "hostname", None) or ""
+    kernel_release = (
+        getattr(args, "kernel", DEFAULT_FAKE_KERNEL_RELEASE)
+        or DEFAULT_FAKE_KERNEL_RELEASE
+    )
+    hostname = getattr(args, "hostname", "localhost") or "localhost"
     login_wd = getattr(args, "work_dir", "") or ""
     redirect_ports = getattr(args, "redirect_ports", False)
     isolated = getattr(args, "isolated", False)
@@ -431,21 +436,11 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     if not no_sysvipc:
         proot_args.append("--sysvipc")
 
-    if kernel_release or hostname:
-        # Only override the uname struct when the user explicitly asked
-        # for a kernel release or a hostname. Missing fields fall back to
-        # the host's real values so we don't fabricate the rest.
-        host_uname = os.uname()
-        eff_sysname = host_uname.sysname or "Linux"
-        eff_nodename = hostname or host_uname.nodename
-        eff_release = kernel_release or host_uname.release
-        eff_version = host_uname.version
-        eff_machine = host_uname.machine
-        proot_args.append(
-            f"--kernel-release=\\{eff_sysname}\\{eff_nodename}"
-            f"\\{eff_release}\\{eff_version}\\{eff_machine}"
-            f"\\localdomain\\-1\\"
-        )
+    uname_m = os.uname().machine
+    proot_args.append(
+        f"--kernel-release=\\Linux\\{hostname}\\{kernel_release}"
+        f"\\{DEFAULT_FAKE_KERNEL_VERSION}\\{uname_m}\\localdomain\\-1\\"
+    )
 
     proot_args.append("-L")  # Fix lstat for dpkg symlink warnings.
 
