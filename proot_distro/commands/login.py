@@ -472,6 +472,20 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     emu_args = get_emulator_args(target_arch, device_arch, emulator_override)
     need_emu = bool(emu_args)
 
+    if dist_type == "termux" and need_emu:
+        msg()
+        msg(f"{C['BRED']}Error: cannot run Termux-type container "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' under emulation. "
+            f"The container architecture is '{C['YELLOW']}{target_arch}"
+            f"{C['BRED']}' but the host is '{C['YELLOW']}{device_arch}"
+            f"{C['BRED']}'. Termux-type containers are not emulatable because "
+            f"the host and the container share the same Termux prefix path "
+            f"({PREFIX}), so the host binaries at that path would be "
+            f"visible inside the container instead of the container's own "
+            f"architecture-specific binaries.{C['RST']}")
+        msg()
+        sys.exit(1)
+
     proot_bin = shutil.which("proot") or "proot"
     proot_args = [proot_bin] + emu_args
 
