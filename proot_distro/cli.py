@@ -345,6 +345,25 @@ def main() -> None:
             _HELP_COMMANDS[cmd]()
             sys.exit(0)
 
+    # Validate the command before argparse runs. An unknown subcommand name
+    # causes _SubParsersAction to raise ArgumentError, which parse_known_args
+    # routes through self.error() — printing argparse's own message and
+    # exiting before our custom error handler is ever reached.
+    _first = raw_args[0] if raw_args else None
+    if (
+        _first is not None
+        and not _first.startswith("-")
+        and _first not in _COMMAND_HANDLERS
+        and _first not in _ALIAS_TO_CANONICAL
+    ):
+        msg()
+        msg(f"{C['BRED']}Error: unknown command "
+            f"'{C['YELLOW']}{_first}{C['BRED']}'.{C['RST']}")
+        msg()
+        command_help()
+        msg()
+        sys.exit(1)
+
     parser = build_parser()
     args, _ = parser.parse_known_args(raw_args)
 
