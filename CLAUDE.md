@@ -1,0 +1,496 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working
+with code in this repository.
+
+## Overview
+
+This repository contains `proot-distro`, a Python utility for managing
+rootless proot-based Linux containers on Termux (Android). It pulls
+Docker/OCI images and assembles container filesystems locally.
+
+**No third-party Python dependencies.** `proot-distro` is pip-installable
+(published on PyPI at https://pypi.org/project/proot-distro/).
+
+---
+
+## proot-distro
+
+Manages proot-based Linux containers on Termux. The entry point
+`proot-distro.py` is a thin shim; all logic lives in `proot_distro/`.
+
+### Installation
+
+```bash
+pip install proot-distro        # from PyPI
+pip install .                   # from local source
+pip install -e .                # editable install for development
+```
+
+The `proot-distro` console script entry point resolves to
+`proot_distro.cli:main`. `pyproject.toml` is the single source of truth
+for the version string; `PROGRAM_VERSION` in `constants.py` reads it at
+runtime via `importlib.metadata.version("proot-distro")`.
+
+### Running directly (without pip)
+
+```bash
+./proot-distro.py list
+./proot-distro.py install ubuntu:24.04
+./proot-distro.py login ubuntu
+./proot-distro.py login ubuntu --user myuser -- bash -c "echo hello"
+./proot-distro.py remove ubuntu
+./proot-distro.py --help
+./proot-distro.py login --help
+```
+
+### Module layout (`proot_distro/`)
+
+| Module | Contents |
+|---|---|
+| `constants.py` | All global path and default constants. `PREFIX` reads `TERMUX_PREFIX` env var. |
+| `colors.py` | ANSI escape constants, `C` (color dict), `msg()`, `show_version()` |
+| `arch.py` | CPU arch detection, ELF-based installed arch detection, QEMU/emulator helpers |
+| `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()` |
+| `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` — with TTY progress bars |
+| `helpers/rootfs.py` | Install helpers: `write_resolv_conf()`, `write_hosts()`, `register_android_ids()` |
+| `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, cache helpers, layer application |
+| `commands/install.py` | `command_install()`, `_validate_name()`, `_is_local_path()`, `_derive_local_name()`, `_detect_strip_count()`, `_extract_plain_tar()`, `_extract_oci()`, `_install_from_local_file()` |
+| `commands/remove.py` | `command_remove()`, `_remove_path()` |
+| `commands/rename.py` | `command_rename()` |
+| `commands/reset.py` | `command_reset()` |
+| `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_manifest_env()`, `_IMAGE_ENV_BLOCKED`, and other private helpers |
+| `commands/list.py` | `command_list()` |
+| `commands/backup.py` | `command_backup()`, `_compression_mode()`, `_COMPRESSION_ARG_MAP`, `_iter_entries()`, `_add_path()`, `_fix_permissions()` |
+| `commands/restore.py` | `command_restore()`, `_detect_compression()`, `_remove_existing()`, `_dest_path()` |
+| `commands/clear_cache.py` | `command_clear_cache()`, `_ensure_readable()` |
+| `commands/copy.py` | `command_copy()`, `_resolve_copy_path()` |
+| `commands/sync.py` | `command_sync()`, `_resolve_sync_path()`, `_collect_entries()`, `_needs_update()`, `_sync_dir()`, `_sync_symlink()`, `_sync_file()`, `_file_checksum()`, `_unlink_robust()`, `_rmtree_robust()` |
+| `commands/run.py` | `command_run()`, `_read_image_config()` |
+| `commands/help.py` | `command_help()`, `_HELP_COMMANDS` |
+| `cli.py` | `build_parser()`, `_ALIAS_TO_CANONICAL`, `_COMMAND_HANDLERS`, `_REQUIRED_ARGS`, `main()` |
+
+### Key paths (Termux defaults)
+
+All paths are rooted under `TERMUX_PREFIX` (env var), which defaults to
+`/data/data/com.termux/files/usr`. Set `TERMUX_PREFIX` to override.
+
+| Constant | Default value |
+|---|---|
+| `PREFIX` | `/data/data/com.termux/files/usr` |
+| `RUNTIME_DIR` | `$PREFIX/var/lib/proot-distro` |
+| `CONTAINERS_DIR` | `$RUNTIME_DIR/containers` |
+| `LEGACY_ROOTFS_DIR` | `$RUNTIME_DIR/installed-rootfs` (migration only) |
+| `DOWNLOAD_CACHE_DIR` | `$RUNTIME_DIR/dlcache` |
+| `LAYER_CACHE_DIR` | `$RUNTIME_DIR/dlcache/layers` |
+| `MANIFEST_CACHE_DIR` | `$RUNTIME_DIR/dlcache/manifests` |
+
+### Container storage layout
+
+Each container is stored as a directory under `CONTAINERS_DIR`:
+
+```
+containers/<name>/
+containers/<name>/manifest.json   ← image_ref, arch, OCI manifest
+containers/<name>/rootfs/         ← assembled filesystem
+containers/<name>/rootfs/etc/
+containers/<name>/rootfs/...
+```
+
+`manifest.json` records `image_ref`, `arch`, the full OCI manifest, and
+`image_config` (the full image config blob) so that `reset` can re-pull the
+exact same image later and `login` can read image-defined environment
+variables. Plain tarball local installs do not write `manifest.json`.
+
+### Legacy format migration
+
+The old storage layout placed the rootfs at
+`installed-rootfs/<name>` (without the `containers/` wrapper and without
+`manifest.json`). `login` detects this on first use and automatically moves
+the rootfs to `containers/<name>/rootfs` via `_migrate_legacy_rootfs()`.
+
+After the rename, `_migrate_legacy_rootfs()` walks the new rootfs and
+rewrites any proot link2symlink symlinks whose targets still point at the
+old `installed-rootfs/<name>` path, replacing the prefix with the new
+`containers/<name>/rootfs` path. This mirrors the same rewrite done by
+`command_rename()`.
+
+The constant `LEGACY_ROOTFS_DIR` is kept exclusively for this migration path.
+No command other than `login` reads from it.
+
+### Container identity
+
+The **container directory name** under `CONTAINERS_DIR` is the sole
+identifier. There are no YAML config files at runtime.
+
+`list` scans `CONTAINERS_DIR` for subdirectories that have a `rootfs/`
+inside. All other commands validate existence by checking for
+`containers/<name>/rootfs`.
+
+### Distribution type: `normal` vs `termux`
+
+Detected from the rootfs filesystem layout at login time:
+
+- **`termux`**: `rootfs/data/data/com.termux/files/usr/bin/login` **file** exists inside rootfs (file check, not directory, to avoid false positives when proot creates the bind-mount target dir during a concurrent session).
+- **`normal`**: all other rootfs layouts.
+
+**`termux` type** differences in `login`:
+- No `--link2symlink`, no `--change-id`.
+- Working directory defaults to `/data/data/com.termux/files/home`.
+- Inner command is `/data/data/com.termux/files/usr/bin/login` (exec'd directly; no `/usr/bin/env` wrapper).
+- Guest env is hardcoded to `HOME`, `PATH`, `PREFIX`, `TMPDIR` for the Termux layout, plus host-inherited `TERM`/`COLORTERM` and any user `--env` entries.
+- Android system bindings are always enabled; Termux `PREFIX` is not bound into the guest.
+- **Cross-architecture not supported**: if the container's architecture differs from the host and QEMU emulation would be required, `login` exits with an error. The host and container share the same Termux prefix path (`PREFIX`), making cross-arch emulation impossible.
+
+### Commands and aliases
+
+| Command | Aliases |
+|---|---|
+| `install` | `add`, `i`, `in`, `ins` |
+| `remove` | `rm` |
+| `rename` | — |
+| `reset` | — |
+| `login` | `sh` |
+| `list` | `li`, `ls` |
+| `backup` | `bak`, `bkp` |
+| `restore` | — |
+| `clear-cache` | `clear`, `cl` |
+| `copy` | `cp` |
+| `sync` | — |
+| `run` | — |
+| `help` | `h`, `he`, `hel` |
+
+Note: the `mv` alias for `rename` was removed.
+
+### proot availability check
+
+`main()` calls `shutil.which("proot")` early. If proot is absent and stdin
+is a TTY, the user is prompted `Would you like to install it now? [y/N]`;
+answering `y`/`yes` runs `pkg install -y -q proot` via `subprocess.run`. On
+a non-TTY stdin the install hint is printed and the process exits.
+
+### Argument validation
+
+All required positional arguments are declared `nargs='?'` in argparse so
+that missing arguments are caught manually rather than by argparse.
+`_REQUIRED_ARGS` in `cli.py` maps each canonical command to a list of
+`(arg_name, error_message)` pairs checked in order before dispatch. On
+failure: blank line, error message, then the command's help text (via
+`_HELP_COMMANDS`). `restore` handles its own missing-input error inside
+`command_restore()` (depends on stdin TTY state).
+
+`install` accepts either a Docker image reference (e.g. `ubuntu:24.04`,
+`alpine:3.21`, `myuser/myimage:tag`, `ghcr.io/org/image:tag`) or a local
+archive path (detected by `_is_local_path()`: starts with `/`, `./`, `../`,
+or resolves to an existing file). Options: `--name ALIAS` (stored as
+`args.custom_dist_name`) installs under a custom local name; an empty
+`--name ''` is rejected immediately. `--architecture ARCH` (stored as
+`args.override_arch`; choices: `aarch64`, `arm`, `i686`, `riscv64`,
+`x86_64`) overrides the target CPU architecture (defaults to device arch).
+
+Container names (whether derived automatically or supplied via `--name`) are
+validated by `_validate_name()` against `^[A-Za-z0-9][A-Za-z0-9_.\-]*$`.
+`login` applies the same validation to its positional argument.
+
+`login` always detects architecture automatically from the installed rootfs
+ELF binaries; there is no architecture override for login. `login --emulator
+PATH` (stored as `args.emulator`) overrides the emulator binary; the path
+must exist and be executable.
+
+`remove` accepts `-v`/`--verbose` to print each removed file in real time.
+
+`login` accepts `--bind PATH[:PATH]` (repeatable). The source component is
+always resolved to an absolute path via `os.path.abspath`. The destination
+must not be `.` or `..`.
+
+`backup` accepts `--compress TYPE` (choices: `gzip`, `bzip2`, `xz`, `none`;
+stored as `args.compression`) to force a specific compression algorithm.
+
+`copy` accepts `--recursive` (`-r`) to allow directory copying.
+
+### Colors
+
+`proot_distro/colors.py` defines ANSI escape sequence constants composed into
+a `_COLORS` dict. `C` is set to `_COLORS` when `sys.stderr.isatty()` and
+`PD_FORCE_NO_COLORS` is unset, otherwise `_EMPTY` (all-empty strings). Every
+color entry starts with `_RST` so color transitions implicitly reset
+attributes.
+
+### Architecture and emulation
+
+- Device arch detected via `os.uname().machine`
+- Installed arch detected by `detect_installed_arch(rootfs_path)` in
+  `arch.py`: reads the first 20 bytes of candidate ELF binaries, checks
+  magic, reads endianness from `EI_DATA`, unpacks `e_machine` with `struct`,
+  and maps via `_ELF_MACHINE_MAP`. Accepts either a full rootfs path or a
+  bare container name (resolved as `CONTAINERS_DIR/<name>/rootfs`).
+- 32-bit support on AArch64 probed via `ctypes.CDLL(None).personality(PER_LINUX32)`
+- Cross-arch: proot `-q qemu-*` (QEMU user-mode)
+- 32-bit guests on 64-bit hosts run natively when supported
+- The `uname_m` field in proot's `--kernel-release` string is derived from
+  the container's `target_arch` via `_ARCH_UNAME_M` in `login.py` (not from
+  `os.uname().machine`), so emulated containers report the correct machine
+  type to `uname -m`. Falls back to `os.uname().machine` for unknown arches.
+
+### Install: local archive file
+
+When the positional argument is a local path, `command_install()` calls
+`_install_from_local_file(archive_path, rootfs_dir, dist_arch)`:
+
+1. Opens the archive with `tarfile.open(..., 'r:*')`.
+2. Collects all members (shows "Counting archive entries..." on TTY).
+3. **OCI detection**: if `oci-layout` is a member at the archive root → OCI image layout path; otherwise → plain tarball path.
+
+**Plain tarball path** (`_extract_plain_tar`):
+- **Strip count**: `_detect_strip_count()` scores strip levels 0–4 by counting members whose first remaining component is in `_ROOTFS_DIRS` (standard rootfs directory names). The level with the highest score is used.
+- Extraction mirrors `_apply_layer()` treatment: hard links deferred and copied via `shutil.copy2`, block/character devices and FIFOs skipped, mtime preserved, directory mtimes set in reverse order after all writes, `| stat.S_IRWXU` on all directories.
+- No `manifest.json` is written.
+
+**OCI image layout path** (`_extract_oci`):
+- Reads `index.json` → selects manifest for target arch via `_oci_find_manifest_entry()` (tries `platform` field first; falls back to reading each config blob).
+- Caches layer blobs into `LAYER_CACHE_DIR` via `_oci_cache_layer()` (atomic `.tmp` → `os.replace`).
+- Applies layers in order via `_apply_layer()`.
+- Returns a metadata dict (`manifest`, `image_config`, `image_ref`, `arch`, `env`).
+- `command_install()` writes `containers/<name>/manifest.json` with the same schema as Docker pull.
+
+**Container name for local installs**: derived by `_derive_local_name()` (strips archive extensions defined in `_ARCHIVE_EXTS`, lowercases, sanitizes). If the derived name is invalid and `--name` is not given, an error is shown.
+
+### Install: Docker Hub OCI pull
+
+`command_install()` calls `pull_image()` from `helpers/docker.py`.
+
+**`pull_image(image_ref, rootfs_dir, arch)`** flow:
+
+1. **Check manifest cache** (`dlcache/manifests/<safe_key>.json`) first:
+   - If cached **and** all layers present in `dlcache/layers/` → fully offline install.
+   - If cached but some layers missing → fetch auth token, download missing layers.
+   - If not cached → full online resolution: auth → manifest list → arch manifest → image config blob; saved to cache.
+2. **Apply layers** in order via `_apply_layer()`. Cached layers skip download.
+3. **Whiteout semantics** (OCI spec §6.1.2): `.wh..wh..opq` clears parent dir; `.wh.<name>` deletes the named sibling. Hard links are copied (`shutil.copy2`), deferred until all regular files are written. Block/character devices and FIFOs are silently skipped.
+4. **After layer application**: `setup_fake_sysdata` is always run. When `/etc/` exists: `write_resolv_conf` and `write_hosts` are called. When `/etc/passwd` exists: `register_android_ids` is called. These steps are silently skipped for images that lack `/etc/` (e.g. distroless, scratch-based).
+5. Returns dict with `name`, `version`, `description`, `env`, `manifest`, `image_config`.
+
+After `pull_image()` returns, `command_install()` writes:
+- `containers/<name>/manifest.json` with `image_ref`, `arch`, `manifest`, `image_config`
+
+**Auth stripping:** Docker Hub blob endpoints redirect to CDN pre-signed
+URLs. CDN hosts reject `Bearer` tokens (HTTP 400).
+`_AuthStrippingRedirectHandler` strips the `Authorization` header on
+cross-host redirects.
+
+**Custom registry auth:** For non-Docker-Hub registries, `_get_auth_token()`
+probes `https://<registry>/v2/`. If the registry responds `401` with a
+`WWW-Authenticate: Bearer` header, `_parse_bearer_challenge()` extracts
+`realm` and `service` from it and fetches an anonymous token from the realm
+URL. This handles public OCI registries (e.g. `ghcr.io`) that require a
+Bearer exchange even for unauthenticated pulls. If the probe returns `200`
+(no auth needed) an empty token is used.
+
+**Layer integrity:** `_download_blob()` streams the blob through a
+`hashlib.sha256` hasher while writing it. After the body is fully read the
+computed digest is compared to the expected one from the manifest; on
+mismatch the temp file is unlinked and `RuntimeError` is raised before any
+data is promoted into the cache. Only `sha256` digests are accepted (the
+only algorithm currently used by Docker Hub and the OCI distribution
+spec). Cached layers are trusted because the cache only ever contains
+verified blobs — verification happens before `os.replace` moves the temp
+file to its final location.
+
+**`parse_image_ref(image_ref)`** returns `(registry, repo, tag)` where
+`registry` is empty for Docker Hub images.
+
+**Custom registry detection:** if the first path component of the image ref
+contains `.` or `:`, it is treated as the registry host
+(e.g. `ghcr.io/foo/bar:tag` → registry=`ghcr.io`, repo=`foo/bar`,
+tag=`tag`).
+
+**Cache layout in `dlcache/`:**
+- `layers/<digest_with_colon_as_underscore>` — one file per layer blob.
+- `manifests/<safe_image_ref>_<arch>.json` — resolved single-arch manifest JSON plus image config.
+
+**Architecture mapping** (`_ARCH_TO_DOCKER`):
+
+| proot-distro arch | Docker arch | Variant |
+|---|---|---|
+| `aarch64` | `arm64` | — |
+| `arm` | `arm` | `v7` |
+| `i686` | `386` | — |
+| `x86_64` | `amd64` | — |
+| `riscv64` | `riscv64` | — |
+
+### Login: passwd resolution and environment variables
+
+**`/etc/passwd` symlink resolution** — `_resolve_rootfs_path(rootfs, guest_path)` resolves an absolute guest path to its real host path by following symlinks within the rootfs namespace. Absolute symlink targets are re-rooted under `rootfs` via `os.path.normpath(target)` (prevents `..` escapes past `/`). The loop runs at most 40 times; exceeding this raises `OSError(ELOOP)`.
+
+**Optional `/etc/passwd`** — for `normal`-type containers, `/etc/passwd` is not required. When it is absent, `--user` accepts only a numeric UID or the literal `root` (mapped to UID 0). Any other non-numeric user name is rejected with an error. UID and GID are both set to the supplied number; home defaults to `/root` (UID 0) or `/home/<uid>` (other).
+
+**Shell availability check** — before `os.execvpe`, `login` resolves `login_shell` within the rootfs via `_resolve_rootfs_path` and confirms it is a regular file. If the shell is missing and the image config (`manifest.json`) defines a non-empty `Entrypoint` or `Cmd`, the error directs the user to use `proot-distro run` instead. If neither a shell nor an Entrypoint/Cmd exists, an error states that the image has no shell or entrypoint defined. This check is bypassed when `args._run_inner` is set (i.e. invoked via `command_run`).
+
+**Environment delivery** — `command_login()` builds a clean `child_env` dict and passes it to `os.execvpe("proot", ...)`. Proot inherits this dict and propagates it to the spawned shell. There is **no `/usr/bin/env -i` wrapper** in the inner command — the shell is exec'd directly. The host's environment is **not** carried into the guest; only the entries below are exported.
+
+**Environment variable precedence** (later entries win):
+
+1. `PATH=<DEFAULT_PATH_ENV>`, `MOZ_FAKE_NO_SANDBOX=1`, `PULSE_SERVER=127.0.0.1` — baseline always exported
+2. Image `Env` — read from `containers/<name>/manifest.json` → `image_config["config"]["Env"]` via `_read_manifest_env()`. If `manifest.json` is absent (plain tarball install, legacy container) no image env is applied. Entries whose key is in `_IMAGE_ENV_BLOCKED` are silently skipped.
+3. Android system vars (`ANDROID_ART_ROOT`, `ANDROID_DATA`, `ANDROID_I18N_ROOT`, `ANDROID_ROOT`, `ANDROID_RUNTIME_ROOT`, `ANDROID_TZDATA_ROOT`, `BOOTCLASSPATH`, `DEX2OATBOOTCLASSPATH`, `EXTERNAL_STORAGE`) — exported only when `--isolated` is **not** set
+4. `--env` flags from the command line
+5. `HOME`, `USER`, `TERM`, `COLORTERM` — always set last; `TERM` and `COLORTERM` inherit from host (`COLORTERM` only when set on the host; `TERM` falls back to `xterm-256color` when the host has none)
+
+`_IMAGE_ENV_BLOCKED` prevents image Env from overriding: all Android system vars listed in step 3, `MOZ_FAKE_NO_SANDBOX`, `PULSE_SERVER`, `TERM`, `COLORTERM`. `PATH` is not blocked — images may define a base `PATH`, but `PREFIX/bin` is unconditionally appended afterward in non-isolated mode.
+
+After building `child_env`, when not in `--isolated` mode, `PREFIX/bin` is appended to `PATH` (deduplicating any existing occurrence) so Termux host tools are always reachable from the guest. For `normal`-type containers this is also written into `rootfs/etc/profile.d/termux-prefix.sh` via `_inject_termux_profile()` — a POSIX `case`-guard snippet that re-appends `PREFIX/bin` after `/etc/profile` reinitialises `PATH` during interactive login-shell startup. The snippet is a no-op if `/etc/profile.d/` does not exist in the container.
+
+Proot's own toggle env vars (`PROOT_NO_SECCOMP`, `PROOT_DUMP`, `PROOT_VERBOSE`, plus `PROOT_L2S_DIR` set to `rootfs/.l2s` for normal-type dists — the directory is always created upfront via `os.makedirs(..., exist_ok=True)` so concurrent sessions agree on the same path) are added to `child_env` after the user-facing precedence above so proot can read them. `LD_PRELOAD` is removed from `child_env` before the exec.
+
+### Remove
+
+`command_remove()` removes the entire `containers/<name>` directory (rootfs
++ manifest.json). Uses `_remove_path()` with on-the-fly permission fixing.
+
+**`_remove_path(path, on_remove=None)`**: recursive removal with permission
+fixing. Directories receive at least `S_IRWXU`; regular files receive at
+least `S_IRUSR | S_IWUSR`; symlinks are unlinked directly. Returns `True` on
+full success.
+
+### Copy
+
+`command_copy()` copies or moves files between host paths and container
+rootfs paths (resolved via `dist:path` notation by `_resolve_copy_path()`).
+Container paths resolve to `containers/<name>/rootfs/<path>`.
+
+- **`--recursive`** (`-r`): required for directory copying.
+- **`--move`** (`-m`): uses `shutil.move`.
+- **`--verbose`** (`-v`): logs each file.
+
+### Sync
+
+`command_sync()` synchronizes a source path to a destination path, skipping
+files that are already up to date. Both paths support `dist:path` notation.
+Always recursive — no flag needed.
+
+- **Comparison**: size + integer mtime by default; size + CRC32 (via
+  `zlib.crc32`) with `--checksum`. CRC32 is used for speed since the
+  check is not security-sensitive.
+- **Symlinks**: copied as-is via `os.symlink`.
+- **Hard links**: treated as independent regular files (no inode tracking).
+- **Special files**: block/char devices, FIFOs, sockets silently skipped.
+- **Ownership**: never changed (`chown` is never called).
+- **Modes and mtime**: preserved on every written file via `os.chmod`
+  and `os.utime`.
+- **Permission errors on source**: warned and skipped.
+- **Permission errors on destination**: `chmod` attempted; exits with
+  error if that also fails.
+- **Atomic writes**: regular files written to a `.~pd_sync` temp file
+  then `os.replace`d to avoid partial writes.
+- **Progress bar**: TTY-only stderr, format `[*] [####----] XX%  N / Total files`.
+- **`--verbose`** (`-v`): logs each synced or deleted entry.
+- **`--checksum`**: enables CRC32-based comparison.
+- **`--delete`**: after the sync pass, walks the destination and removes any
+  entry (file, symlink, or directory tree) whose relative path has no
+  counterpart in the source. Only active when source is a directory.
+  Directories are removed with `_rmtree_robust()` (chmod-retry on error);
+  files and symlinks with `_unlink_robust()`. The walk uses `topdown=True`
+  so that when an entire extra directory is found, it is removed via
+  `_rmtree_robust` and popped from `dirnames` — os.walk never descends into
+  it, avoiding redundant per-file checks.
+
+### Run
+
+`command_run()` runs the Entrypoint and/or Cmd defined in a container's
+Docker image manifest (`containers/<name>/manifest.json`), read from
+`image_config.config`. Delegates entirely to `command_login()` after
+injecting the pre-built inner command via `args._run_inner`.
+
+**Entrypoint/Cmd resolution:**
+- If args are given after `--`: inner = `Entrypoint + args` (Cmd replaced).
+- Otherwise: inner = `Entrypoint + Cmd`.
+- If both are empty and no args: error.
+
+`command_login()` checks `args._run_inner` (via `getattr`) in both the
+`termux` and `normal` dist branches, bypassing shell wrapping when set.
+All other login options (`--user`, `--isolated`, `--bind`, etc.) work
+unchanged.
+
+**Working directory in `run` mode** — `command_run()` injects
+`args.work_dir` before calling `command_login()`:
+- If `--work-dir` was given by the user → used as-is (already in `args.work_dir`).
+- Otherwise: `WorkingDir` from `image_config.config` is used when non-empty.
+- If `WorkingDir` is absent or empty → defaults to `/` (not the user's home
+  directory, which is the `login`-mode default).
+
+### Backup
+
+`command_backup()` uses a pure-Python tar implementation.
+
+- **Archive structure**: `<name>/`, `<name>/manifest.json`, `<name>/rootfs/...`
+- **Source**: `containers/<name>/` directory.
+- **Permission fix**: only applied to the `rootfs/` subdirectory before archiving.
+- **Compression**: determined by `--compress` flag first, then file extension.
+- **tar mode**: seekable file uses `w:{comp}`; streaming stdout uses `w|{comp}`.
+- **Entry filtering**: block/character devices, FIFOs, and sockets are silently skipped.
+- **Ownership**: uid/gid/uname/gname are zeroed.
+- **Progress bar**: TTY-only stderr, format `[*] [####----] XX%  N / Total files`.
+- **CTRL-C**: progress bar cleared, partial output file removed.
+
+### Restore
+
+`command_restore()` uses a pure-Python tar implementation.
+
+- **Compression**: detected from file header magic bytes. File: `r:{comp}`; stdin: `r|{comp}`.
+- **Archive format routing** (via `_dest_path()`):
+  - New: `<name>/manifest.json` → `containers/<name>/manifest.json`
+  - New: `<name>/rootfs/...` → `containers/<name>/rootfs/...`
+  - Legacy: `installed-rootfs/<name>/...` → `containers/<name>/rootfs/...`
+  - No subdir (bare root): rejected with an error.
+- **Recursive-unlink**: on the first entry for a container, the existing rootfs is cleared.
+- **Progress bar**: seekable file shows accurate bar; stdin shows counter.
+- **CTRL-C**: progress bar cleared, no data removed.
+
+### Reset
+
+`command_reset()` reads `image_ref` and `arch` from
+`containers/<name>/manifest.json`, removes only the `rootfs/` subdirectory,
+and calls `command_install()` with a synthetic args object. If `manifest.json`
+is missing, falls back to pulling `<name>:latest`.
+
+### Clear cache
+
+`command_clear_cache()` removes all contents of `DOWNLOAD_CACHE_DIR`.
+Uses `os.scandir` for iteration, `shutil.rmtree` for subdirectories,
+`os.remove` for stray files. Reports total freed space.
+
+### Fake sysdata
+
+On install and on every login of a `normal`-type container, fake `/proc`
+and `/sys` stub files are written **inside the container's own rootfs**
+(`containers/<name>/rootfs/proc/.loadavg`, `…/.stat`, `…/.uptime`,
+`…/.version`, `…/.vmstat`, `…/.sysctl_entry_cap_last_cap`,
+`…/.sysctl_inotify_max_user_watches`, plus `…/sys/.empty`) and then
+bind-mounted by proot over the corresponding `/proc/*` and
+`/sys/fs/selinux` paths. Storing them inside the rootfs keeps them
+co-located with the container, so `remove` cleans them up automatically.
+Both `setup_fake_sysdata(rootfs)` and `fake_proc_bindings(rootfs)` take
+the absolute rootfs path as their argument. Constants `_FAKE_LOADAVG`,
+`_FAKE_STAT`, `_FAKE_UPTIME`, `_FAKE_VMSTAT` are hardcoded in
+`proot_distro/sysdata.py`. `termux`-type containers do not get fake
+sysdata (they share the host's `/proc` and `/sys` via the existing
+`--bind=/proc` / `--bind=/sys`).
+
+### Subcommand help
+
+Per-command help text is in `_HELP_COMMANDS` dict (lambdas) in
+`proot_distro/commands/help.py`. All text is limited to 66 display columns.
+Subcommand `--help`/`-h` is intercepted in `main()` before argparse parses
+positional arguments to avoid "required argument" errors.
+
+### Pure Python policy
+
+`proot_distro/` avoids spawning subprocesses for system queries:
+- Colors: ANSI constants, no `tput`
+- User/group info in `helpers/rootfs.py`: `pwd.getpwuid()` and `grp.getgrgid()`, no `id`
+- ELF arch detection in `arch.py`: `struct.unpack` on raw bytes, no `file`
+- 32-bit support in `arch.py`: `ctypes` `personality()` syscall, no `lscpu`
+- OCI registry access: `urllib.request`, no `docker` or `curl`
+- Layer extraction: `tarfile` module, no `tar` subprocess
+- Backup archiving: `tarfile` module, no `tar` subprocess
+- Restore extraction: `tarfile` module, no `tar` subprocess

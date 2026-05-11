@@ -1,2 +1,5 @@
-/rootfs/*
+/dist/
+/rootfs/
+__pycache__
 *.swp
+*.egg-info

@@ -1,17 +1,21 @@
 name: "Feature request"
-description: "Request a new functionality"
+description: "Tell us about function you want to see in proot-distro"
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Check the [Functionality overview](https://github.com/termux/proot-distro#functionality-overview) section of readme document to ensure that new feature would not interfere with already existing ones. PRoot Distro has a blackbox-like design style and never supposed to be highly configurable. Requests for excessive functionality (that can be achieved through already existing) or plug-in format extensions that would allow significantly modifying runtime behavior would be rejected.
+        This is a bug tracker of the PRoot Distro - a helper script for PRoot to manage distribution installations. Please use it accordingly to selected ticket type.
 
-        To submit a request of a new feature, fill the form below. Be patient, do not expect that feature will get added immediately.
+        Maintainer has right to refuse in adding specific feature for any reason.
+
+        > [!IMPORTANT]
+        > DISTRIBUTION REQUESTS WILL BE DISMISSED
   - type: textarea
     attributes:
       label: Feature description
-      description: A clear and concise description of a feature you would like to see in `proot-distro`.
+      description: |
+        A clear and concise description of a feature you would like to see in `proot-distro`.
     validations:
       required: true

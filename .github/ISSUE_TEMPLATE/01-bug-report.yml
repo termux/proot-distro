@@ -1,22 +1,22 @@
 name: "Bug report"
-description: "Create a report to help us improve"
+description: "Tell us about issue with proot-distro utility"
 title: "[Bug]: "
 labels: ["bug report"]
 body:
   - type: markdown
     attributes:
       value: |
-        > [!IMPORTANT]  
-        > ### This is a bug tracker of the PRoot Distro - a Bash script utility for managing distribution rootfs for use with PRoot.
-        > 
-        > ### **!!! DO NOT REPORT ISSUES ABOUT NETWORKING, CRASHES, BLACK SCREENS, BROKEN WINE AND SO ON. THEY WILL BE IGNORED !!! Only bugs related to `proot-distro` shell script implementation will be accepted.**
+        This is a bug tracker of the PRoot Distro - a helper script for PRoot to manage distribution installations. Please use it accordingly to selected ticket type.
+
+        Maintainer may close the bug report without resolution when it doesn't have enough information or when issue considered as result of user mistake.
+
+        > [!IMPORTANT]
+        > DISTRIBUTION BUG REPORTS WILL BE DISMISSED
   - type: textarea
     attributes:
       label: Problem description
       description: |
         A clear and concise description of what the problem is. You may attach the logs, screenshots, screen video recording and whatever else that will help to understand the issue.
-
-        **Reminding once more: do not report distribution bugs here such as black screens, package issues, desktop problems, etc. This bug tracker is solely about `proot-distro` script.**
     validations:
       required: true
   - type: textarea
