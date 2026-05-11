@@ -104,6 +104,11 @@ Layers are cached in `$TERMUX_PREFIX/var/lib/proot-distro/dlcache/` and
 reused on subsequent installs. If all layers are already cached, installation
 runs fully offline.
 
+After installation the tag is always shown in the output (e.g.
+`Installing 'wordpress:latest'`). If the image defines an Entrypoint, a
+`Run entrypoint: proot-distro run <name>` hint is printed alongside the
+`Start shell:` hint.
+
 ---
 
 ### `login` — Start a shell inside a container
@@ -140,6 +145,7 @@ proot-distro login ubuntu -- bash -c "echo hello"
 | `--user USER` | Log in as USER (default: root) |
 | `--redirect-ports` | Redirect privileged ports 1–1023 to higher numbers |
 | `--isolated` | Only bind mandatory host paths (no `/sdcard`, etc.) |
+| `--minimal` | Bare-minimum proot config: only `/dev`, `/proc`, `/sys` bound; no Android dirs, no fake sysdata, no kernel-release override; only `--env`, `TERM`, `COLORTERM`, `PROOT_L2S_DIR` exported |
 | `--termux-home` | Bind Termux home directory into the container |
 | `--shared-tmp` | Bind Termux tmp to `/tmp` inside the container |
 | `--bind SRC[:DST]` | Bind a custom path (repeatable). Source is resolved to an absolute path |
@@ -421,7 +427,8 @@ exits.
 | Only `Cmd` defined | `ARG ...` | `ARG ...` |
 | Neither defined | _(none)_ | Error |
 
-Accepts the same options as `login`. See `proot-distro login --help`.
+Accepts the same options as `login`, including `--isolated`, `--minimal`,
+`--env`, `--bind`, and all others. See `proot-distro login --help`.
 
 **Examples:**
 
@@ -434,6 +441,9 @@ proot-distro run ubuntu -- --version
 
 # Run isolated with a custom environment variable
 proot-distro run ubuntu --isolated --env MY_VAR=hello
+
+# Run with bare-minimum proot configuration
+proot-distro run ubuntu --minimal
 ```
 
 ---
