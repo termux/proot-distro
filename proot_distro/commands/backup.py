@@ -237,8 +237,6 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     # Archive prefix is just the container name (e.g. "ubuntu/").
     arc_prefix = dist_name
     entries = []
-    # Container directory entry.
-    entries.append((container_dir, arc_prefix))
     # manifest.json (optional — may not exist for legacy containers).
     if os.path.isfile(manifest_path):
         entries.append((manifest_path, os.path.join(arc_prefix, "manifest.json")))
