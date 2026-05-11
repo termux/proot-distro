@@ -105,6 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--shared-tmp", dest="shared_tmp", action="store_true"
     )
     p_login.add_argument(
+        "--shared-x11", dest="shared_x11", action="store_true"
+    )
+    p_login.add_argument(
         "--bind", action="append", metavar="PATH[:PATH]"
     )
     p_login.add_argument(
@@ -190,6 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument(
         "--shared-tmp", dest="shared_tmp", action="store_true"
+    )
+    p_run.add_argument(
+        "--shared-x11", dest="shared_x11", action="store_true"
     )
     p_run.add_argument(
         "--bind", action="append", metavar="PATH[:PATH]"

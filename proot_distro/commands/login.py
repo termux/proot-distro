@@ -312,6 +312,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     minimal = getattr(args, "minimal", False)
     use_termux_home = getattr(args, "termux_home", False)
     shared_tmp = getattr(args, "shared_tmp", False)
+    shared_x11 = getattr(args, "shared_x11", False)
     no_link2symlink = getattr(args, "no_link2symlink", False)
     no_sysvipc = getattr(args, "no_sysvipc", False)
     no_kill_on_exit = getattr(args, "no_kill_on_exit", False)
@@ -676,6 +677,9 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
         if shared_tmp and dist_type != "termux":
             proot_args.append(f"--bind={PREFIX}/tmp:/tmp")
+
+        if shared_x11 and dist_type != "termux":
+            proot_args.append(f"--bind={PREFIX}/tmp/.X11-unix:/tmp/.X11-unix")
 
     for bnd in custom_binds:
         if ":" in bnd:

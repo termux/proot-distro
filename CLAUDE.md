@@ -203,6 +203,11 @@ must exist and be executable.
 always resolved to an absolute path via `os.path.abspath`. The destination
 must not be `.` or `..`.
 
+`login` (and `run`) accept `--shared-x11` (stored as `args.shared_x11`).
+When set, binds `PREFIX/tmp/.X11-unix` into the container at
+`/tmp/.X11-unix`. Skipped for termux-type containers. Works independently of
+`--shared-tmp` and takes priority over `--isolated`.
+
 `backup` accepts `--compress TYPE` (choices: `gzip`, `bzip2`, `xz`, `none`;
 stored as `args.compression`) to force a specific compression algorithm.
 
