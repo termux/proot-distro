@@ -97,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--redirect-ports", dest="redirect_ports", action="store_true"
     )
     p_login.add_argument("--isolated", action="store_true")
+    p_login.add_argument("--minimal", action="store_true")
     p_login.add_argument(
         "--termux-home", dest="termux_home", action="store_true"
     )
@@ -183,6 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--redirect-ports", dest="redirect_ports", action="store_true"
     )
     p_run.add_argument("--isolated", action="store_true")
+    p_run.add_argument("--minimal", action="store_true")
     p_run.add_argument(
         "--termux-home", dest="termux_home", action="store_true"
     )

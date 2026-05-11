@@ -309,6 +309,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     login_wd = getattr(args, "work_dir", "") or ""
     redirect_ports = getattr(args, "redirect_ports", False)
     isolated = getattr(args, "isolated", False)
+    minimal = getattr(args, "minimal", False)
     use_termux_home = getattr(args, "termux_home", False)
     shared_tmp = getattr(args, "shared_tmp", False)
     no_link2symlink = getattr(args, "no_link2symlink", False)
@@ -330,20 +331,26 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     if dist_type == "termux":
         if not login_wd:
             login_wd = _TERMUX_HOME_INNER
-        child_env["HOME"] = _TERMUX_HOME_INNER
-        child_env["PATH"] = f"{_TERMUX_USR}/bin"
-        child_env["PREFIX"] = _TERMUX_USR
-        child_env["TMPDIR"] = f"{_TERMUX_USR}/tmp"
+        if minimal:
+            for entry in extra_env:
+                key, _, val = entry.partition("=")
+                if key:
+                    child_env[key] = val
+        else:
+            child_env["HOME"] = _TERMUX_HOME_INNER
+            child_env["PATH"] = f"{_TERMUX_USR}/bin"
+            child_env["PREFIX"] = _TERMUX_USR
+            child_env["TMPDIR"] = f"{_TERMUX_USR}/tmp"
+            for entry in extra_env:
+                key, _, val = entry.partition("=")
+                if key:
+                    child_env[key] = val
         host_term = os.environ.get("TERM", "")
         if host_term:
             child_env["TERM"] = host_term
         host_colorterm = os.environ.get("COLORTERM", "")
         if host_colorterm:
             child_env["COLORTERM"] = host_colorterm
-        for entry in extra_env:
-            key, _, val = entry.partition("=")
-            if key:
-                child_env[key] = val
         run_inner = getattr(args, "_run_inner", None)
         if run_inner is not None:
             inner = run_inner
@@ -413,42 +420,55 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
                 login_wd = login_home
             login_shell = "/bin/sh"
 
-        # Baseline guest env. Always exported on every login.
-        child_env["PATH"] = DEFAULT_PATH_ENV
-        child_env["MOZ_FAKE_NO_SANDBOX"] = "1"
-        child_env["PULSE_SERVER"] = "127.0.0.1"
-
-        # Image-defined Env entries. Blocked vars cannot be overridden by image.
         container_dir = os.path.dirname(rootfs)
-        for entry in _read_manifest_env(container_dir):
-            key, _, val = entry.partition("=")
-            if key and key not in _IMAGE_ENV_BLOCKED:
-                child_env[key] = val
 
-        # Android system vars are exported only when not running --isolated.
-        if not isolated:
-            for var in (
-                "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
-                "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
-                "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
-            ):
-                val = os.environ.get(var, "")
-                if val:
-                    child_env[var] = val
+        if minimal:
+            # Bare-minimum env: only --env args plus terminal variables.
+            for entry in extra_env:
+                key, _, val = entry.partition("=")
+                if key:
+                    child_env[key] = val
+            child_env["TERM"] = os.environ.get("TERM", "") or "xterm-256color"
+            host_colorterm = os.environ.get("COLORTERM", "")
+            if host_colorterm:
+                child_env["COLORTERM"] = host_colorterm
+        else:
+            # Baseline guest env. Always exported on every login.
+            child_env["PATH"] = DEFAULT_PATH_ENV
+            child_env["MOZ_FAKE_NO_SANDBOX"] = "1"
+            child_env["PULSE_SERVER"] = "127.0.0.1"
 
-        # User-supplied --env=VAR=VALUE entries.
-        for entry in extra_env:
-            key, _, val = entry.partition("=")
-            if key:
-                child_env[key] = val
+            # Image-defined Env entries. Blocked vars cannot be overridden.
+            for entry in _read_manifest_env(container_dir):
+                key, _, val = entry.partition("=")
+                if key and key not in _IMAGE_ENV_BLOCKED:
+                    child_env[key] = val
 
-        # Per-user identity and host-inherited terminal vars (always last).
-        child_env["HOME"] = login_home
-        child_env["USER"] = login_user
-        child_env["TERM"] = os.environ.get("TERM", "") or "xterm-256color"
-        host_colorterm = os.environ.get("COLORTERM", "")
-        if host_colorterm:
-            child_env["COLORTERM"] = host_colorterm
+            # Android system vars exported only when not running --isolated.
+            if not isolated:
+                for var in (
+                    "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
+                    "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT",
+                    "ANDROID_TZDATA_ROOT",
+                    "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+                ):
+                    val = os.environ.get(var, "")
+                    if val:
+                        child_env[var] = val
+
+            # User-supplied --env=VAR=VALUE entries.
+            for entry in extra_env:
+                key, _, val = entry.partition("=")
+                if key:
+                    child_env[key] = val
+
+            # Per-user identity and host-inherited terminal vars (always last).
+            child_env["HOME"] = login_home
+            child_env["USER"] = login_user
+            child_env["TERM"] = os.environ.get("TERM", "") or "xterm-256color"
+            host_colorterm = os.environ.get("COLORTERM", "")
+            if host_colorterm:
+                child_env["COLORTERM"] = host_colorterm
 
         run_inner = getattr(args, "_run_inner", None)
         if run_inner is not None:
@@ -500,12 +520,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             else:
                 inner = [login_shell, "-l"]
 
-        setup_fake_sysdata(rootfs)
+        if not minimal:
+            setup_fake_sysdata(rootfs)
 
     # Ensure Termux bin is always last in PATH so guest tools can invoke
-    # host Termux utilities. Skipped in --isolated mode where PREFIX is not
-    # bound into the guest. De-duplicates any existing occurrence first.
-    if not isolated:
+    # host Termux utilities. Skipped in --isolated and --minimal modes where
+    # PREFIX is not bound into the guest. De-duplicates any existing
+    # occurrence first.
+    if not isolated and not minimal:
         termux_bin = f"{PREFIX}/bin"
         components = [
             c for c in child_env.get("PATH", "").split(":")
@@ -514,7 +536,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         components.append(termux_bin)
         child_env["PATH"] = ":".join(components)
 
-    if dist_type == "normal" and not isolated:
+    if dist_type == "normal" and not isolated and not minimal:
         _inject_termux_profile(rootfs)
 
     # Architecture detection.
@@ -571,11 +593,12 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         "x86_64":  "x86_64",
         "riscv64": "riscv64",
     }
-    uname_m = _ARCH_UNAME_M.get(target_arch, os.uname().machine)
-    proot_args.append(
-        f"--kernel-release=\\Linux\\{hostname}\\{kernel_release}"
-        f"\\{DEFAULT_FAKE_KERNEL_VERSION}\\{uname_m}\\localdomain\\-1\\"
-    )
+    if not minimal:
+        uname_m = _ARCH_UNAME_M.get(target_arch, os.uname().machine)
+        proot_args.append(
+            f"--kernel-release=\\Linux\\{hostname}\\{kernel_release}"
+            f"\\{DEFAULT_FAKE_KERNEL_VERSION}\\{uname_m}\\localdomain\\-1\\"
+        )
 
     proot_args.append("-L")  # Fix lstat for dpkg symlink warnings.
 
@@ -587,71 +610,72 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
     proot_args += ["--bind=/dev", "--bind=/proc", "--bind=/sys"]
 
-    if dist_type != "termux":
-        proot_args += [
-            "--bind=/dev/urandom:/dev/random",
-            "--bind=/proc/self/fd:/dev/fd",
-        ]
-        for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
-            if os.path.exists(f"/proc/self/fd/{i}"):
-                proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
-
-        proot_args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
-        proot_args += fake_proc_bindings(rootfs)
-
-        tmp_dir = os.path.join(rootfs, "tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
-        try:
-            os.chmod(tmp_dir, 0o1777)
-        except OSError:
-            pass
-        proot_args.append(f"--bind={tmp_dir}:/dev/shm")
-
-    if not isolated:
-        for data_dir in (
-            "/data/app", "/data/dalvik-cache",
-            "/data/misc/apexdata/com.android.art/dalvik-cache",
-        ):
-            if not os.path.isdir(data_dir):
-                continue
-            mode = oct(os.stat(data_dir).st_mode)[-1]
-            if mode in ("1", "5", "7"):
-                proot_args.append(f"--bind={data_dir}")
-
-        apps_dir = f"/data/data/{TERMUX_APP_PACKAGE}/files/apps"
-        if os.path.isdir(apps_dir):
-            proot_args.append(f"--bind={apps_dir}")
-
+    if not minimal:
         if dist_type != "termux":
-            proot_args.append(
-                f"--bind=/data/data/{TERMUX_APP_PACKAGE}/cache"
-            )
-            proot_args.append(f"--bind={TERMUX_HOME}")
-        else:
-            os.makedirs(
-                os.path.join(
-                    rootfs, "data", "data", "com.termux", "cache"
-                ),
-                exist_ok=True,
-            )
+            proot_args += [
+                "--bind=/dev/urandom:/dev/random",
+                "--bind=/proc/self/fd:/dev/fd",
+            ]
+            for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
+                if os.path.exists(f"/proc/self/fd/{i}"):
+                    proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
 
-        proot_args += _storage_bindings()
+            proot_args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
+            proot_args += fake_proc_bindings(rootfs)
 
-    if dist_type == "termux" or not isolated or need_emu:
-        proot_args += _system_bindings()
-        if dist_type != "termux":
-            proot_args.append(f"--bind={PREFIX}")
+            tmp_dir = os.path.join(rootfs, "tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
+            try:
+                os.chmod(tmp_dir, 0o1777)
+            except OSError:
+                pass
+            proot_args.append(f"--bind={tmp_dir}:/dev/shm")
 
-    if use_termux_home:
-        if dist_type == "termux":
-            proot_args.append(f"--bind={TERMUX_HOME}:{_TERMUX_HOME_INNER}")
-        elif login_user == "root":
-            proot_args.append(f"--bind={TERMUX_HOME}:/root")
-        else:
-            proot_args.append(f"--bind={TERMUX_HOME}:{login_home}")
+        if not isolated:
+            for data_dir in (
+                "/data/app", "/data/dalvik-cache",
+                "/data/misc/apexdata/com.android.art/dalvik-cache",
+            ):
+                if not os.path.isdir(data_dir):
+                    continue
+                mode = oct(os.stat(data_dir).st_mode)[-1]
+                if mode in ("1", "5", "7"):
+                    proot_args.append(f"--bind={data_dir}")
 
-    if shared_tmp and dist_type != "termux":
-        proot_args.append(f"--bind={PREFIX}/tmp:/tmp")
+            apps_dir = f"/data/data/{TERMUX_APP_PACKAGE}/files/apps"
+            if os.path.isdir(apps_dir):
+                proot_args.append(f"--bind={apps_dir}")
+
+            if dist_type != "termux":
+                proot_args.append(
+                    f"--bind=/data/data/{TERMUX_APP_PACKAGE}/cache"
+                )
+                proot_args.append(f"--bind={TERMUX_HOME}")
+            else:
+                os.makedirs(
+                    os.path.join(
+                        rootfs, "data", "data", "com.termux", "cache"
+                    ),
+                    exist_ok=True,
+                )
+
+            proot_args += _storage_bindings()
+
+        if dist_type == "termux" or not isolated or need_emu:
+            proot_args += _system_bindings()
+            if dist_type != "termux":
+                proot_args.append(f"--bind={PREFIX}")
+
+        if use_termux_home:
+            if dist_type == "termux":
+                proot_args.append(f"--bind={TERMUX_HOME}:{_TERMUX_HOME_INNER}")
+            elif login_user == "root":
+                proot_args.append(f"--bind={TERMUX_HOME}:/root")
+            else:
+                proot_args.append(f"--bind={TERMUX_HOME}:{login_home}")
+
+        if shared_tmp and dist_type != "termux":
+            proot_args.append(f"--bind={PREFIX}/tmp:/tmp")
 
     for bnd in custom_binds:
         if ":" in bnd:
@@ -679,10 +703,13 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
     # Proot itself reads a few env vars to toggle its own behavior. They are
     # passed through to proot (and therefore to the spawned guest process).
-    for var in ("PROOT_NO_SECCOMP", "PROOT_DUMP", "PROOT_VERBOSE"):
-        val = os.environ.get(var)
-        if val:
-            child_env[var] = val
+    # In minimal mode only PROOT_L2S_DIR is exported; proot debug vars are
+    # skipped to keep the environment truly minimal.
+    if not minimal:
+        for var in ("PROOT_NO_SECCOMP", "PROOT_DUMP", "PROOT_VERBOSE"):
+            val = os.environ.get(var)
+            if val:
+                child_env[var] = val
     if dist_type != "termux":
         # Always pin PROOT_L2S_DIR to a fixed path and create the directory
         # upfront. Without this, the first session lets proot choose the
