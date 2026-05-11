@@ -88,6 +88,11 @@ def command_run(args, configs: dict) -> None:
         msg()
         sys.exit(1)
 
+    # Use WorkingDir from image config unless --work-dir was given.
+    # Fall back to "/" when neither is available.
+    if not getattr(args, "work_dir", None):
+        args.work_dir = img_cfg.get("WorkingDir") or "/"
+
     if getattr(args, "debug", False):
         if entrypoint:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
