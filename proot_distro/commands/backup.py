@@ -105,12 +105,38 @@ def _iter_entries(root: str, arcroot: str):
             yield (os.path.join(dirpath, fname), os.path.join(arc_dir, fname))
 
 
-def _add_path(tf: tarfile.TarFile, src: str, arcname: str) -> None:
+class _ReadCounter:
+    """File wrapper that calls on_read(n) with the byte count after each read.
+
+    Used to stream progress updates through tarfile's internal copy loop so
+    the bar advances during compression rather than only between files.
+    """
+
+    def __init__(self, fh, on_read):
+        self._fh = fh
+        self._on_read = on_read
+
+    def read(self, n=-1):
+        data = self._fh.read(n)
+        if data:
+            self._on_read(len(data))
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def _add_path(
+    tf: tarfile.TarFile, src: str, arcname: str, on_read=None
+) -> None:
     """Add *src* to *tf* as *arcname*, stripping ownership info.
 
     Block/character devices, FIFOs, and sockets are silently skipped.
     Symlinks are stored as symlinks (not followed). Regular files and
     directories are stored with their permissions intact.
+
+    *on_read*, when provided, is called with the byte count of each chunk
+    read from a regular file so callers can track progress during compression.
     """
     try:
         st = os.lstat(src)
@@ -131,7 +157,7 @@ def _add_path(tf: tarfile.TarFile, src: str, arcname: str) -> None:
     if stat.S_ISREG(m):
         try:
             with open(src, 'rb') as fh:
-                tf.addfile(info, fh)
+                tf.addfile(info, _ReadCounter(fh, on_read) if on_read else fh)
         except OSError:
             pass
     else:
@@ -259,12 +285,12 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Archiving the container...{C['RST']}")
 
-    def _on_entry(arc: str, file_size: int = 0) -> None:
-        nonlocal done_size
-        done_size += file_size
-        if verbose:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Adding: '{arc}'{C['RST']}")
+    # Redraw threshold: update the bar at most once per 256 KiB read so the
+    # _ReadCounter callback doesn't cause excessive stderr writes.
+    _last_shown = 0
+
+    def _draw_bar() -> None:
+        nonlocal _last_shown
         if not use_tty:
             return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
@@ -275,6 +301,19 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
         )
         sys.stderr.flush()
+        _last_shown = done_size
+
+    def _on_read(n: int) -> None:
+        nonlocal done_size
+        done_size += n
+        if done_size - _last_shown >= 262144:
+            _draw_bar()
+
+    def _on_entry(arc: str) -> None:
+        if verbose:
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Adding: '{arc}'{C['RST']}")
+        _draw_bar()
 
     try:
         tar_mode = f'w:{compression}' if output_path else f'w|{compression}'
@@ -286,13 +325,8 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             mode=tar_mode,
         ) as tf:
             for src, arc in entries:
-                try:
-                    st = os.lstat(src)
-                    file_size = st.st_size if stat.S_ISREG(st.st_mode) else 0
-                except OSError:
-                    file_size = 0
-                _add_path(tf, src, arc)
-                _on_entry(arc, file_size)
+                _add_path(tf, src, arc, on_read=_on_read)
+                _on_entry(arc)
 
         if use_tty:
             sys.stderr.write("\r\033[K")
