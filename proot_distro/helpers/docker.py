@@ -445,6 +445,27 @@ def _download_blob(
     return dest
 
 
+class _ByteCounter:
+    """Thin file wrapper that counts raw bytes passing through read()."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.count = 0
+
+    def read(self, size=-1):
+        data = self._fh.read(size)
+        self.count += len(data)
+        return data
+
+    def readinto(self, buf):
+        n = self._fh.readinto(buf)
+        self.count += n
+        return n
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
 def _remove_fstree(path: str) -> None:
     """Remove a file, symlink, or directory tree; ignore all errors."""
     try:
@@ -465,143 +486,136 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
 
     Hard links are copied rather than linked to keep the rootfs
     self-contained. Block/character devices and FIFOs are silently skipped.
+
+    Progress is tracked in compressed bytes consumed (via _ByteCounter) so
+    the denominator is os.path.getsize() — instant — and no upfront scan of
+    the archive is needed.
     """
     use_tty = sys.stderr.isatty()
-    total_size = 0
-    done_size = 0
+    total_size = os.path.getsize(layer_path)
 
-    def _tick(member_size: int = 0) -> None:
-        nonlocal done_size
-        done_size += member_size
+    def _show(counter: _ByteCounter) -> None:
         if not use_tty or not total_size:
             return
-        pct = done_size * 100 // total_size
+        done = counter.count
+        pct = min(done * 100 // total_size, 100)
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         sys.stderr.write(
             f"\r{pfx}[{bar}] {pct:3d}%  "
-            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
+            f"{fmt_size(done)} / {fmt_size(total_size)}\033[K{C['RST']}"
         )
         sys.stderr.flush()
 
-    with tarfile.open(layer_path, "r:*") as tf:
-        if use_tty:
-            sys.stderr.write(
-                f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                f"{C['CYAN']}Estimating...{C['RST']}"
-            )
-            sys.stderr.flush()
-        members = tf.getmembers()
-        if use_tty:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        total_size = sum(m.size for m in members)
-        deferred_links: list = []  # list of (dest, src_path)
-        deferred_dirs: list = []   # list of (path, mtime) — set after all writes
+    deferred_links: list = []  # list of (dest, src_path)
+    deferred_dirs: list = []   # list of (path, mtime) — set after all writes
 
-        for m in members:
-            name = m.name.lstrip("/").rstrip("/")
-            if not name or name == ".":
-                _tick(m.size)
-                continue
-
-            parts = name.split("/")
-            basename = parts[-1]
-            parent = (os.path.join(rootfs_dir, *parts[:-1])
-                      if len(parts) > 1 else rootfs_dir)
-            dest = os.path.join(rootfs_dir, name)
-
-            # Opaque whiteout: clear everything inside the parent directory.
-            if basename == ".wh..wh..opq":
-                if os.path.isdir(parent):
-                    for entry in os.listdir(parent):
-                        _remove_fstree(os.path.join(parent, entry))
-                _tick(m.size)
-                continue
-
-            # Regular whiteout: delete the named sibling.
-            if basename.startswith(".wh."):
-                _remove_fstree(os.path.join(parent, basename[4:]))
-                _tick(m.size)
-                continue
-
-            # Skip device files and FIFOs.
-            if m.isblk() or m.ischr() or m.isfifo():
-                _tick(m.size)
-                continue
-
-            os.makedirs(parent, exist_ok=True)
-
-            if m.isdir():
-                os.makedirs(dest, exist_ok=True)
-                try:
-                    os.chmod(dest, stat.S_IMODE(m.mode) | stat.S_IRWXU)
-                except OSError:
-                    pass
-                deferred_dirs.append((dest, m.mtime))
-
-            elif m.issym():
-                if os.path.lexists(dest):
-                    os.remove(dest)
-                os.symlink(m.linkname, dest)
-                try:
-                    os.utime(dest, (m.mtime, m.mtime), follow_symlinks=False)
-                except OSError:
-                    pass
-
-            elif m.islnk():
-                src = os.path.join(rootfs_dir, m.linkname.lstrip("/"))
-                deferred_links.append((dest, src))
-                continue  # counted in the deferred pass below
-
-            elif m.isreg():
-                fobj = tf.extractfile(m)
-                if fobj is None:
-                    _tick(m.size)
+    with open(layer_path, "rb") as raw_fh:
+        counter = _ByteCounter(raw_fh)
+        with tarfile.open(fileobj=counter, mode="r|*") as tf:
+            for m in tf:
+                name = m.name.lstrip("/").rstrip("/")
+                if not name or name == ".":
+                    _show(counter)
                     continue
-                if os.path.lexists(dest):
+
+                parts = name.split("/")
+                basename = parts[-1]
+                parent = (os.path.join(rootfs_dir, *parts[:-1])
+                          if len(parts) > 1 else rootfs_dir)
+                dest = os.path.join(rootfs_dir, name)
+
+                # Opaque whiteout: clear everything inside the parent directory.
+                if basename == ".wh..wh..opq":
+                    if os.path.isdir(parent):
+                        for entry in os.listdir(parent):
+                            _remove_fstree(os.path.join(parent, entry))
+                    _show(counter)
+                    continue
+
+                # Regular whiteout: delete the named sibling.
+                if basename.startswith(".wh."):
+                    _remove_fstree(os.path.join(parent, basename[4:]))
+                    _show(counter)
+                    continue
+
+                # Skip device files and FIFOs.
+                if m.isblk() or m.ischr() or m.isfifo():
+                    _show(counter)
+                    continue
+
+                os.makedirs(parent, exist_ok=True)
+
+                if m.isdir():
+                    os.makedirs(dest, exist_ok=True)
                     try:
+                        os.chmod(dest, stat.S_IMODE(m.mode) | stat.S_IRWXU)
+                    except OSError:
+                        pass
+                    deferred_dirs.append((dest, m.mtime))
+
+                elif m.issym():
+                    if os.path.lexists(dest):
                         os.remove(dest)
-                    except OSError:
-                        pass
-                try:
-                    with open(dest, "wb") as out:
-                        shutil.copyfileobj(fobj, out)
+                    os.symlink(m.linkname, dest)
                     try:
-                        os.chmod(dest, stat.S_IMODE(m.mode))
+                        os.utime(dest, (m.mtime, m.mtime), follow_symlinks=False)
                     except OSError:
                         pass
+
+                elif m.islnk():
+                    src = os.path.join(rootfs_dir, m.linkname.lstrip("/"))
+                    deferred_links.append((dest, src))
+                    _show(counter)
+                    continue
+
+                elif m.isreg():
+                    fobj = tf.extractfile(m)
+                    if fobj is None:
+                        _show(counter)
+                        continue
+                    if os.path.lexists(dest):
+                        try:
+                            os.remove(dest)
+                        except OSError:
+                            pass
                     try:
-                        os.utime(dest, (m.mtime, m.mtime))
-                    except OSError:
-                        pass
-                finally:
-                    fobj.close()
+                        with open(dest, "wb") as out:
+                            shutil.copyfileobj(fobj, out)
+                        try:
+                            os.chmod(dest, stat.S_IMODE(m.mode))
+                        except OSError:
+                            pass
+                        try:
+                            os.utime(dest, (m.mtime, m.mtime))
+                        except OSError:
+                            pass
+                    finally:
+                        fobj.close()
 
-            _tick(m.size)
+                _show(counter)
 
-        # All regular files are written; now copy hard links.
-        # shutil.copy2 preserves the source mtime, which was already set above.
-        for dest, src in deferred_links:
-            if os.path.lexists(dest):
-                try:
-                    os.remove(dest)
-                except OSError:
-                    pass
-            if os.path.isfile(src):
-                try:
-                    shutil.copy2(src, dest)
-                except OSError:
-                    pass
-            _tick()
-
-        # Apply directory timestamps last. Writing files into a directory
-        # updates its mtime, so this must happen after all file writes.
-        for path, mtime in reversed(deferred_dirs):
+    # All regular files are written; now copy hard links.
+    # shutil.copy2 preserves the source mtime, which was already set above.
+    for dest, src in deferred_links:
+        if os.path.lexists(dest):
             try:
-                os.utime(path, (mtime, mtime))
+                os.remove(dest)
             except OSError:
                 pass
+        if os.path.isfile(src):
+            try:
+                shutil.copy2(src, dest)
+            except OSError:
+                pass
+
+    # Apply directory timestamps last. Writing files into a directory
+    # updates its mtime, so this must happen after all file writes.
+    for path, mtime in reversed(deferred_dirs):
+        try:
+            os.utime(path, (mtime, mtime))
+        except OSError:
+            pass
 
     if use_tty:
         sys.stderr.write("\r\033[K")
