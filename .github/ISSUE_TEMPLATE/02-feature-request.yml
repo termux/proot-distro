@@ -8,10 +8,7 @@ body:
       value: |
         This is a bug tracker of the PRoot Distro - a helper script for PRoot to manage distribution installations. Please use it accordingly to selected ticket type.
 
-        Maintainer has right to refuse in adding specific feature for any reason.
-
-        > [!IMPORTANT]
-        > DISTRIBUTION REQUESTS WILL BE DISMISSED
+        It is not guaranteed that a specific requested feature will be implemented. This depends on many factors including feature complexity or whether feature fits into project purposes and architecture.
   - type: textarea
     attributes:
       label: Feature description

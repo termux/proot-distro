@@ -5,6 +5,6 @@ labels: [question]
 body:
   - type: textarea
     attributes:
-      label: Description
+      label: Question
     validations:
       required: true
