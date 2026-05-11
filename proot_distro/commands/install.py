@@ -114,19 +114,40 @@ def _derive_local_name(path: str) -> str:
 # Plain tarball extraction
 # ---------------------------------------------------------------------------
 
-def _detect_strip_count(members: list) -> int:
+class _ByteCounter:
+    """Thin file wrapper that counts raw bytes passing through read()."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.count = 0
+
+    def read(self, size=-1):
+        data = self._fh.read(size)
+        self.count += len(data)
+        return data
+
+    def readinto(self, buf):
+        n = self._fh.readinto(buf)
+        self.count += n
+        return n
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def _detect_strip_count(member_names: list) -> int:
     """Return how many leading path components to strip so the first remaining
     component lands at the rootfs root (e.g. 'etc', 'usr', 'bin', ...).
 
-    Tries strip counts 0–4, scores each by how many of the first 500 members
+    Tries strip counts 0–4, scores each by how many of the first 500 names
     have a known rootfs dir name at that depth, and picks the highest scorer.
     """
-    sample = members[:500]
+    sample = member_names[:500]
     best_strip, best_score = 0, -1
     for strip in range(5):
         score = 0
-        for m in sample:
-            parts = m.name.lstrip('/').rstrip('/').split('/')
+        for name in sample:
+            parts = name.lstrip('/').rstrip('/').split('/')
             if len(parts) > strip and parts[strip] in _ROOTFS_DIRS:
                 score += 1
         if score > best_score:
@@ -135,9 +156,9 @@ def _detect_strip_count(members: list) -> int:
 
 
 def _extract_plain_tar(
-    tf: tarfile.TarFile, raw_members: list, rootfs_dir: str
+    archive_path: str, strip: int, total_size: int, rootfs_dir: str
 ) -> None:
-    """Extract a plain rootfs tarball (tf already open, raw_members collected).
+    """Stream-extract a plain rootfs tarball into rootfs_dir.
 
     - Block/character devices and FIFOs are silently skipped.
     - Hard links are copied via shutil.copy2 after all regular files are
@@ -145,109 +166,123 @@ def _extract_plain_tar(
     - mtimes are preserved on regular files and symlinks.
     - Directory mtimes are applied last (writing into a dir updates its mtime).
     - Directories get at least S_IRWXU so subsequent writes into them succeed.
+    - Progress is tracked via _ByteCounter (compressed bytes consumed) so the
+      bar advances smoothly without an upfront archive scan.
     """
     use_tty = sys.stderr.isatty()
+    _last_shown = 0
 
-    members = [
-        m for m in raw_members
-        if not (m.isblk() or m.ischr() or m.isfifo())
-    ]
-    strip = _detect_strip_count(members)
-    total_size = sum(m.size for m in members)
-    done_size = 0
-
-    def _on_entry(member_size: int = 0) -> None:
-        nonlocal done_size
-        done_size += member_size
-        if not use_tty:
+    def _show(counter: _ByteCounter) -> None:
+        nonlocal _last_shown
+        if not use_tty or not total_size:
             return
-        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        pct = done_size * 100 // total_size if total_size else 100
+        done = counter.count
+        if done - _last_shown < 262144:
+            return
+        _last_shown = done
+        pct = min(done * 100 // total_size, 100)
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         sys.stderr.write(
             f"\r{pfx}[{bar}] {pct:3d}%  "
-            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
+            f"{fmt_size(done)} / {fmt_size(total_size)}\033[K{C['RST']}"
         )
         sys.stderr.flush()
 
     deferred_links: list = []  # (dest, src) — copied after all regular files
     deferred_dirs: list = []   # (dest, mtime) — stamped after all writes
 
-    for member in members:
-        parts = member.name.lstrip('/').rstrip('/').split('/')
-        if len(parts) <= strip:
-            _on_entry(member.size)
-            continue
-        rel_parts = parts[strip:]
-        rel_path = '/'.join(rel_parts)
-        if not rel_path or rel_path == '.':
-            _on_entry(member.size)
-            continue
+    with open(archive_path, 'rb') as raw_fh:
+        counter = _ByteCounter(raw_fh)
+        with tarfile.open(fileobj=counter, mode='r|*') as tf:
+            for member in tf:
+                if member.isblk() or member.ischr() or member.isfifo():
+                    _show(counter)
+                    continue
 
-        parent = (
-            os.path.join(rootfs_dir, *rel_parts[:-1])
-            if len(rel_parts) > 1 else rootfs_dir
-        )
-        dest = os.path.join(rootfs_dir, rel_path)
+                parts = member.name.lstrip('/').rstrip('/').split('/')
+                if len(parts) <= strip:
+                    _show(counter)
+                    continue
+                rel_parts = parts[strip:]
+                rel_path = '/'.join(rel_parts)
+                if not rel_path or rel_path == '.':
+                    _show(counter)
+                    continue
 
-        os.makedirs(parent, exist_ok=True)
+                parent = (
+                    os.path.join(rootfs_dir, *rel_parts[:-1])
+                    if len(rel_parts) > 1 else rootfs_dir
+                )
+                dest = os.path.join(rootfs_dir, rel_path)
 
-        if member.isdir():
-            os.makedirs(dest, exist_ok=True)
-            try:
-                os.chmod(dest, stat.S_IMODE(member.mode) | stat.S_IRWXU)
-            except OSError:
-                pass
-            deferred_dirs.append((dest, member.mtime))
+                os.makedirs(parent, exist_ok=True)
 
-        elif member.issym():
-            if os.path.lexists(dest):
-                os.remove(dest)
-            try:
-                os.symlink(member.linkname, dest)
-                try:
-                    os.utime(dest, (member.mtime, member.mtime),
-                             follow_symlinks=False)
-                except OSError:
-                    pass
-            except OSError:
-                pass
+                if member.isdir():
+                    os.makedirs(dest, exist_ok=True)
+                    try:
+                        os.chmod(dest, stat.S_IMODE(member.mode) | stat.S_IRWXU)
+                    except OSError:
+                        pass
+                    deferred_dirs.append((dest, member.mtime))
 
-        elif member.islnk():
-            lparts = member.linkname.lstrip('/').rstrip('/').split('/')
-            if len(lparts) > strip:
-                link_src = os.path.join(rootfs_dir, '/'.join(lparts[strip:]))
-                deferred_links.append((dest, link_src))
-            continue  # ticked in the deferred pass below
+                elif member.issym():
+                    if os.path.lexists(dest):
+                        os.remove(dest)
+                    try:
+                        os.symlink(member.linkname, dest)
+                        try:
+                            os.utime(dest, (member.mtime, member.mtime),
+                                     follow_symlinks=False)
+                        except OSError:
+                            pass
+                    except OSError:
+                        pass
 
-        elif member.isreg():
-            fobj = tf.extractfile(member)
-            if fobj is None:
-                _on_entry(member.size)
-                continue
-            if os.path.lexists(dest):
-                try:
-                    os.remove(dest)
-                except OSError:
-                    pass
-            try:
-                with open(dest, 'wb') as out:
-                    shutil.copyfileobj(fobj, out)
-                try:
-                    os.chmod(dest, stat.S_IMODE(member.mode))
-                except OSError:
-                    pass
-                try:
-                    os.utime(dest, (member.mtime, member.mtime))
-                except OSError:
-                    pass
-            finally:
-                fobj.close()
+                elif member.islnk():
+                    lparts = member.linkname.lstrip('/').rstrip('/').split('/')
+                    if len(lparts) > strip:
+                        link_src = os.path.join(
+                            rootfs_dir, '/'.join(lparts[strip:])
+                        )
+                        deferred_links.append((dest, link_src))
+                    _show(counter)
+                    continue
 
-        else:
-            continue
+                elif member.isreg():
+                    fobj = tf.extractfile(member)
+                    if fobj is None:
+                        _show(counter)
+                        continue
+                    if os.path.lexists(dest):
+                        try:
+                            os.remove(dest)
+                        except OSError:
+                            pass
+                    try:
+                        with open(dest, 'wb') as out:
+                            while True:
+                                chunk = fobj.read(1 << 17)  # 128 KiB
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                                _show(counter)
+                        try:
+                            os.chmod(dest, stat.S_IMODE(member.mode))
+                        except OSError:
+                            pass
+                        try:
+                            os.utime(dest, (member.mtime, member.mtime))
+                        except OSError:
+                            pass
+                    finally:
+                        fobj.close()
 
-        _on_entry(member.size)
+                else:
+                    _show(counter)
+                    continue
+
+                _show(counter)
 
     # All regular files written — now copy hard links (shutil.copy2 preserves mtime).
     for dest, src in deferred_links:
@@ -261,7 +296,6 @@ def _extract_plain_tar(
                 shutil.copy2(src, dest)
             except OSError:
                 pass
-        _on_entry()
 
     # Apply directory timestamps last.
     for path, mtime in reversed(deferred_dirs):
@@ -471,29 +505,49 @@ def _install_from_local_file(
 
     Returns a metadata dict for OCI images (same schema as pull_image()), or
     None for plain tarballs (no manifest.json is written for those).
+
+    Format detection and strip-count determination use a streaming probe that
+    reads at most the first 500 member headers — no full upfront scan needed
+    for plain tarballs. OCI image layouts still require a full getmembers()
+    pass because layer blobs must be accessed by digest in arbitrary order.
     """
-    use_tty = sys.stderr.isatty()
+    total_size = os.path.getsize(archive_path)
 
-    with tarfile.open(archive_path, 'r:*') as tf:
-        if use_tty:
-            sys.stderr.write(
-                f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                f"{C['CYAN']}Estimating...{C['RST']}"
-            )
-            sys.stderr.flush()
-        raw_members = tf.getmembers()
-        if use_tty:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
+    # Streaming probe: read up to 500 member names to detect OCI layout and
+    # determine the strip count for plain tarballs. For compressed archives
+    # this decompresses only the leading portion of the file (fast).
+    probe_names: list = []
+    is_oci = False
+    with tarfile.open(archive_path, 'r|*') as tf_probe:
+        for m in tf_probe:
+            probe_names.append(m.name)
+            if m.name == 'oci-layout':
+                is_oci = True
+                break
+            if len(probe_names) >= 500:
+                break
 
-        member_names = {m.name for m in raw_members}
-
-        if 'oci-layout' in member_names:
+    if is_oci:
+        # OCI image layout: blobs are accessed by digest in arbitrary order,
+        # so random access via getmembers() is required.
+        use_tty = sys.stderr.isatty()
+        with tarfile.open(archive_path, 'r:*') as tf:
+            if use_tty:
+                sys.stderr.write(
+                    f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                    f"{C['CYAN']}Indexing OCI archive...{C['RST']}"
+                )
+                sys.stderr.flush()
+            raw_members = tf.getmembers()
+            if use_tty:
+                sys.stderr.write("\r\033[K")
+                sys.stderr.flush()
             member_map = {m.name: m for m in raw_members}
             return _extract_oci(tf, member_map, rootfs_dir, dist_arch)
 
-        _extract_plain_tar(tf, raw_members, rootfs_dir)
-        return None
+    strip = _detect_strip_count(probe_names)
+    _extract_plain_tar(archive_path, strip, total_size, rootfs_dir)
+    return None
 
 
 # ---------------------------------------------------------------------------
