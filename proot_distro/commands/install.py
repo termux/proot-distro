@@ -658,6 +658,13 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Finished installation.{C['RST']}")
     msg()
-    msg(f"{C['CYAN']}Log in with: "
-        f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['CYAN']}{C['RST']}")
+    msg(f"{C['CYAN']}Start shell:    "
+        f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['RST']}")
+    entrypoint = (
+        (metadata.get("image_config") or {}).get("config", {}).get("Entrypoint")
+        if metadata else None
+    )
+    if entrypoint:
+        msg(f"{C['CYAN']}Run entrypoint: "
+            f"{C['GREEN']}{PROGRAM_NAME} run {install_name}{C['RST']}")
     msg()
