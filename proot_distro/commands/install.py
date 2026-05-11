@@ -573,8 +573,13 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             f"from '{C['YELLOW']}{os.path.basename(local_path)}{C['CYAN']}' "
             f"as '{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
     else:
+        # Always show the tag, appending ':latest' when the user omitted it.
+        last_component = image_ref.split("/")[-1]
+        display_ref = (
+            image_ref if ":" in last_component else f"{image_ref}:latest"
+        )
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
-            f"'{C['YELLOW']}{image_ref}{C['CYAN']}' as "
+            f"'{C['YELLOW']}{display_ref}{C['CYAN']}' as "
             f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
 
     os.makedirs(rootfs_dir, exist_ok=True)
