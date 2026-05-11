@@ -11,6 +11,11 @@ requires-python = ">=3.9"
 license = "GPL-3.0-only"
 dependencies = []
 
+[project.urls]
+'Homepage' = 'https://github.com/termux/proot-distro'
+'Repository' = 'https://github.com/termux/proot-distro'
+'Issue Tracker' = 'https://github.com/termux/proot-distro/issues'
+
 [project.scripts]
 proot-distro = "proot_distro.cli:main"
 pd = "proot_distro.cli:main"
