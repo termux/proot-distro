@@ -72,7 +72,11 @@ proot-distro install [OPTIONS] IMAGE
 Aliases: add, i, in, ins
 ```
 
-Pull a Docker/OCI image and create a container from it.
+Pull a Docker/OCI image and create a container from it, or extract one
+from a local archive file.
+
+#### From a Docker/OCI registry
+
 `IMAGE` is a standard Docker image reference:
 
 | Form | Example |
@@ -84,12 +88,9 @@ Pull a Docker/OCI image and create a container from it.
 
 When no tag is given, `latest` is used.
 
-**Options:**
-
-| Option | Description |
-|---|---|
-| `--name NAME` | Set a custom local name for the container (default: image name without tag) |
-| `--architecture ARCH` | Override target CPU architecture (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) |
+Layers are cached in `$TERMUX_PREFIX/var/lib/proot-distro/dlcache/` and
+reused on subsequent installs. If all layers are already cached, installation
+runs fully offline.
 
 **Examples:**
 
@@ -100,9 +101,49 @@ proot-distro install debian:bookworm --architecture aarch64
 proot-distro install ghcr.io/myorg/myimage:latest
 ```
 
-Layers are cached in `$TERMUX_PREFIX/var/lib/proot-distro/dlcache/` and
-reused on subsequent installs. If all layers are already cached, installation
-runs fully offline.
+#### From a local archive
+
+`IMAGE` can also be a path to a local archive file. A path is recognised
+when it starts with `/`, `./`, `../`, or `~`, or when it resolves to an
+existing file on disk.
+
+Two archive formats are supported:
+
+- **Plain rootfs tarball** — a tar archive whose top-level entries form a
+  standard Linux filesystem (`bin/`, `etc/`, `usr/`, …). The tool
+  automatically detects and strips any leading path components so the
+  rootfs lands at the correct depth. Supported compression: gzip, bzip2,
+  xz, lzma, or uncompressed.
+- **OCI image layout** — a tar archive that contains an `oci-layout` file
+  at its root (as produced by `docker save`, `skopeo copy oci-archive:`,
+  or similar tools). Layers are applied in order with full whiteout
+  semantics, and `manifest.json` is written so `reset` and `run` work.
+
+The container name is derived from the archive filename by stripping
+known extensions (`.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`,
+`.tar.xz`, `.txz`, `.tar.lzma`, `.tlzma`) and sanitising the result.
+Use `--name` to set an explicit name.
+
+**Examples:**
+
+```sh
+# Plain rootfs tarball
+proot-distro install ./alpine-rootfs.tar.gz
+
+# OCI image layout saved with docker
+docker save myimage:latest -o myimage.oci.tar
+proot-distro install ./myimage.oci.tar --name myimage
+
+# Explicit name and architecture override
+proot-distro install /tmp/debian-arm.tar.xz --name debian --architecture arm
+```
+
+**Options:**
+
+| Option | Description |
+|---|---|
+| `--name NAME` | Set a custom local name for the container (default: image name without tag, or derived from filename) |
+| `--architecture ARCH` | Override target CPU architecture (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) |
 
 After installation the tag is always shown in the output (e.g.
 `Installing 'wordpress:latest'`). If the image defines an Entrypoint, a
