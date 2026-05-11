@@ -153,19 +153,20 @@ def _extract_plain_tar(
         if not (m.isblk() or m.ischr() or m.isfifo())
     ]
     strip = _detect_strip_count(members)
-    total = len(members)
-    done = 0
+    total_size = sum(m.size for m in members)
+    done_size = 0
 
-    def _on_entry() -> None:
-        nonlocal done
-        done += 1
+    def _on_entry(member_size: int = 0) -> None:
+        nonlocal done_size
+        done_size += member_size
         if not use_tty:
             return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        pct = done * 100 // total if total else 100
+        pct = done_size * 100 // total_size if total_size else 100
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
+            f"\r{pfx}[{bar}] {pct:3d}%  "
+            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
         )
         sys.stderr.flush()
 
@@ -175,12 +176,12 @@ def _extract_plain_tar(
     for member in members:
         parts = member.name.lstrip('/').rstrip('/').split('/')
         if len(parts) <= strip:
-            _on_entry()
+            _on_entry(member.size)
             continue
         rel_parts = parts[strip:]
         rel_path = '/'.join(rel_parts)
         if not rel_path or rel_path == '.':
-            _on_entry()
+            _on_entry(member.size)
             continue
 
         parent = (
@@ -222,7 +223,7 @@ def _extract_plain_tar(
         elif member.isreg():
             fobj = tf.extractfile(member)
             if fobj is None:
-                _on_entry()
+                _on_entry(member.size)
                 continue
             if os.path.lexists(dest):
                 try:
@@ -246,7 +247,7 @@ def _extract_plain_tar(
         else:
             continue
 
-        _on_entry()
+        _on_entry(member.size)
 
     # All regular files written — now copy hard links (shutil.copy2 preserves mtime).
     for dest, src in deferred_links:
@@ -477,7 +478,7 @@ def _install_from_local_file(
         if use_tty:
             sys.stderr.write(
                 f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                f"{C['CYAN']}Counting archive entries...{C['RST']}"
+                f"{C['CYAN']}Estimating...{C['RST']}"
             )
             sys.stderr.flush()
         raw_members = tf.getmembers()

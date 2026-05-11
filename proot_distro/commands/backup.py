@@ -31,6 +31,7 @@ import tarfile
 
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.colors import C, msg
+from proot_distro.helpers.download import fmt_size
 from proot_distro.commands.help import _HELP_COMMANDS
 
 
@@ -244,27 +245,36 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     # rootfs tree.
     entries.extend(_iter_entries(rootfs_dir, os.path.join(arc_prefix, "rootfs")))
 
-    total_entries = len(entries)
-    done = 0
+    # Pre-compute total size of regular files to drive the progress bar.
+    total_size = 0
+    for src, _arc in entries:
+        try:
+            st = os.lstat(src)
+            if stat.S_ISREG(st.st_mode):
+                total_size += st.st_size
+        except OSError:
+            pass
+
+    done_size = 0
     use_tty = sys.stderr.isatty()
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Archiving the container...{C['RST']}")
 
-    def _on_entry(arc: str) -> None:
-        nonlocal done
-        done += 1
+    def _on_entry(arc: str, file_size: int = 0) -> None:
+        nonlocal done_size
+        done_size += file_size
         if verbose:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
                 f"Adding: '{arc}'{C['RST']}")
         if not use_tty:
             return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        pct = done * 100 // total_entries if total_entries else 100
+        pct = done_size * 100 // total_size if total_size else 100
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total_entries} files"
-            f"\033[K{C['RST']}"
+            f"\r{pfx}[{bar}] {pct:3d}%  "
+            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
         )
         sys.stderr.flush()
 
@@ -278,8 +288,13 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             mode=tar_mode,
         ) as tf:
             for src, arc in entries:
+                try:
+                    st = os.lstat(src)
+                    file_size = st.st_size if stat.S_ISREG(st.st_mode) else 0
+                except OSError:
+                    file_size = 0
                 _add_path(tf, src, arc)
-                _on_entry(arc)
+                _on_entry(arc, file_size)
 
         if use_tty:
             sys.stderr.write("\r\033[K")

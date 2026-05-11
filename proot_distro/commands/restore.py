@@ -35,6 +35,7 @@ import tarfile
 
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
+from proot_distro.helpers.download import fmt_size
 
 
 # Magic-byte signatures used to identify compressed streams.
@@ -158,28 +159,30 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
         f"Extracting container from the archive...{C['RST']}")
 
     use_tty = sys.stderr.isatty()
-    done = 0
+    done_size = 0
+    total_size = 0
     cleared: set = set()
     rejected_bare = False
 
-    def _on_entry(total: int, member_name: str) -> None:
-        nonlocal done
-        done += 1
+    def _on_entry(member_size: int, member_name: str) -> None:
+        nonlocal done_size
+        done_size += member_size
         if verbose:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
                 f"Extracting: '{member_name}'{C['RST']}")
         if not use_tty:
             return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        if total:
-            pct = done * 100 // total
+        if total_size:
+            pct = done_size * 100 // total_size
             bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
             sys.stderr.write(
-                f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
+                f"\r{pfx}[{bar}] {pct:3d}%  "
+                f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
             )
         else:
             sys.stderr.write(
-                f"\r{pfx}{done} files extracted...\033[K{C['RST']}"
+                f"\r{pfx}{fmt_size(done_size)} extracted...\033[K{C['RST']}"
             )
         sys.stderr.flush()
 
@@ -209,7 +212,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 if use_tty:
                     sys.stderr.write(
                         f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                        f"{C['CYAN']}Counting archive entries...{C['RST']}"
+                        f"{C['CYAN']}Estimating...{C['RST']}"
                     )
                     sys.stderr.flush()
                 all_members = [
@@ -229,13 +232,12 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                             f"(e.g. ubuntu/rootfs/...).{C['RST']}")
                         msg()
                         sys.exit(1)
-                total = len(all_members)
+                total_size = sum(m.size for m in all_members)
                 if use_tty:
                     sys.stderr.write("\r\033[K")
                     sys.stderr.flush()
             else:
                 all_members = tf
-                total = 0
 
             for member in all_members:
                 if not archive and (
@@ -354,7 +356,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 else:
                     continue
 
-                _on_entry(total, member.name)
+                _on_entry(member.size, member.name)
 
         if use_tty:
             sys.stderr.write("\r\033[K")

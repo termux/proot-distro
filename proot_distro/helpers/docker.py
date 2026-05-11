@@ -467,18 +467,20 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
     self-contained. Block/character devices and FIFOs are silently skipped.
     """
     use_tty = sys.stderr.isatty()
-    done = 0
+    total_size = 0
+    done_size = 0
 
-    def _tick(total: int) -> None:
-        nonlocal done
-        done += 1
-        if not use_tty or not total:
+    def _tick(member_size: int = 0) -> None:
+        nonlocal done_size
+        done_size += member_size
+        if not use_tty or not total_size:
             return
-        pct = done * 100 // total
+        pct = done_size * 100 // total_size
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} entries\033[K{C['RST']}"
+            f"\r{pfx}[{bar}] {pct:3d}%  "
+            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
         )
         sys.stderr.flush()
 
@@ -486,21 +488,21 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
         if use_tty:
             sys.stderr.write(
                 f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                f"{C['CYAN']}Counting archive entries...{C['RST']}"
+                f"{C['CYAN']}Estimating...{C['RST']}"
             )
             sys.stderr.flush()
         members = tf.getmembers()
         if use_tty:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        total = len(members)
+        total_size = sum(m.size for m in members)
         deferred_links: list = []  # list of (dest, src_path)
         deferred_dirs: list = []   # list of (path, mtime) — set after all writes
 
         for m in members:
             name = m.name.lstrip("/").rstrip("/")
             if not name or name == ".":
-                _tick(total)
+                _tick(m.size)
                 continue
 
             parts = name.split("/")
@@ -514,18 +516,18 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                 if os.path.isdir(parent):
                     for entry in os.listdir(parent):
                         _remove_fstree(os.path.join(parent, entry))
-                _tick(total)
+                _tick(m.size)
                 continue
 
             # Regular whiteout: delete the named sibling.
             if basename.startswith(".wh."):
                 _remove_fstree(os.path.join(parent, basename[4:]))
-                _tick(total)
+                _tick(m.size)
                 continue
 
             # Skip device files and FIFOs.
             if m.isblk() or m.ischr() or m.isfifo():
-                _tick(total)
+                _tick(m.size)
                 continue
 
             os.makedirs(parent, exist_ok=True)
@@ -555,7 +557,7 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
             elif m.isreg():
                 fobj = tf.extractfile(m)
                 if fobj is None:
-                    _tick(total)
+                    _tick(m.size)
                     continue
                 if os.path.lexists(dest):
                     try:
@@ -576,7 +578,7 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                 finally:
                     fobj.close()
 
-            _tick(total)
+            _tick(m.size)
 
         # All regular files are written; now copy hard links.
         # shutil.copy2 preserves the source mtime, which was already set above.
@@ -591,7 +593,7 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                     shutil.copy2(src, dest)
                 except OSError:
                     pass
-            _tick(total)
+            _tick()
 
         # Apply directory timestamps last. Writing files into a directory
         # updates its mtime, so this must happen after all file writes.
