@@ -22,10 +22,10 @@
 # Expected archive structure: <name>/manifest.json + <name>/rootfs/*.
 # Legacy archives with installed-rootfs/<name> layout are also accepted:
 # contents are re-rooted to containers/<name>/rootfs/. Archives with no
-# subdirectory are rejected. Compression is detected from file header
-# magic bytes. For seekable file input the member count is pre-collected
-# so an accurate progress percentage is shown; for stdin streaming only a
-# counter is shown.
+# subdirectory are rejected. Compression is auto-detected via tarfile r|*
+# (archive file) or from header magic bytes (stdin). For file input,
+# progress is tracked in compressed bytes consumed so total_size is
+# os.path.getsize() — instant, no upfront scan needed.
 
 import os
 import shutil
@@ -36,6 +36,27 @@ import tarfile
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.helpers.download import fmt_size
+
+
+class _ByteCounter:
+    """Thin file wrapper that counts raw bytes passing through read()."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.count = 0
+
+    def read(self, size=-1):
+        data = self._fh.read(size)
+        self.count += len(data)
+        return data
+
+    def readinto(self, buf):
+        n = self._fh.readinto(buf)
+        self.count += n
+        return n
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
 
 
 # Magic-byte signatures used to identify compressed streams.
@@ -161,8 +182,8 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
     use_tty = sys.stderr.isatty()
     done_size = 0
     total_size = 0
+    counter = None
     cleared: set = set()
-    rejected_bare = False
 
     def _on_entry(member_size: int, member_name: str) -> None:
         nonlocal done_size
@@ -173,12 +194,13 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
         if not use_tty:
             return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        if total_size:
-            pct = done_size * 100 // total_size
+        if counter is not None and total_size:
+            done = counter.count
+            pct = min(done * 100 // total_size, 100)
             bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
             sys.stderr.write(
                 f"\r{pfx}[{bar}] {pct:3d}%  "
-                f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
+                f"{fmt_size(done)} / {fmt_size(total_size)}\033[K{C['RST']}"
             )
         else:
             sys.stderr.write(
@@ -194,78 +216,41 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
         parts = name.split('/')
         return len(parts) == 1 and not name.endswith('/')
 
+    raw_fh = None
     try:
         if archive:
-            with open(archive, 'rb') as fh:
-                header = fh.read(6)
-            comp = _detect_compression(header)
-            tar_mode = f'r:{comp}' if comp else 'r:*'
-            open_kwargs = dict(name=archive, mode=tar_mode)
+            total_size = os.path.getsize(archive)
+            raw_fh = open(archive, 'rb')
+            counter = _ByteCounter(raw_fh)
+            tf_kwargs = dict(fileobj=counter, mode='r|*')
         else:
             header = sys.stdin.buffer.peek(6)[:6]
             comp = _detect_compression(header)
-            tar_mode = f'r|{comp}'
-            open_kwargs = dict(fileobj=sys.stdin.buffer, mode=tar_mode)
+            tf_kwargs = dict(fileobj=sys.stdin.buffer, mode=f'r|{comp}')
 
-        with tarfile.open(**open_kwargs) as tf:
-            if archive:
-                if use_tty:
-                    sys.stderr.write(
-                        f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                        f"{C['CYAN']}Estimating...{C['RST']}"
-                    )
-                    sys.stderr.flush()
-                all_members = [
-                    m for m in tf.getmembers()
-                    if not (m.isblk() or m.ischr() or m.isfifo())
-                ]
-                # Check for bare-root archives before doing anything.
-                for m in all_members:
-                    if _check_bare_root(m.name):
-                        if use_tty:
-                            sys.stderr.write("\r\033[K")
-                            sys.stderr.flush()
-                        msg()
-                        msg(f"{C['BRED']}Error: archive is not compatible "
-                            f"with proot-distro. Files must be stored under "
-                            f"a container name subdirectory "
-                            f"(e.g. ubuntu/rootfs/...).{C['RST']}")
-                        msg()
-                        sys.exit(1)
-                total_size = sum(m.size for m in all_members)
-                if use_tty:
-                    sys.stderr.write("\r\033[K")
-                    sys.stderr.flush()
-            else:
-                all_members = tf
-
-            for member in all_members:
-                if not archive and (
-                    member.isblk() or member.ischr() or member.isfifo()
-                ):
+        with tarfile.open(**tf_kwargs) as tf:
+            for member in tf:
+                if member.isblk() or member.ischr() or member.isfifo():
                     continue
 
-                if not archive and _check_bare_root(member.name):
-                    if not rejected_bare:
-                        rejected_bare = True
-                        if use_tty:
-                            sys.stderr.write("\r\033[K")
-                            sys.stderr.flush()
-                        msg()
-                        msg(f"{C['BRED']}Error: archive is not compatible "
-                            f"with proot-distro. Files must be stored under "
-                            f"a container name subdirectory "
-                            f"(e.g. ubuntu/rootfs/...).{C['RST']}")
-                        msg()
-                        sys.exit(1)
+                if _check_bare_root(member.name):
+                    if use_tty:
+                        sys.stderr.write("\r\033[K")
+                        sys.stderr.flush()
+                    msg()
+                    msg(f"{C['BRED']}Error: archive is not compatible "
+                        f"with proot-distro. Files must be stored under "
+                        f"a container name subdirectory "
+                        f"(e.g. ubuntu/rootfs/...).{C['RST']}")
+                    msg()
+                    sys.exit(1)
 
                 dist_name, dest = _dest_path(member.name)
                 if dist_name is None:
                     continue
 
                 # On the first entry for a given container's rootfs, clear it.
-                clear_key = dist_name
-                if clear_key not in cleared:
+                if dist_name not in cleared:
                     rootfs_dir = os.path.join(
                         CONTAINERS_DIR, dist_name, "rootfs"
                     )
@@ -302,7 +287,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                         if use_tty:
                             sys.stderr.write("\r\033[K")
                             sys.stderr.flush()
-                    cleared.add(clear_key)
+                    cleared.add(dist_name)
 
                 _remove_existing(dest, member)
 
@@ -383,3 +368,6 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             f"PRoot-Distro.{C['RST']}")
         msg()
         sys.exit(1)
+    finally:
+        if raw_fh is not None:
+            raw_fh.close()
