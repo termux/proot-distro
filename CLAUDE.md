@@ -53,7 +53,7 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | `arch.py` | CPU arch detection, ELF-based installed arch detection, QEMU/emulator helpers |
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()` |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` — with TTY progress bars |
-| `helpers/rootfs.py` | Install helpers: `write_resolv_conf()`, `register_android_ids()` |
+| `helpers/rootfs.py` | Install helpers: `write_resolv_conf()`, `write_hosts()`, `register_android_ids()` |
 | `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, cache helpers, layer application |
 | `commands/install.py` | `command_install()`, `_validate_name()`, `_is_local_path()`, `_derive_local_name()`, `_detect_strip_count()`, `_extract_plain_tar()`, `_extract_oci()`, `_install_from_local_file()` |
 | `commands/remove.py` | `command_remove()`, `_remove_path()` |
@@ -140,6 +140,7 @@ Detected from the rootfs filesystem layout at login time:
 - Inner command is `/data/data/com.termux/files/usr/bin/login` (exec'd directly; no `/usr/bin/env` wrapper).
 - Guest env is hardcoded to `HOME`, `PATH`, `PREFIX`, `TMPDIR` for the Termux layout, plus host-inherited `TERM`/`COLORTERM` and any user `--env` entries.
 - Android system bindings are always enabled; Termux `PREFIX` is not bound into the guest.
+- **Cross-architecture not supported**: if the container's architecture differs from the host and QEMU emulation would be required, `login` exits with an error. The host and container share the same Termux prefix path (`PREFIX`), making cross-arch emulation impossible.
 
 ### Commands and aliases
 
@@ -226,6 +227,10 @@ attributes.
 - 32-bit support on AArch64 probed via `ctypes.CDLL(None).personality(PER_LINUX32)`
 - Cross-arch: proot `-q qemu-*` (QEMU user-mode)
 - 32-bit guests on 64-bit hosts run natively when supported
+- The `uname_m` field in proot's `--kernel-release` string is derived from
+  the container's `target_arch` via `_ARCH_UNAME_M` in `login.py` (not from
+  `os.uname().machine`), so emulated containers report the correct machine
+  type to `uname -m`. Falls back to `os.uname().machine` for unknown arches.
 
 ### Install: local archive file
 
@@ -262,7 +267,7 @@ When the positional argument is a local path, `command_install()` calls
    - If not cached → full online resolution: auth → manifest list → arch manifest → image config blob; saved to cache.
 2. **Apply layers** in order via `_apply_layer()`. Cached layers skip download.
 3. **Whiteout semantics** (OCI spec §6.1.2): `.wh..wh..opq` clears parent dir; `.wh.<name>` deletes the named sibling. Hard links are copied (`shutil.copy2`), deferred until all regular files are written. Block/character devices and FIFOs are silently skipped.
-4. **After layer application**: `write_resolv_conf`, `register_android_ids`, `setup_fake_sysdata` are run. `/etc/environment` and `/etc/hosts` are **not** written — env vars are set at login time; `/etc/hosts` is left as provided by the image.
+4. **After layer application**: `setup_fake_sysdata` is always run. When `/etc/` exists: `write_resolv_conf` and `write_hosts` are called. When `/etc/passwd` exists: `register_android_ids` is called. These steps are silently skipped for images that lack `/etc/` (e.g. distroless, scratch-based).
 5. Returns dict with `name`, `version`, `description`, `env`, `manifest`, `image_config`.
 
 After `pull_image()` returns, `command_install()` writes:
@@ -316,6 +321,10 @@ tag=`tag`).
 ### Login: passwd resolution and environment variables
 
 **`/etc/passwd` symlink resolution** — `_resolve_rootfs_path(rootfs, guest_path)` resolves an absolute guest path to its real host path by following symlinks within the rootfs namespace. Absolute symlink targets are re-rooted under `rootfs` via `os.path.normpath(target)` (prevents `..` escapes past `/`). The loop runs at most 40 times; exceeding this raises `OSError(ELOOP)`.
+
+**Optional `/etc/passwd`** — for `normal`-type containers, `/etc/passwd` is not required. When it is absent, `--user` accepts only a numeric UID or the literal `root` (mapped to UID 0). Any other non-numeric user name is rejected with an error. UID and GID are both set to the supplied number; home defaults to `/root` (UID 0) or `/home/<uid>` (other).
+
+**Shell availability check** — before `os.execvpe`, `login` resolves `login_shell` within the rootfs via `_resolve_rootfs_path` and confirms it is a regular file. If the shell is missing and the image config (`manifest.json`) defines a non-empty `Entrypoint` or `Cmd`, the error directs the user to use `proot-distro run` instead. If neither a shell nor an Entrypoint/Cmd exists, an error states that the image has no shell or entrypoint defined. This check is bypassed when `args._run_inner` is set (i.e. invoked via `command_run`).
 
 **Environment delivery** — `command_login()` builds a clean `child_env` dict and passes it to `os.execvpe("proot", ...)`. Proot inherits this dict and propagates it to the spawned shell. There is **no `/usr/bin/env -i` wrapper** in the inner command — the shell is exec'd directly. The host's environment is **not** carried into the guest; only the entries below are exported.
 
@@ -401,6 +410,13 @@ injecting the pre-built inner command via `args._run_inner`.
 `termux` and `normal` dist branches, bypassing shell wrapping when set.
 All other login options (`--user`, `--isolated`, `--bind`, etc.) work
 unchanged.
+
+**Working directory in `run` mode** — `command_run()` injects
+`args.work_dir` before calling `command_login()`:
+- If `--work-dir` was given by the user → used as-is (already in `args.work_dir`).
+- Otherwise: `WorkingDir` from `image_config.config` is used when non-empty.
+- If `WorkingDir` is absent or empty → defaults to `/` (not the user's home
+  directory, which is the `login`-mode default).
 
 ### Backup
 
