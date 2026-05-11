@@ -593,14 +593,6 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             os.makedirs(DOWNLOAD_CACHE_DIR, exist_ok=True)
             metadata = pull_image(image_ref, rootfs_dir, dist_arch)
 
-        if not os.path.isdir(os.path.join(rootfs_dir, "etc")):
-            msg()
-            msg(f"{C['BRED']}Error: extracted rootfs has no /etc directory. "
-                f"The image may be incompatible with proot.{C['RST']}")
-            msg()
-            _cleanup()
-            sys.exit(1)
-
         # Write manifest.json when metadata is available (Docker pull or OCI
         # local). Skipped for plain tarballs (metadata is None).
         if metadata is not None:
@@ -621,17 +613,19 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
                 msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
                     f"Warning: could not write manifest.json: {exc}{C['RST']}")
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Updating '/etc/resolv.conf'...{C['RST']}")
-        write_resolv_conf(rootfs_dir)
+        if os.path.isdir(os.path.join(rootfs_dir, "etc")):
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Updating '/etc/resolv.conf'...{C['RST']}")
+            write_resolv_conf(rootfs_dir)
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Updating '/etc/hosts'...{C['RST']}")
-        write_hosts(rootfs_dir)
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Updating '/etc/hosts'...{C['RST']}")
+            write_hosts(rootfs_dir)
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Registering Android-specific UIDs and GIDs...{C['RST']}")
-        register_android_ids(rootfs_dir)
+            if os.path.isfile(os.path.join(rootfs_dir, "etc", "passwd")):
+                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                    f"Registering Android-specific UIDs and GIDs...{C['RST']}")
+                register_android_ids(rootfs_dir)
 
         setup_fake_sysdata(rootfs_dir)
 

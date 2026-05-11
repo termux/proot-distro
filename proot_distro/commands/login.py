@@ -42,6 +42,7 @@ from proot_distro.constants import (
     DEFAULT_PATH_ENV,
     DEFAULT_FAKE_KERNEL_RELEASE,
     DEFAULT_FAKE_KERNEL_VERSION,
+    PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
 from proot_distro.arch import (
@@ -352,46 +353,64 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
                 inner += ["-c", shlex.join(login_cmd)]
         login_uid = login_gid = login_home = None
     else:
+        # /etc/passwd is optional. When absent, --user must be a numeric UID.
+        passwd_available = False
         try:
             passwd_path = _resolve_rootfs_path(rootfs, "/etc/passwd")
+            passwd_available = os.path.isfile(passwd_path)
         except OSError:
-            msg(f"{C['BRED']}Error: the selected distribution doesn't have "
-                f"/etc/passwd.{C['RST']}")
-            sys.exit(1)
+            pass
 
-        if not os.path.isfile(passwd_path):
-            msg(f"{C['BRED']}Error: the selected distribution doesn't have "
-                f"/etc/passwd.{C['RST']}")
-            sys.exit(1)
+        if passwd_available:
+            try:
+                with open(passwd_path) as fh:
+                    user_found = any(
+                        line.startswith(f"{login_user}:") for line in fh
+                    )
+            except OSError:
+                user_found = False
 
-        try:
-            with open(passwd_path) as fh:
-                user_found = any(
-                    line.startswith(f"{login_user}:") for line in fh
+            if not user_found:
+                msg(f"{C['BRED']}Error: no user "
+                    f"'{C['YELLOW']}{login_user}{C['BRED']}' defined in "
+                    f"/etc/passwd.{C['RST']}")
+                sys.exit(1)
+
+            login_uid = _read_passwd_field(rootfs, login_user, 2)
+            login_gid = _read_passwd_field(rootfs, login_user, 3)
+            login_home = _read_passwd_field(rootfs, login_user, 5)
+            login_shell = _read_passwd_field(rootfs, login_user, 6)
+
+            if not login_uid:
+                msg(f"{C['BRED']}Error: failed to retrieve UID for user "
+                    f"'{login_user}'.{C['RST']}")
+                sys.exit(1)
+            if not login_home:
+                login_home = (
+                    f"/home/{login_user}" if login_user != "root" else "/root"
                 )
-        except OSError:
-            user_found = False
-
-        if not user_found:
-            msg(f"{C['BRED']}Error: no user "
-                f"'{C['YELLOW']}{login_user}{C['BRED']}' defined in "
-                f"/etc/passwd.{C['RST']}")
-            sys.exit(1)
-
-        login_uid = _read_passwd_field(rootfs, login_user, 2)
-        login_gid = _read_passwd_field(rootfs, login_user, 3)
-        login_home = _read_passwd_field(rootfs, login_user, 5)
-        login_shell = _read_passwd_field(rootfs, login_user, 6)
-
-        if not login_uid:
-            msg(f"{C['BRED']}Error: failed to retrieve UID for user "
-                f"'{login_user}'.{C['RST']}")
-            sys.exit(1)
-        if not login_home:
-            login_home = f"/home/{login_user}" if login_user != "root" else "/root"
-        if not login_wd:
-            login_wd = login_home
-        if not login_shell:
+            if not login_wd:
+                login_wd = login_home
+            if not login_shell:
+                login_shell = "/bin/sh"
+        else:
+            # No /etc/passwd: accept only a numeric UID via --user.
+            # "root" is allowed as a universal alias for UID 0.
+            if login_user == "root":
+                login_uid = login_gid = "0"
+            elif login_user.isdigit():
+                login_uid = login_gid = login_user
+            else:
+                msg()
+                msg(f"{C['BRED']}Error: container "
+                    f"'{C['YELLOW']}{dist_name}{C['BRED']}' has no "
+                    f"/etc/passwd; '--user' only accepts a numeric UID "
+                    f"in this case.{C['RST']}")
+                msg()
+                sys.exit(1)
+            login_home = "/root" if login_uid == "0" else f"/home/{login_uid}"
+            if not login_wd:
+                login_wd = login_home
             login_shell = "/bin/sh"
 
         # Baseline guest env. Always exported on every login.
@@ -434,10 +453,52 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         run_inner = getattr(args, "_run_inner", None)
         if run_inner is not None:
             inner = run_inner
-        elif login_cmd:
-            inner = [login_shell, "-c", shlex.join(login_cmd)]
         else:
-            inner = [login_shell, "-l"]
+            # Verify the shell exists inside the container before exec'ing.
+            shell_found = False
+            try:
+                shell_found = os.path.isfile(
+                    _resolve_rootfs_path(rootfs, login_shell)
+                )
+            except OSError:
+                pass
+
+            if not shell_found:
+                _mc_path = os.path.join(container_dir, "manifest.json")
+                _has_ep_or_cmd = False
+                try:
+                    with open(_mc_path) as _fh:
+                        _mc = json.load(_fh)
+                    _cfg = (_mc.get("image_config") or {}).get("config", {})
+                    _has_ep_or_cmd = bool(
+                        (_cfg.get("Entrypoint") or [])
+                        or (_cfg.get("Cmd") or [])
+                    )
+                except (OSError, ValueError):
+                    pass
+
+                msg()
+                if _has_ep_or_cmd:
+                    msg(f"{C['BRED']}Error: shell "
+                        f"'{C['YELLOW']}{login_shell}{C['BRED']}' is not "
+                        f"available in container "
+                        f"'{C['YELLOW']}{dist_name}{C['BRED']}'. The image "
+                        f"defines an Entrypoint or Cmd; use "
+                        f"'{C['YELLOW']}{PROGRAM_NAME} run "
+                        f"{dist_name}{C['BRED']}' instead.{C['RST']}")
+                else:
+                    msg(f"{C['BRED']}Error: shell "
+                        f"'{C['YELLOW']}{login_shell}{C['BRED']}' is not "
+                        f"available in container "
+                        f"'{C['YELLOW']}{dist_name}{C['BRED']}', and the "
+                        f"image has no Entrypoint or Cmd defined.{C['RST']}")
+                msg()
+                sys.exit(1)
+
+            if login_cmd:
+                inner = [login_shell, "-c", shlex.join(login_cmd)]
+            else:
+                inner = [login_shell, "-l"]
 
         setup_fake_sysdata(rootfs)
 
