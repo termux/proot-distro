@@ -158,6 +158,7 @@ proot-distro login ubuntu -- bash -c "echo hello"
 | `--hostname TEXT` | Customize the hostname inside the container |
 | `--work-dir PATH` | Set the initial working directory |
 | `--env VAR=VALUE` | Set an environment variable (repeatable) |
+| `--debug` | Print the fully assembled proot command line and exit without running it |
 
 **Legacy migration:** if the container was created by an older version of
 PRoot-Distro and its rootfs is still at the legacy path
@@ -428,7 +429,7 @@ exits.
 | Neither defined | _(none)_ | Error |
 
 Accepts the same options as `login`, including `--isolated`, `--minimal`,
-`--env`, `--bind`, and all others. See `proot-distro login --help`.
+`--env`, `--bind`, `--debug`, and all others. See `proot-distro login --help`.
 
 **Examples:**
 
@@ -444,6 +445,9 @@ proot-distro run ubuntu --isolated --env MY_VAR=hello
 
 # Run with bare-minimum proot configuration
 proot-distro run ubuntu --minimal
+
+# Print the proot command line without executing
+proot-distro run ubuntu --debug
 ```
 
 ---
