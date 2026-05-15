@@ -30,26 +30,62 @@ import sys
 from proot_distro.constants import PROGRAM_VERSION
 
 
-_RST    = "\033[0m"
-_BOLD   = "\033[1m"
-_ITALIC = "\033[3m"
-_RED    = "\033[31m"
-_GREEN  = "\033[32m"
-_YELLOW = "\033[33m"
-_BLUE   = "\033[34m"
-_CYAN   = "\033[36m"
+_RST       = "\033[0m"
+_BOLD      = "\033[1m"
+_ITALIC    = "\033[3m"
+_UNDERLINE = "\033[4m"
+_RED       = "\033[31m"
+_GREEN     = "\033[32m"
+_YELLOW    = "\033[33m"
+_BLUE      = "\033[34m"
+_MAGENTA   = "\033[35m"
+_CYAN      = "\033[36m"
+_WHITE     = "\033[37m"
 
 _COLORS = {
     "RST":     _RST,
-    "RED":     _RST + _RED,
-    "BRED":    _RST + _BOLD + _RED,
-    "GREEN":   _RST + _GREEN,
-    "YELLOW":  _RST + _YELLOW,
+
+    "RED": _RST + _RED,
+    "BRED": _RST + _BOLD + _RED,
+    "IRED": _RST + _ITALIC + _RED,
+    "URED": _RST + _UNDERLINE + _RED,
+    "UBRED": _RST + _UNDERLINE + _BOLD + _RED,
+
+    "GREEN": _RST + _GREEN,
+    "BGREEN": _RST + _BOLD + _GREEN,
+    "IGREEN": _RST + _ITALIC + _GREEN,
+    "UGREEN": _RST + _UNDERLINE + _GREEN,
+    "UBGREEN": _RST + _UNDERLINE + _BOLD + _GREEN,
+
+    "YELLOW": _RST + _YELLOW,
     "BYELLOW": _RST + _BOLD + _YELLOW,
-    "BLUE":    _RST + _BLUE,
-    "CYAN":    _RST + _CYAN,
-    "BCYAN":   _RST + _BOLD + _CYAN,
-    "ICYAN":   _RST + _ITALIC + _CYAN,
+    "IYELLOW": _RST + _ITALIC + _YELLOW,
+    "UYELLOW": _RST + _UNDERLINE + _YELLOW,
+    "UBYELLOW": _RST + _UNDERLINE + _BOLD + _YELLOW,
+
+    "BLUE": _RST + _BLUE,
+    "BBLUE": _RST + _BOLD + _BLUE,
+    "IBLUE": _RST + _ITALIC + _BLUE,
+    "UBLUE": _RST + _UNDERLINE + _BLUE,
+    "UBBLUE": _RST + _UNDERLINE + _BOLD + _BLUE,
+
+    "MAGENTA": _RST + _MAGENTA,
+    "BMAGENTA": _RST + _BOLD + _MAGENTA,
+    "IMAGENTA": _RST + _ITALIC + _MAGENTA,
+    "UMAGENTA": _RST + _UNDERLINE + _MAGENTA,
+    "UBMAGENTA": _RST + _UNDERLINE + _BOLD + _MAGENTA,
+
+    "CYAN": _RST + _CYAN,
+    "BCYAN": _RST + _BOLD + _CYAN,
+    "ICYAN": _RST + _ITALIC + _CYAN,
+    "UCYAN": _RST + _UNDERLINE + _CYAN,
+    "UBCYAN": _RST + _UNDERLINE + _BOLD + _CYAN,
+
+    "WHITE": _RST + _WHITE,
+    "BWHITE": _RST + _BOLD + _WHITE,
+    "IWHITE": _RST + _ITALIC + _WHITE,
+    "UWHITE": _RST + _UNDERLINE + _WHITE,
+    "UBWHITE": _RST + _UNDERLINE + _BOLD + _WHITE,
 }
 _EMPTY = {k: "" for k in _COLORS}
 
