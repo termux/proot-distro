@@ -65,7 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
         "install", aliases=["add", "i", "in", "ins"], add_help=False
     )
     p_install.add_argument("alias", nargs="?", default=None, metavar="IMAGE")
-    p_install.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
+    _p_install_name = p_install.add_mutually_exclusive_group()
+    _p_install_name.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
+    _p_install_name.add_argument(
+        "--override-alias", dest="custom_dist_name", metavar="ALIAS"
+    )
     p_install.add_argument(
         "--architecture", dest="override_arch", metavar="ARCH",
     )
@@ -92,8 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_login = sub.add_parser("login", aliases=["sh"], add_help=False)
     p_login.add_argument("alias", nargs="?", default=None)
     p_login.add_argument("--user", default="root")
-    p_login.add_argument(
+    _p_login_ports = p_login.add_mutually_exclusive_group()
+    _p_login_ports.add_argument(
         "--redirect-ports", dest="redirect_ports", action="store_true"
+    )
+    _p_login_ports.add_argument(
+        "--fix-low-ports", dest="redirect_ports", action="store_true"
     )
     p_login.add_argument("--isolated", action="store_true")
     p_login.add_argument("--minimal", action="store_true")
