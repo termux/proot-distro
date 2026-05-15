@@ -93,14 +93,6 @@ def command_run(args, configs: dict) -> None:
     if not getattr(args, "work_dir", None):
         args.work_dir = img_cfg.get("WorkingDir") or "/"
 
-    if getattr(args, "debug", False):
-        if entrypoint:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Entrypoint: {json.dumps(entrypoint)}{C['RST']}")
-        if cmd:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Cmd: {json.dumps(cmd)}{C['RST']}")
-
     # Signal to command_login to bypass shell wrapping and run inner directly.
     args._run_inner = inner
     args.login_cmd = []

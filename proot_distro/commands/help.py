@@ -551,7 +551,7 @@ _HELP_PAGES = {
             ("--env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
-            ("--debug",
+            ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
              "paste into a terminal."),
@@ -741,7 +741,7 @@ _HELP_PAGES = {
             ("--env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
-            ("--debug",
+            ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
              "paste into a terminal."),

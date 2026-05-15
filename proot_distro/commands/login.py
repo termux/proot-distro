@@ -724,15 +724,13 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         child_env["PROOT_L2S_DIR"] = l2s_dir
     child_env.pop("LD_PRELOAD", None)
 
-    debug = getattr(args, "debug", False)
-    if debug:
+    get_proot_cmd = getattr(args, "get-proot-cmd", False)
+    if get_proot_cmd:
         parts = ["env"]
         for k, v in child_env.items():
             parts.append(f"{k}={_dq(v)}")
         parts.extend(_dq(a) for a in proot_args)
         cmd_line = " \\\n  ".join(parts)
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Proot command line:{C['RST']}")
         msg(cmd_line)
         sys.exit(0)
 
