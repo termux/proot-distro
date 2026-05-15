@@ -912,6 +912,17 @@ def command_help(args=None, configs=None) -> None:  # noqa: ARG001
 
     _section("TROUBLESHOOTING")
     _paragraph(
+        "If your terminal (theme) does not work well with colors, "
+        "set this environment variable:",
+        width
+    )
+    msg()
+    _shell_block(
+        ["export PD_FORCE_NO_COLORS=true"],
+        width,
+    )
+    msg()
+    _paragraph(
         "If you have issues with proot during login, try these "
         "quck troubleshooting steps:",
         width,
