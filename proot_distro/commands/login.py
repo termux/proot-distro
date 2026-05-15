@@ -48,7 +48,6 @@ from proot_distro.colors import C, msg
 from proot_distro.arch import (
     get_device_cpu_arch,
     detect_installed_arch,
-    supports_32bit,
     get_emulator_args,
 )
 from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
@@ -316,7 +315,6 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     no_link2symlink = getattr(args, "no_link2symlink", False)
     no_sysvipc = getattr(args, "no_sysvipc", False)
     no_kill_on_exit = getattr(args, "no_kill_on_exit", False)
-    no_arch_warning = getattr(args, "no_arch_warning", False)
     custom_binds = getattr(args, "bind", []) or []
     extra_env = getattr(args, "env", []) or []
     login_cmd = getattr(args, "login_cmd", []) or []
@@ -546,11 +544,6 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         target_arch = get_device_cpu_arch()
 
     device_arch = get_device_cpu_arch()
-
-    if (target_arch != device_arch and not no_arch_warning
-            and not supports_32bit()):
-        msg(f"{C['BRED']}Warning: CPU doesn't support 32-bit instructions, "
-            f"some software may not work.{C['RST']}")
 
     emulator_override = getattr(args, "emulator", None) or ""
     emu_args = get_emulator_args(target_arch, device_arch, emulator_override)

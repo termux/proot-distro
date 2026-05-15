@@ -538,8 +538,6 @@ _HELP_PAGES = {
              "SELinux set to permissive mode."),
             ("--no-kill-on-exit",
              "Hang indefinitely until all session processes exit."),
-            ("--no-arch-warning",
-             "Suppress the 32-bit CPU support warning."),
             ("--emulator [FILE]",
              "Override the QEMU emulator binary for cross-arch "
              "execution. Only QEMU user mode and Blink emulators are "
@@ -728,8 +726,6 @@ _HELP_PAGES = {
              "SELinux set to permissive mode."),
             ("--no-kill-on-exit",
              "Hang indefinitely until all session processes exit."),
-            ("--no-arch-warning",
-             "Suppress the 32-bit CPU support warning."),
             ("--emulator [FILE]",
              "Override the QEMU emulator binary for cross-arch "
              "execution. Only QEMU user mode and Blink emulators are "
