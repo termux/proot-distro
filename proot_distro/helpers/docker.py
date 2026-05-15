@@ -128,8 +128,10 @@ def _layer_cache_path(digest: str) -> str:
 
 
 def _manifest_cache_path(image_ref: str, arch: str) -> str:
-    safe = re.sub(r"[^\w._-]", "_", f"{image_ref}_{arch}")
-    return os.path.join(MANIFEST_CACHE_DIR, safe + ".json")
+    registry, repo, tag = parse_image_ref(image_ref)
+    canonical = f"{registry + '/' if registry else ''}{repo}:{tag}_{arch}"
+    key = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    return os.path.join(MANIFEST_CACHE_DIR, key + ".json")
 
 
 def _save_manifest_cache(
