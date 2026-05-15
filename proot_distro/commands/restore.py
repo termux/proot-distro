@@ -34,7 +34,7 @@ import sys
 import tarfile
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
 
 
@@ -193,6 +193,8 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 f"Extracting: '{member_name}'{C['RST']}")
         if not use_tty:
             return
+        if not tty_safe_for_writes():
+            return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         if counter is not None and total_size:
             done = counter.count
@@ -234,7 +236,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                     continue
 
                 if _check_bare_root(member.name):
-                    if use_tty:
+                    if use_tty and tty_safe_for_writes():
                         sys.stderr.write("\r\033[K")
                         sys.stderr.flush()
                     msg()
@@ -260,7 +262,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                             f"{C['CYAN']}"
                         )
                         count = 0
-                        if use_tty:
+                        if use_tty and tty_safe_for_writes():
                             sys.stderr.write("\r\033[K")
                             sys.stderr.flush()
                         for dp, dns, fns in os.walk(
@@ -272,7 +274,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                                 except OSError:
                                     pass
                                 count += 1
-                                if use_tty:
+                                if use_tty and tty_safe_for_writes():
                                     sys.stderr.write(
                                         f"\r{pfx}Removing old rootfs..."
                                         f" {count} files{C['RST']}"
@@ -284,7 +286,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                                 except OSError:
                                     pass
                         shutil.rmtree(rootfs_dir, ignore_errors=True)
-                        if use_tty:
+                        if use_tty and tty_safe_for_writes():
                             sys.stderr.write("\r\033[K")
                             sys.stderr.flush()
                     cleared.add(dist_name)
@@ -343,7 +345,7 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
 
                 _on_entry(member.size, member.name)
 
-        if use_tty:
+        if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
 
@@ -351,14 +353,14 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             f"Finished restoring the container.{C['RST']}")
 
     except KeyboardInterrupt:
-        if use_tty:
+        if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
             f"Aborted by user.{C['RST']}")
         sys.exit(1)
     except (EOFError, OSError, tarfile.TarError) as exc:
-        if use_tty:
+        if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"

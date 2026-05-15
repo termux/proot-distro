@@ -49,7 +49,7 @@ runtime via `importlib.metadata.version("proot-distro")`.
 | Module | Contents |
 |---|---|
 | `constants.py` | All global path and default constants. `PREFIX` reads `TERMUX_PREFIX` env var. |
-| `colors.py` | ANSI escape constants, `C` (color dict), `msg()`, `show_version()` |
+| `colors.py` | ANSI escape constants, `C` (color dict), `msg()`, `tty_safe_for_writes()`, `show_version()` |
 | `arch.py` | CPU arch detection, ELF-based installed arch detection, QEMU/emulator helpers |
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()` |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` — with TTY progress bars |
@@ -220,6 +220,19 @@ a `_COLORS` dict. `C` is set to `_COLORS` when `sys.stderr.isatty()` and
 `PD_FORCE_NO_COLORS` is unset, otherwise `_EMPTY` (all-empty strings). Every
 color entry starts with `_RST` so color transitions implicitly reset
 attributes.
+
+`tty_safe_for_writes()` returns `False` when stderr is a TTY whose termios
+state has `ECHO` or `ICANON` cleared — the signature of a password prompt
+or full-screen curses UI on the same TTY (e.g., the pinentry triggered by
+`proot-distro backup ubuntu | gpg -c ...` or `gpg -d ubuntu.gpg |
+proot-distro restore`). Returns `True` for non-TTY stderr (file/pipe) and
+for TTYs in canonical+ECHO mode, so plain redirection and pipes to
+non-interactive consumers (`gzip`, `cat`, etc.) are unaffected. Detection
+is program-agnostic — no process names are matched. `msg()` consults this
+helper and silently drops writes when it returns `False`; backup and
+restore additionally gate their progress-bar `sys.stderr.write` calls and
+`\r\033[K` clears on it so destructive escapes never reach a pinentry or
+curses display sharing the TTY.
 
 ### Architecture and emulation
 
@@ -435,6 +448,13 @@ unchanged.
 - **Entry filtering**: block/character devices, FIFOs, and sockets are silently skipped.
 - **Ownership**: uid/gid/uname/gname are zeroed.
 - **Progress bar**: TTY-only stderr, format `[*] [####----] XX%  N / Total files`.
+- **TTY-contention safety**: when piping into an interactive consumer
+  (e.g. `gpg -c` showing a pinentry prompt), every stderr write — the
+  initial info lines via `msg()`, the progress bar, and its `\r\033[K`
+  clears — is gated by `tty_safe_for_writes()`. While the downstream
+  pinentry holds the TTY in no-echo/raw mode, our writes are suppressed
+  entirely; once it restores the TTY, `msg()` and the progress bar resume
+  normally. Piping into non-TTY consumers (`gzip`, `cat`) is unaffected.
 - **CTRL-C**: progress bar cleared, partial output file removed.
 
 ### Restore
@@ -449,6 +469,12 @@ unchanged.
   - No subdir (bare root): rejected with an error.
 - **Recursive-unlink**: on the first entry for a container, the existing rootfs is cleared.
 - **Progress bar**: seekable file shows accurate bar; stdin shows counter.
+- **TTY-contention safety**: same gating as `backup`. When stdin is fed
+  by an interactive producer (e.g. `gpg -d archive.gpg | proot-distro
+  restore` showing a pinentry prompt), `msg()` calls, the progress bar,
+  the `Removing old rootfs... N files` line, and every `\r\033[K` clear
+  consult `tty_safe_for_writes()` and stay silent while the pinentry
+  holds the TTY. Output resumes once the TTY returns to canonical+ECHO.
 - **CTRL-C**: progress bar cleared, no data removed.
 
 ### Reset

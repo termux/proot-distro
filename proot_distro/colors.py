@@ -23,9 +23,21 @@
 # dict maps symbolic names to escape sequences so callers don't deal with
 # raw ANSI codes. Every entry starts with _RST so transitions implicitly
 # reset attributes.
+#
+# tty_safe_for_writes() lets callers detect when stderr's TTY has been
+# taken over by another process for interactive input — e.g., the pinentry
+# triggered by piping a backup into 'gpg -c'. In that state any of our
+# writes (info lines, progress bars) would land on top of the other
+# program's display. msg() and the backup progress bar consult this so
+# that piping into curses/no-echo consumers stays clean.
 
 import os
 import sys
+
+try:
+    import termios
+except ImportError:
+    termios = None
 
 from proot_distro.constants import PROGRAM_VERSION
 
@@ -99,7 +111,44 @@ def _init_colors() -> dict:
 C = _init_colors()
 
 
+def tty_safe_for_writes() -> bool:
+    """Return False when stderr's TTY is currently being used by another
+    process for interactive input (a password prompt or a full-screen
+    curses UI). Return True otherwise.
+
+    A TTY in canonical mode with ECHO enabled is in its normal "shell"
+    state. Programs that read a passphrase clear ECHO; programs that
+    drive a full-screen UI clear ICANON. Either signal means another
+    process has taken control of the TTY and our writes — particularly
+    destructive escapes like '\\r' or '\\033[K' from a progress bar —
+    would corrupt that program's display. The check looks only at the
+    TTY's termios state, so it triggers for any such consumer (pinentry,
+    sudo, ssh-askpass, less, etc.) without naming any specific program.
+    Non-TTY stderr (file/pipe) always returns True so plain redirection
+    is unaffected.
+    """
+    if termios is None:
+        return True
+    try:
+        fd = sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError):
+        return True
+    try:
+        if not os.isatty(fd):
+            return True
+    except OSError:
+        return True
+    try:
+        attrs = termios.tcgetattr(fd)
+    except (OSError, termios.error):
+        return True
+    lflag = attrs[3]
+    return bool(lflag & termios.ECHO) and bool(lflag & termios.ICANON)
+
+
 def msg(*args):
+    if not tty_safe_for_writes():
+        return
     print(*args, file=sys.stderr)
 
 

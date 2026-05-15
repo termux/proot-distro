@@ -30,7 +30,7 @@ import sys
 import tarfile
 
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
 from proot_distro.commands.help import _HELP_COMMANDS
 
@@ -293,6 +293,8 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
         nonlocal _last_shown
         if not use_tty:
             return
+        if not tty_safe_for_writes():
+            return
         pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         pct = done_size * 100 // total_size if total_size else 100
         bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
@@ -328,14 +330,14 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
                 _add_path(tf, src, arc, on_read=_on_read)
                 _on_entry(arc)
 
-        if use_tty:
+        if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Finished backing up.{C['RST']}")
 
     except KeyboardInterrupt:
-        if use_tty:
+        if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
@@ -347,7 +349,7 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
                 pass
         sys.exit(1)
     except (OSError, tarfile.TarError) as exc:
-        if use_tty:
+        if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
