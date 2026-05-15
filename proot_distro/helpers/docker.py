@@ -664,12 +664,19 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                     f"{C['CYAN']}Authenticating with registry...{C['RST']}")
                 token = _get_auth_token(repo, registry)
             except (urllib.error.URLError, OSError) as net_err:
-                if (isinstance(net_err, urllib.error.HTTPError)
-                        and net_err.code == 404):
-                    raise RuntimeError(
-                        f"Image not found: '{image_ref}' does not exist "
-                        f"on the registry."
-                    ) from net_err
+                if isinstance(net_err, urllib.error.HTTPError):
+                    if net_err.code == 401:
+                        raise RuntimeError(
+                            f"Authentication required: '{image_ref}' is a "
+                            f"private image or the registry requires "
+                            f"credentials. Only public images can be "
+                            f"installed without authentication."
+                        ) from net_err
+                    if net_err.code == 404:
+                        raise RuntimeError(
+                            f"Image not found: '{image_ref}' does not exist "
+                            f"on the registry."
+                        ) from net_err
                 raise RuntimeError(
                     f"Network error: {net_err}\n"
                     f"{missing} of {len(layers)} layer(s) for '{image_ref}'"
@@ -683,12 +690,19 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                 image_ref, arch
             )
         except (urllib.error.URLError, OSError) as net_err:
-            if (isinstance(net_err, urllib.error.HTTPError)
-                    and net_err.code == 404):
-                raise RuntimeError(
-                    f"Image not found: '{image_ref}' does not exist "
-                    f"on the registry."
-                ) from net_err
+            if isinstance(net_err, urllib.error.HTTPError):
+                if net_err.code == 401:
+                    raise RuntimeError(
+                        f"Authentication required: '{image_ref}' is a "
+                        f"private image or the registry requires "
+                        f"credentials. Only public images can be "
+                        f"installed without authentication."
+                    ) from net_err
+                if net_err.code == 404:
+                    raise RuntimeError(
+                        f"Image not found: '{image_ref}' does not exist "
+                        f"on the registry."
+                    ) from net_err
             raise RuntimeError(
                 f"Network error: {net_err}\n"
                 f"No cached manifest found for '{image_ref}' ({arch}). "
@@ -729,7 +743,17 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
                 f"{short_id}: Downloading layer "
                 f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
-            layer_path = _download_blob(repo, digest, token or "", registry)
+            try:
+                layer_path = _download_blob(repo, digest, token or "", registry)
+            except urllib.error.HTTPError as dl_err:
+                if dl_err.code == 401:
+                    raise RuntimeError(
+                        f"Authentication required: '{image_ref}' is a "
+                        f"private image or the registry requires "
+                        f"credentials. Only public images can be "
+                        f"installed without authentication."
+                    ) from dl_err
+                raise
 
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
