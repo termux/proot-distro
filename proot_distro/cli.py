@@ -358,7 +358,6 @@ def main() -> None:
         msg()
         msg(f"{C['BRED']}Error: unknown command "
             f"'{C['YELLOW']}{_first}{C['BRED']}'.{C['RST']}")
-        msg()
         command_help()
         msg()
         sys.exit(1)
@@ -371,7 +370,6 @@ def main() -> None:
         msg()
         msg(f"{C['BRED']}Error: unknown command "
             f"'{C['YELLOW']}{raw_args[0]}{C['BRED']}'.{C['RST']}")
-        msg()
         command_help()
         msg()
         sys.exit(1)
