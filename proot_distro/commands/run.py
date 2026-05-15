@@ -62,6 +62,14 @@ def command_run(args, configs: dict) -> None:
     dist_name = args.alias
     run_args = getattr(args, "run_args", []) or []
 
+    rootfs = os.path.join(CONTAINERS_DIR, dist_name, "rootfs")
+    if not os.path.isdir(rootfs):
+        msg()
+        msg(f"{C['BRED']}Error: container "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
+        msg()
+        sys.exit(1)
+
     img_cfg = _read_image_config(dist_name)
 
     entrypoint: list = list(img_cfg.get("Entrypoint") or [])
