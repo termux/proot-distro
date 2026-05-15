@@ -465,8 +465,10 @@ _HELP_PAGES = {
              "letters, numbers and special symbols dot, minus, underscore. "
              "Default equals to image name without tag and registry prefix."),
             ("--architecture [ARCH]",
-             "Override the target CPU architecture. Valid values: "
-             "aarch64, arm, i686, riscv64, x86_64."),
+             "Override the target CPU architecture. Accepts native "
+             "names (aarch64, arm, i686, riscv64, x86_64) or Docker "
+             "platform strings (linux/arm64, linux/amd64, linux/arm/v7, "
+             "linux/386, linux/riscv64)."),
         ],
         "examples": [
             f"{PROGRAM_NAME} install ubuntu:24.04",

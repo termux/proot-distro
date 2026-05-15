@@ -68,7 +68,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_install.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
     p_install.add_argument(
         "--architecture", dest="override_arch", metavar="ARCH",
-        choices=["aarch64", "arm", "i686", "riscv64", "x86_64"],
     )
     p_install.add_argument("-h", "--help", action="store_true")
 

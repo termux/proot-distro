@@ -115,6 +115,35 @@ def detect_installed_arch(dist_name_or_rootfs: str) -> str:
 # QEMU / CPU emulator helpers
 # ---------------------------------------------------------------------------
 
+_KNOWN_ARCHS = {"aarch64", "arm", "i686", "riscv64", "x86_64"}
+
+# Docker platform strings and alternative names → proot-distro arch.
+# Entries are matched after stripping a leading "linux/" prefix.
+_DOCKER_TO_PROOT = {
+    "arm64":   "aarch64",
+    "arm/v7":  "arm",
+    "arm":     "arm",
+    "386":     "i686",
+    "amd64":   "x86_64",
+    "riscv64": "riscv64",
+}
+
+
+def normalize_arch(arch: str):
+    """Return a canonical proot-distro arch name, or None if unrecognised.
+
+    Accepts native names (``aarch64``, ``x86_64`` …), bare Docker names
+    (``arm64``, ``amd64`` …), and ``linux/``-prefixed Docker platform
+    strings (``linux/arm64``, ``linux/amd64`` …).
+    """
+    s = arch.strip()
+    if s.startswith("linux/"):
+        s = s[6:]
+    if s in _KNOWN_ARCHS:
+        return s
+    return _DOCKER_TO_PROOT.get(s)
+
+
 _QEMU_BINS = {
     "aarch64": f"{PREFIX}/bin/qemu-aarch64",
     "arm":     f"{PREFIX}/bin/qemu-arm",

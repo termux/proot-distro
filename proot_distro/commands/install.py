@@ -42,7 +42,7 @@ from proot_distro.constants import (
     PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
-from proot_distro.arch import get_device_cpu_arch
+from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import (
     pull_image,
@@ -574,7 +574,20 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
         sys.exit(1)
 
     device_arch = get_device_cpu_arch()
-    dist_arch = getattr(args, "override_arch", None) or device_arch
+    _raw_arch = getattr(args, "override_arch", None)
+    if _raw_arch:
+        dist_arch = normalize_arch(_raw_arch)
+        if dist_arch is None:
+            msg()
+            msg(f"{C['BRED']}Error: unknown architecture "
+                f"'{C['YELLOW']}{_raw_arch}{C['BRED']}'. "
+                f"Valid values: aarch64, arm, i686, riscv64, x86_64 "
+                f"(or Docker format: linux/arm64, linux/amd64, "
+                f"linux/arm/v7, linux/386, linux/riscv64).{C['RST']}")
+            msg()
+            sys.exit(1)
+    else:
+        dist_arch = device_arch
 
     # Decide between local-file mode and Docker-pull mode.
     local_path = os.path.expanduser(image_ref) if _is_local_path(image_ref) else None
