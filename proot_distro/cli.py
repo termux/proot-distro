@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("--hostname", metavar="STRING")
     p_login.add_argument("--work-dir", dest="work_dir", metavar="PATH")
     p_login.add_argument("--env", action="append", metavar="VAR=VALUE")
-    p_login.add_argument("--get-proot-cmd", action="store_true")
+    p_login.add_argument("--get-proot-cmd", dest="get_proot_cmd", action="store_true")
     p_login.add_argument("login_cmd", nargs="*")
     p_login.add_argument("-h", "--help", action="store_true")
 

@@ -724,7 +724,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         child_env["PROOT_L2S_DIR"] = l2s_dir
     child_env.pop("LD_PRELOAD", None)
 
-    get_proot_cmd = getattr(args, "get-proot-cmd", False)
+    get_proot_cmd = getattr(args, "get_proot_cmd", False)
     if get_proot_cmd:
         parts = ["env"]
         for k, v in child_env.items():
