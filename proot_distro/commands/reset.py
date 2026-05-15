@@ -20,9 +20,9 @@
 
 # Architecture: Rebuilds a container rootfs from the image reference stored
 # in containers/<name>/manifest.json. Only the rootfs/ subdirectory is
-# removed; manifest.json is preserved and re-used by install. If the
-# manifest is absent the reset falls back to pulling 'latest' from Docker
-# Hub using the container name as the image name.
+# removed; manifest.json is preserved and re-used by install. Containers
+# without a manifest (plain tarball installs, legacy rootfs) are rejected —
+# reset requires an OCI image_ref to know what to pull.
 
 import json
 import os
@@ -62,11 +62,12 @@ def command_reset(args, configs: dict) -> None:
             pass
 
     if not image_ref:
-        # Fallback: use the container name as the image name with :latest.
-        image_ref = f"{dist_name}:latest"
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"No manifest found; will pull "
-            f"'{C['YELLOW']}{image_ref}{C['CYAN']}'...{C['RST']}")
+        msg()
+        msg(f"{C['BRED']}Error: container "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' has no OCI manifest. "
+            f"Reset is supported for OCI images only.{C['RST']}")
+        msg()
+        sys.exit(1)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Removing rootfs of "

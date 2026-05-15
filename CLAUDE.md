@@ -456,7 +456,8 @@ unchanged.
 `command_reset()` reads `image_ref` and `arch` from
 `containers/<name>/manifest.json`, removes only the `rootfs/` subdirectory,
 and calls `command_install()` with a synthetic args object. If `manifest.json`
-is missing, falls back to pulling `<name>:latest`.
+is missing or contains no `image_ref`, the command exits with an error — reset
+is supported for OCI images only.
 
 ### Clear cache
 
