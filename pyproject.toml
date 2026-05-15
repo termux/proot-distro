@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proot-distro"
-version = "5.0.0b3"
+version = "5.0.0b4"
 description = "Manage Linux proot containers on Termux"
 readme = {text = "Manage Linux proot containers on Termux.", content-type = "text/plain"}
 requires-python = ">=3.9"
