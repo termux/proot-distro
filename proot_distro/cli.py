@@ -364,7 +364,7 @@ def main() -> None:
         sys.exit(1)
 
     parser = build_parser()
-    args, _ = parser.parse_known_args(raw_args)
+    args, unknown = parser.parse_known_args(raw_args)
 
     command = args.command
     if command is None:
@@ -385,6 +385,24 @@ def main() -> None:
         else:
             command_help()
         sys.exit(0)
+
+    # Check for unrecognized options/arguments. For login and run, args after
+    # '--' are passed to the inner command and must not be flagged — re-parse
+    # only the portion before '--' to get a clean unknown list.
+    check_unknown = unknown
+    if canonical in ("login", "run") and "--" in raw_args:
+        sep_idx = raw_args.index("--")
+        _, check_unknown = parser.parse_known_args(raw_args[:sep_idx])
+    if check_unknown:
+        bad = check_unknown[0]
+        kind = "unrecognized option" if bad.startswith("-") else "unexpected argument"
+        msg()
+        msg(f"{C['BRED']}Error: {kind}: "
+            f"'{C['YELLOW']}{bad}{C['BRED']}'.{C['RST']}")
+        if canonical in _HELP_COMMANDS:
+            _HELP_COMMANDS[canonical]()
+        msg()
+        sys.exit(1)
 
     # Validate required positional arguments.
     for arg_name, error_msg in _REQUIRED_ARGS.get(canonical, []):
