@@ -577,7 +577,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     if dist_type != "termux" and not no_link2symlink:
         proot_args.append("--link2symlink")
 
-    if not no_sysvipc:
+    if not no_sysvipc and not minimal:
         proot_args.append("--sysvipc")
 
     _ARCH_UNAME_M = {
