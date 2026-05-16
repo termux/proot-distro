@@ -22,3 +22,11 @@ pd = "proot_distro.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["proot_distro*"]
+
+[tool.setuptools.package-data]
+"proot_distro" = ["completions/*"]
+
+[tool.setuptools.data-files]
+"share/bash-completion/completions" = ["proot_distro/completions/proot-distro.bash"]
+"share/zsh/site-functions" = ["proot_distro/completions/_proot-distro"]
+"share/fish/vendor_completions.d" = ["proot_distro/completions/proot-distro.fish"]

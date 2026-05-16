@@ -1,0 +1,283 @@
+#compdef proot-distro pd
+#
+# Zsh completion for proot-distro and pd
+#
+# Install:
+#   cp _proot-distro /usr/share/zsh/site-functions/_proot-distro
+# Or for the current user, add to a directory in $fpath:
+#   mkdir -p ~/.local/share/zsh/site-functions
+#   cp _proot-distro ~/.local/share/zsh/site-functions/_proot-distro
+#   # Add to ~/.zshrc: fpath=(~/.local/share/zsh/site-functions $fpath)
+
+# ---------------------------------------------------------------------------
+# Helper: list installed containers
+# ---------------------------------------------------------------------------
+_proot_distro_containers() {
+    local dir
+    if [[ -n "${TERMUX_PREFIX}" ]]; then
+        dir="${TERMUX_PREFIX}/var/lib/proot-distro/containers"
+    elif [[ -n "${ANDROID_ROOT}" ]]; then
+        dir="/data/data/com.termux/files/usr/var/lib/proot-distro/containers"
+    else
+        dir="${XDG_DATA_HOME:-${HOME}/.local/share}/proot-distro/containers"
+    fi
+    local -a containers
+    if [[ -d "${dir}" ]]; then
+        local d
+        for d in "${dir}"/*/; do
+            [[ -d "${d}rootfs" ]] && containers+=("${d:t}")
+        done
+    fi
+    _describe 'container' containers
+}
+
+# ---------------------------------------------------------------------------
+# login / run shared options
+# ---------------------------------------------------------------------------
+_proot_distro_login_run_opts() {
+    local opts
+    opts=(
+        '--user[run as this user (default\: root)]:user'
+        '--redirect-ports[redirect ports below 1024 to unprivileged range]'
+        '--fix-low-ports[alias for --redirect-ports]'
+        '--isolated[isolated mode\: no host env vars or Termux paths]'
+        '--minimal[like --isolated but also disables Android system bindings]'
+        '--shared-home[mount Termux home inside the container]'
+        '--termux-home[alias for --shared-home]'
+        '--shared-tmp[share /tmp with the host]'
+        '--shared-x11[share the X11 socket (/tmp/.X11-unix)]'
+        '*--bind[bind-mount PATH\[:DEST\] into the container]:path:_files'
+        '--no-link2symlink[disable proot link2symlink extension]'
+        '--no-sysvipc[disable SysV IPC emulation]'
+        '--no-kill-on-exit[do not kill child processes when the session ends]'
+        '--emulator[path to QEMU user-mode emulator binary]:path:_files'
+        '--kernel[fake kernel release string reported to uname]:string'
+        '--hostname[hostname visible inside the container]:string'
+        '--work-dir[initial working directory inside the container]:path:_directories'
+        '*--env[set environment variable VAR=VALUE]:VAR=VALUE'
+        '--get-proot-cmd[print the proot command line and exit]'
+        '(-h --help)'{-h,--help}'[show help]'
+    )
+    echo "${opts[@]}"
+}
+
+# ---------------------------------------------------------------------------
+# Main completion function
+# ---------------------------------------------------------------------------
+_proot_distro() {
+    local curcontext="${curcontext}" state state_descr line
+    typeset -A opt_args
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[show help]' \
+        '1:command:->command' \
+        '*:: :->args'
+
+    case "${state}" in
+        command)
+            local -a subcommands
+            subcommands=(
+                'install:install a container from a Docker image or local archive'
+                'add:alias for install'
+                'i:alias for install'
+                'in:alias for install'
+                'ins:alias for install'
+                'remove:remove an installed container'
+                'rm:alias for remove'
+                'rename:rename a container'
+                'reset:reinstall a container from its original image'
+                'login:open a shell inside a container'
+                'sh:alias for login'
+                'list:list installed containers'
+                'li:alias for list'
+                'ls:alias for list'
+                'backup:backup a container to a tar archive'
+                'bak:alias for backup'
+                'bkp:alias for backup'
+                'restore:restore a container from a tar archive'
+                'clear-cache:clear the download cache'
+                'clear:alias for clear-cache'
+                'cl:alias for clear-cache'
+                'copy:copy files between host and container'
+                'cp:alias for copy'
+                'sync:synchronize files between host and container'
+                'run:run the image entrypoint/cmd in a container'
+                'help:show help'
+                'h:alias for help'
+                'he:alias for help'
+                'hel:alias for help'
+            )
+            _describe 'command' subcommands
+            ;;
+
+        args)
+            local cmd="${words[1]}"
+            case "${cmd}" in
+                add|i|in|ins)   cmd="install" ;;
+                rm)             cmd="remove" ;;
+                sh)             cmd="login" ;;
+                li|ls)          cmd="list" ;;
+                bak|bkp)        cmd="backup" ;;
+                clear|cl)       cmd="clear-cache" ;;
+                cp)             cmd="copy" ;;
+                h|he|hel)       cmd="help" ;;
+            esac
+            curcontext="${curcontext%:*:*}:proot-distro-${cmd}:"
+
+            case "${cmd}" in
+
+                # -----------------------------------------------------------
+                install)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(--name --override-alias)--name[install under a custom container name]:alias' \
+                        '(--name --override-alias)--override-alias[install under a custom container name]:alias' \
+                        '--architecture[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '1:docker image or local archive:_files'
+                    ;;
+
+                # -----------------------------------------------------------
+                remove)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-v --verbose)'{-v,--verbose}'[print each removed file]' \
+                        '1:container:_proot_distro_containers'
+                    ;;
+
+                # -----------------------------------------------------------
+                rename)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '1:original container:_proot_distro_containers' \
+                        '2:new container name'
+                    ;;
+
+                # -----------------------------------------------------------
+                reset)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '1:container:_proot_distro_containers'
+                    ;;
+
+                # -----------------------------------------------------------
+                login)
+                    _arguments -s \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '--user[run as this user (default\: root)]:user' \
+                        '(--redirect-ports --fix-low-ports)--redirect-ports[redirect ports below 1024]' \
+                        '(--redirect-ports --fix-low-ports)--fix-low-ports[alias for --redirect-ports]' \
+                        '(--isolated --minimal)--isolated[isolated mode]' \
+                        '(--isolated --minimal)--minimal[minimal isolated mode]' \
+                        '(--shared-home --termux-home)--shared-home[mount Termux home inside container]' \
+                        '(--shared-home --termux-home)--termux-home[alias for --shared-home]' \
+                        '--shared-tmp[share /tmp with the host]' \
+                        '--shared-x11[share the X11 socket (/tmp/.X11-unix)]' \
+                        '*--bind[bind-mount PATH\[:DEST\] into the container]:path:_files' \
+                        '--no-link2symlink[disable proot link2symlink extension]' \
+                        '--no-sysvipc[disable SysV IPC emulation]' \
+                        '--no-kill-on-exit[do not kill child processes when session ends]' \
+                        '--emulator[path to QEMU user-mode emulator binary]:path:_files' \
+                        '--kernel[fake kernel release string]:string' \
+                        '--hostname[hostname visible inside the container]:string' \
+                        '--work-dir[initial working directory]:path:_directories' \
+                        '*--env[set environment variable]:VAR=VALUE' \
+                        '--get-proot-cmd[print the proot command line and exit]' \
+                        '1:container:_proot_distro_containers' \
+                        '*:inner command:_command_names -e'
+                    ;;
+
+                # -----------------------------------------------------------
+                list)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]'
+                    ;;
+
+                # -----------------------------------------------------------
+                backup)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-v --verbose)'{-v,--verbose}'[print each archived file]' \
+                        '--output[write archive to FILE instead of stdout]:file:_files' \
+                        '--compress[compression algorithm]:type:(gzip bzip2 xz none)' \
+                        '1:container:_proot_distro_containers'
+                    ;;
+
+                # -----------------------------------------------------------
+                restore)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-v --verbose)'{-v,--verbose}'[print each extracted file]' \
+                        '1:archive:_files -g "*.tar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz"'
+                    ;;
+
+                # -----------------------------------------------------------
+                clear-cache)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-v --verbose)'{-v,--verbose}'[list removed files]'
+                    ;;
+
+                # -----------------------------------------------------------
+                copy)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-v --verbose)'{-v,--verbose}'[print each copied file]' \
+                        '(-m --move)'{-m,--move}'[move instead of copy]' \
+                        '(-r --recursive)'{-r,--recursive}'[copy directories recursively]' \
+                        '1:source (host path or container\:path):_files' \
+                        '2:destination (host path or container\:path):_files'
+                    ;;
+
+                # -----------------------------------------------------------
+                sync)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-v --verbose)'{-v,--verbose}'[print each synced file]' \
+                        '--checksum[use CRC32 checksum instead of size+mtime]' \
+                        '--delete[remove destination entries absent from source]' \
+                        '1:source (host path or container\:path):_files' \
+                        '2:destination (host path or container\:path):_files'
+                    ;;
+
+                # -----------------------------------------------------------
+                run)
+                    _arguments -s \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '--user[run as this user (default\: root)]:user' \
+                        '--redirect-ports[redirect ports below 1024]' \
+                        '(--isolated --minimal)--isolated[isolated mode]' \
+                        '(--isolated --minimal)--minimal[minimal isolated mode]' \
+                        '(--shared-home --termux-home)--shared-home[mount Termux home inside container]' \
+                        '(--shared-home --termux-home)--termux-home[alias for --shared-home]' \
+                        '--shared-tmp[share /tmp with the host]' \
+                        '--shared-x11[share the X11 socket (/tmp/.X11-unix)]' \
+                        '*--bind[bind-mount PATH\[:DEST\] into the container]:path:_files' \
+                        '--no-link2symlink[disable proot link2symlink extension]' \
+                        '--no-sysvipc[disable SysV IPC emulation]' \
+                        '--no-kill-on-exit[do not kill child processes when session ends]' \
+                        '--emulator[path to QEMU user-mode emulator binary]:path:_files' \
+                        '--kernel[fake kernel release string]:string' \
+                        '--hostname[hostname visible inside the container]:string' \
+                        '--work-dir[initial working directory]:path:_directories' \
+                        '*--env[set environment variable]:VAR=VALUE' \
+                        '--get-proot-cmd[print the proot command line and exit]' \
+                        '1:container:_proot_distro_containers' \
+                        '*:arguments'
+                    ;;
+
+                # -----------------------------------------------------------
+                help)
+                    local -a topics
+                    topics=(
+                        install remove rename reset login list
+                        backup restore clear-cache copy sync run
+                    )
+                    _describe 'topic' topics
+                    ;;
+
+            esac
+            ;;
+    esac
+}
+
+_proot_distro "$@"
