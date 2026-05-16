@@ -19,7 +19,7 @@
 #
 
 # Architecture: All global constants and path variables for proot-distro.
-# On Termux/Android, paths are rooted under TERMUX_PREFIX (env var). On a
+# On Termux/Android, paths are rooted under TERMUX__PREFIX (env var). On a
 # regular Linux host, XDG base directories (~/.local/share, ~/.cache) are
 # used instead. IS_TERMUX is computed once at import time and drives both
 # path selection and runtime behaviour (e.g. isolated-mode default).
@@ -45,24 +45,25 @@ _SAVED_LD_PRELOAD = os.environ.get("LD_PRELOAD", "")
 # Termux / Android detection
 # ---------------------------------------------------------------------------
 
+TERMUX_APP_PACKAGE = os.environ.get("TERMUX_APP__PACKAGE_NAME", "com.termux")
+TERMUX_HOME = os.environ.get(
+    "TERMUX__HOME", f"/data/data/{TERMUX_APP_PACKAGE}/files/home"
+)
+PREFIX = os.environ.get(
+    "TERMUX__PREFIX", f"/data/data/{TERMUX_APP_PACKAGE}/files/usr"
+)
+
 def _detect_termux() -> bool:
-    """Return True when running inside Termux on Android."""
-    # Termux-specific env var — always set by the Termux shell.
-    if os.environ.get("TERMUX_PREFIX"):
-        return True
-    # Standard Android system env var present in every Android process.
-    if os.environ.get("ANDROID_ROOT"):
-        return True
-    # platform.platform() reports "android" on Python builds for Android.
-    try:
-        if "android" in platform.platform().lower():
-            return True
-    except Exception:
-        pass
-    # /system/build.prop exists on every Android device.
-    if os.path.isfile("/system/build.prop"):
-        return True
-    return False
+    """Return True when at least two Termux/Android indicators are present."""
+    checks = (
+        ("android" in platform.platform().lower()
+            or os.path.exists("/system/build.prop")
+            or os.path.exists("/data/app")),
+        bool(os.environ.get("TERMUX_APP__APP_VERSION_NAME")
+            or os.environ.get("TERMUX_VERSION")),
+        os.access(PREFIX, os.R_OK | os.X_OK),
+    )
+    return sum(checks) >= 2
 
 
 IS_TERMUX: bool = _detect_termux()
@@ -71,12 +72,6 @@ IS_TERMUX: bool = _detect_termux()
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-
-PREFIX = os.environ.get(
-    "TERMUX_PREFIX", "/data/data/com.termux/files/usr"
-)
-TERMUX_HOME = os.environ.get("HOME", "/data/data/com.termux/files/home")
-TERMUX_APP_PACKAGE = os.environ.get("TERMUX_APP_PACKAGE", "com.termux")
 
 if IS_TERMUX:
     RUNTIME_DIR = os.path.join(PREFIX, "var", "lib", "proot-distro")

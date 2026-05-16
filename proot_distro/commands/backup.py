@@ -33,6 +33,7 @@ from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.colors import C, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
 from proot_distro.commands.help import _HELP_COMMANDS
+from proot_distro.commands.install import _validate_name
 
 
 # Maps file-extension suffixes to tarfile compression identifiers.
@@ -193,6 +194,15 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
     output_path = getattr(args, "output", None)
     compression_arg = getattr(args, "compression", None)
     verbose = getattr(args, "verbose", False)
+
+    if not _validate_name(dist_name):
+        msg()
+        msg(f"{C['BRED']}Error: container name "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
+            f"It must begin with a letter or digit and contain only "
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
+        msg()
+        sys.exit(1)
 
     container_dir = os.path.join(CONTAINERS_DIR, dist_name)
     rootfs_dir = os.path.join(container_dir, "rootfs")

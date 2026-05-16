@@ -23,13 +23,23 @@ _proot_distro_get_containers() {
     fi
 }
 
+# Returns 0 (true) when running on Termux/Android: at least two of three
+# independent indicators must match, mirroring _detect_termux() in constants.py.
+_proot_distro_is_termux() {
+    local score=0
+    [[ -f /system/build.prop || -d /data/app ]] && ((score++))
+    [[ -n "${TERMUX_APP__APP_VERSION_NAME}" || -n "${TERMUX_VERSION}" ]] && ((score++))
+    local prefix="${TERMUX__PREFIX:-/data/data/com.termux/files/usr}"
+    [[ -r "${prefix}" && -x "${prefix}" ]] && ((score++))
+    [[ ${score} -ge 2 ]]
+}
+
 _proot_distro() {
     local cur prev words cword
     _init_completion || return
 
-    local -r _all_commands="install add i in ins remove rm rename reset login sh
-        list li ls backup bak bkp restore clear-cache clear cl copy cp sync run
-        help h he hel"
+    local -r _all_commands="install remove rename reset login list backup restore
+        clear-cache copy sync run help"
 
     # Complete the subcommand itself
     if [[ ${cword} -eq 1 ]]; then
@@ -38,16 +48,6 @@ _proot_distro() {
     fi
 
     local command="${words[1]}"
-    case "${command}" in
-        add|i|in|ins)   command="install" ;;
-        rm)             command="remove" ;;
-        sh)             command="login" ;;
-        li|ls)          command="list" ;;
-        bak|bkp)        command="backup" ;;
-        clear|cl)       command="clear-cache" ;;
-        cp)             command="copy" ;;
-        h|he|hel)       command="help" ;;
-    esac
 
     case "${command}" in
 
@@ -114,15 +114,12 @@ _proot_distro() {
                 --env)       return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "
-                    --user --redirect-ports --fix-low-ports
-                    --isolated --minimal
-                    --shared-home --termux-home
-                    --shared-tmp --shared-x11
-                    --bind --no-link2symlink --no-sysvipc --no-kill-on-exit
-                    --emulator --kernel --hostname --work-dir
-                    --env --get-proot-cmd --help
-                " -- "${cur}"))
+                local opts="--user --redirect-ports --shared-home --shared-tmp --shared-x11
+                    --bind --emulator --kernel --hostname --work-dir
+                    --env --get-proot-cmd --help"
+                _proot_distro_is_termux && \
+                    opts+=" --isolated --minimal --no-link2symlink --no-sysvipc --no-kill-on-exit"
+                COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -223,15 +220,12 @@ _proot_distro() {
                 --env)       return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "
-                    --user --redirect-ports
-                    --isolated --minimal
-                    --shared-home --termux-home
-                    --shared-tmp --shared-x11
-                    --bind --no-link2symlink --no-sysvipc --no-kill-on-exit
-                    --emulator --kernel --hostname --work-dir
-                    --env --get-proot-cmd --help
-                " -- "${cur}"))
+                local opts="--user --redirect-ports --shared-home --shared-tmp --shared-x11
+                    --bind --emulator --kernel --hostname --work-dir
+                    --env --get-proot-cmd --help"
+                _proot_distro_is_termux && \
+                    opts+=" --isolated --minimal --no-link2symlink --no-sysvipc --no-kill-on-exit"
+                COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi

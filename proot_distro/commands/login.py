@@ -147,11 +147,17 @@ def _storage_bindings() -> list:
     """Return --bind args for Android shared storage."""
     binds = []
     if os.access("/storage", os.R_OK):
-        binds += ["--bind=/storage", "--bind=/storage/emulated/0:/sdcard"]
+        binds += ["--bind=/storage"]
+        if os.access("/storage/emulated/0", os.R_OK):
+            binds += [
+                "--bind=/storage/emulated/0:/sdcard",
+                "--bind=/storage/emulated/0:/mnt/sdcard",
+            ]
     else:
         for p in ("/storage/self/primary", "/storage/emulated/0", "/sdcard"):
             if os.access(p, os.R_OK):
                 binds += [
+                    f"--bind={p}:/mnt/sdcard",
                     f"--bind={p}:/sdcard",
                     f"--bind={p}:/storage/emulated/0",
                     f"--bind={p}:/storage/self/primary",
@@ -233,25 +239,64 @@ def _migrate_legacy_rootfs(dist_name: str) -> None:
         f"Migration complete.{C['RST']}")
 
 
-def _inject_termux_profile(rootfs: str) -> None:
-    """Write a profile.d snippet that appends Termux bin to PATH.
+# Variables that must NOT be hardcoded into the rootfs profile snippet.
+# Per-session vars (HOME, USER, TERM, COLORTERM) belong to the spawning
+# shell, not the container — baking them in would override the values set
+# by 'su - <other-user>'. PATH is handled specially (case-guard append).
+# Proot-internal vars are host-side and have no meaning inside the guest.
+_PROFILE_INJECT_SKIP = frozenset({
+    "HOME", "USER", "TERM", "COLORTERM",
+    "PATH",
+    "PROOT_NO_SECCOMP", "PROOT_DUMP", "PROOT_VERBOSE", "PROOT_L2S_DIR",
+    "LD_PRELOAD", "LD_LIBRARY_PATH",
+})
 
-    Login shells source /etc/profile which overwrites PATH from scratch,
-    discarding whatever proot inherited. Dropping a snippet into profile.d
-    ensures the Termux bin dir survives that reset without modifying any
-    distro-owned file.
+
+def _inject_termux_profile(rootfs: str, env: dict) -> None:
+    """Write a profile.d snippet that re-applies the login-time environment.
+
+    Login shells source /etc/profile, which reinitialises the environment
+    and discards whatever proot inherited. Without a snippet, every
+    proot-distro-defined var — Termux baseline (MOZ_FAKE_NO_SANDBOX,
+    PULSE_SERVER), Android system vars, image Env entries, and user
+    --env flags — disappears the moment the user runs 'su - someone'
+    inside the container.
+
+    PATH gets a case-guarded append so the system PATH from /etc/profile
+    keeps priority; other vars are exported unconditionally so the
+    proot-distro value wins. Per-session vars and proot-internal vars
+    are excluded via _PROFILE_INJECT_SKIP.
     """
     profile_d = os.path.join(rootfs, "etc", "profile.d")
     if not os.path.isdir(profile_d):
         return
-    snippet = os.path.join(profile_d, "termux-prefix.sh")
+    snippet = os.path.join(profile_d, "termux-profile.sh")
+    # Remove the previous filename (PATH-only era) so a container that
+    # was already logged into doesn't keep sourcing stale content.
+    legacy_snippet = os.path.join(profile_d, "termux-prefix.sh")
+    try:
+        os.remove(legacy_snippet)
+    except OSError:
+        pass
     termux_bin = f"{PREFIX}/bin"
-    content = (
-        f'case ":${{PATH}}:" in\n'
-        f'  *":{termux_bin}:"*) ;;\n'
-        f'  *) export PATH="${{PATH}}:{termux_bin}" ;;\n'
-        f'esac\n'
-    )
+
+    lines = [
+        f'case ":${{PATH}}:" in',
+        f'  *":{termux_bin}:"*) ;;',
+        f'  *) export PATH="${{PATH}}:{termux_bin}" ;;',
+        f'esac',
+    ]
+
+    for key in sorted(env):
+        if key in _PROFILE_INJECT_SKIP:
+            continue
+        val = env[key]
+        # Single-quote the value; embedded single quotes use the standard
+        # '\'' idiom (close-quote, escaped quote, reopen-quote).
+        escaped = str(val).replace("'", "'\\''")
+        lines.append(f"export {key}='{escaped}'")
+
+    content = '\n'.join(lines) + '\n'
     try:
         with open(snippet, "w") as fh:
             fh.write(content)
@@ -538,7 +583,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         child_env["PATH"] = ":".join(components)
 
     if dist_type == "normal" and IS_TERMUX and not isolated and not minimal:
-        _inject_termux_profile(rootfs)
+        _inject_termux_profile(rootfs, child_env)
 
     # Architecture detection.
     target_arch = detect_installed_arch(rootfs)
@@ -679,6 +724,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         if IS_TERMUX and shared_x11 and dist_type != "termux":
             proot_args.append(f"--bind={PREFIX}/tmp/.X11-unix:/tmp/.X11-unix")
 
+    existing_dsts = set()
+    for arg in proot_args:
+        if arg.startswith("--bind="):
+            spec = arg[len("--bind="):]
+            colon = spec.find(":")
+            dst_part = spec[colon + 1:] if colon != -1 else spec
+            existing_dsts.add(os.path.normpath(dst_part))
+
     for bnd in custom_binds:
         if ":" in bnd:
             src, dst = bnd.split(":", 1)
@@ -687,12 +740,19 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
         src = os.path.abspath(src)
 
-        if dst in (".", ".."):
+        if dst is not None and not os.path.isabs(dst):
             msg()
-            msg(f"{C['BRED']}Error: '.' and '..' are not allowed as binding "
-                f"destination.{C['RST']}")
+            msg(f"{C['BRED']}Error: binding destination must be an absolute "
+                f"path, got '{C['YELLOW']}{dst}{C['BRED']}'.{C['RST']}")
             msg()
             sys.exit(1)
+
+        effective_dst = os.path.normpath(dst if dst is not None else src)
+        if effective_dst in existing_dsts:
+            msg(f"{C['BYELLOW']}Warning: '--bind={bnd}' overlaps with an "
+                f"existing binding at destination "
+                f"'{C['YELLOW']}{effective_dst}{C['BYELLOW']}'.{C['RST']}")
+        existing_dsts.add(effective_dst)
 
         proot_args.append(
             f"--bind={src}:{dst}" if dst else f"--bind={src}"

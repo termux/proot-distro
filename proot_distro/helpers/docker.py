@@ -522,6 +522,11 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
                     continue
 
                 parts = name.split("/")
+                # Reject any member whose name contains a '..' component so
+                # a crafted layer cannot write outside rootfs_dir.
+                if any(p in ("..", "") for p in parts):
+                    _show(counter)
+                    continue
                 basename = parts[-1]
                 parent = (os.path.join(rootfs_dir, *parts[:-1])
                           if len(parts) > 1 else rootfs_dir)
@@ -558,8 +563,12 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
 
                 elif m.issym():
                     if os.path.lexists(dest):
-                        os.remove(dest)
-                    os.symlink(m.linkname, dest)
+                        _remove_fstree(dest)
+                    try:
+                        os.symlink(m.linkname, dest)
+                    except OSError:
+                        _show(counter)
+                        continue
                     try:
                         os.utime(dest, (m.mtime, m.mtime), follow_symlinks=False)
                     except OSError:
@@ -669,22 +678,20 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                 if isinstance(net_err, urllib.error.HTTPError):
                     if net_err.code == 401:
                         raise RuntimeError(
-                            f"Authentication required: '{image_ref}' is a "
-                            f"private image or the registry requires "
-                            f"credentials. Only public images can be "
-                            f"installed without authentication."
+                            f"Unauthorized: '{image_ref}' does not exist "
+                            f"or is a private image. Only public images "
+                            f"can be installed without authentication."
                         ) from net_err
                     if net_err.code == 404:
                         raise RuntimeError(
                             f"Image not found: '{image_ref}' does not exist "
                             f"on the registry."
                         ) from net_err
-                raise RuntimeError(
-                    f"Network error: {net_err}\n"
-                    f"{missing} of {len(layers)} layer(s) for '{image_ref}'"
-                    f" ({arch}) are not in the local cache. "
-                    f"Connect to the internet and retry."
-                ) from net_err
+                msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+                    f"{missing} of {len(layers)} layer(s) for "
+                    f"'{image_ref}' ({arch}) are not in the local cache."
+                    f"{C['RST']}")
+                raise RuntimeError(f"Network error: {net_err}") from net_err
     else:
         # No cached manifest — resolve from the registry.
         try:
@@ -695,21 +702,19 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             if isinstance(net_err, urllib.error.HTTPError):
                 if net_err.code == 401:
                     raise RuntimeError(
-                        f"Authentication required: '{image_ref}' is a "
-                        f"private image or the registry requires "
-                        f"credentials. Only public images can be "
-                        f"installed without authentication."
+                        f"Unauthorized: '{image_ref}' does not exist "
+                        f"or is a private image. Only public images "
+                        f"can be installed without authentication."
                     ) from net_err
                 if net_err.code == 404:
                     raise RuntimeError(
                         f"Image not found: '{image_ref}' does not exist "
                         f"on the registry."
                     ) from net_err
-            raise RuntimeError(
-                f"Network error: {net_err}\n"
-                f"No cached manifest found for '{image_ref}' ({arch}). "
-                f"Connect to the internet and retry."
-            ) from net_err
+            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+                f"No cached manifest found for '{image_ref}' ({arch})."
+                f"{C['RST']}")
+            raise RuntimeError(f"Network error: {net_err}") from net_err
         cfg_digest = manifest.get("config", {}).get("digest", "")
         image_config = _fetch_config_blob(repo, cfg_digest, token, registry)
         _save_manifest_cache(image_ref, arch, manifest, repo, image_config)
@@ -750,10 +755,9 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             except urllib.error.HTTPError as dl_err:
                 if dl_err.code == 401:
                     raise RuntimeError(
-                        f"Authentication required: '{image_ref}' is a "
-                        f"private image or the registry requires "
-                        f"credentials. Only public images can be "
-                        f"installed without authentication."
+                        f"Unauthorized: '{image_ref}' does not exist "
+                        f"or is a private image. Only public images "
+                        f"can be installed without authentication."
                     ) from dl_err
                 raise
 

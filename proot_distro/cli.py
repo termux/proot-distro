@@ -28,6 +28,7 @@
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -48,8 +49,20 @@ from proot_distro.commands.run import command_run
 from proot_distro.commands.help import command_help, _HELP_COMMANDS
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+class _PdArgumentParser(argparse.ArgumentParser):
+    _pd_command: "str | None" = None
+
+    def error(self, message: str) -> None:
+        msg()
+        msg(f"{C['BRED']}Error: {message}{C['RST']}")
+        if self._pd_command and self._pd_command in _HELP_COMMANDS:
+            _HELP_COMMANDS[self._pd_command]()
+        msg()
+        sys.exit(1)
+
+
+def build_parser() -> "_PdArgumentParser":
+    parser = _PdArgumentParser(
         prog=PROGRAM_NAME,
         description="Manage Linux proot containers.",
         add_help=False,
@@ -64,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_install = sub.add_parser(
         "install", aliases=["add", "i", "in", "ins"], add_help=False
     )
+    p_install._pd_command = "install"
     p_install.add_argument("alias", nargs="?", default=None, metavar="IMAGE")
     _p_install_name = p_install.add_mutually_exclusive_group()
     _p_install_name.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
@@ -77,23 +91,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     # remove
     p_remove = sub.add_parser("remove", aliases=["rm"], add_help=False)
+    p_remove._pd_command = "remove"
     p_remove.add_argument("alias", nargs="?", default=None)
     p_remove.add_argument("-v", "--verbose", action="store_true")
     p_remove.add_argument("-h", "--help", action="store_true")
 
     # rename
     p_rename = sub.add_parser("rename", add_help=False)
+    p_rename._pd_command = "rename"
     p_rename.add_argument("orig_alias", nargs="?", default=None)
     p_rename.add_argument("new_alias", nargs="?", default=None)
     p_rename.add_argument("-h", "--help", action="store_true")
 
     # reset
     p_reset = sub.add_parser("reset", add_help=False)
+    p_reset._pd_command = "reset"
     p_reset.add_argument("alias", nargs="?", default=None)
     p_reset.add_argument("-h", "--help", action="store_true")
 
     # login
     p_login = sub.add_parser("login", aliases=["sh"], add_help=False)
+    p_login._pd_command = "login"
     p_login.add_argument("alias", nargs="?", default=None)
     p_login.add_argument("--user", default="root")
     _p_login_ports = p_login.add_mutually_exclusive_group()
@@ -144,12 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     # list
     p_list = sub.add_parser("list", aliases=["li", "ls"], add_help=False)
+    p_list._pd_command = "list"
     p_list.add_argument("-h", "--help", action="store_true")
 
     # backup
     p_backup = sub.add_parser(
         "backup", aliases=["bak", "bkp"], add_help=False
     )
+    p_backup._pd_command = "backup"
     p_backup.add_argument("alias", nargs="?", default=None)
     p_backup.add_argument("--output", metavar="FILE")
     p_backup.add_argument(
@@ -161,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # restore
     p_restore = sub.add_parser("restore", add_help=False)
+    p_restore._pd_command = "restore"
     p_restore.add_argument("archive", nargs="?")
     p_restore.add_argument("-v", "--verbose", action="store_true")
     p_restore.add_argument("-h", "--help", action="store_true")
@@ -169,11 +190,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_clear = sub.add_parser(
         "clear-cache", aliases=["clear", "cl"], add_help=False
     )
+    p_clear._pd_command = "clear-cache"
     p_clear.add_argument("-v", "--verbose", action="store_true")
     p_clear.add_argument("-h", "--help", action="store_true")
 
     # copy
     p_copy = sub.add_parser("copy", aliases=["cp"], add_help=False)
+    p_copy._pd_command = "copy"
     p_copy.add_argument("source", nargs="?", default=None)
     p_copy.add_argument("destination", nargs="?", default=None)
     p_copy.add_argument("-v", "--verbose", action="store_true")
@@ -183,6 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # sync
     p_sync = sub.add_parser("sync", add_help=False)
+    p_sync._pd_command = "sync"
     p_sync.add_argument("source", nargs="?", default=None)
     p_sync.add_argument("destination", nargs="?", default=None)
     p_sync.add_argument("-v", "--verbose", action="store_true")
@@ -192,6 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # run
     p_run = sub.add_parser("run", add_help=False)
+    p_run._pd_command = "run"
     p_run.add_argument("alias", nargs="?", default=None)
     p_run.add_argument("--user", default="root")
     p_run.add_argument(
@@ -283,7 +308,19 @@ _COMMAND_HANDLERS = {
 }
 
 
+def _sigquit_to_keyboard_interrupt(_signum, _frame):
+    raise KeyboardInterrupt()
+
+
 def main() -> None:
+    # Route SIGQUIT (Ctrl-\) through KeyboardInterrupt so every
+    # 'except KeyboardInterrupt' block in the codebase handles it the
+    # same as SIGINT (Ctrl-C). The default disposition of SIGQUIT is
+    # to terminate the process with a core dump, which would skip
+    # progress-bar cleanup, partial-file removal, and "Aborted by
+    # user" messaging that the Ctrl-C handlers already provide.
+    signal.signal(signal.SIGQUIT, _sigquit_to_keyboard_interrupt)
+
     # Warn if running as root.
     if os.getuid() == 0:
         msg()

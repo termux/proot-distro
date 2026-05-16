@@ -42,6 +42,15 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
         msg()
         sys.exit(1)
 
+    if not _validate_name(orig):
+        msg()
+        msg(f"{C['BRED']}Error: invalid original name "
+            f"'{C['YELLOW']}{orig}{C['BRED']}'. "
+            f"Must start with alphanumeric and contain only "
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
+        msg()
+        sys.exit(1)
+
     if not _validate_name(new):
         msg()
         msg(f"{C['BRED']}Error: invalid new name "

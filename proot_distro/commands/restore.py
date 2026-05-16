@@ -28,6 +28,7 @@
 # os.path.getsize() — instant, no upfront scan needed.
 
 import os
+import re
 import shutil
 import stat
 import sys
@@ -36,6 +37,9 @@ import tarfile
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
+
+
+_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
 
 
 class _ByteCounter:
@@ -99,12 +103,21 @@ def _dest_path(member_name: str) -> tuple:
       1. New format:    <name>/manifest.json or <name>/rootfs/...
       2. Legacy format: installed-rootfs/<name>/...
       3. No subdir or bare ./: rejected (returns skip sentinel).
+
+    Member names containing '..' or absolute path components anywhere are
+    rejected to prevent a crafted archive from writing outside
+    CONTAINERS_DIR. The container name is also validated against _NAME_RE.
     """
     name = member_name.lstrip('/')
     if not name or name in ('.', ''):
         return (None, None)
 
     parts = name.split('/')
+
+    # Reject any member containing '..' or '.' or empty components.
+    # This blocks path traversal via crafted archives.
+    if any(p in ('..', '.', '') for p in parts):
+        return (None, None)
 
     # Archive starts at root with no real subdirectory — reject.
     if len(parts) == 1 and not name.endswith('/'):
@@ -115,6 +128,8 @@ def _dest_path(member_name: str) -> tuple:
         if len(parts) < 2:
             return (None, None)
         dist_name = parts[1]
+        if not _NAME_RE.match(dist_name):
+            return (None, None)
         if len(parts) == 2:
             # Entry is the legacy rootfs dir itself.
             new_path = os.path.join(CONTAINERS_DIR, dist_name, "rootfs")
@@ -126,6 +141,8 @@ def _dest_path(member_name: str) -> tuple:
 
     # New format: <name>/manifest.json or <name>/rootfs/...
     dist_name = parts[0]
+    if not _NAME_RE.match(dist_name):
+        return (None, None)
 
     if len(parts) == 1:
         # Top-level container directory entry.

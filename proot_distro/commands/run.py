@@ -32,6 +32,7 @@ import sys
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.commands.login import command_login
+from proot_distro.commands.install import _validate_name
 
 
 def _read_image_config(dist_name: str) -> dict:
@@ -61,6 +62,15 @@ def _read_image_config(dist_name: str) -> dict:
 def command_run(args, configs: dict) -> None:
     dist_name = args.alias
     run_args = getattr(args, "run_args", []) or []
+
+    if not _validate_name(dist_name):
+        msg()
+        msg(f"{C['BRED']}Error: container name "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
+            f"It must begin with a letter or digit and contain only "
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
+        msg()
+        sys.exit(1)
 
     rootfs = os.path.join(CONTAINERS_DIR, dist_name, "rootfs")
     if not os.path.isdir(rootfs):

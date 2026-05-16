@@ -32,11 +32,20 @@ import sys
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.commands.remove import _remove_path
-from proot_distro.commands.install import command_install
+from proot_distro.commands.install import command_install, _validate_name
 
 
 def command_reset(args, configs: dict) -> None:
     dist_name = args.alias
+
+    if not _validate_name(dist_name):
+        msg()
+        msg(f"{C['BRED']}Error: container name "
+            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
+            f"It must begin with a letter or digit and contain only "
+            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
+        msg()
+        sys.exit(1)
 
     container_dir = os.path.join(CONTAINERS_DIR, dist_name)
     rootfs_dir = os.path.join(container_dir, "rootfs")

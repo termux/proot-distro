@@ -87,10 +87,14 @@ def _validate_name(name: str) -> bool:
 
 
 def _is_local_path(ref: str) -> bool:
-    """Return True if ref should be treated as a local file path."""
-    if ref.startswith(('/', './', '../', '~')):
-        return True
-    return os.path.isfile(os.path.expanduser(ref))
+    """Return True if ref should be treated as a local file path.
+
+    A reference is local only when it has an explicit path syntax:
+    a leading '/', './', '../', or '~'. A bare token like 'ubuntu' is
+    treated as a Docker image even if a file with that name happens to
+    exist in the current working directory.
+    """
+    return ref.startswith(('/', './', '../', '~'))
 
 
 def _derive_local_name(path: str) -> str:
@@ -209,6 +213,11 @@ def _extract_plain_tar(
                 if not rel_path or rel_path == '.':
                     _show(counter)
                     continue
+                # Reject any post-strip component of '..' so a crafted
+                # tarball cannot write outside rootfs_dir.
+                if any(p in ('..', '') for p in rel_parts):
+                    _show(counter)
+                    continue
 
                 parent = (
                     os.path.join(rootfs_dir, *rel_parts[:-1])
@@ -228,7 +237,13 @@ def _extract_plain_tar(
 
                 elif member.issym():
                     if os.path.lexists(dest):
-                        os.remove(dest)
+                        try:
+                            if os.path.isdir(dest) and not os.path.islink(dest):
+                                shutil.rmtree(dest, ignore_errors=True)
+                            else:
+                                os.remove(dest)
+                        except OSError:
+                            pass
                     try:
                         os.symlink(member.linkname, dest)
                         try:
@@ -615,6 +630,14 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
                 sys.exit(1)
     else:
         install_name = custom_dist_name if custom_dist_name else derive_alias(image_ref)
+        if not _validate_name(install_name):
+            msg()
+            msg(f"{C['BRED']}Error: cannot derive a valid container name "
+                f"from '{C['YELLOW']}{image_ref}{C['BRED']}'. Use "
+                f"'{C['YELLOW']}--name NAME{C['BRED']}' to specify "
+                f"one.{C['RST']}")
+            msg()
+            sys.exit(1)
 
     container_dir = os.path.join(CONTAINERS_DIR, install_name)
     rootfs_dir = os.path.join(container_dir, "rootfs")
@@ -725,12 +748,16 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Finished installation.{C['RST']}")
     msg()
-    msg(f"{C['CYAN']}Start shell:    "
-        f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['RST']}")
     entrypoint = (
         (metadata.get("image_config") or {}).get("config", {}).get("Entrypoint")
         if metadata else None
     )
+    # Pad the "Start shell:" label only when the "Run entrypoint:" line will
+    # also be printed, so the two labels align as a column. Without the
+    # entrypoint line there is nothing to align against, so drop the padding.
+    shell_label = "Start shell:   " if entrypoint else "Start shell:"
+    msg(f"{C['CYAN']}{shell_label} "
+        f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['RST']}")
     if entrypoint:
         msg(f"{C['CYAN']}Run entrypoint: "
             f"{C['GREEN']}{PROGRAM_NAME} run {install_name}{C['RST']}")

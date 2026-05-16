@@ -579,6 +579,7 @@ _HELP_PAGES = {
                     (f"/data/data/{TERMUX_APP_PACKAGE}", None),
                     ("/linkerconfig/ld.config.txt", None),
                     ("/linkerconfig/com.android.art/ld.config.txt", None),
+                    ("/mnt/sdcard", None),
                     ("/odm", None),
                     ("/product", None),
                     ("/sdcard", None),
@@ -600,6 +601,10 @@ _HELP_PAGES = {
                         "ANDROID_ROOT, ANDROID_TZDATA_ROOT, BOOTCLASSPATH, "
                         "EXTERNAL_STORAGE. Valid values can be retrieved "
                         "through Termux shell."
+                        "\n\n"
+                        "Host storage bindings such as /sdcard may be "
+                        "disabled if Termux app does not have necessary "
+                        "permissions."
                         "\n\n"
                         if IS_TERMUX else ""
                     ) +
