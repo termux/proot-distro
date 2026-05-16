@@ -248,16 +248,19 @@ def _commands_block(commands, width: int) -> None:
 
 def _shell_block(examples, width: int) -> None:
     avail = max(12, width - 4)
+    wrap_avail = max(4, avail - 2)
     for ex in examples:
-        wrapped = _wrap(ex, avail)
+        wrapped = _wrap(ex, wrap_avail)
+        last = len(wrapped) - 1
         for i, line in enumerate(wrapped):
+            suffix = "" if i == last else f" {C['CYAN']}\\{C['RST']}"
             if i == 0:
                 msg(
                     f"  {C['YELLOW']}{_PROMPT}{C['RST']} "
-                    f"{C['GREEN']}{line}{C['RST']}"
+                    f"{C['GREEN']}{line}{C['RST']}{suffix}"
                 )
             else:
-                msg(f"    {C['GREEN']}{line}{C['RST']}")
+                msg(f"    {C['GREEN']}{line}{C['RST']}{suffix}")
 
 
 def _bullets_block(bullets, width: int) -> None:
