@@ -1,5 +1,5 @@
 #
-# Proot-Distro - manage proot containers on Termux.
+# Proot-Distro - manage proot containers.
 #
 # Created by Sylirre <sylirre@termux.dev> for Termux project.
 # Development assisted by Claude Code (https://claude.ai/code).
@@ -31,7 +31,7 @@ import shutil
 import subprocess
 import sys
 
-from proot_distro.constants import PROGRAM_NAME
+from proot_distro.constants import IS_TERMUX, PROGRAM_NAME
 from proot_distro.colors import C, msg
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
@@ -51,7 +51,7 @@ from proot_distro.commands.help import command_help, _HELP_COMMANDS
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROGRAM_NAME,
-        description="Manage Linux proot containers on Termux.",
+        description="Manage Linux proot containers.",
         add_help=False,
     )
     parser.add_argument("-h", "--help", action="store_true")
@@ -103,10 +103,15 @@ def build_parser() -> argparse.ArgumentParser:
     _p_login_ports.add_argument(
         "--fix-low-ports", dest="redirect_ports", action="store_true"
     )
-    p_login.add_argument("--isolated", action="store_true")
-    p_login.add_argument("--minimal", action="store_true")
-    p_login.add_argument(
-        "--termux-home", dest="termux_home", action="store_true"
+    if IS_TERMUX:
+        p_login.add_argument("--isolated", action="store_true")
+        p_login.add_argument("--minimal", action="store_true")
+    _p_login_shared_home = p_login.add_mutually_exclusive_group()
+    _p_login_shared_home.add_argument(
+        "--shared-home", dest="shared_home", action="store_true"
+    )
+    _p_login_shared_home.add_argument(
+        "--termux-home", dest="shared_home", action="store_true"
     )
     p_login.add_argument(
         "--shared-tmp", dest="shared_tmp", action="store_true"
@@ -120,9 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument(
         "--no-link2symlink", dest="no_link2symlink", action="store_true"
     )
-    p_login.add_argument(
-        "--no-sysvipc", dest="no_sysvipc", action="store_true"
-    )
+    if IS_TERMUX:
+        p_login.add_argument(
+            "--no-sysvipc", dest="no_sysvipc", action="store_true"
+        )
     p_login.add_argument(
         "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
     )
@@ -190,10 +196,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--redirect-ports", dest="redirect_ports", action="store_true"
     )
-    p_run.add_argument("--isolated", action="store_true")
-    p_run.add_argument("--minimal", action="store_true")
-    p_run.add_argument(
-        "--termux-home", dest="termux_home", action="store_true"
+    if IS_TERMUX:
+        p_run.add_argument("--isolated", action="store_true")
+        p_run.add_argument("--minimal", action="store_true")
+    _p_run_shared_home = p_run.add_mutually_exclusive_group()
+    _p_run_shared_home.add_argument(
+        "--shared-home", dest="shared_home", action="store_true"
+    )
+    _p_run_shared_home.add_argument(
+        "--termux-home", dest="shared_home", action="store_true"
     )
     p_run.add_argument(
         "--shared-tmp", dest="shared_tmp", action="store_true"
@@ -207,9 +218,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--no-link2symlink", dest="no_link2symlink", action="store_true"
     )
-    p_run.add_argument(
-        "--no-sysvipc", dest="no_sysvipc", action="store_true"
-    )
+    if IS_TERMUX:
+        p_run.add_argument(
+            "--no-sysvipc", dest="no_sysvipc", action="store_true"
+        )
     p_run.add_argument(
         "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
     )
@@ -303,38 +315,39 @@ def main() -> None:
         msg()
         msg(f"{C['BRED']}Error: unable to find proot utility.{C['RST']}")
         msg()
-        if sys.stdin.isatty():
-            sys.stderr.write(
-                f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}"
-            )
-            sys.stderr.flush()
-            try:
-                answer = input().strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                answer = ""
-            if answer in ("y", "yes"):
-                msg()
+        if IS_TERMUX:
+            if sys.stdin.isatty():
+                sys.stderr.write(
+                    f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}"
+                )
+                sys.stderr.flush()
                 try:
-                    subprocess.run(
-                        ["pkg", "install", "-y", "-q", "proot"], check=True
-                    )
-                except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                    answer = input().strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    answer = ""
+                if answer in ("y", "yes"):
                     msg()
-                    msg(f"{C['BRED']}Error: failed to install proot: "
-                        f"{exc}{C['RST']}")
+                    try:
+                        subprocess.run(
+                            ["pkg", "install", "-y", "-q", "proot"], check=True
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                        msg()
+                        msg(f"{C['BRED']}Error: failed to install proot: "
+                            f"{exc}{C['RST']}")
+                        msg()
+                        sys.exit(1)
+                else:
+                    msg()
+                    msg(f"{C['CYAN']}Install it manually with: "
+                        f"{C['GREEN']}pkg install proot{C['RST']}")
                     msg()
                     sys.exit(1)
             else:
-                msg()
-                msg(f"{C['CYAN']}Install it manually with: "
+                msg(f"{C['CYAN']}Install it with: "
                     f"{C['GREEN']}pkg install proot{C['RST']}")
                 msg()
-                sys.exit(1)
-        else:
-            msg(f"{C['CYAN']}Install it with: "
-                f"{C['GREEN']}pkg install proot{C['RST']}")
-            msg()
-            sys.exit(1)
+        sys.exit(1)
 
     if len(sys.argv) < 2 or sys.argv[1] in (
         "-h", "--help", "help", "hel", "he", "h"

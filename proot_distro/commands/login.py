@@ -1,5 +1,5 @@
 #
-# Proot-Distro - manage proot containers on Termux.
+# Proot-Distro - manage proot containers.
 #
 # Created by Sylirre <sylirre@termux.dev> for Termux project.
 # Development assisted by Claude Code (https://claude.ai/code).
@@ -35,6 +35,7 @@ import sys
 
 from proot_distro.constants import (
     CONTAINERS_DIR,
+    IS_TERMUX,
     LEGACY_ROOTFS_DIR,
     PREFIX,
     TERMUX_HOME,
@@ -309,7 +310,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     redirect_ports = getattr(args, "redirect_ports", False)
     isolated = getattr(args, "isolated", False)
     minimal = getattr(args, "minimal", False)
-    use_termux_home = getattr(args, "termux_home", False)
+    use_shared_home = getattr(args, "shared_home", False)
     shared_tmp = getattr(args, "shared_tmp", False)
     shared_x11 = getattr(args, "shared_x11", False)
     no_link2symlink = getattr(args, "no_link2symlink", False)
@@ -434,8 +435,9 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         else:
             # Baseline guest env. Always exported on every login.
             child_env["PATH"] = DEFAULT_PATH_ENV
-            child_env["MOZ_FAKE_NO_SANDBOX"] = "1"
-            child_env["PULSE_SERVER"] = "127.0.0.1"
+            if IS_TERMUX:
+                child_env["MOZ_FAKE_NO_SANDBOX"] = "1"
+                child_env["PULSE_SERVER"] = "127.0.0.1"
 
             # Image-defined Env entries. Blocked vars cannot be overridden.
             for entry in _read_manifest_env(container_dir):
@@ -443,8 +445,8 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
                 if key and key not in _IMAGE_ENV_BLOCKED:
                     child_env[key] = val
 
-            # Android system vars exported only when not running --isolated.
-            if not isolated:
+            # Android system vars exported only on Termux and when not --isolated.
+            if IS_TERMUX and not isolated:
                 for var in (
                     "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
                     "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT",
@@ -519,14 +521,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             else:
                 inner = [login_shell, "-l"]
 
-        if not minimal:
+        if IS_TERMUX and not minimal:
             setup_fake_sysdata(rootfs)
 
     # Ensure Termux bin is always last in PATH so guest tools can invoke
     # host Termux utilities. Skipped in --isolated and --minimal modes where
     # PREFIX is not bound into the guest. De-duplicates any existing
     # occurrence first.
-    if not isolated and not minimal:
+    if IS_TERMUX and not isolated and not minimal:
         termux_bin = f"{PREFIX}/bin"
         components = [
             c for c in child_env.get("PATH", "").split(":")
@@ -535,7 +537,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         components.append(termux_bin)
         child_env["PATH"] = ":".join(components)
 
-    if dist_type == "normal" and not isolated and not minimal:
+    if dist_type == "normal" and IS_TERMUX and not isolated and not minimal:
         _inject_termux_profile(rootfs)
 
     # Architecture detection.
@@ -577,7 +579,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     if dist_type != "termux" and not no_link2symlink:
         proot_args.append("--link2symlink")
 
-    if not no_sysvipc and not minimal:
+    if IS_TERMUX and not no_sysvipc and not minimal:
         proot_args.append("--sysvipc")
 
     _ARCH_UNAME_M = {
@@ -587,7 +589,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         "x86_64":  "x86_64",
         "riscv64": "riscv64",
     }
-    if not minimal:
+    if IS_TERMUX and not minimal:
         uname_m = _ARCH_UNAME_M.get(target_arch, os.uname().machine)
         proot_args.append(
             f"--kernel-release=\\Linux\\{hostname}\\{kernel_release}"
@@ -606,26 +608,27 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
     if not minimal:
         if dist_type != "termux":
-            proot_args += [
-                "--bind=/dev/urandom:/dev/random",
-                "--bind=/proc/self/fd:/dev/fd",
-            ]
-            for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
-                if os.path.exists(f"/proc/self/fd/{i}"):
-                    proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
+            if IS_TERMUX:
+                proot_args += [
+                    "--bind=/dev/urandom:/dev/random",
+                    "--bind=/proc/self/fd:/dev/fd",
+                ]
+                for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
+                    if os.path.exists(f"/proc/self/fd/{i}"):
+                        proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
 
-            proot_args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
-            proot_args += fake_proc_bindings(rootfs)
+                proot_args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
+                proot_args += fake_proc_bindings(rootfs)
 
-            tmp_dir = os.path.join(rootfs, "tmp")
-            os.makedirs(tmp_dir, exist_ok=True)
-            try:
-                os.chmod(tmp_dir, 0o1777)
-            except OSError:
-                pass
-            proot_args.append(f"--bind={tmp_dir}:/dev/shm")
+                tmp_dir = os.path.join(rootfs, "tmp")
+                os.makedirs(tmp_dir, exist_ok=True)
+                try:
+                    os.chmod(tmp_dir, 0o1777)
+                except OSError:
+                    pass
+                proot_args.append(f"--bind={tmp_dir}:/dev/shm")
 
-        if not isolated:
+        if IS_TERMUX and not isolated:
             for data_dir in (
                 "/data/app", "/data/dalvik-cache",
                 "/data/misc/apexdata/com.android.art/dalvik-cache",
@@ -655,12 +658,12 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
 
             proot_args += _storage_bindings()
 
-        if dist_type == "termux" or not isolated or need_emu:
+        if IS_TERMUX and (dist_type == "termux" or not isolated or need_emu):
             proot_args += _system_bindings()
             if dist_type != "termux":
                 proot_args.append(f"--bind={PREFIX}")
 
-        if use_termux_home:
+        if use_shared_home:
             if dist_type == "termux":
                 proot_args.append(f"--bind={TERMUX_HOME}:{_TERMUX_HOME_INNER}")
             elif login_user == "root":
@@ -668,10 +671,10 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             else:
                 proot_args.append(f"--bind={TERMUX_HOME}:{login_home}")
 
-        if shared_tmp and dist_type != "termux":
+        if IS_TERMUX and shared_tmp and dist_type != "termux":
             proot_args.append(f"--bind={PREFIX}/tmp:/tmp")
 
-        if shared_x11 and dist_type != "termux":
+        if IS_TERMUX and shared_x11 and dist_type != "termux":
             proot_args.append(f"--bind={PREFIX}/tmp/.X11-unix:/tmp/.X11-unix")
 
     for bnd in custom_binds:

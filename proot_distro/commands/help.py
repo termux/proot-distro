@@ -1,5 +1,5 @@
 #
-# Proot-Distro - manage proot containers on Termux.
+# Proot-Distro - manage proot containers.
 #
 # Created by Sylirre <sylirre@termux.dev> for Termux project.
 # Development assisted by Claude Code (https://claude.ai/code).
@@ -31,6 +31,7 @@ import shutil
 import textwrap
 
 from proot_distro.constants import (
+    IS_TERMUX,
     PROGRAM_NAME,
     PROGRAM_VERSION,
     RUNTIME_DIR,
@@ -494,10 +495,13 @@ _HELP_PAGES = {
             "configured in /etc/passwd. Alternatively user can specify "
             "a custom command to use instead of default shell after "
             "command line separator ('--')."
-            "\n\n"
-            "By default container is not isolated from the host file"
-            "system. It is highly discouraged to run destructive commands "
-            "unless isolated mode enabled."
+            + (
+                "\n\n"
+                "By default container is not isolated from the host file"
+                "system. It is highly discouraged to run destructive commands "
+                "unless isolated mode enabled."
+                if IS_TERMUX else ""
+            )
         ),
         "options": [
             ("--help", "Show this help."),
@@ -507,37 +511,40 @@ _HELP_PAGES = {
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
               "hardcoded into proot executable itself and can't be "
               f"configured through {PROGRAM_NAME}."),
-            ("--isolated",
-             "Enable Isolated Mode. No host file system bindings created "
-             "unless using QEMU user mode emulation or user manually "
-             "requested specific directories to be bound."),
-            ("--minimal",
-             "Enable Isolated Mode with bare mimimum proot configuration. "
-             "Only /dev, /proc and /sys are bound. All proot extensions "
-             "except link2symlink are disabled. No /proc system data "
-             "workarounds, no kernel release override. Specific features "
-             "may only be enabled through command line options. Could show "
-             "higher performance than in other modes."),
-            ("--termux-home",
-             "Bind Termux home directory into the container. Takes "
-             "priority over Isolated Mode. Already included in default mode."),
+            *([("--isolated",
+                "Enable Isolated Mode. No host file system bindings created "
+                "unless using QEMU user mode emulation or user manually "
+                "requested specific directories to be bound.")] if IS_TERMUX else []),
+            *([("--minimal",
+                "Enable Isolated Mode with bare mimimum proot configuration. "
+                "Only /dev, /proc and /sys are bound. All proot extensions "
+                "except link2symlink are disabled. No /proc system data "
+                "workarounds, no kernel release override. Specific features "
+                "may only be enabled through command line options. Could show "
+                "higher performance than in other modes.")] if IS_TERMUX else []),
+            ("--shared-home",
+             "Bind host home directory into the container."
+             + (" Takes priority over Isolated Mode."
+                " Already included in default mode." if IS_TERMUX else "")),
             ("--shared-tmp",
-             "Bind Termux tmp directory to /tmp. Takes priority over "
-             "Isolated Mode. Already included in default mode."),
+             "Bind host tmp directory to /tmp."
+             + (" Takes priority over Isolated Mode."
+                " Already included in default mode." if IS_TERMUX else "")),
             ("--shared-x11",
-             "Bind Termux X11 socket directory to /tmp/.X11-unix. "
-             "Takes priority over Isolated Mode. Inherited by --shared-tmp. "
-             "Already included in default mode."),
+             "Bind host X11 socket directory to /tmp/.X11-unix."
+             + (" Takes priority over Isolated Mode."
+                " Inherited by --shared-tmp."
+                " Already included in default mode." if IS_TERMUX else "")),
             ("--bind [SRC:DEST]",
-             "Custom filesystem binding. Can be specified multiple "
-             "times. Takes priority over Isolated Mode."),
+             "Custom filesystem binding. Can be specified multiple times."
+             + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
             ("--no-link2symlink",
              "Disable hardlink emulation by proot. Recommended only for "
              "devices with SELinux in permissive mode."),
-            ("--no-sysvipc",
-             "Disable System V IPC emulation by proot. Recommended only "
-             "for devices where kernel has this feature enabled and "
-             "SELinux set to permissive mode."),
+            *([("--no-sysvipc",
+                "Disable System V IPC emulation by proot. Recommended only "
+                "for devices where kernel has this feature enabled and "
+                "SELinux set to permissive mode.")] if IS_TERMUX else []),
             ("--no-kill-on-exit",
              "Hang indefinitely until all session processes exit."),
             ("--emulator [FILE]",
@@ -557,7 +564,7 @@ _HELP_PAGES = {
              "paste into a terminal."),
         ],
         "footer": [
-            {
+            *([{
                 "title": "HOST BINDINGS",
                 "intro": (
                     "Without --isolated, the following host paths "
@@ -578,18 +585,21 @@ _HELP_PAGES = {
                     ("/system_ext", None),
                     ("/vendor", None),
                 ],
-            },
+            }] if IS_TERMUX else []),
             {
                 "title": "NOTES",
                 "intro": (
-                    "If host utilities like termux-api do not work, "
-                    "ensure that PATH includes Termux bin directory as "
-                    "well as special environment variables such as "
-                    "ANDROID_ART_ROOT, ANDROID_DATA, ANDROID_I18N_ROOT, "
-                    "ANDROID_ROOT, ANDROID_TZDATA_ROOT, BOOTCLASSPATH, "
-                    "EXTERNAL_STORAGE. Valid values can be retrieved "
-                    "through Termux shell."
-                    "\n\n"
+                    (
+                        "If host utilities like termux-api do not work, "
+                        "ensure that PATH includes Termux bin directory as "
+                        "well as special environment variables such as "
+                        "ANDROID_ART_ROOT, ANDROID_DATA, ANDROID_I18N_ROOT, "
+                        "ANDROID_ROOT, ANDROID_TZDATA_ROOT, BOOTCLASSPATH, "
+                        "EXTERNAL_STORAGE. Valid values can be retrieved "
+                        "through Termux shell."
+                        "\n\n"
+                        if IS_TERMUX else ""
+                    ) +
                     "PRoot-Distro does not guarantee that everything "
                     "inside given distribution will work flawlessly "
                     "and is not responsible for that. Thus it is not "
@@ -695,37 +705,40 @@ _HELP_PAGES = {
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
               "hardcoded into proot executable itself and can't be "
               f"configured through {PROGRAM_NAME}."),
-            ("--isolated",
-             "Enable Isolated Mode. No host file system bindings created "
-             "unless using QEMU user mode emulation or user manually "
-             "requested specific directories to be bound."),
-            ("--minimal",
-             "Enable Isolated Mode with bare mimimum proot configuration. "
-             "Only /dev, /proc and /sys are bound. All proot extensions "
-             "except link2symlink are disabled. No /proc system data "
-             "workarounds, no kernel release override. Specific features "
-             "may only be enabled through command line options. Could show "
-             "higher performance than in other modes."),
-            ("--termux-home",
-             "Bind Termux home directory into the container. Takes "
-             "priority over Isolated Mode. Already included in default mode."),
+            *([("--isolated",
+                "Enable Isolated Mode. No host file system bindings created "
+                "unless using QEMU user mode emulation or user manually "
+                "requested specific directories to be bound.")] if IS_TERMUX else []),
+            *([("--minimal",
+                "Enable Isolated Mode with bare mimimum proot configuration. "
+                "Only /dev, /proc and /sys are bound. All proot extensions "
+                "except link2symlink are disabled. No /proc system data "
+                "workarounds, no kernel release override. Specific features "
+                "may only be enabled through command line options. Could show "
+                "higher performance than in other modes.")] if IS_TERMUX else []),
+            ("--shared-home",
+             "Bind host home directory into the container."
+             + (" Takes priority over Isolated Mode."
+                " Already included in default mode." if IS_TERMUX else "")),
             ("--shared-tmp",
-             "Bind Termux tmp directory to /tmp. Takes priority over "
-             "Isolated Mode. Already included in default mode."),
+             "Bind host tmp directory to /tmp."
+             + (" Takes priority over Isolated Mode."
+                " Already included in default mode." if IS_TERMUX else "")),
             ("--shared-x11",
-             "Bind Termux X11 socket directory to /tmp/.X11-unix. "
-             "Takes priority over Isolated Mode. Inherited by --shared-tmp. "
-             "Already included in default mode."),
+             "Bind host X11 socket directory to /tmp/.X11-unix."
+             + (" Takes priority over Isolated Mode."
+                " Inherited by --shared-tmp."
+                " Already included in default mode." if IS_TERMUX else "")),
             ("--bind [SRC:DEST]",
-             "Custom filesystem binding. Can be specified multiple "
-             "times. Takes priority over Isolated Mode."),
+             "Custom filesystem binding. Can be specified multiple times."
+             + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
             ("--no-link2symlink",
              "Disable hardlink emulation by proot. Recommended only for "
              "devices with SELinux in permissive mode."),
-            ("--no-sysvipc",
-             "Disable System V IPC emulation by proot. Recommended only "
-             "for devices where kernel has this feature enabled and "
-             "SELinux set to permissive mode."),
+            *([("--no-sysvipc",
+                "Disable System V IPC emulation by proot. Recommended only "
+                "for devices where kernel has this feature enabled and "
+                "SELinux set to permissive mode.")] if IS_TERMUX else []),
             ("--no-kill-on-exit",
              "Hang indefinitely until all session processes exit."),
             ("--emulator [FILE]",

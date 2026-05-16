@@ -1,5 +1,5 @@
 #
-# Proot-Distro - manage proot containers on Termux.
+# Proot-Distro - manage proot containers.
 #
 # Created by Sylirre <sylirre@termux.dev> for Termux project.
 # Development assisted by Claude Code (https://claude.ai/code).
