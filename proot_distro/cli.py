@@ -104,8 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--fix-low-ports", dest="redirect_ports", action="store_true"
     )
     if IS_TERMUX:
-        p_login.add_argument("--isolated", action="store_true")
-        p_login.add_argument("--minimal", action="store_true")
+        _p_login_isolation = p_login.add_mutually_exclusive_group()
+        _p_login_isolation.add_argument("--isolated", action="store_true")
+        _p_login_isolation.add_argument("--minimal", action="store_true")
     _p_login_shared_home = p_login.add_mutually_exclusive_group()
     _p_login_shared_home.add_argument(
         "--shared-home", dest="shared_home", action="store_true"
@@ -197,8 +198,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--redirect-ports", dest="redirect_ports", action="store_true"
     )
     if IS_TERMUX:
-        p_run.add_argument("--isolated", action="store_true")
-        p_run.add_argument("--minimal", action="store_true")
+        _p_run_isolation = p_run.add_mutually_exclusive_group()
+        _p_run_isolation.add_argument("--isolated", action="store_true")
+        _p_run_isolation.add_argument("--minimal", action="store_true")
     _p_run_shared_home = p_run.add_mutually_exclusive_group()
     _p_run_shared_home.add_argument(
         "--shared-home", dest="shared_home", action="store_true"
