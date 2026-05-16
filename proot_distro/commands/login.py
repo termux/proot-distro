@@ -597,7 +597,8 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             f"\\{DEFAULT_FAKE_KERNEL_VERSION}\\{uname_m}\\localdomain\\-1\\"
         )
 
-    proot_args.append("-L")  # Fix lstat for dpkg symlink warnings.
+    if IS_TERMUX:
+        proot_args.append("-L")  # Fix lstat for dpkg symlink warnings.
 
     if dist_type != "termux":
         proot_args.append(f"--change-id={login_uid}:{login_gid}")
