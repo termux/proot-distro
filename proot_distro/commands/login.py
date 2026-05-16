@@ -568,13 +568,14 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     proot_bin = shutil.which("proot") or "proot"
     proot_args = [proot_bin] + emu_args
 
-    if not no_kill_on_exit:
-        proot_args.append("--kill-on-exit")
-    else:
-        msg(f"{C['BRED']}Warning: option "
-            f"'{C['YELLOW']}--no-kill-on-exit{C['BRED']}' is enabled. "
-            f"When exiting, your session will be blocked until all processes "
-            f"are terminated.{C['RST']}")
+    if IS_TERMUX:
+        if not no_kill_on_exit:
+            proot_args.append("--kill-on-exit")
+        else:
+            msg(f"{C['BRED']}Warning: option "
+                f"'{C['YELLOW']}--no-kill-on-exit{C['BRED']}' is enabled. "
+                f"When exiting, your session will be blocked until all processes "
+                f"are terminated.{C['RST']}")
 
     if IS_TERMUX and dist_type != "termux" and not no_link2symlink:
         proot_args.append("--link2symlink")

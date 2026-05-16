@@ -545,8 +545,8 @@ _HELP_PAGES = {
                 "Disable System V IPC emulation by proot. Recommended only "
                 "for devices where kernel has this feature enabled and "
                 "SELinux set to permissive mode.")] if IS_TERMUX else []),
-            ("--no-kill-on-exit",
-             "Hang indefinitely until all session processes exit."),
+            *([("--no-kill-on-exit",
+                "Hang indefinitely until all session processes exit.")] if IS_TERMUX else []),
             ("--emulator [FILE]",
              "Override the QEMU emulator binary for cross-arch "
              "execution. Only QEMU user mode and Blink emulators are "
@@ -739,8 +739,8 @@ _HELP_PAGES = {
                 "Disable System V IPC emulation by proot. Recommended only "
                 "for devices where kernel has this feature enabled and "
                 "SELinux set to permissive mode.")] if IS_TERMUX else []),
-            ("--no-kill-on-exit",
-             "Hang indefinitely until all session processes exit."),
+            *([("--no-kill-on-exit",
+                "Hang indefinitely until all session processes exit.")] if IS_TERMUX else []),
             ("--emulator [FILE]",
              "Override the QEMU emulator binary for cross-arch "
              "execution. Only QEMU user mode and Blink emulators are "

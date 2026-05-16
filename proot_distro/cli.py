@@ -129,9 +129,9 @@ def build_parser() -> argparse.ArgumentParser:
         p_login.add_argument(
             "--no-sysvipc", dest="no_sysvipc", action="store_true"
         )
-    p_login.add_argument(
-        "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
-    )
+        p_login.add_argument(
+            "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
+        )
     p_login.add_argument("--emulator", dest="emulator", metavar="PATH")
     p_login.add_argument("--kernel", metavar="STRING")
     p_login.add_argument("--hostname", metavar="STRING")
@@ -222,9 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
         p_run.add_argument(
             "--no-sysvipc", dest="no_sysvipc", action="store_true"
         )
-    p_run.add_argument(
-        "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
-    )
+        p_run.add_argument(
+            "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
+        )
     p_run.add_argument("--emulator", dest="emulator", metavar="PATH")
     p_run.add_argument("--kernel", metavar="STRING")
     p_run.add_argument("--hostname", metavar="STRING")
