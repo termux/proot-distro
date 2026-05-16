@@ -576,7 +576,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             f"When exiting, your session will be blocked until all processes "
             f"are terminated.{C['RST']}")
 
-    if dist_type != "termux" and not no_link2symlink:
+    if IS_TERMUX and dist_type != "termux" and not no_link2symlink:
         proot_args.append("--link2symlink")
 
     if IS_TERMUX and not no_sysvipc and not minimal:
@@ -710,7 +710,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
             val = os.environ.get(var)
             if val:
                 child_env[var] = val
-    if dist_type != "termux":
+    if IS_TERMUX and dist_type != "termux":
         # Always pin PROOT_L2S_DIR to a fixed path and create the directory
         # upfront. Without this, the first session lets proot choose the
         # location implicitly while simultaneous sessions set it explicitly,

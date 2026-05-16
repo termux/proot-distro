@@ -538,9 +538,9 @@ _HELP_PAGES = {
             ("--bind [SRC:DEST]",
              "Custom filesystem binding. Can be specified multiple times."
              + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
-            ("--no-link2symlink",
-             "Disable hardlink emulation by proot. Recommended only for "
-             "devices with SELinux in permissive mode."),
+            *([("--no-link2symlink",
+                "Disable hardlink emulation by proot. Recommended only for "
+                "devices with SELinux in permissive mode.")] if IS_TERMUX else []),
             *([("--no-sysvipc",
                 "Disable System V IPC emulation by proot. Recommended only "
                 "for devices where kernel has this feature enabled and "
@@ -732,9 +732,9 @@ _HELP_PAGES = {
             ("--bind [SRC:DEST]",
              "Custom filesystem binding. Can be specified multiple times."
              + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
-            ("--no-link2symlink",
-             "Disable hardlink emulation by proot. Recommended only for "
-             "devices with SELinux in permissive mode."),
+            *([("--no-link2symlink",
+                "Disable hardlink emulation by proot. Recommended only for "
+                "devices with SELinux in permissive mode.")] if IS_TERMUX else []),
             *([("--no-sysvipc",
                 "Disable System V IPC emulation by proot. Recommended only "
                 "for devices where kernel has this feature enabled and "

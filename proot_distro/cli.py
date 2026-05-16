@@ -122,10 +122,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument(
         "--bind", action="append", metavar="PATH[:PATH]"
     )
-    p_login.add_argument(
-        "--no-link2symlink", dest="no_link2symlink", action="store_true"
-    )
     if IS_TERMUX:
+        p_login.add_argument(
+            "--no-link2symlink", dest="no_link2symlink", action="store_true"
+        )
         p_login.add_argument(
             "--no-sysvipc", dest="no_sysvipc", action="store_true"
         )
@@ -215,10 +215,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--bind", action="append", metavar="PATH[:PATH]"
     )
-    p_run.add_argument(
-        "--no-link2symlink", dest="no_link2symlink", action="store_true"
-    )
     if IS_TERMUX:
+        p_run.add_argument(
+            "--no-link2symlink", dest="no_link2symlink", action="store_true"
+        )
         p_run.add_argument(
             "--no-sysvipc", dest="no_sysvipc", action="store_true"
         )
