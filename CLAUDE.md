@@ -117,6 +117,10 @@ and `os.rename`s it to `containers/<name>/rootfs` via
 symlinks whose targets still point at the old path. `LEGACY_ROOTFS_DIR`
 is kept only for this path — no other command reads from it.
 
+During the l2s rewrite, SIGINT and SIGQUIT are intercepted and replaced
+with a warning (same pattern as `rename`) so the user cannot leave the
+container in an inconsistent state by Ctrl-C.
+
 ## Distribution type: `normal` vs `termux`
 
 Detected from the rootfs at login time:

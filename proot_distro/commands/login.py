@@ -30,6 +30,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import stat
 import sys
 
@@ -219,21 +220,34 @@ def _migrate_legacy_rootfs(dist_name: str) -> None:
         return
 
     # Rewrite l2s symlinks whose targets still point at the old rootfs path.
+    # SIGINT is deferred for this block: an interrupt mid-rewrite would leave
+    # some symlinks pointing at the old (now-gone) path, breaking the container.
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Updating PRoot link2symlink extension files "
         f"(may take a long time)...{C['RST']}")
-    for dirpath, _dirs, filenames in os.walk(new_rootfs):
-        for fname in filenames:
-            fpath = os.path.join(dirpath, fname)
-            try:
-                if os.path.islink(fpath):
-                    target = os.readlink(fpath)
-                    if target.startswith(legacy_path):
-                        new_target = new_rootfs + target[len(legacy_path):]
-                        os.unlink(fpath)
-                        os.symlink(new_target, fpath)
-            except OSError:
-                pass
+    def _warn_no_interrupt(_signum, _frame):
+        msg(f"\n{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['RED']}"
+            f"Terminating now will leave link2symlink symlinks broken. "
+            f"Please wait for the operation to complete.{C['RST']}")
+
+    _old_sigint = signal.signal(signal.SIGINT, _warn_no_interrupt)
+    _old_sigquit = signal.signal(signal.SIGQUIT, _warn_no_interrupt)
+    try:
+        for dirpath, _dirs, filenames in os.walk(new_rootfs):
+            for fname in filenames:
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    if os.path.islink(fpath):
+                        target = os.readlink(fpath)
+                        if target.startswith(legacy_path):
+                            new_target = new_rootfs + target[len(legacy_path):]
+                            os.unlink(fpath)
+                            os.symlink(new_target, fpath)
+                except OSError:
+                    pass
+    finally:
+        signal.signal(signal.SIGINT, _old_sigint)
+        signal.signal(signal.SIGQUIT, _old_sigquit)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Migration complete.{C['RST']}")
