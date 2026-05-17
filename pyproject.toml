@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "proot-distro"
 version = "5.0.0b5"
-description = "Manage Linux proot containers on Termux"
-readme = {text = "Manage Linux proot containers on Termux.", content-type = "text/plain"}
+description = "PRoot-Distro is a lightweight rootless Linux container management utility built around proot."
+readme = "README.md"
 requires-python = ">=3.9"
 license = "GPL-3.0-only"
 dependencies = []
