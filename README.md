@@ -845,7 +845,7 @@ on Termux, and under `$XDG_CACHE_HOME/proot-distro/` (default
 | `XDG_CACHE_HOME` | On non-Termux hosts, base for `$XDG_CACHE_HOME/proot-distro/`. Defaults to `~/.cache`. |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
 | `PROOT_NO_SECCOMP` | Inherited and forwarded to `proot`. Set to `1` if `login` fails with seccomp-related errors on the host kernel. Skipped in `--minimal` mode. |
-| `PROOT_DUMP`, `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
+| `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
 | `COLUMNS` | Fallback terminal width for `--help` rendering. |
 | `TERM`, `COLORTERM` | Inherited from the host and exported into the guest (always; even in `--minimal`). In `normal`-type containers, `TERM` defaults to `xterm-256color` when unset on the host. |
 

@@ -261,7 +261,7 @@ def _migrate_legacy_rootfs(dist_name: str) -> None:
 _PROFILE_INJECT_SKIP = frozenset({
     "HOME", "USER", "TERM", "COLORTERM",
     "PATH",
-    "PROOT_NO_SECCOMP", "PROOT_DUMP", "PROOT_VERBOSE", "PROOT_L2S_DIR",
+    "PROOT_NO_SECCOMP", "PROOT_VERBOSE", "PROOT_L2S_DIR",
     "LD_PRELOAD", "LD_LIBRARY_PATH",
 })
 
@@ -782,7 +782,7 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
     # In minimal mode only PROOT_L2S_DIR is exported; proot debug vars are
     # skipped to keep the environment truly minimal.
     if not minimal:
-        for var in ("PROOT_NO_SECCOMP", "PROOT_DUMP", "PROOT_VERBOSE"):
+        for var in ("PROOT_NO_SECCOMP", "PROOT_VERBOSE"):
             val = os.environ.get(var)
             if val:
                 child_env[var] = val

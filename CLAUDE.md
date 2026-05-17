@@ -538,8 +538,8 @@ The snippet:
   the system PATH from `/etc/profile` keeps priority).
 - Then emits `export KEY='VALUE'` for every entry in `child_env` except
   per-session vars (`HOME`, `USER`, `TERM`, `COLORTERM`), `PATH`, and
-  proot-internal vars (`PROOT_NO_SECCOMP`, `PROOT_DUMP`,
-  `PROOT_VERBOSE`, `PROOT_L2S_DIR`, `LD_PRELOAD`, `LD_LIBRARY_PATH`).
+  proot-internal vars (`PROOT_NO_SECCOMP`, `PROOT_VERBOSE`, `PROOT_L2S_DIR`,
+  `LD_PRELOAD`, `LD_LIBRARY_PATH`).
 - Values single-quoted with the `'\''` idiom for safe round-tripping.
 
 No-op when `/etc/profile.d/` does not exist.
@@ -549,12 +549,12 @@ plus `TERM` (with `xterm-256color` fallback) and inherited `COLORTERM`
 are exported. Image Env, Android system vars, the `PREFIX/bin` append,
 and `_inject_termux_profile()` are all skipped.
 
-**Proot toggle vars**: `PROOT_NO_SECCOMP`, `PROOT_DUMP`, `PROOT_VERBOSE`
-are inherited from the host environment when non-empty. Skipped in
-`--minimal`. `PROOT_L2S_DIR` is set to `rootfs/.l2s` for `normal`-type
-when `IS_TERMUX` — the directory is always created upfront so
-concurrent sessions agree on the same path. `LD_PRELOAD` is removed
-from `child_env` before the exec.
+**Proot toggle vars**: `PROOT_NO_SECCOMP`, `PROOT_VERBOSE` are inherited
+from the host environment when non-empty. Skipped in `--minimal`.
+`PROOT_L2S_DIR` is set to `rootfs/.l2s` for `normal`-type when
+`IS_TERMUX` — the directory is always created upfront so concurrent
+sessions agree on the same path. `LD_PRELOAD` is removed from `child_env`
+before the exec.
 
 ## Login: proot command line assembly
 
