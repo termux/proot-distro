@@ -907,7 +907,7 @@ def command_help(args=None, configs=None) -> None:  # noqa: ARG001
     )
     msg()
     _shell_block(
-        [f"{PROGRAM_NAME} install termux/termux-docker"], width,
+        [f"{PROGRAM_NAME} install termux/termux-docker:aarch64"], width,
     )
     msg()
     _paragraph(
