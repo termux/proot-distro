@@ -82,6 +82,7 @@ def parse_image_ref(image_ref: str) -> tuple:
       'ubuntu'           → ('', 'library/ubuntu', 'latest')
       'ubuntu:24.04'     → ('', 'library/ubuntu', '24.04')
       'myuser/img:1.0'   → ('', 'myuser/img', '1.0')
+      'docker.io/library/ubuntu:24.04' → ('', 'library/ubuntu', '24.04')
 
     Custom registry images (host contains a dot or colon):
       'ghcr.io/foo/bar:latest' → ('ghcr.io', 'foo/bar', 'latest')
@@ -94,6 +95,14 @@ def parse_image_ref(image_ref: str) -> tuple:
     else:
         registry = ""
         remainder = image_ref
+
+    # 'docker.io' and 'index.docker.io' are user-facing aliases for Docker
+    # Hub. The actual API host is 'registry-1.docker.io' (and auth lives at
+    # 'auth.docker.io'), so route these through the default Docker Hub path
+    # by clearing the registry — otherwise the probe would hit the marketing
+    # site at https://docker.io/ and decode HTML as JSON.
+    if registry in ("docker.io", "index.docker.io"):
+        registry = ""
 
     if ":" in remainder:
         name, tag = remainder.rsplit(":", 1)
