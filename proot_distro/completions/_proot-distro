@@ -72,6 +72,8 @@ _proot_distro() {
                 'copy:copy files between host and container'
                 'sync:synchronize files between host and container'
                 'run:run the image entrypoint/cmd in a container'
+                'build:build an OCI image from a Dockerfile'
+                'push:push a locally built image to a registry'
                 'help:show help'
             )
             _describe 'command' subcommands
@@ -230,11 +232,21 @@ _proot_distro() {
                     ;;
 
                 # -----------------------------------------------------------
+                push)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
+                        '--architecture[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '1:image reference'
+                    ;;
+
+                # -----------------------------------------------------------
                 help)
                     local -a topics
                     topics=(
                         install remove rename reset login list
                         backup restore clear-cache copy sync run
+                        build push
                     )
                     _describe 'topic' topics
                     ;;

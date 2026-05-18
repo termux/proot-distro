@@ -475,6 +475,81 @@ _HELP_PAGES = {
         ],
     },
 
+    "push": {
+        "usage": "push [OPTIONS] IMAGE",
+        "summary": (
+            "Push a locally built image to a Docker/OCI registry. The "
+            "image must have been produced by '"
+            f"{PROGRAM_NAME} build -t IMAGE' first; the manifest and "
+            "blobs are read straight from the local cache."
+            "\n\n"
+            "IMAGE is the same reference passed to 'build -t', for "
+            "example 'myuser/myapp:1.0' (Docker Hub) or "
+            "'ghcr.io/myorg/myapp:1.0' (custom registry). When no tag "
+            "component is present, ':latest' is appended."
+            "\n\n"
+            "By default the architecture matches the host. Use "
+            "--architecture to push an image built for a different "
+            "target arch (the manifest cache is keyed by IMAGE+arch)."
+            "\n\n"
+            "Layers and the image config blob that are already present "
+            "on the registry are detected via HEAD requests and "
+            "skipped, so re-pushing an unchanged image transfers only "
+            "the small manifest."
+            "\n\n"
+            "Private repositories require authentication. Set "
+            "PD_DOCKER_AUTH=\"user:password\" (or "
+            "\"user:personal-access-token\") before running push. "
+            "Self-hosted registries that allow anonymous push do not "
+            "need PD_DOCKER_AUTH set."
+        ),
+        "options": [
+            ("--help", "Show this help."),
+            ("--architecture [ARCH]",
+             "Push the manifest built for the given architecture. "
+             "Accepts proot-distro names (aarch64, arm, i686, "
+             "riscv64, x86_64) or Docker platform strings "
+             "(linux/arm64, linux/amd64, ...). Default: host "
+             "architecture."),
+            ("--quiet", "Suppress non-error output."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} push myuser/myapp:1.0",
+            f"{PROGRAM_NAME} push ghcr.io/myorg/myapp:1.0",
+            f"{PROGRAM_NAME} push --architecture aarch64 myuser/myapp:1.0",
+        ],
+        "footer": [
+            {
+                "title": "AUTHENTICATION",
+                "intro": (
+                    "Set PD_DOCKER_AUTH in 'username:password' format "
+                    "before running push. The colon is mandatory; "
+                    "bare tokens without a username cannot be used "
+                    "because registry auth requires a token exchange "
+                    "with Basic credentials. For GitHub Container "
+                    "Registry, use a personal access token with the "
+                    "'write:packages' scope as the password."
+                ),
+                "examples": [
+                    "export PD_DOCKER_AUTH=user:password",
+                    f"{PROGRAM_NAME} push ghcr.io/myorg/myapp:1.0",
+                ],
+            },
+            {
+                "title": "NOTES",
+                "intro": (
+                    "Multi-architecture manifest lists are not "
+                    "produced. To publish a multi-arch image, build "
+                    "and push each architecture under the same tag — "
+                    "the registry overwrites the tag with the "
+                    "most-recently pushed manifest. Producing a "
+                    "manifest index that points at multiple "
+                    "single-arch manifests is out of scope."
+                ),
+            },
+        ],
+    },
+
     "backup": {
         "usage": "backup [OPTIONS] CONTAINER",
         "aliases": ("bak", "bkp"),
@@ -967,6 +1042,7 @@ _TOP_COMMANDS = [
     ("copy", "Copy files from/to container."),
     ("sync", "Sync files from/to container."),
     ("build", "Build an OCI image from a Dockerfile."),
+    ("push", "Push a locally built image to a registry."),
 ]
 
 

@@ -246,8 +246,14 @@ def _env_basic_auth() -> str:
     return "Basic " + base64.b64encode(raw.encode()).decode()
 
 
-def _get_auth_token(repo: str, registry: str = "") -> str:
-    """Obtain a pull token for *repo* from the appropriate auth endpoint.
+def _get_auth_token(
+    repo: str, registry: str = "", actions: str = "pull",
+) -> str:
+    """Obtain an OAuth2 token for *repo* with the requested *actions* scope.
+
+    `actions` is a comma-separated list of registry actions to request,
+    such as 'pull' (default), 'push', or 'pull,push'. The push flow
+    needs 'pull,push'; the pull flow uses the default 'pull'.
 
     When PD_DOCKER_AUTH is set, its 'username:password' value is
     forwarded as HTTP Basic auth to the registry's token endpoint,
@@ -255,9 +261,9 @@ def _get_auth_token(repo: str, registry: str = "") -> str:
     contain a colon separating the username from the password/PAT.
 
     Without PD_DOCKER_AUTH Docker Hub uses its well-known auth
-    endpoint for anonymous pulls. For any other registry the Bearer realm
-    is discovered by probing /v2/ and following the standard OCI auth
-    challenge.
+    endpoint for anonymous requests. For any other registry the Bearer
+    realm is discovered by probing /v2/ and following the standard OCI
+    auth challenge.
     """
     # Validate format early; _env_basic_auth raises if colon is missing.
     basic_auth = _env_basic_auth()
@@ -265,7 +271,7 @@ def _get_auth_token(repo: str, registry: str = "") -> str:
     if not registry:
         url = (
             f"{_AUTH_URL}?service=registry.docker.io"
-            f"&scope=repository:{repo}:pull"
+            f"&scope=repository:{repo}:{actions}"
         )
         req = urllib.request.Request(url, headers=_ua())
         if basic_auth:
@@ -275,9 +281,9 @@ def _get_auth_token(repo: str, registry: str = "") -> str:
         return data.get("token") or data.get("access_token", "")
 
     # Custom registry: probe /v2/ to discover the Bearer realm, then fetch
-    # a pull token. Registries that serve public images (e.g. ghcr.io)
-    # still require this token dance — they always return 401 on
-    # unauthenticated requests and embed the token endpoint in the challenge.
+    # a token. Registries that serve public images (e.g. ghcr.io) still
+    # require this token dance — they always return 401 on unauthenticated
+    # requests and embed the token endpoint in the challenge.
     probe_req = urllib.request.Request(
         f"https://{registry}/v2/", headers=_ua()
     )
@@ -299,7 +305,7 @@ def _get_auth_token(repo: str, registry: str = "") -> str:
         qs_parts = []
         if service:
             qs_parts.append(f"service={urllib.parse.quote(service, safe='')}")
-        qs_parts.append(f"scope=repository:{repo}:pull")
+        qs_parts.append(f"scope=repository:{repo}:{actions}")
         sep = "&" if "?" in realm else "?"
         token_req = urllib.request.Request(
             f"{realm}{sep}{'&'.join(qs_parts)}", headers=_ua()
@@ -850,3 +856,388 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
         "manifest": manifest,
         "image_config": image_config,
     }
+
+
+# ---------------------------------------------------------------------------
+# Push: upload blobs and manifest to a registry
+# ---------------------------------------------------------------------------
+
+_OCI_MANIFEST_MEDIA = "application/vnd.oci.image.manifest.v1+json"
+
+
+def _canonical_json(obj) -> bytes:
+    """Return canonical (sorted-keys, no-whitespace) JSON bytes."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _resolve_upload_url(base: str, location: str) -> str:
+    """Resolve the Location header from POST /v2/<repo>/blobs/uploads/.
+
+    Registries may return a fully-qualified URL or a relative path
+    (with or without a leading slash). Some return a URL on a
+    different host (CDN-backed uploads), which urllib follows
+    automatically.
+    """
+    if not location:
+        raise RuntimeError(
+            "Registry did not return an upload Location header."
+        )
+    if location.startswith(("http://", "https://")):
+        return location
+    if location.startswith("/"):
+        return base + location
+    return base.rstrip("/") + "/" + location
+
+
+def _blob_exists(
+    repo: str, digest: str, token: str, registry: str = "",
+) -> bool:
+    """Return True iff blob *digest* already exists on the registry."""
+    base = _registry_base_url(registry)
+    url = f"{base}/v2/{repo}/blobs/{digest}"
+    headers = {**_ua()}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, method="HEAD", headers=headers)
+    try:
+        with _auth_stripping_opener.open(req) as resp:
+            return 200 <= resp.status < 300
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise
+
+
+class _ProgressReader:
+    """File wrapper that reports upload progress as bytes flow through read().
+
+    Used to draw a TTY progress bar while http.client streams a file
+    object as the request body during blob uploads.
+    """
+
+    def __init__(self, fh, total: int, label: str):
+        self._fh = fh
+        self.total = total
+        self.sent = 0
+        self._label = label
+        self._tty = sys.stderr.isatty()
+        self._last_shown = 0
+
+    def read(self, size=-1):
+        data = self._fh.read(size)
+        self.sent += len(data)
+        if self._tty and (self.sent - self._last_shown >= 262144
+                          or len(data) == 0):
+            self._last_shown = self.sent
+            pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            if self.total:
+                pct = min(self.sent * 100 // self.total, 100)
+                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+                line = (
+                    f"\r{pfx}{self._label}: [{bar}] {pct:3d}%  "
+                    f"{fmt_size(self.sent)} / "
+                    f"{fmt_size(self.total)}\033[K{C['RST']}"
+                )
+            else:
+                line = (
+                    f"\r{pfx}{self._label}: "
+                    f"{fmt_size(self.sent)} uploaded...\033[K{C['RST']}"
+                )
+            sys.stderr.write(line)
+            sys.stderr.flush()
+        return data
+
+
+def _upload_blob_bytes(
+    repo: str, digest: str, data: bytes, token: str,
+    registry: str = "",
+) -> None:
+    """Upload a small in-memory blob (POST + monolithic PUT).
+
+    Per the OCI Distribution spec the PUT body uses
+    'application/octet-stream'; the manifest's mediaType field describes
+    the *content* of the blob and is set separately when the manifest
+    itself is uploaded.
+    """
+    base = _registry_base_url(registry)
+    headers = {**_ua()}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    post_req = urllib.request.Request(
+        f"{base}/v2/{repo}/blobs/uploads/",
+        data=b"",
+        method="POST",
+        headers={**headers, "Content-Length": "0"},
+    )
+    with _auth_stripping_opener.open(post_req) as resp:
+        location = resp.headers.get("Location", "")
+    put_url = _resolve_upload_url(base, location)
+    sep = "&" if "?" in put_url else "?"
+    put_url = (
+        f"{put_url}{sep}digest="
+        f"{urllib.parse.quote(digest, safe='')}"
+    )
+    put_req = urllib.request.Request(
+        put_url,
+        data=data,
+        method="PUT",
+        headers={
+            **headers,
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(len(data)),
+        },
+    )
+    with _auth_stripping_opener.open(put_req) as resp:
+        if not 200 <= resp.status < 300:
+            raise RuntimeError(
+                f"Blob upload failed for {digest}: HTTP {resp.status}"
+            )
+
+
+def _upload_blob_file(
+    repo: str, digest: str, file_path: str, token: str,
+    registry: str = "", label: str = "",
+) -> None:
+    """Upload a blob from *file_path* (streamed, POST + monolithic PUT)."""
+    base = _registry_base_url(registry)
+    headers = {**_ua()}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    # Start the upload session.
+    post_req = urllib.request.Request(
+        f"{base}/v2/{repo}/blobs/uploads/",
+        data=b"",
+        method="POST",
+        headers={**headers, "Content-Length": "0"},
+    )
+    with _auth_stripping_opener.open(post_req) as resp:
+        location = resp.headers.get("Location", "")
+    put_url = _resolve_upload_url(base, location)
+    sep = "&" if "?" in put_url else "?"
+    put_url = (
+        f"{put_url}{sep}digest="
+        f"{urllib.parse.quote(digest, safe='')}"
+    )
+
+    size = os.path.getsize(file_path)
+    use_tty = sys.stderr.isatty()
+    try:
+        with open(file_path, "rb") as fh:
+            reader = _ProgressReader(fh, size, label or digest[:19])
+            put_req = urllib.request.Request(
+                put_url,
+                data=reader,
+                method="PUT",
+                headers={
+                    **headers,
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(size),
+                },
+            )
+            with _auth_stripping_opener.open(put_req) as resp:
+                if not 200 <= resp.status < 300:
+                    raise RuntimeError(
+                        f"Blob upload failed for {digest}: HTTP {resp.status}"
+                    )
+    finally:
+        if use_tty:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+
+
+def _put_manifest(
+    repo: str, reference: str, body: bytes, media_type: str,
+    token: str, registry: str = "",
+) -> str:
+    """PUT a manifest at <reference> (tag or digest). Returns the registry
+    digest from the Docker-Content-Digest header, if provided."""
+    base = _registry_base_url(registry)
+    url = f"{base}/v2/{repo}/manifests/{reference}"
+    headers = {
+        **_ua(),
+        "Content-Type": media_type,
+        "Content-Length": str(len(body)),
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=body, method="PUT", headers=headers)
+    with _auth_stripping_opener.open(req) as resp:
+        if not 200 <= resp.status < 300:
+            raise RuntimeError(
+                f"Manifest upload failed: HTTP {resp.status}"
+            )
+        return resp.headers.get("Docker-Content-Digest", "")
+
+
+def push_image(image_ref: str, arch: str) -> dict:
+    """Push a built image (resolved from the local manifest cache) to its
+    registry. The image must have been produced by `proot-distro build`
+    under exactly this *image_ref* and *arch* — `build` stores the
+    manifest in MANIFEST_CACHE_DIR and the layer + config blobs in
+    LAYER_CACHE_DIR using the same digests we transmit here.
+
+    Authentication is identical to `pull_image`: when PD_DOCKER_AUTH is
+    set ('username:password'), it is forwarded as Basic auth to the
+    registry's token endpoint with `pull,push` scope. For wide-open or
+    self-hosted registries, no credentials are required.
+
+    Returns a metadata dict with `manifest_digest` (digest returned by
+    the registry, when reported) and `bytes_uploaded` (sum of blob and
+    manifest body sizes actually transmitted).
+    """
+    manifest, repo, image_config = _load_manifest_cache(image_ref, arch)
+    if manifest is None:
+        raise RuntimeError(
+            f"No cached manifest for '{image_ref}' ({arch}). Build it "
+            f"first with: proot-distro build -t {image_ref}"
+        )
+
+    layers = manifest.get("layers", [])
+    if not layers:
+        raise RuntimeError(
+            f"Cached manifest for '{image_ref}' has no filesystem layers."
+        )
+
+    # Refuse to push partial caches — every layer must be present locally.
+    missing = [
+        layer["digest"] for layer in layers
+        if not os.path.isfile(_layer_cache_path(layer["digest"]))
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Cannot push '{image_ref}': {len(missing)} layer blob(s) are "
+            f"missing from the local cache (first missing: {missing[0]}). "
+            f"Rebuild the image to repopulate the cache."
+        )
+
+    registry, _, tag = parse_image_ref(image_ref)
+
+    # ----- Re-canonicalize the image config and check the digest -----
+    # The manifest carries config.digest, which the registry verifies
+    # against the bytes we PUT. The build engine canonicalized the
+    # config dict with sort_keys/no-whitespace JSON before computing
+    # this digest; round-tripping the dict through json.dump+json.load
+    # in the manifest cache preserves all keys, so the same canonical
+    # form is reproducible here.
+    config_bytes = _canonical_json(image_config)
+    expected_cfg_digest = manifest.get("config", {}).get("digest", "")
+    actual_cfg_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+    if expected_cfg_digest != actual_cfg_digest:
+        raise RuntimeError(
+            f"Image config digest mismatch (cached manifest expects "
+            f"{expected_cfg_digest}, regenerated bytes hash to "
+            f"{actual_cfg_digest}). The local cache appears corrupted; "
+            f"rebuild the image."
+        )
+
+    # ----- Authenticate -----
+    auth_note = " (user credentials)" if os.environ.get("PD_DOCKER_AUTH") else ""
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+        f"{C['CYAN']}Authenticating with registry{auth_note}...{C['RST']}")
+    try:
+        token = _get_auth_token(repo, registry, actions="pull,push")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError(_push_denied_msg(image_ref, exc.code)) from exc
+        raise
+
+    n_layers = len(layers)
+    bytes_uploaded = 0
+
+    # ----- Upload each layer blob -----
+    for i, layer in enumerate(layers):
+        digest = layer["digest"]
+        short_id = digest.split(":")[-1][:12]
+        path = _layer_cache_path(digest)
+        size = os.path.getsize(path)
+
+        try:
+            if _blob_exists(repo, digest, token, registry):
+                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                    f"{short_id}: Layer {i + 1}/{n_layers} already exists "
+                    f"on registry, skipping upload.{C['RST']}")
+                continue
+
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"{short_id}: Uploading layer {i + 1}/{n_layers} "
+                f"({fmt_size(size)})...{C['RST']}")
+            _upload_blob_file(
+                repo, digest, path, token, registry, label=short_id,
+            )
+            bytes_uploaded += size
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise RuntimeError(
+                    _push_denied_msg(image_ref, exc.code)
+                ) from exc
+            raise
+
+    # ----- Upload the image config blob -----
+    cfg_short = expected_cfg_digest.split(":")[-1][:12]
+    try:
+        if _blob_exists(repo, expected_cfg_digest, token, registry):
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"{cfg_short}: Image config already exists on registry, "
+                f"skipping upload.{C['RST']}")
+        else:
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"{cfg_short}: Uploading image config "
+                f"({fmt_size(len(config_bytes))})...{C['RST']}")
+            _upload_blob_bytes(
+                repo, expected_cfg_digest, config_bytes, token, registry,
+            )
+            bytes_uploaded += len(config_bytes)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError(_push_denied_msg(image_ref, exc.code)) from exc
+        raise
+
+    # ----- PUT the manifest under the tag -----
+    manifest_media = manifest.get("mediaType") or _OCI_MANIFEST_MEDIA
+    manifest_bytes = _canonical_json(_strip_private_keys(manifest))
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+        f"Uploading manifest for tag '{tag}' "
+        f"({fmt_size(len(manifest_bytes))})...{C['RST']}")
+    try:
+        registry_digest = _put_manifest(
+            repo, tag, manifest_bytes, manifest_media, token, registry,
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError(_push_denied_msg(image_ref, exc.code)) from exc
+        raise
+    bytes_uploaded += len(manifest_bytes)
+
+    return {
+        "manifest_digest": registry_digest,
+        "bytes_uploaded": bytes_uploaded,
+        "registry": registry or "docker.io",
+        "repo": repo,
+        "tag": tag,
+    }
+
+
+def _strip_private_keys(d: dict) -> dict:
+    """Return a shallow copy of *d* without keys starting with '_'.
+
+    `_get_manifest` stuffs the response Content-Type into `_ct` for
+    internal use; that key must not be serialised back to the registry.
+    """
+    return {k: v for k, v in d.items() if not k.startswith("_")}
+
+
+def _push_denied_msg(image_ref: str, code: int) -> str:
+    """Return a context-sensitive error string for 401/403 on push."""
+    if os.environ.get("PD_DOCKER_AUTH"):
+        return (
+            f"Push denied for '{image_ref}' (HTTP {code}). "
+            f"Check that PD_DOCKER_AUTH=username:password is correct "
+            f"and the account has push access to the repository."
+        )
+    return (
+        f"Push denied for '{image_ref}' (HTTP {code}). "
+        f"Set PD_DOCKER_AUTH=username:password to authenticate, or, "
+        f"for self-hosted registries that allow anonymous push, check "
+        f"the registry configuration."
+    )

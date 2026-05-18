@@ -30,7 +30,7 @@ are installed as package data to standard `share/` locations.
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()`. |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` with TTY progress bars. |
 | `helpers/rootfs.py` | `write_resolv_conf()`, `write_hosts()`, `register_android_ids()`. |
-| `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, `_AuthStrippingRedirectHandler`, `_env_basic_auth()`, `_auth_denied_msg()`, cache and layer application helpers. |
+| `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `push_image()`, `parse_image_ref()`, `derive_alias()`, `_AuthStrippingRedirectHandler`, `_env_basic_auth()`, `_auth_denied_msg()`, `_push_denied_msg()`, `_blob_exists()`, `_upload_blob_bytes()`, `_upload_blob_file()`, `_put_manifest()`, `_ProgressReader`, cache and layer application helpers. `_get_auth_token()` takes an `actions` parameter (`"pull"` or `"pull,push"`). |
 | `helpers/dockerfile.py` | Dockerfile parser: `parse_dockerfile()` → `(directives, instructions)`, `expand_vars()` for `$VAR`/`${VAR…}` substitution, `DockerfileSyntaxError`. |
 | `helpers/layer_diff.py` | Layer snapshot/diff/tar writers: `snapshot()`, `diff_snapshots()`, `write_layer_tar()`, `write_files_layer()`, `_resolve_l2s_target()` (resolves proot `--link2symlink` symlinks to file content so layers stay portable). |
 | `helpers/build_cache.py` | Recipe-hash → layer-digest index: `lookup()`, `record()`, `compute_recipe_hash()`. |
@@ -39,6 +39,7 @@ are installed as package data to standard `share/` locations.
 | `locking.py` | Advisory POSIX `flock(2)` locking: `ContainerLock`, `LOCKS_DIR`, `_held_exclusive`, `_lock_path()`, `_read_lock_info()`. |
 | `commands/install.py` | `command_install()`, `_validate_name()`, `_is_local_path()`, `_derive_local_name()`, `_detect_strip_count()`, `_extract_plain_tar()`, `_extract_oci()`, `_install_from_local_file()`. |
 | `commands/build.py` | `command_build()`, `_derive_tag_from_path()`, `_is_valid_tag()`, `_install_as_container()`, `_prompt_proot_install()`. |
+| `commands/push.py` | `command_push()`. Resolves the cached manifest for `(image_ref, arch)`, then delegates to `helpers/docker.push_image()`. |
 | `commands/login.py` | `command_login()`, `_command_login_inner()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_manifest_env()`, `_IMAGE_ENV_BLOCKED`, `_storage_bindings()`, `_system_bindings()`, `_dq()`. |
 | `commands/run.py` | `command_run()`, `_read_image_config()`. |
 | `commands/remove.py` | `command_remove()`, `_remove_path()`. |
@@ -171,6 +172,7 @@ Detected from the rootfs at login time:
 | `sync` | — |
 | `run` | — |
 | `build` | — |
+| `push` | — |
 | `help` | `h`, `he`, `hel` |
 
 ## `main()` flow
@@ -399,6 +401,19 @@ from stdin).
   pull_image yet); reserved for future use.
 - `-v`/`--verbose` — echo each instruction's raw text and stream `RUN`
   output to the terminal.
+- `-q`/`--quiet` — suppress non-error output.
+
+### `push`
+
+Pushes an image previously produced by `proot-distro build` to its
+registry. Required positional: image reference (e.g.
+`myuser/myapp:1.0`, `ghcr.io/myorg/myapp:1.0`). When the last path
+component lacks a `:tag` suffix, `:latest` is appended (matching
+`build`'s behaviour).
+
+- `--architecture ARCH` — push the manifest built for the given target
+  arch. Default: host arch. Same accepted spellings as in `install` /
+  `build`.
 - `-q`/`--quiet` — suppress non-error output.
 
 ## Isolation modes (`login` / `run`)
@@ -1121,6 +1136,106 @@ When no `-t/--tag` is given, the tag defaults to
 PATH was not supplied). The basename is lowercased and sanitised; if
 it cannot be made to satisfy `_NAME_RE`, the user is required to
 pass `--tag` explicitly.
+
+## Push
+
+`command_push()` uploads a locally built image to its registry. The
+image must already exist in the manifest + layer cache, which `build`
+populates: `MANIFEST_CACHE_DIR/<key>.json` holds the manifest, image
+config, and repo name; `LAYER_CACHE_DIR/<digest>` holds each layer
+blob. There is no on-disk index of pushable images — the manifest is
+located by the same `(image_ref, arch)` cache key the install pipeline
+uses, so the user must supply the same tag they built with.
+
+### Flow
+
+`push_image(image_ref, arch)` in `helpers/docker.py`:
+
+1. Resolve `(manifest, repo, image_config)` from
+   `_load_manifest_cache(image_ref, arch)`. Missing entry → `RuntimeError`
+   with a build hint; missing layer blobs → `RuntimeError` listing the
+   first missing digest.
+2. Re-canonicalise the cached `image_config` via `_canonical_json()`
+   and verify the SHA-256 matches `manifest.config.digest`. A mismatch
+   means the cache is corrupted; the user must rebuild. This check is
+   reliable because the build engine canonicalises the same way and
+   the round-trip through `json.dump`/`json.load` preserves every key.
+3. Fetch an auth token via `_get_auth_token(repo, registry,
+   actions="pull,push")`. The `actions` parameter (added in this
+   command's commit) defaults to `"pull"` so all existing call sites
+   stay on the original scope.
+4. For each layer in order: `_blob_exists()` HEAD-probes the registry;
+   present blobs are skipped, missing blobs go through
+   `_upload_blob_file()`. The upload uses POST `/v2/<repo>/blobs/uploads/`
+   to start a session, then a single monolithic PUT `<location>?digest=<digest>`.
+   Layers stream from disk via `_ProgressReader` (chunked through
+   `http.client`'s built-in file-object support), so the process never
+   loads a whole layer into memory.
+5. Same flow for the image config blob, via `_upload_blob_bytes()` —
+   the bytes are produced fresh from the cached dict, not read from
+   disk, since the config has no separate blob file.
+6. `_put_manifest()` PUTs the manifest under the tag from
+   `parse_image_ref(image_ref)`. `Content-Type` is the manifest's own
+   `mediaType` (defaults to `application/vnd.oci.image.manifest.v1+json`).
+   Returns `Docker-Content-Digest` from the response when the registry
+   provides one.
+
+Returns `{manifest_digest, bytes_uploaded, registry, repo, tag}` to
+`command_push()` for the summary lines.
+
+### Authentication
+
+Same `PD_DOCKER_AUTH=user:password` env var as `install`/`pull_image`.
+Required for private repos and Docker Hub user namespaces; optional
+for self-hosted/anonymous-push registries (the token endpoint returns
+an empty token, and the registry accepts unauthenticated requests).
+
+Token scope is `repository:<repo>:pull,push` — `_get_auth_token()` now
+takes an `actions` parameter (default `"pull"`) that selects the
+comma-separated action list inserted into the scope.
+
+401/403 responses on any phase (token fetch, blob HEAD/POST/PUT,
+manifest PUT) are converted into `RuntimeError` via
+`_push_denied_msg()` — a counterpart to `_auth_denied_msg()` with
+push-specific wording.
+
+### HTTP body uploads
+
+Blob PUTs always use `Content-Type: application/octet-stream` per the
+OCI Distribution spec. `Content-Length` is set explicitly from
+`os.path.getsize()` (file) or `len(data)` (bytes), so urllib never
+falls back to chunked transfer encoding. For file uploads, a
+`_ProgressReader` wraps the open file: each `read()` call increments
+the byte counter and refreshes the TTY progress bar at 256 KiB
+granularity. `http.client._send_output` reads in `self.blocksize`
+chunks (8 KiB by default), which keeps memory usage flat.
+
+The `_AuthStrippingRedirectHandler` already strips `Authorization`
+across cross-host redirects, which covers Docker Hub blob endpoints
+when (rarely) an upload session location lands on a CDN host.
+
+### CLI exposure
+
+Only required positional: `IMAGE`. The `--architecture` override
+mirrors `install`/`build` and is normalised through `normalize_arch()`.
+`-q`/`--quiet` suppresses the success summary; errors still print.
+
+`cli.py:main()`'s startup proot probe is bypassed for `push` (same as
+`build`) — push is a pure-Python operation that never invokes proot.
+
+### Limitations
+
+- Multi-architecture manifest lists are not produced. Each push writes
+  a single-arch manifest to the tag; pushing the same tag for multiple
+  arches simply overwrites the previous manifest.
+- Cross-repository blob mounts (`POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<other_repo>`)
+  are not used. Layers shared across repos within the same registry
+  are re-uploaded in full unless they happen to also live in the
+  destination repo.
+- Chunked uploads are not implemented; every blob is sent via one
+  monolithic PUT. This is the simplest reliable mode and works with
+  every spec-compliant registry, but failed uploads of multi-GiB
+  layers must restart from zero.
 
 ## Fake sysdata
 

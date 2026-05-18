@@ -24,6 +24,7 @@ exporting it as a standalone OCI tarball.
 4. [Commands](#commands-reference)
    * [`install`](#install--install-a-container)
    * [`build`](#build--build-an-image-from-a-dockerfile)
+   * [`push`](#push--push-a-built-image-to-a-registry)
    * [`login`](#login--start-a-shell-inside-a-container)
    * [`run`](#run--run-the-image-defined-entrypoint)
    * [`list`](#list--list-installed-containers)
@@ -59,7 +60,8 @@ Typical use cases:
 - Spinning up server software (Nginx, Nextcloud, PostgreSQL, etc.) on
   Android by reusing the same OCI images you'd run on a server.
 - Building custom OCI images from a Dockerfile, on-device, without
-  needing a Docker daemon.
+  needing a Docker daemon — and pushing them straight to Docker Hub,
+  GitHub Container Registry, or any other OCI-compatible registry.
 - Trying a distribution non-destructively: install, mess around,
   `proot-distro remove` when done.
 
@@ -140,6 +142,10 @@ proot-distro list
 
 # Build and install a custom image from a Dockerfile
 proot-distro build -t myapp:1.0 --install-as myapp ./mycontext
+
+# Publish the built image to a registry
+export PD_DOCKER_AUTH=myuser:mypassword
+proot-distro push myuser/myapp:1.0
 
 # Rebuild from scratch (loses all in-container data)
 proot-distro reset ubuntu
@@ -404,6 +410,103 @@ that depend on real namespaces or kernel features will fail or
 behave subtly differently from a `docker build`. Multi-platform
 manifest lists are not produced — build once per target architecture
 and use `--tag` to keep them distinct.
+
+---
+
+### `push` — Push a built image to a registry
+
+```
+proot-distro push [OPTIONS] IMAGE
+```
+
+Upload a locally built image to a Docker/OCI registry. The image must
+have been produced by `proot-distro build -t IMAGE` first; `push`
+reads the manifest and all blobs directly from the local cache and
+streams them to the registry. No Docker daemon and no on-disk
+intermediate archive are involved.
+
+`IMAGE` is the same reference passed to `build -t`. When the last
+path component lacks an explicit `:tag` suffix, `:latest` is appended
+(matching `build`'s behaviour). The registry is derived from the
+image reference: a bare or user/repo form goes to Docker Hub, a host
+form like `ghcr.io/foo/bar:tag` goes to the named registry.
+
+**Options:**
+
+| Option | Description |
+|---|---|
+| `--architecture ARCH` | Push the manifest built for the given architecture. Accepts proot-distro names (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings (`linux/arm64`, `linux/amd64`, …). Default: host architecture. The manifest cache is keyed by `(IMAGE, arch)`, so the value must match the architecture you built for. |
+| `-q`, `--quiet` | Suppress non-error output. |
+
+**Authentication:**
+
+`push` uses the same `PD_DOCKER_AUTH=username:password` contract as
+`install`. The colon separator is mandatory — the value is forwarded
+as HTTP Basic auth to the registry's token endpoint to obtain a
+scoped bearer token with `pull,push` actions:
+
+```sh
+# Docker Hub
+export PD_DOCKER_AUTH=myuser:mypassword
+proot-distro push myuser/myapp:1.0
+
+# GitHub Container Registry — use a PAT with the write:packages scope
+export PD_DOCKER_AUTH=myuser:ghp_xxx
+proot-distro push ghcr.io/myorg/myapp:1.0
+
+# Any other OCI registry
+export PD_DOCKER_AUTH=myuser:mypassword
+proot-distro push registry.example.com/private/myapp:1.0
+```
+
+Self-hosted registries that allow anonymous push do not need
+`PD_DOCKER_AUTH` set — the token endpoint returns an empty token and
+the registry accepts unauthenticated `PUT`s.
+
+**Behaviour:**
+
+- Each layer is HEAD-probed against the registry first; blobs that
+  already exist are skipped, so re-pushing an unchanged image
+  transfers only the manifest.
+- New layers stream from disk via a single monolithic `PUT` per
+  blob — memory usage stays flat regardless of layer size.
+- The image config bytes are re-canonicalised from the cached dict
+  and their SHA-256 is verified to match the digest recorded in the
+  manifest before upload. A mismatch indicates a corrupted local
+  cache and aborts the push.
+- 401/403 responses (on any phase: token fetch, blob upload, manifest
+  PUT) are reported with a hint to set or fix `PD_DOCKER_AUTH`.
+
+**Examples:**
+
+```sh
+# Build then push to Docker Hub
+proot-distro build -t myuser/myapp:1.0 ./mycontext
+export PD_DOCKER_AUTH=myuser:mypassword
+proot-distro push myuser/myapp:1.0
+
+# Build a cross-arch image and push it
+proot-distro build -t myuser/myapp:arm64 --architecture aarch64 .
+proot-distro push --architecture aarch64 myuser/myapp:arm64
+
+# Push to a self-hosted, unauthenticated registry
+proot-distro build -t registry.lan:5000/internal/tool:dev .
+proot-distro push registry.lan:5000/internal/tool:dev
+
+# Quiet mode (only errors print)
+proot-distro push -q myuser/myapp:1.0
+```
+
+**Limitations:**
+
+Multi-architecture manifest lists are not produced — each push writes
+a single-arch manifest under the tag. To publish a multi-arch image,
+build and push each architecture separately; the tag is overwritten
+on each push, so a higher-level tool would be required to assemble a
+manifest list. Cross-repository blob mounting and chunked uploads are
+not implemented; layers shared across repositories on the same
+registry are re-uploaded in full, and a failed multi-gigabyte layer
+upload must restart from zero.
 
 ---
 
@@ -1007,7 +1110,7 @@ on Termux, and under `$XDG_CACHE_HOME/proot-distro/` (default
 | `TERMUX_APP__APP_VERSION_NAME`, `TERMUX_VERSION` | Either one (when set) counts as one of the indicators that flips on Termux mode in `_detect_termux()`. |
 | `XDG_DATA_HOME` | On non-Termux hosts, base for `$XDG_DATA_HOME/proot-distro/`. Defaults to `~/.local/share`. |
 | `XDG_CACHE_HOME` | On non-Termux hosts, base for `$XDG_CACHE_HOME/proot-distro/`. Defaults to `~/.cache`. |
-| `PD_DOCKER_AUTH` | Credentials for pulling private Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install` and `build` (`FROM` base-image pulls). |
+| `PD_DOCKER_AUTH` | Credentials for pulling and pushing Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install`, `build` (`FROM` base-image pulls), and `push` (with `pull,push` scope). |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
 | `PROOT_NO_SECCOMP` | Inherited and forwarded to `proot`. Set to `1` if `login` fails with seccomp-related errors on the host kernel. Skipped in `--minimal` mode. |
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
@@ -1076,8 +1179,9 @@ cp proot_distro/completions/proot-distro.fish \
 
 ### PRoot-Distro limitations
 
-- **Private image authentication**: pulling private images requires
-  setting `PD_DOCKER_AUTH=user:password` (or a raw bearer token).
+- **Registry authentication**: pulling private images and pushing to
+  private repositories require setting
+  `PD_DOCKER_AUTH=user:password` (or `user:personal-access-token`).
   Credential helpers and Docker config file (`~/.docker/config.json`) are
   not read — only the environment variable is supported.
 - **No zstd-compressed layers**: Python's `tarfile` module does not
@@ -1091,10 +1195,15 @@ cp proot_distro/completions/proot-distro.fish \
   (`RUN --mount=type=cache|secret|ssh`, `RUN --network`,
   `RUN --security=insecure`, `COPY --link`, `COPY --parents`) are
   rejected with an explicit error. Multi-platform manifest lists are
-  not produced — build once per architecture. For complex builds
-  that depend on a real container runtime, use `docker build` /
+  not produced — build (and `push`) once per architecture. For complex
+  builds that depend on a real container runtime, use `docker build` /
   `buildah` / `nerdctl` on a full host and `proot-distro install
   ./myimage.oci.tar`.
+- **`push` is single-arch, single-stream**: each `proot-distro push`
+  writes a single-arch manifest, with no manifest-list assembly,
+  cross-repository blob mounting, or chunked uploads. Layers shared
+  across repos on the same registry are re-uploaded in full, and a
+  failed upload of a large layer must restart from zero.
 - **No live state migration**: `backup`/`restore` archive the rootfs
   and the OCI manifest, but in-memory state of running processes is
   not preserved.

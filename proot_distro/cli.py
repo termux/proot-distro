@@ -47,6 +47,7 @@ from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.commands.run import command_run
 from proot_distro.commands.build import command_build
+from proot_distro.commands.push import command_push
 from proot_distro.commands.help import command_help, _HELP_COMMANDS
 
 
@@ -252,6 +253,16 @@ def build_parser() -> "_PdArgumentParser":
     p_build.add_argument("-q", "--quiet", action="store_true")
     p_build.add_argument("-h", "--help", action="store_true")
 
+    # push
+    p_push = sub.add_parser("push", add_help=False)
+    p_push._pd_command = "push"
+    p_push.add_argument("image_ref", nargs="?", default=None, metavar="IMAGE")
+    p_push.add_argument(
+        "--architecture", dest="override_arch", metavar="ARCH",
+    )
+    p_push.add_argument("-q", "--quiet", action="store_true")
+    p_push.add_argument("-h", "--help", action="store_true")
+
     # run
     p_run = sub.add_parser("run", add_help=False)
     p_run._pd_command = "run"
@@ -327,6 +338,8 @@ _REQUIRED_ARGS = {
     "sync":    [("source",      "source path is not specified."),
                 ("destination", "destination path is not specified.")],
     "run":     [("alias", "container name is not specified.")],
+    "push":    [("image_ref", "image reference is not specified"
+                 " (e.g. 'myrepo/myapp:1.0').")],
 }
 
 _COMMAND_HANDLERS = {
@@ -343,6 +356,7 @@ _COMMAND_HANDLERS = {
     "sync":        command_sync,
     "run":         command_run,
     "build":       command_build,
+    "push":        command_push,
     "help":        command_help,
 }
 
@@ -388,16 +402,18 @@ def main() -> None:
     except OSError:
         pass
 
-    # Check that proot is installed. `build` is exempt from this
-    # startup probe: a Dockerfile with no RUN instruction can be built
-    # in pure-Python mode without proot. command_build() runs its own
-    # check after parsing the Dockerfile and refuses only when RUN
-    # (or ONBUILD RUN) is actually present.
+    # Check that proot is installed. `build` and `push` are exempt from
+    # this startup probe: `build` may run a Dockerfile with no RUN
+    # instructions in pure-Python mode, and `push` only reads from the
+    # local manifest/layer cache and uploads to a registry. `build`
+    # runs its own check after parsing the Dockerfile and refuses only
+    # when RUN (or ONBUILD RUN) is actually present.
     _first_canonical = ""
     if len(sys.argv) >= 2:
         first_arg = sys.argv[1]
         _first_canonical = _ALIAS_TO_CANONICAL.get(first_arg, first_arg)
-    if _first_canonical != "build" and shutil.which("proot") is None:
+    if (_first_canonical not in ("build", "push")
+            and shutil.which("proot") is None):
         msg()
         msg(f"{C['BRED']}Error: unable to find proot utility.{C['RST']}")
         msg()

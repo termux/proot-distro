@@ -58,7 +58,7 @@ end
 function __proot_distro_no_subcommand
     not __fish_seen_subcommand_from \
         install remove rename reset login list backup restore \
-        clear-cache copy sync run help
+        clear-cache copy sync run build push help
 end
 
 # ---------------------------------------------------------------------------
@@ -76,6 +76,8 @@ complete -c proot-distro -f -n __proot_distro_no_subcommand -a clear-cache -d 'C
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a copy        -d 'Copy files between host and container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a sync        -d 'Synchronize files between host and container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a run         -d 'Run the image entrypoint/cmd in a container'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a build       -d 'Build an OCI image from a Dockerfile'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a push        -d 'Push a locally built image to a registry'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a help        -d 'Show help'
 
 # Global help flag (before subcommand)
@@ -270,10 +272,21 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -s h -l help          -d 'Show help'
 
 # ---------------------------------------------------------------------------
+# push
+# ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
+    -l architecture    -r -d 'Target CPU architecture' \
+    -a 'aarch64\tAArch64 arm\tARM(32-bit) i686\tx86(32-bit) riscv64\tRISC-V x86_64\tx86_64'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
+    -s q -l quiet      -d 'Suppress non-error output'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
+    -s h -l help       -d 'Show help'
+
+# ---------------------------------------------------------------------------
 # help
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list backup restore clear-cache copy sync run' \
+    -a 'install remove rename reset login list backup restore clear-cache copy sync run build push' \
     -d 'Topic'
 
 # ---------------------------------------------------------------------------
@@ -291,6 +304,8 @@ complete -c pd -f -n __proot_distro_no_subcommand -a clear-cache -d 'Clear the d
 complete -c pd -f -n __proot_distro_no_subcommand -a copy        -d 'Copy files between host and container'
 complete -c pd -f -n __proot_distro_no_subcommand -a sync        -d 'Synchronize files between host and container'
 complete -c pd -f -n __proot_distro_no_subcommand -a run         -d 'Run the image entrypoint/cmd in a container'
+complete -c pd -f -n __proot_distro_no_subcommand -a build       -d 'Build an OCI image from a Dockerfile'
+complete -c pd -f -n __proot_distro_no_subcommand -a push        -d 'Push a locally built image to a registry'
 complete -c pd -f -n __proot_distro_no_subcommand -a help        -d 'Show help'
 complete -c pd -f -n __proot_distro_no_subcommand -s h -l help   -d 'Show help'
 
@@ -375,5 +390,9 @@ complete -c pd -f -n '__fish_seen_subcommand_from run' -l env             -r -d 
 complete -c pd -f -n '__fish_seen_subcommand_from run' -l get-proot-cmd      -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -s h -l help          -d 'Show help'
 
+complete -c pd -f -n '__fish_seen_subcommand_from push' -l architecture -r -d 'Target CPU architecture' -a 'aarch64 arm i686 riscv64 x86_64'
+complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet -d 'Suppress non-error output'
+complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help  -d 'Show help'
+
 complete -c pd -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list backup restore clear-cache copy sync run' -d 'Topic'
+    -a 'install remove rename reset login list backup restore clear-cache copy sync run build push' -d 'Topic'

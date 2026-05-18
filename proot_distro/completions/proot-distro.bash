@@ -39,7 +39,7 @@ _proot_distro() {
     _init_completion || return
 
     local -r _all_commands="install remove rename reset login list backup restore
-        clear-cache copy sync run help"
+        clear-cache copy sync run build push help"
 
     # Complete the subcommand itself
     if [[ ${cword} -eq 1 ]]; then
@@ -232,8 +232,20 @@ _proot_distro() {
             ;;
 
         # -----------------------------------------------------------------------
+        push)
+            case "${prev}" in
+                --architecture)
+                    COMPREPLY=($(compgen -W "aarch64 arm i686 riscv64 x86_64" -- "${cur}"))
+                    return ;;
+            esac
+            if [[ "${cur}" == -* ]]; then
+                COMPREPLY=($(compgen -W "--architecture --quiet --help" -- "${cur}"))
+            fi
+            ;;
+
+        # -----------------------------------------------------------------------
         help)
-            local topics="install remove rename reset login list backup restore clear-cache copy sync run"
+            local topics="install remove rename reset login list backup restore clear-cache copy sync run build push"
             COMPREPLY=($(compgen -W "${topics}" -- "${cur}"))
             ;;
 
