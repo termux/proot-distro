@@ -252,6 +252,16 @@ After installation the resolved image tag is shown (e.g.
 `Run entrypoint: proot-distro run <name>` hint is printed alongside
 `Start shell: proot-distro login <name>`.
 
+#### From an URL
+
+When URL is specified instead of local path, the content will be fully
+downloaded and then processed by same method used for local file installation.
+
+Only HTTP or HTTPS links are supported.
+
+The default container name derived from the last URL component. Use `--name`
+to override.
+
 ---
 
 ### `build` — Build an image from a Dockerfile

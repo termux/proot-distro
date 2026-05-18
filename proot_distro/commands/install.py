@@ -57,7 +57,7 @@ from proot_distro.helpers.rootfs import (
     write_hosts,
     register_android_ids,
 )
-from proot_distro.helpers.download import fmt_size
+from proot_distro.helpers.download import fmt_size, download_file
 
 _NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
 
@@ -96,6 +96,11 @@ def _is_local_path(ref: str) -> bool:
     exist in the current working directory.
     """
     return ref.startswith(('/', './', '../', '~'))
+
+
+def _is_url(ref: str) -> bool:
+    """Return True if ref is an HTTP/HTTPS URL."""
+    return ref.startswith(('http://', 'https://'))
 
 
 def _derive_local_name(path: str) -> str:
@@ -605,8 +610,9 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
     else:
         dist_arch = device_arch
 
-    # Decide between local-file mode and Docker-pull mode.
+    # Decide between local-file, URL, and Docker-pull mode.
     local_path = os.path.expanduser(image_ref) if _is_local_path(image_ref) else None
+    url = image_ref if _is_url(image_ref) else None
 
     if local_path is not None:
         if not os.path.isfile(local_path):
@@ -629,6 +635,22 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
                     f"one.{C['RST']}")
                 msg()
                 sys.exit(1)
+    elif url is not None:
+        if custom_dist_name:
+            install_name = custom_dist_name
+        else:
+            # Strip query string/fragment before deriving the name.
+            url_path = url.split('?')[0].split('#')[0]
+            install_name = _derive_local_name(url_path)
+            if not install_name or not _validate_name(install_name):
+                msg()
+                msg(f"{C['BRED']}Error: cannot determine a valid container "
+                    f"name from URL "
+                    f"'{C['YELLOW']}{url}{C['BRED']}'. "
+                    f"Use '{C['YELLOW']}--name NAME{C['BRED']}' to specify "
+                    f"one.{C['RST']}")
+                msg()
+                sys.exit(1)
     else:
         install_name = custom_dist_name if custom_dist_name else derive_alias(image_ref)
         if not _validate_name(install_name):
@@ -642,7 +664,7 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
 
     with ContainerLock(install_name, exclusive=True, command="install"):
         _run_install(
-            install_name, image_ref, local_path, dist_arch, configs
+            install_name, image_ref, local_path, url, dist_arch, configs
         )
 
 
@@ -650,6 +672,7 @@ def _run_install(
     install_name: str,
     image_ref: str,
     local_path,
+    url,
     dist_arch: str,
     configs: dict,
 ) -> None:
@@ -677,6 +700,10 @@ def _run_install(
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
             f"from '{C['YELLOW']}{os.path.basename(local_path)}{C['CYAN']}' "
             f"as '{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
+    elif url is not None:
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
+            f"from URL '{C['YELLOW']}{url}{C['CYAN']}' as "
+            f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
     else:
         # Always show the tag, appending ':latest' when the user omitted it.
         last_component = image_ref.split("/")[-1]
@@ -695,11 +722,23 @@ def _run_install(
         except OSError:
             pass
 
+    tmp_archive = None
     try:
         if local_path is not None:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
                 f"Extracting rootfs from archive...{C['RST']}")
             metadata = _install_from_local_file(local_path, rootfs_dir, dist_arch)
+        elif url is not None:
+            os.makedirs(DOWNLOAD_CACHE_DIR, exist_ok=True)
+            tmp_archive = os.path.join(
+                DOWNLOAD_CACHE_DIR, f".pd_dl_{install_name}.tmp"
+            )
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Downloading archive...{C['RST']}")
+            download_file(url, tmp_archive)
+            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                f"Extracting rootfs from archive...{C['RST']}")
+            metadata = _install_from_local_file(tmp_archive, rootfs_dir, dist_arch)
         else:
             os.makedirs(DOWNLOAD_CACHE_DIR, exist_ok=True)
             metadata = pull_image(image_ref, rootfs_dir, dist_arch)
@@ -759,6 +798,12 @@ def _run_install(
     except Exception:
         _cleanup()
         raise
+    finally:
+        if tmp_archive is not None:
+            try:
+                os.remove(tmp_archive)
+            except OSError:
+                pass
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Finished installation.{C['RST']}")

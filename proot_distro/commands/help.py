@@ -545,11 +545,12 @@ _HELP_PAGES = {
     },
 
     "install": {
-        "usage": "install [OPTIONS] (IMAGE:TAG or /path/to/roofs.tar)",
+        "usage": "install [OPTIONS] (IMAGE:TAG or URL or FILE)",
         "aliases": ("add", "i", "in", "ins"),
         "summary": (
             "Create a proot container from a given source: Docker image, "
-            "a local OCI image archive or plain rootfs tarball."
+            "OCI image archive, rootfs tarball or a web URL providing "
+            "either of supported archive file formats."
             "\n\n"
             "Installation from Docker image require specifying a reference, "
             "for example 'ubuntu:24.04'. Official images can be specified by "
@@ -589,6 +590,7 @@ _HELP_PAGES = {
         "examples": [
             f"{PROGRAM_NAME} install ubuntu:24.04",
             f"{PROGRAM_NAME} install debian --architecture x86_64",
+            f"{PROGRAM_NAME} install https://example.com/dist.tar",
             f"{PROGRAM_NAME} install ~/linuxfromscratch.tgz --name lfs"
         ],
     },
