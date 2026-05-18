@@ -363,6 +363,118 @@ def _render_page(page: dict, command_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 _HELP_PAGES = {
+    "build": {
+        "usage": "build [OPTIONS] [PATH]",
+        "summary": (
+            "Build an OCI/Docker-compatible image from a Dockerfile."
+            "\n\n"
+            "PATH is the build context directory containing the "
+            "Dockerfile (default: '.'). All COPY/ADD source paths "
+            "resolve relative to it. A '.dockerignore' file in the "
+            "context excludes patterns from COPY/ADD."
+            "\n\n"
+            "By default the image is stored in the local manifest "
+            "cache under the tag given by --tag (default: the "
+            "basename of PATH plus ':latest'). Once stored, "
+            f"'{PROGRAM_NAME} install <tag>' resolves the tag against "
+            "the cache first and installs entirely offline."
+            "\n\n"
+            "Use --output FILE to additionally write a standalone "
+            "OCI image-layout tarball that 'docker load' or "
+            f"'{PROGRAM_NAME} install FILE' also understands."
+            "\n\n"
+            "Use --install-as NAME to turn the freshly built image "
+            "into a container in one step."
+        ),
+        "options": [
+            ("--help", "Show this help."),
+            ("-f, --file [PATH]",
+             "Use a Dockerfile at PATH instead of <PATH>/Dockerfile. "
+             "Pass '-' to read the Dockerfile from standard input."),
+            ("-t, --tag [REF]",
+             "Image reference to assign. Repeatable. Defaults to "
+             "'<basename(PATH)>:latest'."),
+            ("--build-arg [K=V]",
+             "Set a build-time ARG. Only ARGs declared in the "
+             "Dockerfile are honoured. Repeatable."),
+            ("--architecture [ARCH]",
+             "Target CPU architecture (default: host architecture). "
+             "Accepts proot-distro names (aarch64, arm, i686, "
+             "riscv64, x86_64) or Docker platform strings "
+             "(linux/arm64, linux/amd64, ...)."),
+            ("--target [STAGE]",
+             "Stop after the named stage of a multi-stage build."),
+            ("--emulator [PATH]",
+             "Override the QEMU user-mode binary used for "
+             "cross-architecture builds."),
+            ("--output [FILE]",
+             "Write the built image as an OCI tarball to FILE. "
+             "Compression is inferred from the extension "
+             "(.oci.tar, .oci.tar.gz, .oci.tar.xz). Repeatable."),
+            ("--install-as [NAME]",
+             "Install the built image as a container named NAME "
+             "after the build completes."),
+            ("--no-cache",
+             "Disable build-step caching. Each instruction is "
+             "executed fresh."),
+            ("--pull",
+             "Force re-pull of base images, ignoring the manifest "
+             "cache."),
+            ("--verbose",
+             "Echo each instruction and stream RUN output to the "
+             "terminal."),
+            ("--quiet",
+             "Suppress non-error output."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} build -t myapp:1.0 .",
+            f"{PROGRAM_NAME} build -t myapp:1.0 --output myapp.oci.tar.gz .",
+            f"{PROGRAM_NAME} build -t myapp --install-as myapp .",
+            f"{PROGRAM_NAME} build -f Dockerfile.arm "
+                f"--architecture aarch64 .",
+        ],
+        "footer": [
+            {
+                "title": "PROOT REQUIREMENT",
+                "intro": (
+                    "If the Dockerfile contains any RUN (or "
+                    "ONBUILD RUN) instruction, proot must be "
+                    "installed on the host because RUN executes the "
+                    "given command against the in-progress rootfs "
+                    "under proot. Dockerfiles composed only of FROM, "
+                    "COPY, ADD, ENV, ARG, LABEL, USER, WORKDIR, "
+                    "CMD, ENTRYPOINT, EXPOSE, VOLUME, STOPSIGNAL, "
+                    "HEALTHCHECK, SHELL, MAINTAINER, and "
+                    "ONBUILD<non-RUN> build in pure-Python mode and "
+                    "do not require proot."
+                ),
+            },
+            {
+                "title": "AFTER BUILD",
+                "intro": (
+                    "Without --output and --install-as, the image is "
+                    "stored only in the local cache. "
+                    f"'{PROGRAM_NAME} install <tag>' resolves the "
+                    "tag against the cache first; install proceeds "
+                    "without network access when the manifest and "
+                    "all layers are cached."
+                ),
+            },
+            {
+                "title": "LIMITATIONS",
+                "intro": (
+                    "RUN steps run under proot, not a real container "
+                    "runtime. No PID, network or IPC isolation, no "
+                    "cgroups, no seccomp profiles. BuildKit-only "
+                    "features (RUN --mount, --network, --security; "
+                    "COPY --link, --parents) are rejected with an "
+                    "error. Multi-platform manifest lists are not "
+                    "produced — build once per architecture."
+                ),
+            },
+        ],
+    },
+
     "backup": {
         "usage": "backup [OPTIONS] CONTAINER",
         "aliases": ("bak", "bkp"),
@@ -847,6 +959,7 @@ _TOP_COMMANDS = [
     ("clear-cache", "Delete cached downloads."),
     ("copy", "Copy files from/to container."),
     ("sync", "Sync files from/to container."),
+    ("build", "Build an OCI image from a Dockerfile."),
 ]
 
 
@@ -922,9 +1035,8 @@ def command_help(args=None, configs=None) -> None:  # noqa: ARG001
     _paragraph(
         "You can discover existing images on Docker Hub "
         "(https://hub.docker.com/) or other places on the Internet. "
-        "Current version of PRoot-Distro does not support building "
-        "distribution images and you will need external utilities for "
-        "that.",
+        "You can also build your own image from a Dockerfile with "
+        f"'{PROGRAM_NAME} build'.",
         width,
     )
 

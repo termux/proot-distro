@@ -10,6 +10,10 @@ Docker Hub or any compatible public registry — or by extracting a local
 tarball / OCI image archive. The container filesystem is assembled from
 the image layers and stored locally, ready to be entered at any time.
 
+PRoot-Distro can also **build** OCI images from a Dockerfile (no Docker
+daemon required), storing the result in the local manifest cache or
+exporting it as a standalone OCI tarball.
+
 ---
 
 ## Table of contents
@@ -19,6 +23,7 @@ the image layers and stored locally, ready to be entered at any time.
 3. [Quick start](#quick-start)
 4. [Commands](#commands-reference)
    * [`install`](#install--install-a-container)
+   * [`build`](#build--build-an-image-from-a-dockerfile)
    * [`login`](#login--start-a-shell-inside-a-container)
    * [`run`](#run--run-the-image-defined-entrypoint)
    * [`list`](#list--list-installed-containers)
@@ -53,6 +58,8 @@ Typical use cases:
 - Cross-compiling for a different CPU architecture using QEMU user-mode.
 - Spinning up server software (Nginx, Nextcloud, PostgreSQL, etc.) on
   Android by reusing the same OCI images you'd run on a server.
+- Building custom OCI images from a Dockerfile, on-device, without
+  needing a Docker daemon.
 - Trying a distribution non-destructively: install, mess around,
   `proot-distro remove` when done.
 
@@ -130,6 +137,9 @@ proot-distro login ubuntu -- /bin/uname -a
 
 # List all installed containers
 proot-distro list
+
+# Build and install a custom image from a Dockerfile
+proot-distro build -t myapp:1.0 --install-as myapp ./mycontext
 
 # Rebuild from scratch (loses all in-container data)
 proot-distro reset ubuntu
@@ -241,6 +251,124 @@ After installation the resolved image tag is shown (e.g.
 `Installing 'ubuntu:24.04'`). If the image defines an `Entrypoint`, a
 `Run entrypoint: proot-distro run <name>` hint is printed alongside
 `Start shell: proot-distro login <name>`.
+
+---
+
+### `build` — Build an image from a Dockerfile
+
+```
+proot-distro build [OPTIONS] [PATH]
+```
+
+Build an OCI/Docker-compatible image from a Dockerfile. `PATH` is the
+build context directory (default `.`); all `COPY`/`ADD` source paths
+are resolved relative to it.
+
+By default the built image is stored in the local manifest cache
+under the tag given by `--tag` (defaulting to
+`<basename(PATH)>:latest`). A subsequent
+`proot-distro install <tag>` finds the manifest in the cache and
+installs entirely without network access.
+
+**Options:**
+
+| Option | Description |
+|---|---|
+| `-f`, `--file PATH` | Use a Dockerfile at PATH instead of `<PATH>/Dockerfile`. Pass `-` to read the Dockerfile from stdin. |
+| `-t`, `--tag REF` | Image reference to assign. Repeatable. Defaults to `<basename(PATH)>:latest`. |
+| `--build-arg K=V` | Set a build-time `ARG`. Only `ARG`s declared in the Dockerfile are honoured. Repeatable. |
+| `--architecture ARCH` | Target CPU architecture (default: host). Accepts proot-distro names (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings (`linux/arm64`, …). |
+| `--target STAGE` | Stop after the named stage of a multi-stage build. |
+| `--emulator PATH` | Override the QEMU user-mode binary for cross-architecture builds. |
+| `--output FILE` | Write the built image as an OCI image-layout tarball to FILE. Compression is inferred from the extension (`.oci.tar`, `.oci.tar.gz`, `.oci.tar.xz`). Repeatable. |
+| `--install-as NAME` | After build, install the image as a container named NAME. |
+| `--no-cache` | Disable per-step build caching. |
+| `--pull` | Re-pull base images from the registry even on cache hit. |
+| `-v`, `--verbose` | Echo each instruction and stream `RUN` output. |
+| `-q`, `--quiet` | Suppress non-error output. |
+
+**Supported Dockerfile instructions:**
+
+`FROM` (including multi-stage with `AS name`, `FROM scratch`,
+`FROM <stage>`, `COPY --from=<stage-or-image>`), `RUN` (shell + JSON
+exec + here-doc forms), `COPY` (with `--from`, `--chown`, `--chmod`),
+`ADD` (local files, automatic tar extraction, remote URL fetch),
+`CMD`, `ENTRYPOINT`, `ENV`, `ARG` (with `--build-arg`), `LABEL`,
+`MAINTAINER`, `USER`, `WORKDIR`, `EXPOSE`, `VOLUME`, `STOPSIGNAL`,
+`HEALTHCHECK`, `SHELL`, `ONBUILD`.
+
+Parser directives recognised at the top of the file: `# syntax=…`
+(recorded; not acted on), `# escape=` (`\` or `` ` ``; changes the
+line-continuation character), `# check=…` (recorded; not acted on).
+
+BuildKit-only features (`RUN --mount`, `RUN --network`,
+`RUN --security`, `COPY --link`, `COPY --parents`) are rejected with
+an explicit error.
+
+**`proot` requirement:**
+
+If the Dockerfile contains any `RUN` (or `ONBUILD RUN`) instruction,
+`proot` must be installed because each `RUN` is executed against the
+in-progress rootfs under `proot`. Dockerfiles composed only of
+metadata + `COPY`/`ADD`/`ENV`/etc. instructions build in pure-Python
+mode and do not require `proot` — they are useful, for example, for
+assembling distroless images from prebuilt artefacts on a host that
+doesn't have `proot` available.
+
+**Output variants:**
+
+| Output | Trigger | Format |
+|---|---|---|
+| Manifest cache | Always (free) | `dlcache/manifests/<key>.json` referencing layer blobs in `dlcache/layers/`. Installable via `proot-distro install <tag>` with no network access. |
+| OCI tarball | `--output FILE` | Standard OCI image-layout tarball (`oci-layout`, `index.json`, `blobs/sha256/*`). Installable via `proot-distro install ./FILE`; also consumable by `docker load`. |
+| Container | `--install-as NAME` | Installed container at `containers/<NAME>/`. Performed after the build by invoking the install command with the just-built tag. |
+
+**Build cache:**
+
+Each instruction is keyed by a recipe hash combining the parent layer
+digest, the instruction text (with flags and here-doc bodies), and
+the relevant inputs (file digests for `COPY`/`ADD`, env+ARG state for
+`RUN`). A cache hit applies the previously-built layer instead of
+re-running the instruction. Pass `--no-cache` to skip cache lookups.
+
+The build cache index lives at
+`$DOWNLOAD_CACHE_DIR/buildcache/index.json`; layer blobs themselves
+are stored alongside registry-pulled blobs in
+`$DOWNLOAD_CACHE_DIR/layers/`. `proot-distro clear-cache` deletes
+both.
+
+**Examples:**
+
+```sh
+# Build with the default tag (basename of '.' + ':latest')
+proot-distro build .
+
+# Build with an explicit tag and install in one step
+proot-distro build -t myapp:1.0 --install-as myapp .
+
+# Cross-arch build, write to an OCI tarball
+proot-distro build -t myapp:arm64 \
+    --architecture aarch64 \
+    --output myapp-arm64.oci.tar.gz .
+
+# Build a specific stage of a multi-stage Dockerfile
+proot-distro build -t myapp:debug --target debugger .
+
+# Read the Dockerfile from stdin (build context is still required)
+cat Dockerfile.test | proot-distro build -f - -t myapp:test .
+
+# Build-arg propagation into RUN
+proot-distro build --build-arg HTTP_PROXY=$HTTP_PROXY -t myapp .
+```
+
+**Limitations:**
+
+`RUN` steps run under `proot`, not a real container runtime: no PID,
+network, or IPC isolation, no `cgroups`, no `seccomp`. Build steps
+that depend on real namespaces or kernel features will fail or
+behave subtly differently from a `docker build`. Multi-platform
+manifest lists are not produced — build once per target architecture
+and use `--tag` to keep them distinct.
 
 ---
 
@@ -827,8 +955,9 @@ on Termux, and under `$XDG_CACHE_HOME/proot-distro/` (default
 | `containers/<name>/rootfs/` | Container root filesystem |
 | `containers/<name>/manifest.json` | Image reference, arch, full OCI manifest, full image config |
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
-| `dlcache/layers/` (Termux) or `$XDG_CACHE_HOME/proot-distro/layers/` | Cached OCI layer blobs |
-| `dlcache/manifests/` (Termux) or `…/manifests/` | Cached resolved single-arch manifests |
+| `dlcache/layers/` (Termux) or `$XDG_CACHE_HOME/proot-distro/layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
+| `dlcache/manifests/` (Termux) or `…/manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags) |
+| `dlcache/buildcache/index.json` (Termux) or `…/buildcache/index.json` | `build` cache index: recipe-hash → layer-digest |
 | `installed-rootfs/<name>/` | **Legacy** layout; auto-migrated by `login`. |
 
 ---
@@ -919,10 +1048,17 @@ cp proot_distro/completions/proot-distro.fish \
   support zstd. Images using zstd-compressed layers (some newer Docker
   Hub images) fail to install with an explicit error. Try a different
   image or an older tag.
-- **No image building**: PRoot-Distro consumes existing OCI images; it
-  does not build them. Use `docker build` / `buildah` / `nerdctl` on a
-  full Linux host to produce one, then `docker save -o myimage.oci.tar
-  myimage:tag` and `proot-distro install ./myimage.oci.tar`.
+- **Image building runs under proot, not BuildKit**: `proot-distro
+  build` produces OCI/Docker-compatible images, but each `RUN` step
+  executes under `proot` (no PID/network/IPC isolation, no `cgroups`,
+  no `seccomp`). BuildKit-only Dockerfile features
+  (`RUN --mount=type=cache|secret|ssh`, `RUN --network`,
+  `RUN --security=insecure`, `COPY --link`, `COPY --parents`) are
+  rejected with an explicit error. Multi-platform manifest lists are
+  not produced — build once per architecture. For complex builds
+  that depend on a real container runtime, use `docker build` /
+  `buildah` / `nerdctl` on a full host and `proot-distro install
+  ./myimage.oci.tar`.
 - **No live state migration**: `backup`/`restore` archive the rootfs
   and the OCI manifest, but in-memory state of running processes is
   not preserved.

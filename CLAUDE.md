@@ -31,7 +31,13 @@ are installed as package data to standard `share/` locations.
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` with TTY progress bars. |
 | `helpers/rootfs.py` | `write_resolv_conf()`, `write_hosts()`, `register_android_ids()`. |
 | `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, `_AuthStrippingRedirectHandler`, cache and layer application helpers. |
+| `helpers/dockerfile.py` | Dockerfile parser: `parse_dockerfile()` → `(directives, instructions)`, `expand_vars()` for `$VAR`/`${VAR…}` substitution, `DockerfileSyntaxError`. |
+| `helpers/layer_diff.py` | Layer snapshot/diff/tar writers: `snapshot()`, `diff_snapshots()`, `write_layer_tar()`, `write_files_layer()`, `_resolve_l2s_target()` (resolves proot `--link2symlink` symlinks to file content so layers stay portable). |
+| `helpers/build_cache.py` | Recipe-hash → layer-digest index: `lookup()`, `record()`, `compute_recipe_hash()`. |
+| `helpers/oci_writer.py` | OCI output writers: `build_manifest_and_config()`, `store_in_cache()` (Variant A — manifest cache), `write_oci_archive()` (Variant B — tarball with OCI layout + Docker-legacy `manifest.json`), `_build_docker_manifest()` for `docker load` compatibility. |
+| `helpers/build_engine.py` | Dockerfile interpreter: `BuildEngine`, `Stage`, `BuildError`, per-instruction handlers, `needs_proot()`, `_PREDEFINED_ARGS`, `_HANDLERS` table. |
 | `commands/install.py` | `command_install()`, `_validate_name()`, `_is_local_path()`, `_derive_local_name()`, `_detect_strip_count()`, `_extract_plain_tar()`, `_extract_oci()`, `_install_from_local_file()`. |
+| `commands/build.py` | `command_build()`, `_derive_tag_from_path()`, `_is_valid_tag()`, `_install_as_container()`, `_prompt_proot_install()`. |
 | `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_manifest_env()`, `_IMAGE_ENV_BLOCKED`, `_storage_bindings()`, `_system_bindings()`, `_dq()`. |
 | `commands/run.py` | `command_run()`, `_read_image_config()`. |
 | `commands/remove.py` | `command_remove()`, `_remove_path()`. |
@@ -163,6 +169,7 @@ Detected from the rootfs at login time:
 | `copy` | `cp` |
 | `sync` | — |
 | `run` | — |
+| `build` | — |
 | `help` | `h`, `he`, `hel` |
 
 ## `main()` flow
@@ -180,7 +187,10 @@ Detected from the rootfs at login time:
    and `IS_TERMUX` and stdin is a TTY, the user is prompted
    `Would you like to install it now? [y/N]`; answering `y`/`yes` runs
    `pkg install -y -q proot`. Otherwise the install hint is printed and
-   the process exits.
+   the process exits. **The `build` command is exempt** from this
+   probe — a Dockerfile without `RUN` builds in pure-Python mode and
+   does not need proot. `command_build()` runs its own check after
+   parsing the Dockerfile (see the `build` section).
 5. **Top-level `--help`/`-h`/`help` short-circuit** → `command_help()`.
 6. **Per-subcommand `--help`/`-h`/`--usage` intercept** runs **before**
    argparse parses positionals (so missing required positionals never
@@ -300,6 +310,41 @@ entire `containers/<name>` directory (rootfs + manifest).
 ### `clear-cache`
 
 - `-v`/`--verbose` lists each removed entry.
+
+### `build`
+
+Builds an OCI/Docker image from a Dockerfile. Positional `PATH` is the
+build context directory (default: `.`). The Dockerfile defaults to
+`<PATH>/Dockerfile`; override with `-f/--file PATH` (use `-` to read
+from stdin).
+
+- `-t`/`--tag REF` — image reference to assign. Repeatable. Defaults
+  to `<basename(PATH)>:latest`. Rejected when the derived basename
+  doesn't satisfy `_NAME_RE`.
+- `--build-arg K=V` — set a build-time `ARG`. Only `ARG`s declared in
+  the Dockerfile are honoured; bare `--build-arg K` (no equals) reads
+  the value from the host env. Repeatable.
+- `--architecture ARCH` — target arch (proot-distro names or Docker
+  `linux/...` strings). Default: host arch.
+- `--target STAGE` — stop after the named stage of a multi-stage
+  build. Validated against named stages found in the pre-scan.
+- `--emulator PATH` — override the QEMU user-mode binary for
+  cross-arch builds. Same semantics as in `login`.
+- `--output FILE` — write a Variant B OCI tarball to FILE. Repeatable
+  for multiple compressions; format inferred from extension
+  (`.oci.tar`, `.oci.tar.gz`, `.oci.tar.xz`, …).
+- `--install-as NAME` — after the build completes, install the image
+  as a container named NAME. Calls `command_install()` with the
+  primary tag; pull_image's offline-cache branch picks up the just-
+  written manifest cache without a network probe.
+- `--no-cache` — disable per-instruction build cache (lookups skipped,
+  recordings still happen).
+- `--pull` — re-pull base images even when the manifest cache is hit.
+  Currently records the flag but has no effect (no force-pull path in
+  pull_image yet); reserved for future use.
+- `-v`/`--verbose` — echo each instruction's raw text and stream `RUN`
+  output to the terminal.
+- `-q`/`--quiet` — suppress non-error output.
 
 ## Isolation modes (`login` / `run`)
 
@@ -743,6 +788,267 @@ Always recursive.
   subtrees are captured as single `is_tree=True` entries (no descent).
   `_rmtree_robust()` for dirs, `_unlink_robust()` for files/symlinks
   (both retry with chmod on `PermissionError`).
+
+## Build
+
+`command_build()` is split across `commands/build.py` (orchestration)
+and four helper modules:
+
+| Module | Responsibility |
+|---|---|
+| `helpers/dockerfile.py` | Lex + parse Dockerfile text into instruction records. Variable expansion (`expand_vars()`) is a separate pass run by the engine, not by the parser. |
+| `helpers/build_engine.py` | `BuildEngine` walks instructions, mutates an in-memory `image_config`, and emits layers via the diff helper. |
+| `helpers/layer_diff.py` | `snapshot()` walks the rootfs and records fingerprints; `diff_snapshots()` returns added/modified/deleted; `write_layer_tar()` / `write_files_layer()` produce gzipped OCI layer tars. |
+| `helpers/build_cache.py` | Recipe-hash → layer-digest index at `dlcache/buildcache/index.json`. |
+| `helpers/oci_writer.py` | `store_in_cache()` (Variant A, manifest-cache write) and `write_oci_archive()` (Variant B, OCI image-layout tarball). |
+
+### Parser (`helpers/dockerfile.py`)
+
+`parse_dockerfile(text) → (directives, instructions)`. Pipeline:
+
+1. Strip BOM, normalise CRLF/CR.
+2. Collect `# key=value` parser directives at the top until the first
+   non-directive line. Only `syntax`, `escape`, and `check` are
+   recognised; only `escape` (`\` or `` ` ``) changes lexer behaviour.
+3. For each logical line: skip blank/comment lines, join continuations
+   on the trailing escape character (an odd number of trailing escapes
+   is a continuation; an even number is literal).
+4. Tokenise: first whitespace-delimited token is the instruction name
+   (uppercased; rejected if not in `_INSTRUCTIONS`). Remaining text is
+   the value. Leading `--flag[=value]` tokens before the value are
+   parsed into `flags` dict, with quoted values stripped via `shlex`.
+5. For `ADD`/`COPY`/`RUN`, scan the value for `<<TAG` / `<<-TAG`
+   here-doc openers and consume body lines until the closing tag.
+6. Try `json.loads` on the value to detect JSON exec form
+   (`["echo", "hi"]`) — only when the parse yields a `list[str]`.
+7. `ONBUILD` wraps an inner instruction record stored in `value`.
+
+Each emitted record: `{name, flags, value, exec_form, heredocs,
+lineno, raw}`.
+
+`expand_vars(text, env)` handles `$VAR`, `${VAR}`, `${VAR:-default}`,
+`${VAR-default}`, `${VAR:+value}`, `${VAR+value}`. `None` in `env`
+means "unset" (relevant for `:-` vs `-`). A leading `\` escapes the
+following character (so `\$FOO` is literal).
+
+### Engine (`helpers/build_engine.py`)
+
+`BuildEngine.run(instructions)`:
+
+1. **Pre-scan** for global ARGs (declared before the first FROM) and
+   for named stages. Validates `--target` against the named-stage set
+   *before* any work.
+2. **Per-instruction dispatch** via `_HANDLERS`. Variable expansion
+   runs only for instructions in `_EXPANDS_VARS` and only when not in
+   exec form. `FROM` is handled separately because its value expands
+   against `global_args` (not stage-local ARGs).
+3. **Stop after target**: when a new `FROM` is encountered and the
+   *current* stage matches `--target`, `_stop_after=True` and the loop
+   breaks before the new stage's rootfs is created.
+
+`Stage` holds: index, optional name, `rootfs_dir` (under `tmp_root`),
+in-progress `image_config`, ordered `layers` list, `parent_layer_digest`,
+live `env`/`args`/`declared_args`/`workdir`/`user`/`shell` state, and
+pending `onbuild` list.
+
+#### FROM
+
+- `FROM scratch`: empty rootfs, empty `image_config`.
+- `FROM <named-stage>`: re-apply that stage's layers via `_apply_layer`
+  to a fresh rootfs (fast — blobs are already in `LAYER_CACHE_DIR`),
+  inherit its `image_config`.
+- `FROM <image-ref>`: delegate to `helpers/docker.pull_image()`. The
+  returned manifest's layer list is converted into `stage.layers` with
+  digest+size+diff_id (diff_ids come from `image_config.rootfs.diff_ids`,
+  falling back to digest when missing).
+- After the rootfs is populated, `write_resolv_conf` and `write_hosts`
+  fill in DNS so RUN can reach the network.
+- Base image's `OnBuild` triggers fire here: each trigger string is
+  re-parsed via `parse_dockerfile()` and dispatched as if it were a
+  Dockerfile instruction in the new stage.
+
+#### RUN
+
+1. Build the command list:
+   - exec form → bare `instr["value"]`.
+   - shell form → `stage.shell + [value]`.
+   - shell form with here-doc(s) → `stage.shell + [body]` where body
+     is the concatenation of every here-doc body (passed as a single
+     `-c` argument to the SHELL).
+2. Compute the recipe hash (`build_cache.compute_recipe_hash`) over
+   `parent_layer_digest + instr + extra_inputs` where `extra_inputs`
+   is the sorted env+ARG state.
+3. On cache hit (unless `--no-cache`), apply the cached layer via
+   `_apply_layer` and append to `stage.layers`; skip the proot exec.
+4. On miss: snapshot the rootfs, exec proot, snapshot again, diff
+   (`diff_snapshots`), write the gzipped layer tar
+   (`write_layer_tar`), move it to `LAYER_CACHE_DIR/<digest>`,
+   append to `stage.layers`, record in the build cache.
+
+The proot command line mirrors `commands/login` for `normal`-type
+non-Termux-host containers, with two intentional differences:
+
+- **Always isolated**: no Android storage bindings, no `--shared-tmp`,
+  no `--shared-home`. The host's filesystem must not leak into the
+  built image.
+- **Non-interactive**: stdin is `/dev/null` (or the here-doc body),
+  stdout/stderr stream to the parent. Exit code is propagated; non-
+  zero raises `BuildError` and the build aborts.
+
+Cross-arch builds re-apply the same QEMU-binding logic from
+`helpers/arch.get_emulator_args()` and bind Android system paths so
+QEMU can find its loader.
+
+**link2symlink handling**: on Termux, RUN runs with proot's
+`--link2symlink` extension, which emulates a `link()` syscall by
+stashing the original file under `<rootfs>/.l2s/<hash>` and leaving
+symlinks at the original locations pointing at the stash. Those
+symlink targets are absolute paths into the build's tmp rootfs and
+would dangle the moment the image is applied somewhere else. To keep
+the produced layer self-contained:
+
+- `snapshot()` in `helpers/layer_diff.py` skips the `.l2s/` directory
+  entirely, so it never appears in any layer.
+- `_add_entry()` detects symlinks whose target resolves into
+  `<rootfs>/.l2s/` (via `_resolve_l2s_target`) and packs the backing
+  file's content as a regular file instead of the symlink. Multiple
+  endpoints of the same hard link become independent regular files —
+  the hard-link semantics are lost but file content is preserved and
+  the layer is portable.
+
+#### COPY / ADD
+
+Both go through `_do_copy_or_add`. Sources resolve relative to
+`build_dir`. A leading `/` on the source is **stripped** before
+joining (`COPY /foo` and `COPY foo` are equivalent, matching Docker
+semantics). After normalisation, any path that escapes `build_dir`
+via `..` segments is rejected with a "escapes the build context"
+error. Glob expansion is supported via `_simple_glob`
+(`fnmatch`-based). `.dockerignore` patterns are applied before each
+source is packed.
+
+`--from=<stage>` swaps the source root to that stage's `rootfs_dir`.
+`--from=<external image>` (any value not matching a named stage) is
+handled by `_pull_throwaway_image()`, which pulls the image into a
+unique `tmp_root/copyfrom-<hash>` directory and uses it as the source
+rootfs.
+
+`--chown=user[:group]` is resolved against the target rootfs's
+`/etc/passwd` / `/etc/group` (not the host's). Numeric IDs pass
+through directly. `--chmod=octal` overrides file modes.
+
+For `ADD`: local file sources that pass `_is_tar_archive` (uses tar
+magic at offset 257, plus gzip/bzip2/xz magic at offset 0) are
+auto-extracted into the destination directory. URL sources
+(`http://`, `https://`) are downloaded via the shared
+`_AuthStrippingRedirectHandler` and stored as a single file.
+
+Each `COPY`/`ADD` emits exactly one layer, built from a
+`file_map` (`arcname → entry dict`) via `write_files_layer`. The same
+file_map is materialised into the rootfs by `_materialise_files`, so
+the on-disk state and the layer stay in sync.
+
+#### Metadata-only handlers
+
+`ENV`, `LABEL`, `MAINTAINER`, `USER`, `EXPOSE`, `VOLUME`,
+`STOPSIGNAL`, `SHELL`, `HEALTHCHECK`, `ONBUILD` mutate
+`image_config["config"]` only — no layer is produced. `WORKDIR` is
+the exception: it both mutates `WorkingDir` *and* emits a thin layer
+holding any newly-created ancestor directories, so the path also
+exists after the layer is applied to a fresh rootfs by `install`.
+
+`ARG` is build-time only — values are tracked in `stage.args` (with
+fallback chain: `--build-arg` → declared default → global ARG when
+re-declared bare → `_PREDEFINED_ARGS` from host env → empty string).
+They are **not** written to `image_config.Env`, but they *are*
+visible to `RUN` commands via `_build_child_env`.
+
+### Proot-requirement gate
+
+`build_engine.needs_proot(instructions)` returns `True` iff any
+instruction (or any `ONBUILD <inner>`) has `name in
+PROOT_REQUIRED_INSTRUCTIONS` (currently just `{"RUN"}`).
+`command_build()` calls this after parsing and before any work; if
+the result is `True` and `shutil.which("proot") is None`, the build
+is refused.
+
+The CLI startup probe in `cli.py:main()` is bypassed for `build` so a
+no-RUN Dockerfile can build on a host without proot. The bypass is
+implemented as a single-line condition that consults
+`_ALIAS_TO_CANONICAL` early.
+
+### Build cache
+
+`helpers/build_cache.compute_recipe_hash(parent, instr, extra_inputs)`
+hashes the parent layer digest plus the canonical form of the
+instruction plus per-instruction extras (the sorted env+ARG scope for
+RUN; not used by COPY/ADD in v1). The index file lives at
+`$DOWNLOAD_CACHE_DIR/buildcache/index.json` and stores
+`{recipe_hash → {layer_digest, diff_id, size, image_config_patch,
+created}}`. `clear-cache` does **not** automatically delete the build
+cache index — it lives next to `layers/` and `manifests/` and is
+cleaned up by the same operation if the user passes `clear-cache`,
+because the index entries become orphans once the layer blobs are
+gone.
+
+### Output
+
+`commands/build.py` always writes Variant A (manifest cache) via
+`oci_writer.store_in_cache()`. This is cheap — the layer blobs are
+already in `LAYER_CACHE_DIR`, so only the small `manifests/<key>.json`
+file is added. `pull_image()`'s existing manifest-cache-first ordering
+guarantees that a subsequent `install <tag>` returns offline.
+
+When `--output FILE` is given, `oci_writer.write_oci_archive()` emits
+a tarball that contains **both** the standard OCI image layout
+(`oci-layout`, `index.json`, `blobs/sha256/<hex>`) **and** a
+Docker-legacy `manifest.json` at the archive root (with `Config`,
+`RepoTags`, `Layers`, and `LayerSources` fields pointing at the same
+`blobs/sha256/<hex>` paths). The legacy entry is required because
+`docker load` falls back to a per-directory legacy-import loop when
+only OCI files are present and then mis-treats the `blobs/`
+directory as an image folder. `oci-layout` is still written first so
+our own install probe in `commands/install.py:_install_from_local_file`
+detects the OCI format on the first tar member it reads. Layer
+blobs are copied from `LAYER_CACHE_DIR` into the archive. The format
+is consumable by both `docker load` and `proot-distro install
+/path/to/file.oci.tar`.
+
+`--install-as NAME` invokes `command_install` with the primary tag as
+the image reference. Because the manifest cache was just written,
+`pull_image()` resolves the tag offline and applies the cached
+layers without a network probe.
+
+### Interrupt handling
+
+`command_build` wraps the whole post-setup flow — `engine.run()`,
+`store_in_cache()`, every `write_oci_archive()`, and any
+`--install-as` install — in a single `try / except KeyboardInterrupt
+/ finally` block. On Ctrl-C (or SIGQUIT, since `cli.py:main()`
+re-routes SIGQUIT to `KeyboardInterrupt`), the user sees
+`Error: Aborted by user.` instead of a Python traceback and the
+`tmp_root` staging directory is always removed via the `finally`
+clause. Partial output files are taken care of one level lower:
+
+- `write_oci_archive()` writes to `<out>.tmp` and removes it on
+  `BaseException`.
+- `write_layer_tar()` / `write_files_layer()` use a `NamedTemporaryFile`
+  for the uncompressed tar and a `<out>.tmp` for the gzipped output;
+  both are removed on `BaseException`.
+- `_download_blob()` in `helpers/docker.py` follows the same
+  `<dest>.tmp` + `BaseException`-cleanup pattern for layer pulls.
+
+The result: nothing under the user's destination paths is left in a
+half-written state after an interrupt, and the local cache only
+ever contains content-verified, fully-written blobs.
+
+### Default tag
+
+When no `-t/--tag` is given, the tag defaults to
+`<basename(PATH)>:latest` (or the parent of `--file`'s argument when
+PATH was not supplied). The basename is lowercased and sanitised; if
+it cannot be made to satisfy `_NAME_RE`, the user is required to
+pass `--tag` explicitly.
 
 ## Fake sysdata
 

@@ -46,6 +46,7 @@ from proot_distro.commands.clear_cache import command_clear_cache
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.commands.run import command_run
+from proot_distro.commands.build import command_build
 from proot_distro.commands.help import command_help, _HELP_COMMANDS
 
 
@@ -214,6 +215,43 @@ def build_parser() -> "_PdArgumentParser":
     p_sync.add_argument("--delete", action="store_true")
     p_sync.add_argument("-h", "--help", action="store_true")
 
+    # build
+    p_build = sub.add_parser("build", add_help=False)
+    p_build._pd_command = "build"
+    p_build.add_argument("path", nargs="?", default=".", metavar="PATH")
+    p_build.add_argument("-f", "--file", dest="dockerfile", metavar="PATH")
+    p_build.add_argument(
+        "-t", "--tag", dest="tags", action="append",
+        default=[], metavar="REF",
+    )
+    p_build.add_argument(
+        "--build-arg", dest="build_args", action="append",
+        default=[], metavar="K=V",
+    )
+    p_build.add_argument(
+        "--architecture", dest="override_arch", metavar="ARCH",
+    )
+    p_build.add_argument(
+        "--target", dest="target_stage", metavar="STAGE",
+    )
+    p_build.add_argument("--emulator", dest="emulator", metavar="PATH")
+    p_build.add_argument(
+        "--output", dest="outputs", action="append",
+        default=[], metavar="FILE",
+    )
+    p_build.add_argument(
+        "--install-as", dest="install_as", metavar="NAME",
+    )
+    p_build.add_argument(
+        "--no-cache", dest="no_cache", action="store_true",
+    )
+    p_build.add_argument(
+        "--pull", dest="force_pull", action="store_true",
+    )
+    p_build.add_argument("-v", "--verbose", action="store_true")
+    p_build.add_argument("-q", "--quiet", action="store_true")
+    p_build.add_argument("-h", "--help", action="store_true")
+
     # run
     p_run = sub.add_parser("run", add_help=False)
     p_run._pd_command = "run"
@@ -304,6 +342,7 @@ _COMMAND_HANDLERS = {
     "copy":        command_copy,
     "sync":        command_sync,
     "run":         command_run,
+    "build":       command_build,
     "help":        command_help,
 }
 
@@ -349,8 +388,16 @@ def main() -> None:
     except OSError:
         pass
 
-    # Check that proot is installed.
-    if shutil.which("proot") is None:
+    # Check that proot is installed. `build` is exempt from this
+    # startup probe: a Dockerfile with no RUN instruction can be built
+    # in pure-Python mode without proot. command_build() runs its own
+    # check after parsing the Dockerfile and refuses only when RUN
+    # (or ONBUILD RUN) is actually present.
+    _first_canonical = ""
+    if len(sys.argv) >= 2:
+        first_arg = sys.argv[1]
+        _first_canonical = _ALIAS_TO_CANONICAL.get(first_arg, first_arg)
+    if _first_canonical != "build" and shutil.which("proot") is None:
         msg()
         msg(f"{C['BRED']}Error: unable to find proot utility.{C['RST']}")
         msg()
