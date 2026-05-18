@@ -36,19 +36,20 @@ are installed as package data to standard `share/` locations.
 | `helpers/build_cache.py` | Recipe-hash → layer-digest index: `lookup()`, `record()`, `compute_recipe_hash()`. |
 | `helpers/oci_writer.py` | OCI output writers: `build_manifest_and_config()`, `store_in_cache()` (Variant A — manifest cache), `write_oci_archive()` (Variant B — tarball with OCI layout + Docker-legacy `manifest.json`), `_build_docker_manifest()` for `docker load` compatibility. |
 | `helpers/build_engine.py` | Dockerfile interpreter: `BuildEngine`, `Stage`, `BuildError`, per-instruction handlers, `needs_proot()`, `_PREDEFINED_ARGS`, `_HANDLERS` table. |
+| `locking.py` | Advisory POSIX `flock(2)` locking: `ContainerLock`, `LOCKS_DIR`, `_held_exclusive`, `_lock_path()`, `_read_lock_info()`. |
 | `commands/install.py` | `command_install()`, `_validate_name()`, `_is_local_path()`, `_derive_local_name()`, `_detect_strip_count()`, `_extract_plain_tar()`, `_extract_oci()`, `_install_from_local_file()`. |
 | `commands/build.py` | `command_build()`, `_derive_tag_from_path()`, `_is_valid_tag()`, `_install_as_container()`, `_prompt_proot_install()`. |
-| `commands/login.py` | `command_login()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_manifest_env()`, `_IMAGE_ENV_BLOCKED`, `_storage_bindings()`, `_system_bindings()`, `_dq()`. |
+| `commands/login.py` | `command_login()`, `_command_login_inner()`, `_migrate_legacy_rootfs()`, `_inject_termux_profile()`, `_resolve_rootfs_path()`, `_read_manifest_env()`, `_IMAGE_ENV_BLOCKED`, `_storage_bindings()`, `_system_bindings()`, `_dq()`. |
 | `commands/run.py` | `command_run()`, `_read_image_config()`. |
 | `commands/remove.py` | `command_remove()`, `_remove_path()`. |
-| `commands/rename.py` | `command_rename()`. |
+| `commands/rename.py` | `command_rename()`, `_do_rename()`. |
 | `commands/reset.py` | `command_reset()`. |
 | `commands/list.py` | `command_list()`. |
-| `commands/backup.py` | `command_backup()`, `_compression_mode()`, `_COMPRESSION_ARG_MAP`, `_UNSUPPORTED_EXTS`, `_iter_entries()`, `_add_path()`, `_fix_permissions()`, `_ReadCounter`. |
+| `commands/backup.py` | `command_backup()`, `_run_backup()`, `_compression_mode()`, `_COMPRESSION_ARG_MAP`, `_UNSUPPORTED_EXTS`, `_iter_entries()`, `_add_path()`, `_fix_permissions()`, `_ReadCounter`. |
 | `commands/restore.py` | `command_restore()`, `_detect_compression()`, `_dest_path()`, `_ByteCounter`. |
 | `commands/clear_cache.py` | `command_clear_cache()`, `_ensure_readable()`. |
-| `commands/copy.py` | `command_copy()`, `_resolve_copy_path()`. |
-| `commands/sync.py` | `command_sync()`, `_resolve_sync_path()`, `_collect_entries()`, `_collect_extras()`, `_needs_update()`, `_sync_dir()`, `_sync_symlink()`, `_sync_file()`, `_file_checksum()`, `_unlink_robust()`, `_rmtree_robust()`. |
+| `commands/copy.py` | `command_copy()`, `_do_copy()`, `_container_from_spec()`, `_resolve_copy_path()`. |
+| `commands/sync.py` | `command_sync()`, `_do_sync()`, `_container_from_spec()`, `_resolve_sync_path()`, `_collect_entries()`, `_collect_extras()`, `_needs_update()`, `_sync_dir()`, `_sync_symlink()`, `_sync_file()`, `_file_checksum()`, `_unlink_robust()`, `_rmtree_robust()`. |
 | `commands/help.py` | `command_help()`, `_HELP_PAGES`, `_HELP_COMMANDS`, `_render_page()`, `_term_width()`, layout primitives. |
 | `cli.py` | `build_parser()`, `_ALIAS_TO_CANONICAL`, `_COMMAND_HANDLERS`, `_REQUIRED_ARGS`, `main()`. |
 | `completions/` | Bash, Zsh, Fish completion scripts (package data). |
@@ -220,6 +221,60 @@ identifier — `install`, `remove`, `rename` (both orig and new), `reset`,
 `login`, `run`, `backup` — before any path is joined onto
 `CONTAINERS_DIR`. `restore` applies the same regex to the container
 name embedded in each archive member.
+
+## Locking
+
+`locking.py` provides advisory POSIX `flock(2)` locking so that
+conflicting operations on the same container cannot run simultaneously.
+
+**Lock file location**: `RUNTIME_DIR/locks/<name>.lock`. The directory
+is created on first use. Lock files are never explicitly deleted — the
+OS drops the flock automatically when the last fd to the file closes.
+
+**Lock types**:
+
+| Operation | Lock type |
+|---|---|
+| `install`, `restore`, `remove`, `rename`, `reset` | Exclusive |
+| `copy`, `sync` (destination is a container) | Exclusive on dest |
+| `copy`, `sync` (source is a container) | Shared on source |
+| `backup`, `login`, `run` | Shared |
+
+Multiple shared locks on the same name coexist freely (e.g. concurrent
+`login` sessions, or `backup` while a session is open). An exclusive
+lock blocks all other locks on the same name.
+
+**Behaviour on conflict**: non-blocking (`LOCK_NB`). If the lock cannot
+be acquired, the command exits immediately with a descriptive error that
+includes the PID and operation of the holder (read from the lock file).
+The command never waits.
+
+**Filesystem fallback**: if the lock file cannot be created (e.g. the
+filesystem does not support `flock`), `acquire()` returns `True` and
+proceeds unlocked rather than refusing to run.
+
+**Re-entrancy**: `_held_exclusive` (module-level `set`) tracks container
+names this process currently holds exclusively. `command_reset` acquires
+an exclusive lock and then calls `command_install` for the same name;
+`install`'s `ContainerLock.acquire()` detects the name in
+`_held_exclusive`, sets `self._reentrant = True`, and skips the flock
+call. The `release()` of a re-entrant instance is a no-op.
+
+**Login / run fd inheritance**: Python 3.4+ sets `O_CLOEXEC` on all
+new fds (PEP 446), which would close the lock fd on `os.execvpe()`.
+`ContainerLock(…, inheritable=True)` calls
+`os.set_inheritable(fd.fileno(), True)` to clear `O_CLOEXEC` so proot
+inherits the fd and holds the shared lock for the entire session.
+
+**Multiple locks (copy / sync / rename)**: locks are built into a list
+and acquired through `contextlib.ExitStack` in sorted name order. The
+consistent ordering prevents theoretical lock ordering deadlocks.
+
+**Restore lazy acquisition**: streaming archives (including stdin)
+cannot be pre-scanned for container names. `command_restore` acquires
+the exclusive lock per container on the first `TarInfo` header
+encountered for that container, before any write. Locks are tracked in
+a `pending_locks` dict and released in a `finally` block.
 
 ## Command-specific options
 

@@ -34,9 +34,16 @@ import os
 import shutil
 import stat
 import sys
+from contextlib import ExitStack
 
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
+from proot_distro.locking import ContainerLock
+
+
+def _container_from_spec(spec: str):
+    """Return the container name from a 'dist:path' spec, or None."""
+    return spec.split(":", 1)[0] if ":" in spec else None
 
 
 def _resolve_sync_path(spec: str) -> str:
@@ -430,6 +437,30 @@ def command_sync(args, configs: dict) -> None:  # noqa: ARG001
     use_checksum = getattr(args, "checksum", False)
     delete = getattr(args, "delete", False)
 
+    src_c = _container_from_spec(src)
+    dst_c = _container_from_spec(dest)
+
+    _locks = []
+    if src_c and dst_c:
+        if src_c == dst_c:
+            _locks.append(ContainerLock(src_c, exclusive=True, command="sync"))
+        else:
+            for name in sorted({src_c, dst_c}):
+                _locks.append(ContainerLock(
+                    name, exclusive=(name == dst_c), command="sync"
+                ))
+    elif dst_c:
+        _locks.append(ContainerLock(dst_c, exclusive=True, command="sync"))
+    elif src_c:
+        _locks.append(ContainerLock(src_c, exclusive=False, command="sync"))
+
+    with ExitStack() as _stack:
+        for _lock in _locks:
+            _stack.enter_context(_lock)
+        _do_sync(src, dest, verbose, use_checksum, delete)
+
+
+def _do_sync(src, dest, verbose, use_checksum, delete):
     src_path = _resolve_sync_path(src)
     dest_path = _resolve_sync_path(dest)
 

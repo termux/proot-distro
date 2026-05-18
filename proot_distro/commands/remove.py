@@ -29,6 +29,7 @@ import sys
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.commands.install import _validate_name
+from proot_distro.locking import ContainerLock
 
 
 def _remove_path(path: str, on_remove=None) -> bool:
@@ -110,21 +111,22 @@ def command_remove(args, configs: dict) -> None:  # noqa: ARG001
         msg()
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Removing container "
-        f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    with ContainerLock(dist_name, exclusive=True, command="remove"):
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Removing container "
+            f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
-    on_remove = None
-    if verbose:
-        def on_remove(path):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Removed: '{path}'{C['RST']}")
+        on_remove = None
+        if verbose:
+            def on_remove(path):
+                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                    f"Removed: '{path}'{C['RST']}")
 
-    if not _remove_path(container_dir, on_remove):
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Finished with errors. Some files probably were not "
-            f"deleted.{C['RST']}")
-        sys.exit(1)
+        if not _remove_path(container_dir, on_remove):
+            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+                f"Finished with errors. Some files probably were not "
+                f"deleted.{C['RST']}")
+            sys.exit(1)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Finished removing the container.{C['RST']}")

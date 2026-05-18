@@ -26,9 +26,16 @@
 import os
 import shutil
 import sys
+from contextlib import ExitStack
 
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
+from proot_distro.locking import ContainerLock
+
+
+def _container_from_spec(spec: str):
+    """Return the container name from a 'dist:path' spec, or None."""
+    return spec.split(":", 1)[0] if ":" in spec else None
 
 
 def _resolve_copy_path(spec: str) -> str:
@@ -53,6 +60,33 @@ def command_copy(args, configs: dict) -> None:
     move_mode = getattr(args, "move", False)
     recursive = getattr(args, "recursive", False)
 
+    src_c = _container_from_spec(src)
+    dst_c = _container_from_spec(dest)
+
+    # Build lock list: destination needs exclusive, source needs shared.
+    # When both are the same container a single exclusive lock suffices.
+    # Locks are acquired in sorted order to ensure consistent ordering.
+    _locks = []
+    if src_c and dst_c:
+        if src_c == dst_c:
+            _locks.append(ContainerLock(src_c, exclusive=True, command="copy"))
+        else:
+            for name in sorted({src_c, dst_c}):
+                _locks.append(ContainerLock(
+                    name, exclusive=(name == dst_c), command="copy"
+                ))
+    elif dst_c:
+        _locks.append(ContainerLock(dst_c, exclusive=True, command="copy"))
+    elif src_c:
+        _locks.append(ContainerLock(src_c, exclusive=False, command="copy"))
+
+    with ExitStack() as _stack:
+        for _lock in _locks:
+            _stack.enter_context(_lock)
+        _do_copy(src, dest, src_c, dst_c, verbose, move_mode, recursive)
+
+
+def _do_copy(src, dest, src_c, dst_c, verbose, move_mode, recursive):
     src_path = _resolve_copy_path(src)
     dest_path = _resolve_copy_path(dest)
 

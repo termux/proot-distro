@@ -34,6 +34,7 @@ from proot_distro.colors import C, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
 from proot_distro.commands.help import _HELP_COMMANDS
 from proot_distro.commands.install import _validate_name
+from proot_distro.locking import ContainerLock
 
 
 # Maps file-extension suffixes to tarfile compression identifiers.
@@ -262,6 +263,17 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
         msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
             f"Tarball will be written to stdout.{C['RST']}")
 
+    with ContainerLock(dist_name, exclusive=False, command="backup"):
+        _run_backup(
+            dist_name, container_dir, rootfs_dir, manifest_path,
+            output_path, compression, verbose,
+        )
+
+
+def _run_backup(
+    dist_name, container_dir, rootfs_dir, manifest_path,
+    output_path, compression, verbose,
+):
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 

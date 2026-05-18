@@ -33,6 +33,7 @@ from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.commands.remove import _remove_path
 from proot_distro.commands.install import command_install, _validate_name
+from proot_distro.locking import ContainerLock
 
 
 def command_reset(args, configs: dict) -> None:
@@ -78,25 +79,26 @@ def command_reset(args, configs: dict) -> None:
         msg()
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Removing rootfs of "
-        f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    with ContainerLock(dist_name, exclusive=True, command="reset"):
+        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            f"Removing rootfs of "
+            f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
-    if not _remove_path(rootfs_dir):
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Finished with errors. Some files could not be deleted. "
-            f"Proceeding anyway.{C['RST']}")
-        try:
-            shutil.rmtree(rootfs_dir, ignore_errors=True)
-        except OSError:
-            pass
+        if not _remove_path(rootfs_dir):
+            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
+                f"Finished with errors. Some files could not be deleted. "
+                f"Proceeding anyway.{C['RST']}")
+            try:
+                shutil.rmtree(rootfs_dir, ignore_errors=True)
+            except OSError:
+                pass
 
-    # Rebuild args for install: reuse dist name and the stored image/arch.
-    class _ResetArgs:
-        alias = image_ref
-        custom_dist_name = dist_name
+        # Rebuild args for install: reuse dist name and the stored image/arch.
+        class _ResetArgs:
+            alias = image_ref
+            custom_dist_name = dist_name
 
-    reset_args = _ResetArgs()
-    reset_args.override_arch = override_arch
+        reset_args = _ResetArgs()
+        reset_args.override_arch = override_arch
 
-    command_install(reset_args, configs)
+        command_install(reset_args, configs)

@@ -37,6 +37,7 @@ import tarfile
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
+from proot_distro.locking import ContainerLock
 
 
 _NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
@@ -236,6 +237,9 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
         return len(parts) == 1 and not name.endswith('/')
 
     raw_fh = None
+    # Per-container exclusive locks acquired lazily on first member encounter,
+    # before any modification to that container's rootfs.
+    pending_locks: dict = {}
     try:
         if archive:
             total_size = os.path.getsize(archive)
@@ -267,6 +271,25 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                 dist_name, dest = _dest_path(member.name)
                 if dist_name is None:
                     continue
+
+                # Acquire exclusive lock for this container before touching it.
+                if dist_name not in pending_locks:
+                    lock = ContainerLock(
+                        dist_name, exclusive=True, command="restore"
+                    )
+                    if not lock.acquire():
+                        from proot_distro.locking import _read_lock_info, _lock_path
+                        hint = _read_lock_info(_lock_path(dist_name))
+                        if use_tty and tty_safe_for_writes():
+                            sys.stderr.write("\r\033[K")
+                            sys.stderr.flush()
+                        msg()
+                        msg(f"{C['BRED']}Error: container "
+                            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is "
+                            f"currently locked{hint}.{C['RST']}")
+                        msg()
+                        sys.exit(1)
+                    pending_locks[dist_name] = lock
 
                 # On the first entry for a given container's rootfs, clear it.
                 if dist_name not in cleared:
@@ -390,3 +413,5 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
     finally:
         if raw_fh is not None:
             raw_fh.close()
+        for lock in pending_locks.values():
+            lock.release()

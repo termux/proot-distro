@@ -53,6 +53,7 @@ from proot_distro.arch import (
     get_emulator_args,
 )
 from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
+from proot_distro.locking import ContainerLock
 
 
 _SAFE_CHARS = frozenset(
@@ -334,6 +335,18 @@ def command_login(args, configs: dict) -> None:  # noqa: ARG001
         msg()
         sys.exit(1)
 
+    # Acquire a shared lock before setup and exec. inheritable=True clears
+    # O_CLOEXEC so the fd is kept open by proot after execvpe() and the lock
+    # is held for the entire container session. When execvpe() succeeds, the
+    # process is replaced and __exit__ is never called — intentionally, since
+    # the lock must persist in proot. On any error exit __exit__ releases it.
+    with ContainerLock(
+        dist_name, exclusive=False, command="login", inheritable=True
+    ):
+        _command_login_inner(dist_name, args, configs)
+
+
+def _command_login_inner(dist_name: str, args, configs) -> None:
     # Migrate legacy rootfs layout on first login if applicable.
     _migrate_legacy_rootfs(dist_name)
 

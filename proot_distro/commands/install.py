@@ -42,6 +42,7 @@ from proot_distro.constants import (
     PROGRAM_NAME,
 )
 from proot_distro.colors import C, msg
+from proot_distro.locking import ContainerLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import (
@@ -639,6 +640,20 @@ def command_install(args, configs: dict) -> None:  # noqa: ARG001
             msg()
             sys.exit(1)
 
+    with ContainerLock(install_name, exclusive=True, command="install"):
+        _run_install(
+            install_name, image_ref, local_path, dist_arch, configs
+        )
+
+
+def _run_install(
+    install_name: str,
+    image_ref: str,
+    local_path,
+    dist_arch: str,
+    configs: dict,
+) -> None:
+    """Inner install logic — called with the container lock already held."""
     container_dir = os.path.join(CONTAINERS_DIR, install_name)
     rootfs_dir = os.path.join(container_dir, "rootfs")
 

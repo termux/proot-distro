@@ -30,6 +30,7 @@ import sys
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.colors import C, msg
 from proot_distro.commands.install import _validate_name
+from proot_distro.locking import ContainerLock
 
 
 def command_rename(args, configs: dict) -> None:  # noqa: ARG001
@@ -79,6 +80,14 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
         msg()
         sys.exit(1)
 
+    # Acquire locks in sorted order to ensure consistent ordering.
+    first, second = (orig, new) if orig < new else (new, orig)
+    with ContainerLock(first, exclusive=True, command="rename"):
+        with ContainerLock(second, exclusive=True, command="rename"):
+            _do_rename(orig, new, orig_dir, new_dir, new_rootfs, orig_rootfs)
+
+
+def _do_rename(orig, new, orig_dir, new_dir, new_rootfs, orig_rootfs):
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
         f"Renaming '{orig}' to '{new}'...{C['RST']}")
     try:
