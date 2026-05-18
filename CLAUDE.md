@@ -30,7 +30,7 @@ are installed as package data to standard `share/` locations.
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()`. |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` with TTY progress bars. |
 | `helpers/rootfs.py` | `write_resolv_conf()`, `write_hosts()`, `register_android_ids()`. |
-| `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, `_AuthStrippingRedirectHandler`, cache and layer application helpers. |
+| `helpers/docker.py` | Pure-Python OCI registry client: `pull_image()`, `parse_image_ref()`, `derive_alias()`, `_AuthStrippingRedirectHandler`, `_env_basic_auth()`, `_auth_denied_msg()`, cache and layer application helpers. |
 | `helpers/dockerfile.py` | Dockerfile parser: `parse_dockerfile()` → `(directives, instructions)`, `expand_vars()` for `$VAR`/`${VAR…}` substitution, `DockerfileSyntaxError`. |
 | `helpers/layer_diff.py` | Layer snapshot/diff/tar writers: `snapshot()`, `diff_snapshots()`, `write_layer_tar()`, `write_files_layer()`, `_resolve_l2s_target()` (resolves proot `--link2symlink` symlinks to file content so layers stay portable). |
 | `helpers/build_cache.py` | Recipe-hash → layer-digest index: `lookup()`, `record()`, `compute_recipe_hash()`. |
@@ -532,11 +532,28 @@ pre-signed URLs that reject Bearer tokens (HTTP 400).
 `_AuthStrippingRedirectHandler` drops `Authorization` on cross-host
 redirects.
 
+**Private image authentication**: `PD_DOCKER_AUTH` env var enables
+pulling private images. Must be in `username:password` (or
+`username:PAT`) format — the colon is mandatory. `_env_basic_auth()`
+reads the var and returns a `Basic <base64>` header value; it raises
+`RuntimeError` immediately if the var is set but contains no colon (bare
+tokens cannot be used — registry auth requires a token exchange with
+Basic credentials). `_get_auth_token()` passes the Basic header to the
+token endpoint. The progress line notes `(user credentials)` when
+the var is set.
+
 **Custom registry auth**: `_get_auth_token()` probes
 `https://<registry>/v2/`. On `401` with `WWW-Authenticate: Bearer`,
-`_parse_bearer_challenge()` extracts `realm` and `service` and fetches
-an anonymous token from the realm URL. On `200`, an empty token is
-used.
+`_parse_bearer_challenge()` extracts `realm` and `service` and fetches a
+token from the realm URL (anonymous, or with Basic credentials from
+`_env_basic_auth()`). On `200`, an empty token is used.
+
+**401/403 error handling**: all three error catch-sites in `pull_image`
+(auth token fetch, manifest resolve, layer download) handle both 401 and
+403 via `_auth_denied_msg(image_ref, code)`. That helper produces a
+context-sensitive message: if `PD_DOCKER_AUTH` is set it says
+"check credentials"; if not set it says "set PD_DOCKER_AUTH=
+username:password".
 
 **Layer integrity**: `_download_blob()` streams through `hashlib.sha256`
 and verifies the digest before `os.replace` promotes the temp file.
@@ -1138,8 +1155,8 @@ terminal width:
 - Sections rendered when present: USAGE, DESCRIPTION, OPTIONS,
   EXAMPLES, plus footer blocks (HOST BINDINGS, NOTES, etc.).
 - Top-level `command_help()` adds QUICK START, DATA LOCATION (prints
-  `RUNTIME_DIR`), and TROUBLESHOOTING (mentions `PD_FORCE_NO_COLORS`
-  and `PROOT_NO_SECCOMP`).
+  `RUNTIME_DIR`), and TROUBLESHOOTING (mentions `PD_FORCE_NO_COLORS`,
+  `PD_DOCKER_AUTH`, and `PROOT_NO_SECCOMP`).
 
 `_HELP_COMMANDS = {name: _make_help_fn(name) for name in _HELP_PAGES}`
 gives every command a renderable callable. Subcommand

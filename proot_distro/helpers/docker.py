@@ -25,6 +25,7 @@
 # tokens are stripped on cross-host redirects because CDN pre-signed URLs
 # reject them with HTTP 400.
 
+import base64
 import hashlib
 import json
 import os
@@ -206,32 +207,76 @@ class _AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
 _auth_stripping_opener = urllib.request.build_opener(_AuthStrippingRedirectHandler)
 
 
+def _auth_denied_msg(image_ref: str, code: int) -> str:
+    """Return a descriptive error string for 401/403 registry responses."""
+    if os.environ.get("PD_DOCKER_AUTH"):
+        return (
+            f"Access denied to '{image_ref}' (HTTP {code}). "
+            f"Check that PD_DOCKER_AUTH=username:password is correct "
+            f"and the account has pull access to the image."
+        )
+    return (
+        f"Unauthorized: '{image_ref}' does not exist or is a private image. "
+        f"Set PD_DOCKER_AUTH=username:password to authenticate."
+    )
+
+
 def _parse_bearer_challenge(header_value: str) -> dict:
     """Return the key=value pairs from a Bearer WWW-Authenticate header."""
     return dict(re.findall(r'(\w+)="([^"]*)"', header_value))
 
 
+def _env_basic_auth() -> str:
+    """Return a Basic auth header value from PD_DOCKER_AUTH, or ''.
+
+    Accepts 'username:password' — the colon is the required separator.
+    Returns '' when the variable is unset; raises RuntimeError when the
+    variable is set but contains no colon (wrong format).
+    """
+    raw = os.environ.get("PD_DOCKER_AUTH", "")
+    if not raw:
+        return ""
+    if ":" not in raw:
+        raise RuntimeError(
+            "PD_DOCKER_AUTH must be in 'username:password' format "
+            "(e.g. 'myuser:mypassword' or 'myuser:ghp_xxx'). "
+            "A bare token without a username cannot be used — registry "
+            "auth requires a token exchange with Basic credentials."
+        )
+    return "Basic " + base64.b64encode(raw.encode()).decode()
+
+
 def _get_auth_token(repo: str, registry: str = "") -> str:
     """Obtain a pull token for *repo* from the appropriate auth endpoint.
 
-    Docker Hub uses a well-known auth endpoint. For any other registry
-    (e.g. ghcr.io) the Bearer realm is discovered by probing /v2/ and
-    following the standard OCI auth challenge, allowing public images to
-    be pulled with an anonymous token.
+    When PD_DOCKER_AUTH is set, its 'username:password' value is
+    forwarded as HTTP Basic auth to the registry's token endpoint,
+    enabling access to private images. PD_DOCKER_AUTH must always
+    contain a colon separating the username from the password/PAT.
+
+    Without PD_DOCKER_AUTH Docker Hub uses its well-known auth
+    endpoint for anonymous pulls. For any other registry the Bearer realm
+    is discovered by probing /v2/ and following the standard OCI auth
+    challenge.
     """
+    # Validate format early; _env_basic_auth raises if colon is missing.
+    basic_auth = _env_basic_auth()
+
     if not registry:
         url = (
             f"{_AUTH_URL}?service=registry.docker.io"
             f"&scope=repository:{repo}:pull"
         )
         req = urllib.request.Request(url, headers=_ua())
+        if basic_auth:
+            req.add_header("Authorization", basic_auth)
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read())
         return data.get("token") or data.get("access_token", "")
 
     # Custom registry: probe /v2/ to discover the Bearer realm, then fetch
-    # an anonymous pull token. Registries that serve public images (e.g.
-    # ghcr.io) still require this token dance — they always return 401 on
+    # a pull token. Registries that serve public images (e.g. ghcr.io)
+    # still require this token dance — they always return 401 on
     # unauthenticated requests and embed the token endpoint in the challenge.
     probe_req = urllib.request.Request(
         f"https://{registry}/v2/", headers=_ua()
@@ -259,6 +304,8 @@ def _get_auth_token(repo: str, registry: str = "") -> str:
         token_req = urllib.request.Request(
             f"{realm}{sep}{'&'.join(qs_parts)}", headers=_ua()
         )
+        if basic_auth:
+            token_req.add_header("Authorization", basic_auth)
         with urllib.request.urlopen(token_req) as resp:
             data = json.loads(resp.read())
         return data.get("token") or data.get("access_token", "")
@@ -292,8 +339,11 @@ def _resolve_single_manifest(image_ref: str, arch: str) -> tuple:
     """Return (single_image_manifest, token, repo, registry) for the arch."""
     registry, repo, tag = parse_image_ref(image_ref)
 
+    _auth_note = (
+        " (user credentials)" if os.environ.get("PD_DOCKER_AUTH") else ""
+    )
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-        f"{C['CYAN']}Authenticating with registry...{C['RST']}")
+        f"{C['CYAN']}Authenticating with registry{_auth_note}...{C['RST']}")
     token = _get_auth_token(repo, registry)
 
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
@@ -679,17 +729,20 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
                 f"{C['CYAN']}Manifest cached — downloading {missing} missing "
                 f"layer(s) for '{image_ref}' ({arch})...{C['RST']}")
+            _auth_note = (
+                " (user credentials)"
+                if os.environ.get("PD_DOCKER_AUTH") else ""
+            )
             try:
                 msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                    f"{C['CYAN']}Authenticating with registry...{C['RST']}")
+                    f"{C['CYAN']}Authenticating with registry"
+                    f"{_auth_note}...{C['RST']}")
                 token = _get_auth_token(repo, registry)
             except (urllib.error.URLError, OSError) as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
-                    if net_err.code == 401:
+                    if net_err.code in (401, 403):
                         raise RuntimeError(
-                            f"Unauthorized: '{image_ref}' does not exist "
-                            f"or is a private image. Only public images "
-                            f"can be installed without authentication."
+                            _auth_denied_msg(image_ref, net_err.code)
                         ) from net_err
                     if net_err.code == 404:
                         raise RuntimeError(
@@ -709,11 +762,9 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             )
         except (urllib.error.URLError, OSError) as net_err:
             if isinstance(net_err, urllib.error.HTTPError):
-                if net_err.code == 401:
+                if net_err.code in (401, 403):
                     raise RuntimeError(
-                        f"Unauthorized: '{image_ref}' does not exist "
-                        f"or is a private image. Only public images "
-                        f"can be installed without authentication."
+                        _auth_denied_msg(image_ref, net_err.code)
                     ) from net_err
                 if net_err.code == 404:
                     raise RuntimeError(
@@ -762,11 +813,9 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             try:
                 layer_path = _download_blob(repo, digest, token or "", registry)
             except urllib.error.HTTPError as dl_err:
-                if dl_err.code == 401:
+                if dl_err.code in (401, 403):
                     raise RuntimeError(
-                        f"Unauthorized: '{image_ref}' does not exist "
-                        f"or is a private image. Only public images "
-                        f"can be installed without authentication."
+                        _auth_denied_msg(image_ref, dl_err.code)
                     ) from dl_err
                 raise
 

@@ -6,7 +6,7 @@ PRoot-Distro is a utility for managing rootless Linux containers in
 environment without requiring root access on the device.
 
 Containers are created by pulling Docker/OCI images directly from
-Docker Hub or any compatible public registry — or by extracting a local
+Docker Hub or any compatible registry — or by extracting a local
 tarball / OCI image archive. The container filesystem is assembled from
 the image layers and stored locally, ready to be entered at any time.
 
@@ -189,6 +189,31 @@ Custom registries are detected by the first path component containing
 `.` or `:` (i.e. a hostname). Public images on `ghcr.io`,
 `quay.io`, `registry.gitlab.com`, etc. are pulled with an anonymous
 Bearer token discovered from each registry's `/v2/` challenge.
+
+**Private images** require credentials. Set `PD_DOCKER_AUTH` to
+`username:password` (or `username:PAT`) before running the install
+command. The colon separator is mandatory — the value is sent as HTTP
+Basic auth to the registry's token endpoint to obtain a scoped bearer
+token:
+
+```sh
+# Docker Hub private image
+export PD_DOCKER_AUTH=myuser:mypassword
+proot-distro install myuser/private-image:tag
+
+# GitHub Container Registry — use your GitHub username and a PAT
+# with the read:packages scope
+export PD_DOCKER_AUTH=myuser:ghp_xxx
+proot-distro install ghcr.io/myorg/private-image:tag
+
+# Any other OCI registry
+export PD_DOCKER_AUTH=myuser:mypassword
+proot-distro install registry.example.com/private/image:tag
+```
+
+When the env var is set, the authentication progress line notes
+`(user credentials)` so you can confirm your credentials are being
+picked up.
 
 Layers are cached in `$DOWNLOAD_CACHE_DIR/layers/` and reused on
 subsequent installs. If both the resolved manifest and all of its
@@ -982,6 +1007,7 @@ on Termux, and under `$XDG_CACHE_HOME/proot-distro/` (default
 | `TERMUX_APP__APP_VERSION_NAME`, `TERMUX_VERSION` | Either one (when set) counts as one of the indicators that flips on Termux mode in `_detect_termux()`. |
 | `XDG_DATA_HOME` | On non-Termux hosts, base for `$XDG_DATA_HOME/proot-distro/`. Defaults to `~/.local/share`. |
 | `XDG_CACHE_HOME` | On non-Termux hosts, base for `$XDG_CACHE_HOME/proot-distro/`. Defaults to `~/.cache`. |
+| `PD_DOCKER_AUTH` | Credentials for pulling private Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install` and `build` (`FROM` base-image pulls). |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
 | `PROOT_NO_SECCOMP` | Inherited and forwarded to `proot`. Set to `1` if `login` fails with seccomp-related errors on the host kernel. Skipped in `--minimal` mode. |
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
@@ -1050,10 +1076,10 @@ cp proot_distro/completions/proot-distro.fish \
 
 ### PRoot-Distro limitations
 
-- **Public registries only**: registry authentication is not
-  implemented. Only public Docker Hub images and public OCI registries
-  are supported. Private images return an explanatory error from
-  `install`.
+- **Private image authentication**: pulling private images requires
+  setting `PD_DOCKER_AUTH=user:password` (or a raw bearer token).
+  Credential helpers and Docker config file (`~/.docker/config.json`) are
+  not read — only the environment variable is supported.
 - **No zstd-compressed layers**: Python's `tarfile` module does not
   support zstd. Images using zstd-compressed layers (some newer Docker
   Hub images) fail to install with an explicit error. Try a different

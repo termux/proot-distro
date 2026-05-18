@@ -573,6 +573,11 @@ _HELP_PAGES = {
             "It is possible to install distribution with architecture "
             "that differs from your host CPU. In such cases you will need "
             "a QEMU user mode emulator to be able run it."
+            "\n\n"
+            "Private images require authentication. Set the environment "
+            "variable PD_DOCKER_AUTH=\"user:password\" before running "
+            "the install command. Some registries use a personal access "
+            "token instead of password."
         ),
         "options": [
             ("--help", "Show this help."),
@@ -1054,6 +1059,19 @@ def command_help(args=None, configs=None) -> None:  # noqa: ARG001
     msg()
     _shell_block(
         ["export PD_FORCE_NO_COLORS=true"],
+        width,
+    )
+    msg()
+    _paragraph(
+        "To pull private Docker/OCI images, set credentials via "
+        "PD_DOCKER_AUTH in 'username:password' format before "
+        "running the install command:",
+        width,
+    )
+    msg()
+    _shell_block(
+        [f"export PD_DOCKER_AUTH=user:password",
+         f"{PROGRAM_NAME} install ghcr.io/myorg/private-image:tag"],
         width,
     )
     msg()
