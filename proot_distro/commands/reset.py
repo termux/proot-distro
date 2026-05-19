@@ -30,7 +30,7 @@ import shutil
 import sys
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, msg
 from proot_distro.commands.remove import _remove_path
 from proot_distro.commands.install import command_install, _validate_name
 from proot_distro.locking import ContainerLock
@@ -80,9 +80,9 @@ def command_reset(args, configs: dict) -> None:
         sys.exit(1)
 
     with ContainerLock(dist_name, exclusive=True, command="reset"):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Removing rootfs of "
-            f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Removing rootfs of "
+             f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
         if not _remove_path(rootfs_dir):
             msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"

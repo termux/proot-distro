@@ -29,7 +29,7 @@ import sys
 from contextlib import ExitStack
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, msg
 from proot_distro.locking import ContainerLock
 
 
@@ -122,15 +122,15 @@ def _do_copy(src, dest, src_c, dst_c, verbose, move_mode, recursive):
         msg()
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Source: '{src_path}'{C['RST']}")
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Destination: '{dest_path}'{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Source: '{src_path}'{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Destination: '{dest_path}'{C['RST']}")
 
     dest_dir = os.path.dirname(dest_path)
     if not os.path.isdir(dest_dir):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Creating directory '{dest_dir}'...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Creating directory '{dest_dir}'...{C['RST']}")
         try:
             os.makedirs(dest_dir, exist_ok=True)
         except OSError:
@@ -149,8 +149,8 @@ def _do_copy(src, dest, src_c, dst_c, verbose, move_mode, recursive):
 
     try:
         if move_mode:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Moving files...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Moving files...{C['RST']}")
             if verbose:
                 if os.path.isdir(src_path):
                     for root, _dirs, files in os.walk(src_path):
@@ -165,8 +165,8 @@ def _do_copy(src, dest, src_c, dst_c, verbose, move_mode, recursive):
                         f"Moving: '{src_path}' -> '{dest_path}'{C['RST']}")
             shutil.move(src_path, dest_path)
         else:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Copying files, this may take a while...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Copying files, this may take a while...{C['RST']}")
             copy_fn = _verbose_copy2 if verbose else shutil.copy2
             if os.path.isdir(src_path):
                 shutil.copytree(src_path, dest_path, symlinks=True,
@@ -196,5 +196,5 @@ def _do_copy(src, dest, src_c, dst_c, verbose, move_mode, recursive):
         msg()
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished copying files.{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Finished copying files.{C['RST']}")

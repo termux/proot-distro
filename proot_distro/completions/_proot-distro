@@ -92,6 +92,7 @@ _proot_distro() {
                         '(--name --override-alias)--name[install under a custom container name]:alias' \
                         '(--name --override-alias)--override-alias[install under a custom container name]:alias' \
                         '--architecture[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:docker image or local archive:_files'
                     ;;
 
@@ -99,7 +100,8 @@ _proot_distro() {
                 remove)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose)'{-v,--verbose}'[print each removed file]' \
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[print each removed file]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:container:_proot_distro_containers'
                     ;;
 
@@ -107,6 +109,7 @@ _proot_distro() {
                 rename)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
+                        '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:original container:_proot_distro_containers' \
                         '2:new container name'
                     ;;
@@ -115,6 +118,7 @@ _proot_distro() {
                 reset)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
+                        '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:container:_proot_distro_containers'
                     ;;
 
@@ -158,7 +162,8 @@ _proot_distro() {
                 backup)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose)'{-v,--verbose}'[print each archived file]' \
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[print each archived file]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '--output[write archive to FILE instead of stdout]:file:_files' \
                         '--compress[compression algorithm]:type:(gzip bzip2 xz none)' \
                         '1:container:_proot_distro_containers'
@@ -168,7 +173,8 @@ _proot_distro() {
                 restore)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose)'{-v,--verbose}'[print each extracted file]' \
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[print each extracted file]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:archive:_files -g "*.tar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz"'
                     ;;
 
@@ -176,14 +182,16 @@ _proot_distro() {
                 clear-cache)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose)'{-v,--verbose}'[list removed files]'
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[list removed files]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]'
                     ;;
 
                 # -----------------------------------------------------------
                 copy)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose)'{-v,--verbose}'[print each copied file]' \
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[print each copied file]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '(-m --move)'{-m,--move}'[move instead of copy]' \
                         '(-r --recursive)'{-r,--recursive}'[copy directories recursively]' \
                         '1:source (host path or container\:path):_files' \
@@ -194,7 +202,8 @@ _proot_distro() {
                 sync)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose)'{-v,--verbose}'[print each synced file]' \
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[print each synced file]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '--checksum[use CRC32 checksum instead of size+mtime]' \
                         '--delete[remove destination entries absent from source]' \
                         '1:source (host path or container\:path):_files' \

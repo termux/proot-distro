@@ -33,7 +33,7 @@ import subprocess
 import sys
 
 from proot_distro.constants import IS_TERMUX, PROGRAM_NAME
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, msg, set_quiet
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.rename import command_rename
@@ -89,13 +89,16 @@ def build_parser() -> "_PdArgumentParser":
     p_install.add_argument(
         "-a", "--architecture", dest="override_arch", metavar="ARCH",
     )
+    p_install.add_argument("-q", "--quiet", action="store_true")
     p_install.add_argument("-h", "--help", action="store_true")
 
     # remove
     p_remove = sub.add_parser("remove", aliases=["rm"], add_help=False)
     p_remove._pd_command = "remove"
     p_remove.add_argument("alias", nargs="?", default=None)
-    p_remove.add_argument("-v", "--verbose", action="store_true")
+    _p_remove_vq = p_remove.add_mutually_exclusive_group()
+    _p_remove_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_remove_vq.add_argument("-q", "--quiet", action="store_true")
     p_remove.add_argument("-h", "--help", action="store_true")
 
     # rename
@@ -103,12 +106,14 @@ def build_parser() -> "_PdArgumentParser":
     p_rename._pd_command = "rename"
     p_rename.add_argument("orig_alias", nargs="?", default=None)
     p_rename.add_argument("new_alias", nargs="?", default=None)
+    p_rename.add_argument("-q", "--quiet", action="store_true")
     p_rename.add_argument("-h", "--help", action="store_true")
 
     # reset
     p_reset = sub.add_parser("reset", add_help=False)
     p_reset._pd_command = "reset"
     p_reset.add_argument("alias", nargs="?", default=None)
+    p_reset.add_argument("-q", "--quiet", action="store_true")
     p_reset.add_argument("-h", "--help", action="store_true")
 
     # login
@@ -166,6 +171,7 @@ def build_parser() -> "_PdArgumentParser":
     p_list = sub.add_parser("list", aliases=["li", "ls"], add_help=False)
     p_list._pd_command = "list"
     p_list.add_argument("-h", "--help", action="store_true")
+    p_list.add_argument("-q", "--quiet", action="store_true")
 
     # backup
     p_backup = sub.add_parser(
@@ -178,14 +184,18 @@ def build_parser() -> "_PdArgumentParser":
         "-c", "--compress", dest="compression",
         choices=["gzip", "bzip2", "xz", "none"], metavar="TYPE",
     )
-    p_backup.add_argument("-v", "--verbose", action="store_true")
+    _p_backup_vq = p_backup.add_mutually_exclusive_group()
+    _p_backup_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_backup_vq.add_argument("-q", "--quiet", action="store_true")
     p_backup.add_argument("-h", "--help", action="store_true")
 
     # restore
     p_restore = sub.add_parser("restore", add_help=False)
     p_restore._pd_command = "restore"
     p_restore.add_argument("archive", nargs="?")
-    p_restore.add_argument("-v", "--verbose", action="store_true")
+    _p_restore_vq = p_restore.add_mutually_exclusive_group()
+    _p_restore_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_restore_vq.add_argument("-q", "--quiet", action="store_true")
     p_restore.add_argument("-h", "--help", action="store_true")
 
     # clear-cache
@@ -193,7 +203,9 @@ def build_parser() -> "_PdArgumentParser":
         "clear-cache", aliases=["clear", "cl"], add_help=False
     )
     p_clear._pd_command = "clear-cache"
-    p_clear.add_argument("-v", "--verbose", action="store_true")
+    _p_clear_vq = p_clear.add_mutually_exclusive_group()
+    _p_clear_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_clear_vq.add_argument("-q", "--quiet", action="store_true")
     p_clear.add_argument("-h", "--help", action="store_true")
 
     # copy
@@ -201,7 +213,9 @@ def build_parser() -> "_PdArgumentParser":
     p_copy._pd_command = "copy"
     p_copy.add_argument("source", nargs="?", default=None)
     p_copy.add_argument("destination", nargs="?", default=None)
-    p_copy.add_argument("-v", "--verbose", action="store_true")
+    _p_copy_vq = p_copy.add_mutually_exclusive_group()
+    _p_copy_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_copy_vq.add_argument("-q", "--quiet", action="store_true")
     p_copy.add_argument("-m", "--move", action="store_true")
     p_copy.add_argument("-r", "--recursive", action="store_true")
     p_copy.add_argument("-h", "--help", action="store_true")
@@ -211,7 +225,9 @@ def build_parser() -> "_PdArgumentParser":
     p_sync._pd_command = "sync"
     p_sync.add_argument("source", nargs="?", default=None)
     p_sync.add_argument("destination", nargs="?", default=None)
-    p_sync.add_argument("-v", "--verbose", action="store_true")
+    _p_sync_vq = p_sync.add_mutually_exclusive_group()
+    _p_sync_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_sync_vq.add_argument("-q", "--quiet", action="store_true")
     p_sync.add_argument("-c", "--checksum", action="store_true")
     p_sync.add_argument("-d", "--delete", action="store_true")
     p_sync.add_argument("-h", "--help", action="store_true")
@@ -249,8 +265,9 @@ def build_parser() -> "_PdArgumentParser":
     p_build.add_argument(
         "--pull", dest="force_pull", action="store_true",
     )
-    p_build.add_argument("-v", "--verbose", action="store_true")
-    p_build.add_argument("-q", "--quiet", action="store_true")
+    _p_build_vq = p_build.add_mutually_exclusive_group()
+    _p_build_vq.add_argument("-v", "--verbose", action="store_true")
+    _p_build_vq.add_argument("-q", "--quiet", action="store_true")
     p_build.add_argument("-h", "--help", action="store_true")
 
     # push
@@ -547,6 +564,14 @@ def main() -> None:
         args.run_args = raw_args[sep_idx + 1:]
     elif canonical == "run":
         args.run_args = []
+
+    # Enable quiet mode globally before dispatch so helpers in
+    # helpers/docker.py, helpers/download.py, etc. silence their info
+    # lines and progress bars too. 'list --quiet' has a different
+    # semantic (print container names only) and does not use info(), so
+    # setting the global flag is harmless for it.
+    if canonical != "list" and getattr(args, "quiet", False):
+        set_quiet(True)
 
     configs = {}
 

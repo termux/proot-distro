@@ -30,6 +30,12 @@
 # writes (info lines, progress bars) would land on top of the other
 # program's display. msg() and the backup progress bar consult this so
 # that piping into curses/no-echo consumers stays clean.
+#
+# A process-global "quiet" flag is also exported: set_quiet(True) (called
+# by command handlers when --quiet was passed) makes info() silent and
+# is_quiet() return True so progress-bar code paths in helpers can skip
+# their writes. msg() itself is unaffected — error messages must always
+# reach the user.
 
 import os
 import sys
@@ -150,6 +156,31 @@ def msg(*args):
     if not tty_safe_for_writes():
         return
     print(*args, file=sys.stderr)
+
+
+_quiet = False
+
+
+def set_quiet(value: bool) -> None:
+    """Enable or disable quiet mode for the rest of the process.
+
+    Called by command handlers that accept --quiet. When enabled, info()
+    becomes a no-op and is_quiet() returns True so progress-bar code
+    paths in helpers can also bail out.
+    """
+    global _quiet
+    _quiet = bool(value)
+
+
+def is_quiet() -> bool:
+    return _quiet
+
+
+def info(*args):
+    """Emit an informational message unless quiet mode is active."""
+    if _quiet:
+        return
+    msg(*args)
 
 
 def show_version():

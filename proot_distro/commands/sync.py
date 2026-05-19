@@ -37,7 +37,7 @@ import sys
 from contextlib import ExitStack
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, is_quiet, msg
 from proot_distro.locking import ContainerLock
 
 
@@ -479,10 +479,10 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     if not src_is_dir and os.path.isdir(dest_path):
         dest_path = os.path.join(dest_path, os.path.basename(src_path))
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Source:      '{src_path}'{C['RST']}")
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Destination: '{dest_path}'{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Source:      '{src_path}'{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Destination: '{dest_path}'{C['RST']}")
 
     if src_is_dir:
         try:
@@ -509,7 +509,8 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     done = 0
     # Suppress the bar in verbose mode: log lines already provide per-file
     # feedback and the bar would flicker between every line, clogging output.
-    use_tty = sys.stderr.isatty() and not verbose
+    # Also suppress in quiet mode.
+    use_tty = sys.stderr.isatty() and not verbose and not is_quiet()
 
     def _show_progress() -> None:
         if not use_tty:
@@ -612,5 +613,5 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
             else:
                 _unlink_robust(path)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished synchronizing.{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Finished synchronizing.{C['RST']}")

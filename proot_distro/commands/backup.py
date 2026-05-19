@@ -30,7 +30,7 @@ import sys
 import tarfile
 
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
-from proot_distro.colors import C, msg, tty_safe_for_writes
+from proot_distro.colors import C, info, is_quiet, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
 from proot_distro.commands.help import _HELP_COMMANDS
 from proot_distro.commands.install import _validate_name
@@ -244,8 +244,8 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
                 msg(f"{C['BRED']}Error: {exc}{C['RST']}")
                 msg()
                 sys.exit(1)
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Tarball will be written to '{output_path}'.{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Tarball will be written to '{output_path}'.{C['RST']}")
     else:
         if sys.stdout.isatty():
             msg()
@@ -260,8 +260,8 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             if compression_arg is not None
             else ''
         )
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Tarball will be written to stdout.{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Tarball will be written to stdout.{C['RST']}")
 
     with ContainerLock(dist_name, exclusive=False, command="backup"):
         _run_backup(
@@ -274,11 +274,11 @@ def _run_backup(
     dist_name, container_dir, rootfs_dir, manifest_path,
     output_path, compression, verbose,
 ):
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Fixing file permissions in rootfs...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Fixing file permissions in rootfs...{C['RST']}")
     _fix_permissions(rootfs_dir)
 
     # Build the list of entries: manifest.json first, then rootfs tree.
@@ -302,10 +302,10 @@ def _run_backup(
             pass
 
     done_size = 0
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Archiving the container...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Archiving the container...{C['RST']}")
 
     # Redraw threshold: update the bar at most once per 256 KiB read so the
     # _ReadCounter callback doesn't cause excessive stderr writes.
@@ -355,8 +355,8 @@ def _run_backup(
         if use_tty and tty_safe_for_writes():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Finished backing up.{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Finished backing up.{C['RST']}")
 
     except KeyboardInterrupt:
         if use_tty and tty_safe_for_writes():

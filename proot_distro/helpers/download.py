@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 
 from proot_distro.constants import PROGRAM_VERSION
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, is_quiet, msg
 
 
 def fmt_size(n_bytes: int) -> str:
@@ -48,7 +48,7 @@ def sha256_file(path: str) -> str:
     h = hashlib.sha256()
     total = os.path.getsize(path)
     processed = 0
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
@@ -86,7 +86,7 @@ def download_file(
             with urllib.request.urlopen(req) as resp, open(tmp, "wb") as fh:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
-                use_tty = sys.stderr.isatty()
+                use_tty = sys.stderr.isatty() and not is_quiet()
                 while True:
                     chunk = resp.read(65536)
                     if not chunk:
@@ -112,8 +112,8 @@ def download_file(
                     sys.stderr.write("\r\033[K")
                     sys.stderr.flush()
             os.replace(tmp, dest)
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Finished downloading ({fmt_size(downloaded)}).{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Finished downloading ({fmt_size(downloaded)}).{C['RST']}")
             return
         except KeyboardInterrupt:
             if sys.stderr.isatty():

@@ -28,7 +28,7 @@ import signal
 import sys
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, msg
 from proot_distro.commands.install import _validate_name
 from proot_distro.locking import ContainerLock
 
@@ -88,8 +88,8 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
 
 
 def _do_rename(orig, new, orig_dir, new_dir, new_rootfs, orig_rootfs):
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Renaming '{orig}' to '{new}'...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Renaming '{orig}' to '{new}'...{C['RST']}")
     try:
         os.rename(orig_dir, new_dir)
     except OSError as exc:
@@ -100,9 +100,9 @@ def _do_rename(orig, new, orig_dir, new_dir, new_rootfs, orig_rootfs):
     # Update proot link2symlink (l2s) symlinks that point into the old path.
     # SIGINT is deferred for this block: an interrupt mid-rewrite would leave
     # some symlinks pointing at the old (now-gone) path, breaking the container.
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Updating PRoot link2symlink extension files "
-        f"(may take a long time)...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Updating PRoot link2symlink extension files "
+         f"(may take a long time)...{C['RST']}")
     def _warn_no_interrupt(_signum, _frame):
         msg(f"\n{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['RED']}"
             f"Terminating now will leave link2symlink symlinks broken. "
@@ -127,5 +127,5 @@ def _do_rename(orig, new, orig_dir, new_dir, new_rootfs, orig_rootfs):
         signal.signal(signal.SIGINT, _old_sigint)
         signal.signal(signal.SIGQUIT, _old_sigquit)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished renaming the container.{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Finished renaming the container.{C['RST']}")

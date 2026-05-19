@@ -35,7 +35,7 @@ import sys
 import tarfile
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg, tty_safe_for_writes
+from proot_distro.colors import C, info, is_quiet, msg, tty_safe_for_writes
 from proot_distro.helpers.download import fmt_size
 from proot_distro.locking import ContainerLock
 
@@ -194,10 +194,10 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
 
     os.makedirs(CONTAINERS_DIR, exist_ok=True)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Extracting container from the archive...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Extracting container from the archive...{C['RST']}")
 
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
     done_size = 0
     total_size = 0
     counter = None
@@ -389,8 +389,8 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Finished restoring the container.{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Finished restoring the container.{C['RST']}")
 
     except KeyboardInterrupt:
         if use_tty and tty_safe_for_writes():

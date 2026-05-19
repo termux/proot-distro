@@ -41,7 +41,7 @@ from proot_distro.constants import (
     LAYER_CACHE_DIR,
     PROGRAM_NAME,
 )
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, is_quiet, msg
 from proot_distro.locking import ContainerLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.sysdata import setup_fake_sysdata
@@ -179,7 +179,7 @@ def _extract_plain_tar(
     - Progress is tracked via _ByteCounter (compressed bytes consumed) so the
       bar advances smoothly without an upfront archive scan.
     """
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
     _last_shown = 0
 
     def _show(counter: _ByteCounter) -> None:
@@ -483,17 +483,17 @@ def _extract_oci(
         cache_path = _layer_cache_path(digest)
 
         if os.path.isfile(cache_path):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
-                f"skipping.{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
+                 f"skipping.{C['RST']}")
         else:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{short_id}: Caching layer "
-                f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{short_id}: Caching layer "
+                 f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
             _oci_cache_layer(tf, member_map, digest)
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
         _apply_layer(cache_path, rootfs_dir)
 
     # Derive image_ref from index entry annotations if available.
@@ -551,7 +551,7 @@ def _install_from_local_file(
     if is_oci:
         # OCI image layout: blobs are accessed by digest in arbitrary order,
         # so random access via getmembers() is required.
-        use_tty = sys.stderr.isatty()
+        use_tty = sys.stderr.isatty() and not is_quiet()
         with tarfile.open(archive_path, 'r:*') as tf:
             if use_tty:
                 sys.stderr.write(
@@ -697,22 +697,22 @@ def _run_install(
         sys.exit(1)
 
     if local_path is not None:
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
-            f"from '{C['YELLOW']}{os.path.basename(local_path)}{C['CYAN']}' "
-            f"as '{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
+             f"from '{C['YELLOW']}{os.path.basename(local_path)}{C['CYAN']}' "
+             f"as '{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
     elif url is not None:
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
-            f"from URL '{C['YELLOW']}{url}{C['CYAN']}' as "
-            f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
+             f"from URL '{C['YELLOW']}{url}{C['CYAN']}' as "
+             f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
     else:
         # Always show the tag, appending ':latest' when the user omitted it.
         last_component = image_ref.split("/")[-1]
         display_ref = (
             image_ref if ":" in last_component else f"{image_ref}:latest"
         )
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
-            f"'{C['YELLOW']}{display_ref}{C['CYAN']}' as "
-            f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Installing "
+             f"'{C['YELLOW']}{display_ref}{C['CYAN']}' as "
+             f"'{C['YELLOW']}{install_name}{C['CYAN']}'...{C['RST']}")
 
     os.makedirs(rootfs_dir, exist_ok=True)
 
@@ -725,19 +725,19 @@ def _run_install(
     tmp_archive = None
     try:
         if local_path is not None:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Extracting rootfs from archive...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Extracting rootfs from archive...{C['RST']}")
             metadata = _install_from_local_file(local_path, rootfs_dir, dist_arch)
         elif url is not None:
             os.makedirs(DOWNLOAD_CACHE_DIR, exist_ok=True)
             tmp_archive = os.path.join(
                 DOWNLOAD_CACHE_DIR, f".pd_dl_{install_name}.tmp"
             )
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Downloading archive...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Downloading archive...{C['RST']}")
             download_file(url, tmp_archive)
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Extracting rootfs from archive...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Extracting rootfs from archive...{C['RST']}")
             metadata = _install_from_local_file(tmp_archive, rootfs_dir, dist_arch)
         else:
             os.makedirs(DOWNLOAD_CACHE_DIR, exist_ok=True)
@@ -764,17 +764,17 @@ def _run_install(
                     f"Warning: could not write manifest.json: {exc}{C['RST']}")
 
         if os.path.isdir(os.path.join(rootfs_dir, "etc")):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Updating '/etc/resolv.conf'...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Updating '/etc/resolv.conf'...{C['RST']}")
             write_resolv_conf(rootfs_dir)
 
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Updating '/etc/hosts'...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"Updating '/etc/hosts'...{C['RST']}")
             write_hosts(rootfs_dir)
 
             if os.path.isfile(os.path.join(rootfs_dir, "etc", "passwd")):
-                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                    f"Registering Android-specific UIDs and GIDs...{C['RST']}")
+                info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                     f"Registering Android-specific UIDs and GIDs...{C['RST']}")
                 register_android_ids(rootfs_dir)
 
         setup_fake_sysdata(rootfs_dir)
@@ -805,9 +805,9 @@ def _run_install(
             except OSError:
                 pass
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished installation.{C['RST']}")
-    msg()
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Finished installation.{C['RST']}")
+    info()
     entrypoint = (
         (metadata.get("image_config") or {}).get("config", {}).get("Entrypoint")
         if metadata else None
@@ -816,9 +816,9 @@ def _run_install(
     # also be printed, so the two labels align as a column. Without the
     # entrypoint line there is nothing to align against, so drop the padding.
     shell_label = "Start shell:   " if entrypoint else "Start shell:"
-    msg(f"{C['CYAN']}{shell_label} "
-        f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['RST']}")
+    info(f"{C['CYAN']}{shell_label} "
+         f"{C['GREEN']}{PROGRAM_NAME} login {install_name}{C['RST']}")
     if entrypoint:
-        msg(f"{C['CYAN']}Run entrypoint: "
-            f"{C['GREEN']}{PROGRAM_NAME} run {install_name}{C['RST']}")
-    msg()
+        info(f"{C['CYAN']}Run entrypoint: "
+             f"{C['GREEN']}{PROGRAM_NAME} run {install_name}{C['RST']}")
+    info()

@@ -61,7 +61,7 @@ _proot_distro() {
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--name --override-alias --architecture --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--name --override-alias --architecture --quiet --help" -- "${cur}"))
             elif [[ "${cur}" == /* || "${cur}" == ./* || "${cur}" == ../* ]]; then
                 _filedir
             fi
@@ -70,7 +70,7 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         remove)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--verbose --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--verbose --quiet --help" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -79,7 +79,7 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         rename)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--quiet --help" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -88,7 +88,7 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         reset)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--quiet --help" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -141,7 +141,7 @@ _proot_distro() {
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--output --compress --verbose --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--output --compress --verbose --quiet --help" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -150,7 +150,7 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         restore)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--verbose --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--verbose --quiet --help" -- "${cur}"))
             else
                 _filedir '@(tar|tar.gz|tgz|tar.bz2|tbz2|tar.xz|txz)'
             fi
@@ -158,13 +158,13 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         clear-cache)
-            COMPREPLY=($(compgen -W "--verbose --help" -- "${cur}"))
+            COMPREPLY=($(compgen -W "--verbose --quiet --help" -- "${cur}"))
             ;;
 
         # -----------------------------------------------------------------------
         copy)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--verbose --move --recursive --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--verbose --quiet --move --recursive --help" -- "${cur}"))
             else
                 # Support container:path notation: complete container names
                 # (no colon yet) or paths (colon already present → filesystem)
@@ -185,7 +185,7 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         sync)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--verbose --checksum --delete --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "--verbose --quiet --checksum --delete --help" -- "${cur}"))
             else
                 if [[ "${cur}" == *:* ]]; then
                     _filedir

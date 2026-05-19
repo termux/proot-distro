@@ -424,7 +424,8 @@ _HELP_PAGES = {
              "Echo each instruction and stream RUN output to the "
              "terminal."),
             ("-q, --quiet",
-             "Suppress non-error output."),
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} build -t myapp:1.0 .",
@@ -570,6 +571,9 @@ _HELP_PAGES = {
              "the file extension like tar.gz or txz."),
             ("-v, --verbose",
              "Log each file name as it is added to the archive."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} backup ubuntu --output ~/ubuntu.tar.xz",
@@ -586,6 +590,9 @@ _HELP_PAGES = {
         "options": [
             ("-h, --help", "Show this help."),
             ("-v, --verbose", "Log each removed file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
     },
 
@@ -602,7 +609,10 @@ _HELP_PAGES = {
             ("--move",
              "Delete source file after a successful copy."),
             ("--recursive", "Recursive mode for copying directories."),
-            ("--verbose", "Log each copied file."),
+            ("-v, --verbose", "Log each copied file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} copy ./file.txt ubuntu:/root/file.txt",
@@ -666,6 +676,7 @@ _HELP_PAGES = {
              "names (aarch64, arm, i686, riscv64, x86_64) or Docker "
              "platform strings (linux/arm64, linux/amd64, linux/arm/v7, "
              "linux/386, linux/riscv64)."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [
             f"{PROGRAM_NAME} install ubuntu:24.04",
@@ -676,11 +687,12 @@ _HELP_PAGES = {
     },
 
     "list": {
-        "usage": "list",
+        "usage": "list [OPTIONS]",
         "aliases": ("li", "ls"),
         "summary": "List all installed proot containers.",
         "options": [
             ("-h, --help", "Show this help."),
+            ("-q, --quiet", "Print only container names, one per line."),
         ],
     },
 
@@ -833,6 +845,9 @@ _HELP_PAGES = {
         "options": [
             ("-h, --help", "Show this help."),
             ("-v, --verbose", "Log each deleted file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
     },
 
@@ -841,6 +856,7 @@ _HELP_PAGES = {
         "summary": "Rename the installed proot container.",
         "options": [
             ("-h, --help", "Show this help."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
         "footer": [
             {
@@ -866,6 +882,7 @@ _HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
     },
 
@@ -878,6 +895,9 @@ _HELP_PAGES = {
         "options": [
             ("-h, --help", "Show this help."),
             ("-v, --verbose", "Log each extracted file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "footer": [
             {
@@ -1014,7 +1034,10 @@ _HELP_PAGES = {
              "After syncing, remove destination files and "
              "directories that have no counterpart in the source. "
              "Only effective when source is a directory."),
-            ("--verbose", "Log each synced or deleted entry."),
+            ("-v, --verbose", "Log each synced or deleted entry."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} sync ./dotfiles/ ubuntu:/root/",

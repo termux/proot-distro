@@ -94,6 +94,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
     -l architecture    -r -d 'Target CPU architecture' \
     -a 'aarch64\tAArch64 arm\tARM arm\tARM(32-bit) i686\tx86(32-bit) riscv64\tRISC-V x86_64\tx86_64'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
+    -s q -l quiet      -d 'Suppress non-error output'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -104,6 +106,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
     -s v -l verbose    -d 'Print each removed file'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
+    -s q -l quiet      -d 'Suppress non-error output'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -112,6 +116,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from rename' \
     -a '(__proot_distro_containers)' -d 'Container'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from rename' \
+    -s q -l quiet      -d 'Suppress non-error output'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from rename' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -119,6 +125,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from rename' \
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from reset' \
     -a '(__proot_distro_containers)' -d 'Container'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from reset' \
+    -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from reset' \
     -s h -l help       -d 'Show help'
 
@@ -183,6 +191,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
     -s v -l verbose    -d 'Print each archived file'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
+    -s q -l quiet      -d 'Suppress non-error output'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -191,6 +201,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
 complete -c proot-distro -n '__fish_seen_subcommand_from restore' \
     -s v -l verbose    -d 'Print each extracted file'
 complete -c proot-distro -n '__fish_seen_subcommand_from restore' \
+    -s q -l quiet      -d 'Suppress non-error output'
+complete -c proot-distro -n '__fish_seen_subcommand_from restore' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -198,6 +210,8 @@ complete -c proot-distro -n '__fish_seen_subcommand_from restore' \
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
     -s v -l verbose    -d 'List removed files'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
+    -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
     -s h -l help       -d 'Show help'
 
@@ -208,6 +222,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from copy' \
     -a '(__proot_distro_containers)' -d 'Container (use container:path notation)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from copy' \
     -s v -l verbose    -d 'Print each copied file'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from copy' \
+    -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from copy' \
     -s m -l move       -d 'Move instead of copy'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from copy' \
@@ -222,6 +238,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from sync' \
     -a '(__proot_distro_containers)' -d 'Container (use container:path notation)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from sync' \
     -s v -l verbose    -d 'Print each synced file'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from sync' \
+    -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from sync' \
     -l checksum           -d 'Use CRC32 checksum instead of size+mtime'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from sync' \
@@ -312,16 +330,20 @@ complete -c pd -f -n __proot_distro_no_subcommand -s h -l help   -d 'Show help'
 complete -c pd -f -n '__fish_seen_subcommand_from install' -l name           -r -d 'Install under a custom container name'
 complete -c pd -f -n '__fish_seen_subcommand_from install' -l override-alias -r -d 'Install under a custom container name (alias for --name)'
 complete -c pd -f -n '__fish_seen_subcommand_from install' -l architecture   -r -d 'Target CPU architecture' -a 'aarch64 arm i686 riscv64 x86_64'
+complete -c pd -f -n '__fish_seen_subcommand_from install' -s q -l quiet       -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from install' -s h -l help         -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from remove' -a '(__proot_distro_containers)' -d 'Container'
 complete -c pd -f -n '__fish_seen_subcommand_from remove' -s v -l verbose -d 'Print each removed file'
+complete -c pd -f -n '__fish_seen_subcommand_from remove' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from remove' -s h -l help    -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from rename' -a '(__proot_distro_containers)' -d 'Container'
+complete -c pd -f -n '__fish_seen_subcommand_from rename' -s q -l quiet -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from rename' -s h -l help -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from reset' -a '(__proot_distro_containers)' -d 'Container'
+complete -c pd -f -n '__fish_seen_subcommand_from reset' -s q -l quiet -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from reset' -s h -l help -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from login' -a '(__proot_distro_containers)' -d 'Container'
@@ -350,22 +372,27 @@ complete -c pd -f -n '__fish_seen_subcommand_from backup' -a '(__proot_distro_co
 complete -c pd -n   '__fish_seen_subcommand_from backup' -l output     -r -d 'Output archive file'
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -l compress  -r -d 'Compression type' -a 'gzip bzip2 xz none'
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -s v -l verbose -d 'Verbose output'
+complete -c pd -f -n '__fish_seen_subcommand_from backup' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -s h -l help    -d 'Show help'
 
 complete -c pd -n '__fish_seen_subcommand_from restore' -s v -l verbose -d 'Verbose output'
+complete -c pd -n '__fish_seen_subcommand_from restore' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -n '__fish_seen_subcommand_from restore' -s h -l help    -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -s v -l verbose -d 'Verbose output'
+complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -s h -l help    -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from copy' -a '(__proot_distro_containers)' -d 'Container'
 complete -c pd -f -n '__fish_seen_subcommand_from copy' -s v -l verbose   -d 'Verbose output'
+complete -c pd -f -n '__fish_seen_subcommand_from copy' -s q -l quiet     -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from copy' -s m -l move      -d 'Move instead of copy'
 complete -c pd -f -n '__fish_seen_subcommand_from copy' -s r -l recursive -d 'Recursive copy'
 complete -c pd -f -n '__fish_seen_subcommand_from copy' -s h -l help      -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from sync' -a '(__proot_distro_containers)' -d 'Container'
 complete -c pd -f -n '__fish_seen_subcommand_from sync' -s v -l verbose   -d 'Verbose output'
+complete -c pd -f -n '__fish_seen_subcommand_from sync' -s q -l quiet     -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from sync' -l checksum          -d 'Use CRC32 checksum'
 complete -c pd -f -n '__fish_seen_subcommand_from sync' -l delete            -d 'Delete extra destination files'
 complete -c pd -f -n '__fish_seen_subcommand_from sync' -s h -l help         -d 'Show help'

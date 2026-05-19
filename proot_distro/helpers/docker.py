@@ -43,7 +43,7 @@ from proot_distro.constants import (
     MANIFEST_CACHE_DIR,
     PROGRAM_VERSION,
 )
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, is_quiet, msg
 from proot_distro.helpers.download import fmt_size
 
 _REGISTRY_URL = "https://registry-1.docker.io"
@@ -348,12 +348,12 @@ def _resolve_single_manifest(image_ref: str, arch: str) -> tuple:
     _auth_note = (
         " (user credentials)" if os.environ.get("PD_DOCKER_AUTH") else ""
     )
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-        f"{C['CYAN']}Authenticating with registry{_auth_note}...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+         f"{C['CYAN']}Authenticating with registry{_auth_note}...{C['RST']}")
     token = _get_auth_token(repo, registry)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-        f"{C['CYAN']}Fetching manifest for '{image_ref}'...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+         f"{C['CYAN']}Fetching manifest for '{image_ref}'...{C['RST']}")
     manifest = _get_manifest(repo, tag, token, registry)
 
     if manifest["_ct"] in _MANIFEST_LIST_TYPES or "manifests" in manifest:
@@ -364,8 +364,8 @@ def _resolve_single_manifest(image_ref: str, arch: str) -> tuple:
             docker_variant,
             image_ref,
         )
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-            f"{C['CYAN']}Fetching {arch} manifest...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+             f"{C['CYAN']}Fetching {arch} manifest...{C['RST']}")
         manifest = _get_manifest(repo, target["digest"], token, registry)
 
     return manifest, token, repo, registry
@@ -451,7 +451,7 @@ def _download_blob(
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
     tmp = dest + ".tmp"
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
 
     if ":" not in digest:
         raise RuntimeError(f"Malformed layer digest '{digest}'.")
@@ -558,7 +558,7 @@ def _apply_layer(layer_path: str, rootfs_dir: str) -> None:
     the denominator is os.path.getsize() — instant — and no upfront scan of
     the archive is needed.
     """
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
     total_size = os.path.getsize(layer_path)
 
     def _show(counter: _ByteCounter) -> None:
@@ -724,25 +724,25 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
     if manifest is not None:
         layers = manifest.get("layers", [])
         if _all_layers_cached(layers):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                f"{C['CYAN']}Manifest and all layers are cached — "
-                f"skipping network for '{image_ref}' ({arch}).{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                 f"{C['CYAN']}Manifest and all layers are cached — "
+                 f"skipping network for '{image_ref}' ({arch}).{C['RST']}")
         else:
             missing = sum(
                 1 for layer in layers
                 if not os.path.isfile(_layer_cache_path(layer["digest"]))
             )
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                f"{C['CYAN']}Manifest cached — downloading {missing} missing "
-                f"layer(s) for '{image_ref}' ({arch})...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                 f"{C['CYAN']}Manifest cached — downloading {missing} missing "
+                 f"layer(s) for '{image_ref}' ({arch})...{C['RST']}")
             _auth_note = (
                 " (user credentials)"
                 if os.environ.get("PD_DOCKER_AUTH") else ""
             )
             try:
-                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                    f"{C['CYAN']}Authenticating with registry"
-                    f"{_auth_note}...{C['RST']}")
+                info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+                     f"{C['CYAN']}Authenticating with registry"
+                     f"{_auth_note}...{C['RST']}")
                 token = _get_auth_token(repo, registry)
             except (urllib.error.URLError, OSError) as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
@@ -806,16 +806,16 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
         short_id = digest.split(":")[-1][:12]
         cached_path = _layer_cache_path(digest)
         if os.path.isfile(cached_path):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
-                f"skipping download.{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
+                 f"skipping download.{C['RST']}")
             layer_path = cached_path
         else:
             size = layer.get("size", 0)
             size_str = f" ({fmt_size(size)})" if size else ""
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{short_id}: Downloading layer "
-                f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{short_id}: Downloading layer "
+                 f"{i + 1}/{n_layers}{size_str}...{C['RST']}")
             try:
                 layer_path = _download_blob(repo, digest, token or "", registry)
             except urllib.error.HTTPError as dl_err:
@@ -825,8 +825,8 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                     ) from dl_err
                 raise
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"{short_id}: Applying layer {i + 1}/{n_layers}...{C['RST']}")
         _apply_layer(layer_path, rootfs_dir)
 
     # --- Build return metadata from image config labels ---
@@ -920,7 +920,7 @@ class _ProgressReader:
         self.total = total
         self.sent = 0
         self._label = label
-        self._tty = sys.stderr.isatty()
+        self._tty = sys.stderr.isatty() and not is_quiet()
         self._last_shown = 0
 
     def read(self, size=-1):
@@ -1021,7 +1021,7 @@ def _upload_blob_file(
     )
 
     size = os.path.getsize(file_path)
-    use_tty = sys.stderr.isatty()
+    use_tty = sys.stderr.isatty() and not is_quiet()
     try:
         with open(file_path, "rb") as fh:
             reader = _ProgressReader(fh, size, label or digest[:19])
@@ -1133,8 +1133,8 @@ def push_image(image_ref: str, arch: str) -> dict:
 
     # ----- Authenticate -----
     auth_note = " (user credentials)" if os.environ.get("PD_DOCKER_AUTH") else ""
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-        f"{C['CYAN']}Authenticating with registry{auth_note}...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
+         f"{C['CYAN']}Authenticating with registry{auth_note}...{C['RST']}")
     try:
         token = _get_auth_token(repo, registry, actions="pull,push")
     except urllib.error.HTTPError as exc:
@@ -1154,14 +1154,14 @@ def push_image(image_ref: str, arch: str) -> dict:
 
         try:
             if _blob_exists(repo, digest, token, registry):
-                msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                    f"{short_id}: Layer {i + 1}/{n_layers} already exists "
-                    f"on registry, skipping upload.{C['RST']}")
+                info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                     f"{short_id}: Layer {i + 1}/{n_layers} already exists "
+                     f"on registry, skipping upload.{C['RST']}")
                 continue
 
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{short_id}: Uploading layer {i + 1}/{n_layers} "
-                f"({fmt_size(size)})...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{short_id}: Uploading layer {i + 1}/{n_layers} "
+                 f"({fmt_size(size)})...{C['RST']}")
             _upload_blob_file(
                 repo, digest, path, token, registry, label=short_id,
             )
@@ -1177,13 +1177,13 @@ def push_image(image_ref: str, arch: str) -> dict:
     cfg_short = expected_cfg_digest.split(":")[-1][:12]
     try:
         if _blob_exists(repo, expected_cfg_digest, token, registry):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{cfg_short}: Image config already exists on registry, "
-                f"skipping upload.{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{cfg_short}: Image config already exists on registry, "
+                 f"skipping upload.{C['RST']}")
         else:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"{cfg_short}: Uploading image config "
-                f"({fmt_size(len(config_bytes))})...{C['RST']}")
+            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+                 f"{cfg_short}: Uploading image config "
+                 f"({fmt_size(len(config_bytes))})...{C['RST']}")
             _upload_blob_bytes(
                 repo, expected_cfg_digest, config_bytes, token, registry,
             )
@@ -1196,9 +1196,9 @@ def push_image(image_ref: str, arch: str) -> dict:
     # ----- PUT the manifest under the tag -----
     manifest_media = manifest.get("mediaType") or _OCI_MANIFEST_MEDIA
     manifest_bytes = _canonical_json(_strip_private_keys(manifest))
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Uploading manifest for tag '{tag}' "
-        f"({fmt_size(len(manifest_bytes))})...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Uploading manifest for tag '{tag}' "
+         f"({fmt_size(len(manifest_bytes))})...{C['RST']}")
     try:
         registry_digest = _put_manifest(
             repo, tag, manifest_bytes, manifest_media, token, registry,

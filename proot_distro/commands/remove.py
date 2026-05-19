@@ -27,7 +27,7 @@ import stat
 import sys
 
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, msg
 from proot_distro.commands.install import _validate_name
 from proot_distro.locking import ContainerLock
 
@@ -112,9 +112,9 @@ def command_remove(args, configs: dict) -> None:  # noqa: ARG001
         sys.exit(1)
 
     with ContainerLock(dist_name, exclusive=True, command="remove"):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Removing container "
-            f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Removing container "
+             f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
 
         on_remove = None
         if verbose:
@@ -128,5 +128,5 @@ def command_remove(args, configs: dict) -> None:  # noqa: ARG001
                 f"deleted.{C['RST']}")
             sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished removing the container.{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Finished removing the container.{C['RST']}")

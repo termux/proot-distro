@@ -27,7 +27,7 @@ import shutil
 import stat
 
 from proot_distro.constants import DOWNLOAD_CACHE_DIR
-from proot_distro.colors import C, msg
+from proot_distro.colors import C, info, msg
 
 
 def _ensure_readable(path: str) -> None:
@@ -46,8 +46,8 @@ def command_clear_cache(args, configs: dict) -> None:  # noqa: ARG001
     verbose = getattr(args, "verbose", False)
 
     if not os.path.isdir(DOWNLOAD_CACHE_DIR):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Download cache is empty.{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Download cache is empty.{C['RST']}")
         return
 
     total = 0
@@ -62,12 +62,12 @@ def command_clear_cache(args, configs: dict) -> None:  # noqa: ARG001
                 pass
 
     if total == 0 and not any(True for _ in os.scandir(DOWNLOAD_CACHE_DIR)):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Download cache is empty.{C['RST']}")
+        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+             f"Download cache is empty.{C['RST']}")
         return
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Clearing download cache...{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Clearing download cache...{C['RST']}")
 
     for entry in os.scandir(DOWNLOAD_CACHE_DIR):
         try:
@@ -95,5 +95,5 @@ def command_clear_cache(args, configs: dict) -> None:  # noqa: ARG001
     else:
         total_str = f"{total} B"
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Reclaimed {total_str} of disk space.{C['RST']}")
+    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+         f"Reclaimed {total_str} of disk space.{C['RST']}")

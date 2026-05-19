@@ -29,7 +29,8 @@ from proot_distro.colors import C, msg
 
 
 def command_list(args, configs: dict) -> None:  # noqa: ARG001
-    msg()
+    quiet = getattr(args, "quiet", False)
+
     try:
         entries = sorted(
             e for e in os.listdir(CONTAINERS_DIR)
@@ -38,6 +39,12 @@ def command_list(args, configs: dict) -> None:  # noqa: ARG001
     except OSError:
         entries = []
 
+    if quiet:
+        for name in entries:
+            print(name)
+        return
+
+    msg()
     if not entries:
         msg(f"{C['YELLOW']}No containers are installed.{C['RST']}")
         msg()

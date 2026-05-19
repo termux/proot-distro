@@ -25,7 +25,7 @@ are installed as package data to standard `share/` locations.
 | Module | Contents |
 |---|---|
 | `constants.py` | All global path/default constants. `IS_TERMUX`, `PREFIX`, `TERMUX_HOME`, `TERMUX_APP_PACKAGE`, `_detect_termux()`, XDG fallbacks, default kernel strings. |
-| `colors.py` | ANSI escape constants, `C` (color dict), `msg()`, `tty_safe_for_writes()`, `show_version()`. |
+| `colors.py` | ANSI escape constants, `C` (color dict), `msg()`, `info()`, `set_quiet()`, `is_quiet()`, `tty_safe_for_writes()`, `show_version()`. |
 | `arch.py` | CPU arch detection, ELF-based installed-arch detection, `normalize_arch()`, QEMU emulator selection. |
 | `sysdata.py` | Fake `/proc`/`/sys` constants, `setup_fake_sysdata()`, `fake_proc_bindings()`. |
 | `helpers/download.py` | `fmt_size()`, `sha256_file()`, `download_file()` with TTY progress bars. |
@@ -215,6 +215,19 @@ Detected from the rootfs at login time:
    a valid invocation without a positional).
 10. **`--` separator splitting**: populates `args.login_cmd` (for
     `login`) and `args.run_args` (for `run`).
+11. **Global `--quiet` propagation**: if the parsed args carry
+    `quiet=True` (every subcommand except `login`, `run`, `help`
+    accepts `-q`/`--quiet`) and the canonical command is not `list`,
+    `colors.set_quiet(True)` is called before dispatch. The process-
+    global flag makes `colors.info()` a no-op and `colors.is_quiet()`
+    return `True`, so progress-bar code paths in
+    `helpers/docker.py`, `helpers/download.py`, and the commands
+    themselves bail out. `list --quiet` is excluded because its quiet
+    semantics is unrelated ("print only container names, one per
+    line"); it does not use `info()` so the global flag would be a
+    no-op anyway, but the explicit exclusion documents that the two
+    quiet semantics are independent. `msg()` itself is *not* gated —
+    error messages must always reach the user.
 
 ## Container name validation
 
@@ -296,6 +309,7 @@ a Docker image, even if a file by that name exists in the cwd.
   `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings
   (`linux/arm64`, `linux/amd64`, `linux/arm/v7`, `linux/386`,
   `linux/riscv64`).
+- `-q`/`--quiet` — suppress non-error output.
 
 ### `login` (and `run`)
 
@@ -336,6 +350,18 @@ be executable).
 
 `-v`/`--verbose` prints each removed entry in real time. Removes the
 entire `containers/<name>` directory (rootfs + manifest).
+`-q`/`--quiet` suppresses non-error output and is mutually exclusive
+with `--verbose`.
+
+### `rename`
+
+`-q`/`--quiet` suppresses non-error output.
+
+### `reset`
+
+`-q`/`--quiet` suppresses non-error output. The quiet flag is set on
+the global state in `cli.main()` so the inner `command_install` call
+inherits it without `command_reset` needing to plumb it through.
 
 ### `backup`
 
@@ -344,10 +370,14 @@ entire `containers/<name>` directory (rootfs + manifest).
   `.tar.lz4`, `.tar.lz`) raise an error before any work.
 - `--output FILE` writes to FILE instead of stdout.
 - `-v`/`--verbose` logs each entry.
+- `-q`/`--quiet` suppresses non-error output (incl. the progress bar)
+  and is mutually exclusive with `--verbose`.
 
 ### `restore`
 
 - `-v`/`--verbose` logs each extracted entry.
+- `-q`/`--quiet` suppresses non-error output (incl. the progress bar)
+  and is mutually exclusive with `--verbose`.
 - No positional + non-TTY stdin → reads archive from stdin.
 - No positional + TTY stdin → error.
 
@@ -356,6 +386,8 @@ entire `containers/<name>` directory (rootfs + manifest).
 - `-r`/`--recursive` allows directory copying (move mode ignores this).
 - `-m`/`--move` uses `shutil.move`.
 - `-v`/`--verbose`.
+- `-q`/`--quiet` suppresses non-error output and is mutually exclusive
+  with `--verbose`.
 
 ### `sync`
 
@@ -363,10 +395,14 @@ entire `containers/<name>` directory (rootfs + manifest).
 - `--delete` — remove destination entries absent from source (only
   meaningful when source is a directory).
 - `-v`/`--verbose` — also suppresses the progress bar.
+- `-q`/`--quiet` — suppress non-error output (incl. the progress bar);
+  mutually exclusive with `--verbose`.
 
 ### `clear-cache`
 
 - `-v`/`--verbose` lists each removed entry.
+- `-q`/`--quiet` suppresses non-error output and is mutually exclusive
+  with `--verbose`.
 
 ### `build`
 
@@ -444,6 +480,17 @@ program-agnostic; no process names are matched. `msg()` consults this
 and silently drops writes when False; `backup` and `restore` also gate
 their progress-bar `sys.stderr.write` calls and `\r\033[K` clears on it
 so destructive escapes never reach a sibling pinentry/curses display.
+
+`set_quiet(True)` / `is_quiet()` / `info()` form the `--quiet` plumbing.
+`info()` writes the same way as `msg()` but is a no-op while the global
+`_quiet` flag is set. Progress-bar code paths in helpers
+(`helpers/docker.py`, `helpers/download.py`) and in
+`commands/install.py`, `commands/backup.py`, `commands/restore.py`,
+`commands/sync.py` consult `is_quiet()` when deciding whether to emit
+their `\r…` updates. `msg()` itself is *not* gated — error and warning
+messages must always reach the user. `cli.main()` calls `set_quiet(True)`
+once per process, before dispatch, when `args.quiet` is truthy (and the
+command is not `list`, whose `--quiet` has different semantics).
 
 ## Architecture and emulation
 
