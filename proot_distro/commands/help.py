@@ -387,7 +387,7 @@ _HELP_PAGES = {
             "into a container in one step."
         ),
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
             ("-f, --file [PATH]",
              "Use a Dockerfile at PATH instead of <PATH>/Dockerfile. "
              "Pass '-' to read the Dockerfile from standard input."),
@@ -397,7 +397,7 @@ _HELP_PAGES = {
             ("--build-arg [K=V]",
              "Set a build-time ARG. Only ARGs declared in the "
              "Dockerfile are honoured. Repeatable."),
-            ("--architecture [ARCH]",
+            ("-a, --architecture [ARCH]",
              "Target CPU architecture (default: host architecture). "
              "Accepts proot-distro names (aarch64, arm, i686, "
              "riscv64, x86_64) or Docker platform strings "
@@ -407,7 +407,7 @@ _HELP_PAGES = {
             ("--emulator [PATH]",
              "Override the QEMU user-mode binary used for "
              "cross-architecture builds."),
-            ("--output [FILE]",
+            ("-o, --output [FILE]",
              "Write the built image as an OCI tarball to FILE. "
              "Compression is inferred from the extension "
              "(.oci.tar, .oci.tar.gz, .oci.tar.xz). Repeatable."),
@@ -420,10 +420,10 @@ _HELP_PAGES = {
             ("--pull",
              "Force re-pull of base images, ignoring the manifest "
              "cache."),
-            ("--verbose",
+            ("-v, --verbose",
              "Echo each instruction and stream RUN output to the "
              "terminal."),
-            ("--quiet",
+            ("-q, --quiet",
              "Suppress non-error output."),
         ],
         "examples": [
@@ -504,14 +504,14 @@ _HELP_PAGES = {
             "need PD_DOCKER_AUTH set."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--architecture [ARCH]",
+            ("-h, --help", "Show this help."),
+            ("-a, --architecture [ARCH]",
              "Push the manifest built for the given architecture. "
              "Accepts proot-distro names (aarch64, arm, i686, "
              "riscv64, x86_64) or Docker platform strings "
              "(linux/arm64, linux/amd64, ...). Default: host "
              "architecture."),
-            ("--quiet", "Suppress non-error output."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [
             f"{PROGRAM_NAME} push myuser/myapp:1.0",
@@ -560,15 +560,15 @@ _HELP_PAGES = {
             "uncompressed by default."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--compress [TYPE]",
+            ("-h, --help", "Show this help."),
+            ("-c, --compress [TYPE]",
              "Force a specific compression algorithm, overriding the "
              "file extension. Supported values: gzip, bzip2, xz, none."),
-            ("--output [FILE]",
+            ("-o, --output [FILE]",
              "Write the archive to FILE instead of stdout. When "
              "--compress is not given, compression is inferred from "
              "the file extension like tar.gz or txz."),
-            ("--verbose",
+            ("-v, --verbose",
              "Log each file name as it is added to the archive."),
         ],
         "examples": [
@@ -584,8 +584,8 @@ _HELP_PAGES = {
             "layers)."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--verbose", "Log each removed file."),
+            ("-h, --help", "Show this help."),
+            ("-v, --verbose", "Log each removed file."),
         ],
     },
 
@@ -598,7 +598,7 @@ _HELP_PAGES = {
             "path or a 'container:path' reference."
         ),
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
             ("--move",
              "Delete source file after a successful copy."),
             ("--recursive", "Recursive mode for copying directories."),
@@ -655,13 +655,13 @@ _HELP_PAGES = {
             "token instead of password."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--name [NAME]",
+            ("-h, --help", "Show this help."),
+            ("-n, --name [NAME]",
              "Set a custom name for the container. Must start with "
              "alphanumeric character and then may contain only latin "
              "letters, numbers and special symbols dot, minus, underscore. "
              "Default equals to image name without tag and registry prefix."),
-            ("--architecture [ARCH]",
+            ("-a, --architecture [ARCH]",
              "Override the target CPU architecture. Accepts native "
              "names (aarch64, arm, i686, riscv64, x86_64) or Docker "
              "platform strings (linux/arm64, linux/amd64, linux/arm/v7, "
@@ -669,9 +669,9 @@ _HELP_PAGES = {
         ],
         "examples": [
             f"{PROGRAM_NAME} install ubuntu:24.04",
-            f"{PROGRAM_NAME} install debian --architecture x86_64",
-            f"{PROGRAM_NAME} install https://example.com/dist.tar",
-            f"{PROGRAM_NAME} install ~/linuxfromscratch.tgz --name lfs"
+            f"{PROGRAM_NAME} install -a x86_64 debian",
+            f"{PROGRAM_NAME} install -n dist https://example.com/rootfs.tar",
+            f"{PROGRAM_NAME} install -n dist ~/rootfs.tgz"
         ],
     },
 
@@ -680,7 +680,7 @@ _HELP_PAGES = {
         "aliases": ("li", "ls"),
         "summary": "List all installed proot containers.",
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
         ],
     },
 
@@ -701,9 +701,9 @@ _HELP_PAGES = {
             )
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--user [USER]", "Switch to USER instead of root."),
-            ("--redirect-ports",
+            ("-h, --help", "Show this help."),
+            ("-u, --user [USER]", "Switch to USER instead of root."),
+            ("-P, --redirect-ports",
              "Replace privileged port bindings with higher port numbers "
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
               "hardcoded into proot executable itself and can't be "
@@ -732,7 +732,7 @@ _HELP_PAGES = {
              + (" Takes priority over Isolated Mode."
                 " Inherited by --shared-tmp."
                 " Already included in default mode." if IS_TERMUX else "")),
-            ("--bind [SRC:DEST]",
+            ("-b, --bind [SRC:DEST]",
              "Custom filesystem binding. Can be specified multiple times."
              + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
             *([("--no-link2symlink",
@@ -751,8 +751,8 @@ _HELP_PAGES = {
             ("--kernel [TEXT]",
              "Customize the kernel release string reported by uname."),
             ("--hostname [TEXT]", "Customize the system hostname."),
-            ("--work-dir [PATH]", "Set the initial working directory."),
-            ("--env VAR=VALUE",
+            ("-w, --work-dir [PATH]", "Set the initial working directory."),
+            ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
             ("--get-proot-cmd",
@@ -826,8 +826,8 @@ _HELP_PAGES = {
             "No confirmation is requested, be careful."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--verbose", "Log each deleted file."),
+            ("-h, --help", "Show this help."),
+            ("-v, --verbose", "Log each deleted file."),
         ],
     },
 
@@ -835,7 +835,7 @@ _HELP_PAGES = {
         "usage": "rename OLDNAME NEWNAME",
         "summary": "Rename the installed proot container.",
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
         ],
         "footer": [
             {
@@ -860,7 +860,7 @@ _HELP_PAGES = {
             "Works only with containers created from Docker images."
         ),
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
         ],
     },
 
@@ -871,8 +871,8 @@ _HELP_PAGES = {
             "is not specified, archive data is read from stdin."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--verbose", "Log each extracted file."),
+            ("-h, --help", "Show this help."),
+            ("-v, --verbose", "Log each extracted file."),
         ],
         "footer": [
             {
@@ -900,9 +900,9 @@ _HELP_PAGES = {
             "Primarily intended to be used with server images."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--user [USER]", "Switch to USER instead of root."),
-            ("--redirect-ports",
+            ("-h, --help", "Show this help."),
+            ("-u, --user [USER]", "Switch to USER instead of root."),
+            ("-P, --redirect-ports",
              "Replace privileged port bindings with higher port numbers "
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
               "hardcoded into proot executable itself and can't be "
@@ -931,7 +931,7 @@ _HELP_PAGES = {
              + (" Takes priority over Isolated Mode."
                 " Inherited by --shared-tmp."
                 " Already included in default mode." if IS_TERMUX else "")),
-            ("--bind [SRC:DEST]",
+            ("-b, --bind [SRC:DEST]",
              "Custom filesystem binding. Can be specified multiple times."
              + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
             *([("--no-link2symlink",
@@ -950,8 +950,8 @@ _HELP_PAGES = {
             ("--kernel [TEXT]",
              "Customize the kernel release string reported by uname."),
             ("--hostname [TEXT]", "Customize the system hostname."),
-            ("--work-dir [PATH]", "Set the initial working directory."),
-            ("--env VAR=VALUE",
+            ("-w, --work-dir [PATH]", "Set the initial working directory."),
+            ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
             ("--get-proot-cmd",
@@ -996,11 +996,11 @@ _HELP_PAGES = {
             "'container:path' reference."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--checksum",
+            ("-h, --help", "Show this help."),
+            ("-c, --checksum",
              "Compare files by size and CRC32 checksum instead of "
              "size and modification time. Slower but with high precision."),
-            ("--delete",
+            ("-d, --delete",
              "After syncing, remove destination files and "
              "directories that have no counterpart in the source. "
              "Only effective when source is a directory."),

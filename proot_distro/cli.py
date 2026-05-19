@@ -82,12 +82,12 @@ def build_parser() -> "_PdArgumentParser":
     p_install._pd_command = "install"
     p_install.add_argument("alias", nargs="?", default=None, metavar="IMAGE")
     _p_install_name = p_install.add_mutually_exclusive_group()
-    _p_install_name.add_argument("--name", dest="custom_dist_name", metavar="ALIAS")
+    _p_install_name.add_argument("-n", "--name", dest="custom_dist_name", metavar="ALIAS")
     _p_install_name.add_argument(
         "--override-alias", dest="custom_dist_name", metavar="ALIAS"
     )
     p_install.add_argument(
-        "--architecture", dest="override_arch", metavar="ARCH",
+        "-a", "--architecture", dest="override_arch", metavar="ARCH",
     )
     p_install.add_argument("-h", "--help", action="store_true")
 
@@ -115,10 +115,10 @@ def build_parser() -> "_PdArgumentParser":
     p_login = sub.add_parser("login", aliases=["sh"], add_help=False)
     p_login._pd_command = "login"
     p_login.add_argument("alias", nargs="?", default=None)
-    p_login.add_argument("--user", default="root")
+    p_login.add_argument("-u", "--user", default="root")
     _p_login_ports = p_login.add_mutually_exclusive_group()
     _p_login_ports.add_argument(
-        "--redirect-ports", dest="redirect_ports", action="store_true"
+        "-P", "--redirect-ports", dest="redirect_ports", action="store_true"
     )
     _p_login_ports.add_argument(
         "--fix-low-ports", dest="redirect_ports", action="store_true"
@@ -141,7 +141,7 @@ def build_parser() -> "_PdArgumentParser":
         "--shared-x11", dest="shared_x11", action="store_true"
     )
     p_login.add_argument(
-        "--bind", action="append", metavar="PATH[:PATH]"
+        "-b", "--bind", action="append", metavar="PATH[:PATH]"
     )
     if IS_TERMUX:
         p_login.add_argument(
@@ -156,8 +156,8 @@ def build_parser() -> "_PdArgumentParser":
     p_login.add_argument("--emulator", dest="emulator", metavar="PATH")
     p_login.add_argument("--kernel", metavar="STRING")
     p_login.add_argument("--hostname", metavar="STRING")
-    p_login.add_argument("--work-dir", dest="work_dir", metavar="PATH")
-    p_login.add_argument("--env", action="append", metavar="VAR=VALUE")
+    p_login.add_argument("-w", "--work-dir", dest="work_dir", metavar="PATH")
+    p_login.add_argument("-e", "--env", action="append", metavar="VAR=VALUE")
     p_login.add_argument("--get-proot-cmd", dest="get_proot_cmd", action="store_true")
     p_login.add_argument("login_cmd", nargs="*")
     p_login.add_argument("-h", "--help", action="store_true")
@@ -173,9 +173,9 @@ def build_parser() -> "_PdArgumentParser":
     )
     p_backup._pd_command = "backup"
     p_backup.add_argument("alias", nargs="?", default=None)
-    p_backup.add_argument("--output", metavar="FILE")
+    p_backup.add_argument("-o", "--output", metavar="FILE")
     p_backup.add_argument(
-        "--compress", dest="compression",
+        "-c", "--compress", dest="compression",
         choices=["gzip", "bzip2", "xz", "none"], metavar="TYPE",
     )
     p_backup.add_argument("-v", "--verbose", action="store_true")
@@ -212,8 +212,8 @@ def build_parser() -> "_PdArgumentParser":
     p_sync.add_argument("source", nargs="?", default=None)
     p_sync.add_argument("destination", nargs="?", default=None)
     p_sync.add_argument("-v", "--verbose", action="store_true")
-    p_sync.add_argument("--checksum", action="store_true")
-    p_sync.add_argument("--delete", action="store_true")
+    p_sync.add_argument("-c", "--checksum", action="store_true")
+    p_sync.add_argument("-d", "--delete", action="store_true")
     p_sync.add_argument("-h", "--help", action="store_true")
 
     # build
@@ -230,14 +230,14 @@ def build_parser() -> "_PdArgumentParser":
         default=[], metavar="K=V",
     )
     p_build.add_argument(
-        "--architecture", dest="override_arch", metavar="ARCH",
+        "-a", "--architecture", dest="override_arch", metavar="ARCH",
     )
     p_build.add_argument(
         "--target", dest="target_stage", metavar="STAGE",
     )
     p_build.add_argument("--emulator", dest="emulator", metavar="PATH")
     p_build.add_argument(
-        "--output", dest="outputs", action="append",
+        "-o", "--output", dest="outputs", action="append",
         default=[], metavar="FILE",
     )
     p_build.add_argument(
@@ -258,7 +258,7 @@ def build_parser() -> "_PdArgumentParser":
     p_push._pd_command = "push"
     p_push.add_argument("image_ref", nargs="?", default=None, metavar="IMAGE")
     p_push.add_argument(
-        "--architecture", dest="override_arch", metavar="ARCH",
+        "-a", "--architecture", dest="override_arch", metavar="ARCH",
     )
     p_push.add_argument("-q", "--quiet", action="store_true")
     p_push.add_argument("-h", "--help", action="store_true")
@@ -267,9 +267,9 @@ def build_parser() -> "_PdArgumentParser":
     p_run = sub.add_parser("run", add_help=False)
     p_run._pd_command = "run"
     p_run.add_argument("alias", nargs="?", default=None)
-    p_run.add_argument("--user", default="root")
+    p_run.add_argument("-u", "--user", default="root")
     p_run.add_argument(
-        "--redirect-ports", dest="redirect_ports", action="store_true"
+        "-P", "--redirect-ports", dest="redirect_ports", action="store_true"
     )
     if IS_TERMUX:
         _p_run_isolation = p_run.add_mutually_exclusive_group()
@@ -289,7 +289,7 @@ def build_parser() -> "_PdArgumentParser":
         "--shared-x11", dest="shared_x11", action="store_true"
     )
     p_run.add_argument(
-        "--bind", action="append", metavar="PATH[:PATH]"
+        "-b", "--bind", action="append", metavar="PATH[:PATH]"
     )
     if IS_TERMUX:
         p_run.add_argument(
@@ -304,8 +304,8 @@ def build_parser() -> "_PdArgumentParser":
     p_run.add_argument("--emulator", dest="emulator", metavar="PATH")
     p_run.add_argument("--kernel", metavar="STRING")
     p_run.add_argument("--hostname", metavar="STRING")
-    p_run.add_argument("--work-dir", dest="work_dir", metavar="PATH")
-    p_run.add_argument("--env", action="append", metavar="VAR=VALUE")
+    p_run.add_argument("-w", "--work-dir", dest="work_dir", metavar="PATH")
+    p_run.add_argument("-e", "--env", action="append", metavar="VAR=VALUE")
     p_run.add_argument("--get-proot-cmd", action="store_true")
     p_run.add_argument("-h", "--help", action="store_true")
 
