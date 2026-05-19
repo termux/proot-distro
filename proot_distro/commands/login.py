@@ -121,6 +121,40 @@ def _read_passwd_field(rootfs: str, user: str, field_index: int) -> str:
     return ""
 
 
+def _find_passwd_by_uid(rootfs: str, uid: str) -> tuple:
+    """Return (home, shell, primary_gid) for the given UID string, or ('','','')."""
+    try:
+        passwd = _resolve_rootfs_path(rootfs, "/etc/passwd")
+    except OSError:
+        return ("", "", "")
+    try:
+        with open(passwd) as fh:
+            for line in fh:
+                parts = line.strip().split(":")
+                if len(parts) >= 7 and parts[2] == uid:
+                    return (parts[5], parts[6], parts[3])
+    except OSError:
+        pass
+    return ("", "", "")
+
+
+def _read_group_gid(rootfs: str, group: str) -> str:
+    """Return the GID string for the named group from /etc/group, or ''."""
+    try:
+        group_file = _resolve_rootfs_path(rootfs, "/etc/group")
+    except OSError:
+        return ""
+    try:
+        with open(group_file) as fh:
+            for line in fh:
+                parts = line.strip().split(":")
+                if parts and parts[0] == group and len(parts) > 2:
+                    return parts[2]
+    except OSError:
+        pass
+    return ""
+
+
 # Variables that the image Env must not override. These are either
 # proot-distro-defined values or host-inherited terminal variables that must
 # remain under the launcher's control regardless of image configuration.
@@ -432,7 +466,22 @@ def _command_login_inner(dist_name: str, args, configs) -> None:
                 inner += ["-c", shlex.join(login_cmd)]
         login_uid = login_gid = login_home = None
     else:
-        # /etc/passwd is optional. When absent, --user must be a numeric UID.
+        # Parse user:group / uid:gid / uid specification.
+        _user_arg = login_user
+        if ":" in _user_arg:
+            user_spec, group_spec = _user_arg.split(":", 1)
+            if not user_spec or not group_spec:
+                msg()
+                msg(f"{C['BRED']}Error: '--user' with ':' separator requires "
+                    f"both user and group to be non-empty.{C['RST']}")
+                msg()
+                sys.exit(1)
+        else:
+            user_spec = _user_arg
+            group_spec = None
+        login_user = user_spec  # used for USER env var; strip any group suffix
+
+        # /etc/passwd is optional. When absent, --user must use numeric IDs.
         passwd_available = False
         try:
             passwd_path = _resolve_rootfs_path(rootfs, "/etc/passwd")
@@ -441,44 +490,71 @@ def _command_login_inner(dist_name: str, args, configs) -> None:
             pass
 
         if passwd_available:
-            try:
-                with open(passwd_path) as fh:
-                    user_found = any(
-                        line.startswith(f"{login_user}:") for line in fh
-                    )
-            except OSError:
-                user_found = False
-
-            if not user_found:
-                msg(f"{C['BRED']}Error: no user "
-                    f"'{C['YELLOW']}{login_user}{C['BRED']}' defined in "
-                    f"/etc/passwd.{C['RST']}")
-                sys.exit(1)
-
-            login_uid = _read_passwd_field(rootfs, login_user, 2)
-            login_gid = _read_passwd_field(rootfs, login_user, 3)
-            login_home = _read_passwd_field(rootfs, login_user, 5)
-            login_shell = _read_passwd_field(rootfs, login_user, 6)
-
-            if not login_uid:
-                msg(f"{C['BRED']}Error: failed to retrieve UID for user "
-                    f"'{login_user}'.{C['RST']}")
-                sys.exit(1)
-            if not login_home:
-                login_home = (
-                    f"/home/{login_user}" if login_user != "root" else "/root"
+            if user_spec.isdigit():
+                # Numeric UID: use directly; try to resolve home/shell/gid from passwd.
+                login_uid = user_spec
+                _home, _shell, _pgid = _find_passwd_by_uid(rootfs, user_spec)
+                login_home = _home or (
+                    "/root" if login_uid == "0" else f"/home/{login_uid}"
                 )
+                login_shell = _shell or "/bin/sh"
+                _primary_gid = _pgid
+            else:
+                # Named user: must be present in /etc/passwd.
+                try:
+                    with open(passwd_path) as fh:
+                        user_found = any(
+                            line.startswith(f"{user_spec}:") for line in fh
+                        )
+                except OSError:
+                    user_found = False
+
+                if not user_found:
+                    msg(f"{C['BRED']}Error: no user "
+                        f"'{C['YELLOW']}{user_spec}{C['BRED']}' defined in "
+                        f"/etc/passwd.{C['RST']}")
+                    sys.exit(1)
+
+                login_uid = _read_passwd_field(rootfs, user_spec, 2)
+                _primary_gid = _read_passwd_field(rootfs, user_spec, 3)
+                login_home = _read_passwd_field(rootfs, user_spec, 5)
+                login_shell = _read_passwd_field(rootfs, user_spec, 6)
+
+                if not login_uid:
+                    msg(f"{C['BRED']}Error: failed to retrieve UID for user "
+                        f"'{user_spec}'.{C['RST']}")
+                    sys.exit(1)
+                if not login_home:
+                    login_home = (
+                        "/root" if user_spec == "root" else f"/home/{user_spec}"
+                    )
+                if not login_shell:
+                    login_shell = "/bin/sh"
+
             if not login_wd:
                 login_wd = login_home
-            if not login_shell:
-                login_shell = "/bin/sh"
+
+            # Resolve group.
+            if group_spec is None:
+                login_gid = _primary_gid or login_uid
+            elif group_spec.isdigit():
+                login_gid = group_spec
+            else:
+                # Named group: must be present in /etc/group.
+                login_gid = _read_group_gid(rootfs, group_spec)
+                if not login_gid:
+                    msg()
+                    msg(f"{C['BRED']}Error: no group "
+                        f"'{C['YELLOW']}{group_spec}{C['BRED']}' defined in "
+                        f"/etc/group.{C['RST']}")
+                    msg()
+                    sys.exit(1)
         else:
-            # No /etc/passwd: accept only a numeric UID via --user.
-            # "root" is allowed as a universal alias for UID 0.
-            if login_user == "root":
-                login_uid = login_gid = "0"
-            elif login_user.isdigit():
-                login_uid = login_gid = login_user
+            # No /etc/passwd: only numeric IDs (or "root" alias) are accepted.
+            if user_spec == "root":
+                login_uid = "0"
+            elif user_spec.isdigit():
+                login_uid = user_spec
             else:
                 msg()
                 msg(f"{C['BRED']}Error: container "
@@ -487,6 +563,20 @@ def _command_login_inner(dist_name: str, args, configs) -> None:
                     f"in this case.{C['RST']}")
                 msg()
                 sys.exit(1)
+
+            if group_spec is None:
+                login_gid = login_uid
+            elif group_spec.isdigit():
+                login_gid = group_spec
+            else:
+                msg()
+                msg(f"{C['BRED']}Error: container "
+                    f"'{C['YELLOW']}{dist_name}{C['BRED']}' has no "
+                    f"/etc/group; '--user' only accepts a numeric GID "
+                    f"in group specification.{C['RST']}")
+                msg()
+                sys.exit(1)
+
             login_home = "/root" if login_uid == "0" else f"/home/{login_uid}"
             if not login_wd:
                 login_wd = login_home
@@ -740,7 +830,7 @@ def _command_login_inner(dist_name: str, args, configs) -> None:
         if use_shared_home:
             if dist_type == "termux":
                 proot_args.append(f"--bind={TERMUX_HOME}:{_TERMUX_HOME_INNER}")
-            elif login_user == "root":
+            elif login_uid == "0":
                 proot_args.append(f"--bind={TERMUX_HOME}:/root")
             else:
                 proot_args.append(f"--bind={TERMUX_HOME}:{login_home}")

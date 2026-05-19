@@ -702,7 +702,12 @@ _HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
-            ("-u, --user [USER]", "Switch to USER instead of root."),
+            ("-u, --user [USER]",
+             "User identity to switch to instead of root. Accepted forms: "
+             "'name' (username from /etc/passwd), "
+             "'name:group' (username and group name from /etc/passwd and /etc/group), "
+             "'uid' (numeric UID), "
+             "'uid:gid' (numeric UID and GID)."),
             ("-P, --redirect-ports",
              "Replace privileged port bindings with higher port numbers "
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
@@ -901,7 +906,12 @@ _HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
-            ("-u, --user [USER]", "Switch to USER instead of root."),
+            ("-u, --user [USER]",
+             "User identity to switch to instead of root. Accepted forms: "
+             "'name' (username from /etc/passwd), "
+             "'name:group' (username and group name from /etc/passwd and /etc/group), "
+             "'uid' (numeric UID), "
+             "'uid:gid' (numeric UID and GID)."),
             ("-P, --redirect-ports",
              "Replace privileged port bindings with higher port numbers "
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
