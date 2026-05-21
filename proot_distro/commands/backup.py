@@ -98,6 +98,10 @@ def _iter_entries(root: str, arcroot: str, skip_top_level=()):
         rel = os.path.relpath(dirpath, root)
         if rel == '.' and skip:
             dirnames[:] = [d for d in dirnames if d not in skip]
+        # Sort up front so every sibling — symlink-to-dir yields below,
+        # subsequent descents, and file yields further down — comes out
+        # in deterministic order.
+        dirnames.sort()
         arc_dir = arcroot if rel == '.' else os.path.join(arcroot, rel)
 
         yield (dirpath, arc_dir)
@@ -110,8 +114,6 @@ def _iter_entries(root: str, arcroot: str, skip_top_level=()):
                 dirnames.pop(i)
             else:
                 i += 1
-
-        dirnames.sort()
 
         for fname in sorted(filenames):
             yield (os.path.join(dirpath, fname), os.path.join(arc_dir, fname))
