@@ -37,6 +37,10 @@
 #     dropped so a crafted archive cannot escape the rootfs. Bare "."
 #     components are kept (OCI layers commonly use "./foo" paths);
 #     os.path.join collapses them so they cannot escape either.
+#   - Hard-link targets (member.linkname) get the same filtering as
+#     member.name. Without it, a malicious archive could set linkname
+#     to "../../etc/shadow" and we'd shutil.copy2 the host's file into
+#     a member-defined dest inside the rootfs.
 #   - Hard links are deferred until every regular file has been
 #     written, then copied with shutil.copy2 so the link source
 #     definitely exists and mtime survives the round-trip.
@@ -199,11 +203,22 @@ def _write_symlink(dest: str, member) -> None:
 
 
 def _defer_hardlink(member, rootfs_dir, strip, dest, deferred_links):
-    """Queue a hardlink for copy after all regular files are written."""
+    """Queue a hardlink for copy after all regular files are written.
+
+    The linkname is filtered identically to member.name: leading slashes
+    are stripped, the first `strip` components dropped, and any ".." or
+    empty component drops the entry. Without this a malicious archive
+    could point linkname at a host path (e.g. "../../etc/shadow") and
+    shutil.copy2 would resolve it through the rootfs prefix, copying
+    host content into the member-defined dest inside the rootfs.
+    """
     lparts = member.linkname.lstrip("/").rstrip("/").split("/")
     if len(lparts) <= strip:
         return
-    link_src = os.path.join(rootfs_dir, *lparts[strip:])
+    rel_lparts = lparts[strip:]
+    if any(p in ("..", "") for p in rel_lparts):
+        return
+    link_src = os.path.join(rootfs_dir, *rel_lparts)
     deferred_links.append((dest, link_src))
 
 
