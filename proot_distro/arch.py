@@ -58,6 +58,12 @@ def supports_32bit() -> bool:
     if machine in ("aarch64", "arm64"):
         # Mirror lscpu's technique: call personality(PER_LINUX32) and check
         # whether the kernel accepts it (only when CPU implements AArch32 EL0).
+        # On modern 64-bit-only ARM cores AArch32 EL0 is missing and the
+        # syscall returns -1; if libc cannot even be loaded we conservatively
+        # assume the same (no 32-bit support) rather than falling through to
+        # the catch-all `return True`, which would mislead the caller into
+        # running an arm binary natively on a host that can't actually
+        # execute it.
         PER_LINUX32 = 0x0008
         try:
             libc = ctypes.CDLL(None)
@@ -67,7 +73,7 @@ def supports_32bit() -> bool:
             libc.personality(prev)  # restore
             return True
         except Exception:
-            pass
+            return False
 
     return True
 
