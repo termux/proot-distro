@@ -37,6 +37,28 @@ import signal
 from proot_distro.message import log_info, log_error
 
 
+def resolve_l2s_target(symlink_full: str, target: str, rootfs: str):
+    """Resolve `target` to an absolute path inside `<rootfs>/.l2s/`, or None.
+
+    `symlink_full` is the absolute path of the symlink whose readlink
+    returned `target`; `rootfs` is the container rootfs root. Returns
+    the absolute path of the backing file when `target` points into
+    `<rootfs>/.l2s/`, otherwise None. Used by callers that need to
+    materialise the symlink as the backing file's content (backup,
+    build layer writer) so the produced artifact is portable.
+    """
+    if os.path.isabs(target):
+        abs_target = os.path.normpath(target)
+    else:
+        abs_target = os.path.normpath(
+            os.path.join(os.path.dirname(symlink_full), target)
+        )
+    l2s_root = os.path.join(os.path.abspath(rootfs), ".l2s")
+    if abs_target == l2s_root or abs_target.startswith(l2s_root + os.sep):
+        return abs_target
+    return None
+
+
 def rewrite_l2s_targets(rootfs: str, old_prefix: str) -> None:
     """Rewrite every symlink in *rootfs* whose target starts with *old_prefix*.
 

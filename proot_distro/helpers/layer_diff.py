@@ -44,6 +44,7 @@ import stat
 import tarfile
 import zlib
 
+from proot_distro.l2s import resolve_l2s_target
 from proot_distro.progress import (
     clear_bar, draw_bytes_bar, progress_active,
 )
@@ -173,23 +174,6 @@ def _whiteout_paths(deleted, surviving_dirs):
         else:
             arcnames.append(".wh..wh..opq")
     return arcnames
-
-
-def _resolve_l2s_target(symlink_full, target, rootfs):
-    """If `target` (the readlink of the symlink at `symlink_full`) points
-    into <rootfs>/.l2s/, return the absolute path of that backing file.
-    Otherwise return None.
-    """
-    if os.path.isabs(target):
-        abs_target = os.path.normpath(target)
-    else:
-        abs_target = os.path.normpath(
-            os.path.join(os.path.dirname(symlink_full), target)
-        )
-    l2s_root = os.path.join(os.path.abspath(rootfs), ".l2s")
-    if abs_target == l2s_root or abs_target.startswith(l2s_root + os.sep):
-        return abs_target
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +392,7 @@ def _add_entry(tf, rootfs, rel):
         # the moment the image is applied to a different location.
         # Resolve them to the actual file content and pack as regular
         # files so the layer is self-contained.
-        l2s_path = _resolve_l2s_target(full, target, rootfs)
+        l2s_path = resolve_l2s_target(full, target, rootfs)
         if l2s_path is not None:
             try:
                 cst = os.stat(l2s_path)

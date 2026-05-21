@@ -29,6 +29,7 @@ import stat
 import sys
 import tarfile
 
+from proot_distro.l2s import resolve_l2s_target
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.progress import (
     REDRAW_THRESHOLD_BYTES, clear_bar, draw_bytes_bar,
@@ -79,16 +80,24 @@ def _compression_mode(filename: str) -> str:
     return ''
 
 
-def _iter_entries(root: str, arcroot: str):
+def _iter_entries(root: str, arcroot: str, skip_top_level=()):
     """Yield *(src_path, arcname)* for every entry under *root*.
 
     Symlinks to subdirectories are yielded as single entries; os.walk is
     prevented from descending into them. All sibling entries are sorted.
+
+    *skip_top_level* is a collection of directory names that should be
+    omitted when they appear directly under *root* (no descent, no
+    yielded entry). Used to exclude proot's `.l2s/` backing store
+    whose contents are inlined into symlinks elsewhere in the tree.
     """
+    skip = set(skip_top_level)
     for dirpath, dirnames, filenames in os.walk(
         root, followlinks=False, topdown=True
     ):
         rel = os.path.relpath(dirpath, root)
+        if rel == '.' and skip:
+            dirnames[:] = [d for d in dirnames if d not in skip]
         arc_dir = arcroot if rel == '.' else os.path.join(arcroot, rel)
 
         yield (dirpath, arc_dir)
@@ -130,13 +139,21 @@ class _ReadCounter:
 
 
 def _add_path(
-    tf: tarfile.TarFile, src: str, arcname: str, on_read=None
+    tf: tarfile.TarFile, src: str, arcname: str,
+    rootfs: str, on_read=None,
 ) -> None:
     """Add *src* to *tf* as *arcname*, stripping ownership info.
 
     Block/character devices, FIFOs, and sockets are silently skipped.
-    Symlinks are stored as symlinks (not followed). Regular files and
-    directories are stored with their permissions intact.
+    Symlinks are stored as symlinks (not followed) unless they are
+    proot link2symlink emulated hard links — i.e. symlinks whose target
+    points into <rootfs>/.l2s/. Those are resolved to the backing
+    file's content and packed as regular files so the archive is
+    self-contained and survives being restored to a different path.
+    Regular files and directories are stored with their permissions intact.
+
+    *rootfs* is the container's rootfs root, used only to detect the
+    `.l2s/` backing-store prefix in symlink targets.
 
     *on_read*, when provided, is called with the byte count of each chunk
     read from a regular file so callers can track progress during compression.
@@ -149,6 +166,47 @@ def _add_path(
     if (stat.S_ISBLK(m) or stat.S_ISCHR(m)
             or stat.S_ISFIFO(m) or stat.S_ISSOCK(m)):
         return
+
+    # Detect proot link2symlink symlinks and pack their backing files'
+    # content as regular files. Multiple l2s symlinks sharing one
+    # backing file become independent regular files in the archive —
+    # the guest-side hard-link semantics are lost, file content is
+    # preserved, and the archive carries no absolute paths into the
+    # source rootfs that would dangle after restore.
+    if stat.S_ISLNK(m):
+        try:
+            target = os.readlink(src)
+        except OSError:
+            target = None
+        if target is not None:
+            l2s_path = resolve_l2s_target(src, target, rootfs)
+            if l2s_path is not None:
+                try:
+                    cst = os.stat(l2s_path)
+                except OSError:
+                    cst = None
+                if cst is not None and stat.S_ISREG(cst.st_mode):
+                    info = tarfile.TarInfo(arcname)
+                    info.type = tarfile.REGTYPE
+                    info.size = cst.st_size
+                    info.mode = stat.S_IMODE(cst.st_mode)
+                    info.mtime = int(cst.st_mtime)
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ''
+                    info.gname = ''
+                    try:
+                        with open(l2s_path, 'rb') as fh:
+                            tf.addfile(
+                                info,
+                                _ReadCounter(fh, on_read) if on_read else fh,
+                            )
+                    except OSError:
+                        pass
+                    return
+                # Backing file missing or non-regular: fall through and
+                # store the symlink as-is.
+
     try:
         info = tf.gettarinfo(src, arcname=arcname)
     except OSError:
@@ -264,23 +322,45 @@ def _run_backup(
 
     # Build the list of entries: manifest.json first, then rootfs tree.
     # Archive prefix is just the container name (e.g. "ubuntu/").
+    # `.l2s` is skipped at the rootfs root because its files are inlined
+    # into their referring symlinks by _add_path.
     arc_prefix = container_name
     entries = []
     # manifest.json (optional — may not exist for legacy containers).
     if os.path.isfile(manifest_path):
         entries.append((manifest_path, os.path.join(arc_prefix, "manifest.json")))
     # rootfs tree.
-    entries.extend(_iter_entries(rootfs_dir, os.path.join(arc_prefix, "rootfs")))
+    entries.extend(_iter_entries(
+        rootfs_dir, os.path.join(arc_prefix, "rootfs"),
+        skip_top_level=(".l2s",),
+    ))
 
-    # Pre-compute total size of regular files to drive the progress bar.
+    # Pre-compute total size of payload bytes to drive the progress bar.
+    # Regular files contribute their own size; l2s symlinks contribute
+    # the size of their backing file (since _add_path will inline that
+    # content in place of the symlink).
     total_size = 0
     for src, _arc in entries:
         try:
             st = os.lstat(src)
-            if stat.S_ISREG(st.st_mode):
-                total_size += st.st_size
         except OSError:
-            pass
+            continue
+        if stat.S_ISREG(st.st_mode):
+            total_size += st.st_size
+        elif stat.S_ISLNK(st.st_mode):
+            try:
+                target = os.readlink(src)
+            except OSError:
+                continue
+            l2s_path = resolve_l2s_target(src, target, rootfs_dir)
+            if l2s_path is None:
+                continue
+            try:
+                cst = os.stat(l2s_path)
+            except OSError:
+                continue
+            if stat.S_ISREG(cst.st_mode):
+                total_size += cst.st_size
 
     done_size = 0
 
@@ -316,7 +396,7 @@ def _run_backup(
             mode=tar_mode,
         ) as tf:
             for src, arc in entries:
-                _add_path(tf, src, arc, on_read=_on_read)
+                _add_path(tf, src, arc, rootfs_dir, on_read=_on_read)
                 _on_entry(arc)
 
         clear_bar()
