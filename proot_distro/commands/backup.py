@@ -147,13 +147,14 @@ def _add_path(
     Block/character devices, FIFOs, and sockets are silently skipped.
     Symlinks are stored as symlinks (not followed) unless they are
     proot link2symlink emulated hard links — i.e. symlinks whose target
-    points into <rootfs>/.l2s/. Those are resolved to the backing
-    file's content and packed as regular files so the archive is
-    self-contained and survives being restored to a different path.
-    Regular files and directories are stored with their permissions intact.
+    basename matches the link2symlink prefix (see resolve_l2s_target).
+    Those are resolved to the backing file's content and packed as
+    regular files so the archive is self-contained and survives being
+    restored to a different path. Regular files and directories are
+    stored with their permissions intact.
 
-    *rootfs* is the container's rootfs root, used only to detect the
-    `.l2s/` backing-store prefix in symlink targets.
+    *rootfs* is the container's rootfs root, used to confine resolved
+    l2s targets to the rootfs subtree.
 
     *on_read*, when provided, is called with the byte count of each chunk
     read from a regular file so callers can track progress during compression.
@@ -167,12 +168,14 @@ def _add_path(
             or stat.S_ISFIFO(m) or stat.S_ISSOCK(m)):
         return
 
-    # Detect proot link2symlink symlinks and pack their backing files'
-    # content as regular files. Multiple l2s symlinks sharing one
-    # backing file become independent regular files in the archive —
-    # the guest-side hard-link semantics are lost, file content is
-    # preserved, and the archive carries no absolute paths into the
-    # source rootfs that would dangle after restore.
+    # Detect proot link2symlink symlinks (regardless of whether their
+    # intermediate is stashed in <rootfs>/.l2s/ or alongside the
+    # original) and pack their backing files' content as regular
+    # files. Multiple l2s symlinks sharing one backing file become
+    # independent regular files in the archive — the guest-side
+    # hard-link semantics are lost, file content is preserved, and
+    # the archive carries no absolute paths into the source rootfs
+    # that would dangle after restore.
     if stat.S_ISLNK(m):
         try:
             target = os.readlink(src)

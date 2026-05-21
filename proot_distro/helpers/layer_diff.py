@@ -387,11 +387,13 @@ def _add_entry(tf, rootfs, rel):
             return
 
         # proot's --link2symlink extension turns hard-link calls into
-        # symlinks pointing into <rootfs>/.l2s/. Those targets are
-        # absolute paths into the build's tmp rootfs and would dangle
-        # the moment the image is applied to a different location.
-        # Resolve them to the actual file content and pack as regular
-        # files so the layer is self-contained.
+        # symlinks pointing at an intermediate file (in <rootfs>/.l2s/
+        # when PROOT_L2S_DIR is set, alongside the original otherwise).
+        # Either way the targets are absolute paths into the build's
+        # tmp rootfs and would dangle once the image is applied
+        # elsewhere; resolve_l2s_target spots the chain by basename
+        # prefix. Pack the backing file's content as a regular file so
+        # the layer is self-contained.
         l2s_path = resolve_l2s_target(full, target, rootfs)
         if l2s_path is not None:
             try:

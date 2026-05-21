@@ -37,26 +37,54 @@ import signal
 from proot_distro.message import log_info, log_error
 
 
+# Prefix used by proot's --link2symlink extension when naming the
+# intermediate file that stands in for a hard-link. See
+# proot/src/extension/link2symlink/link2symlink.c: ".proot.l2s." in
+# userland builds (the Termux default) and ".l2s." otherwise. Both
+# spellings are accepted so layers produced by either build are
+# recognised.
+_L2S_NAME_PREFIXES = (".proot.l2s.", ".l2s.")
+
+
 def resolve_l2s_target(symlink_full: str, target: str, rootfs: str):
-    """Resolve `target` to an absolute path inside `<rootfs>/.l2s/`, or None.
+    """Return abs path of an l2s intermediate file if `target` looks like one.
 
     `symlink_full` is the absolute path of the symlink whose readlink
-    returned `target`; `rootfs` is the container rootfs root. Returns
-    the absolute path of the backing file when `target` points into
-    `<rootfs>/.l2s/`, otherwise None. Used by callers that need to
-    materialise the symlink as the backing file's content (backup,
-    build layer writer) so the produced artifact is portable.
+    returned `target`; `rootfs` is the container rootfs root, used only
+    to confine the resolved path to the rootfs subtree. Returns None
+    when `target` is not an l2s intermediate or when the resolved path
+    would escape `rootfs`.
+
+    proot's --link2symlink extension emulates hard links by replacing
+    the original path with a symlink to an intermediate file whose
+    basename is ``<PREFIX><name><4-digit-count>``. The intermediate is
+    itself a symlink to a final ``.NNNN``-suffixed file holding the
+    actual content. The intermediate's parent directory depends on
+    proot's PROOT_L2S_DIR: when set, every intermediate lives in that
+    one directory (proot-distro sets it to ``<rootfs>/.l2s``); when
+    unset, the intermediate is created next to the original. Detection
+    is therefore by basename prefix, not by directory, so symlinks are
+    recognised regardless of where the producing proot stashed them.
+
+    Callers (backup, build layer writer) materialise the symlink as
+    the backing file's content via os.stat / open() on the returned
+    path — both follow symlinks and land on the final file automatically.
     """
+    name = os.path.basename(target)
+    if not name.startswith(_L2S_NAME_PREFIXES):
+        return None
     if os.path.isabs(target):
         abs_target = os.path.normpath(target)
     else:
         abs_target = os.path.normpath(
             os.path.join(os.path.dirname(symlink_full), target)
         )
-    l2s_root = os.path.join(os.path.abspath(rootfs), ".l2s")
-    if abs_target == l2s_root or abs_target.startswith(l2s_root + os.sep):
-        return abs_target
-    return None
+    rootfs_abs = os.path.abspath(rootfs)
+    if abs_target != rootfs_abs and not abs_target.startswith(
+        rootfs_abs + os.sep
+    ):
+        return None
+    return abs_target
 
 
 def rewrite_l2s_targets(rootfs: str, old_prefix: str) -> None:
