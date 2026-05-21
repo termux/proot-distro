@@ -183,10 +183,13 @@ Pull is manifest-cache-first: cached + all layers present ⇒ fully
 offline; cached + missing layers ⇒ fetch token + missing only;
 otherwise full pipeline (token → manifest → arch unwrap → config blob
 → layers). Cache writes use `atomic_replace`. Layer digests are
-stream-verified via `hashlib.sha256` before promotion. `zstd`
-mediaType is refused (Python `tarfile` lacks zstd). Whiteouts
-(`.wh..wh..opq` clears parent dir; `.wh.<name>` deletes sibling) and
-traversal protection live in `helpers/tar_extract.py`.
+stream-verified via `hashlib.sha256` before promotion. Digests pass
+through `validate_digest()` before being converted to filesystem
+paths (layer cache, OCI blob layout) so a crafted reference like
+`../foo:bar` can't escape the cache root. `zstd` mediaType is refused
+(Python `tarfile` lacks zstd). Whiteouts (`.wh..wh..opq` clears parent
+dir; `.wh.<name>` deletes sibling), hardlink linkname filtering, and
+member-name traversal protection live in `helpers/tar_extract.py`.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise

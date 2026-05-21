@@ -44,6 +44,7 @@ from proot_distro.helpers.docker.cache import (
     load_manifest_cache,
     manifest_cache_path,
     save_manifest_cache,
+    validate_digest,
 )
 from proot_distro.helpers.docker.transport import (
     AuthStrippingRedirectHandler,
@@ -83,4 +84,5 @@ __all__ = (
     "push_image",
     "registry_base_url",
     "save_manifest_cache",
+    "validate_digest",
 )

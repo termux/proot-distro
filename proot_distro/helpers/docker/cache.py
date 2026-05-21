@@ -32,14 +32,43 @@
 import hashlib
 import json
 import os
+import re
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.constants import LAYER_CACHE_DIR, MANIFEST_CACHE_DIR
 from proot_distro.helpers.docker.refs import parse_image_ref
 
 
+# OCI digest grammar (algorithm ":" encoded). The algorithm component
+# allows alphanumerics joined by single +, _, -, or . separators, so
+# bare ".." can never appear in a valid digest. Anchored so a crafted
+# string like "../foo:bar" — which would make layer_cache_path or any
+# digest→path mapper escape LAYER_CACHE_DIR — is rejected.
+_DIGEST_RE = re.compile(
+    r"^[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*:[A-Fa-f0-9]+$"
+)
+
+
+def validate_digest(digest: str) -> str:
+    """Return *digest* unchanged when well-formed; raise otherwise.
+
+    Used as a choke point before any conversion of an untrusted digest
+    into a filesystem path (layer cache, OCI blob layout). Accepts any
+    OCI-conformant algorithm/hex pair; rejects anything containing path
+    separators or empty/dot components.
+    """
+    if not isinstance(digest, str) or not _DIGEST_RE.match(digest):
+        raise RuntimeError(f"Malformed digest: {digest!r}")
+    return digest
+
+
 def layer_cache_path(digest: str) -> str:
-    """Return the on-disk path of the cached blob for *digest*."""
+    """Return the on-disk path of the cached blob for *digest*.
+
+    Refuses malformed digests so callers cannot accidentally route a
+    crafted value past LAYER_CACHE_DIR via path traversal.
+    """
+    validate_digest(digest)
     return os.path.join(LAYER_CACHE_DIR, digest.replace(":", "_"))
 
 

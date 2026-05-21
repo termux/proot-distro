@@ -39,7 +39,7 @@ from proot_distro.atomic import atomic_replace
 from proot_distro.message import log_info
 from proot_distro.progress import clear_bar, progress_active
 from proot_distro.helpers.docker import (
-    ARCH_TO_DOCKER, apply_layer, layer_cache_path,
+    ARCH_TO_DOCKER, apply_layer, layer_cache_path, validate_digest,
 )
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
@@ -98,7 +98,14 @@ def extract_plain_tar(archive_path: str, strip: int, rootfs_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _oci_blob_path(digest: str) -> str:
-    """Convert 'sha256:abc123' to 'blobs/sha256/abc123'."""
+    """Convert 'sha256:abc123' to 'blobs/sha256/abc123'.
+
+    Validates the digest first so a crafted index.json cannot route
+    the lookup through a member name with directory traversal (e.g.
+    'blobs/../etc/passwd/...') even when the archive carries a
+    matching forged member.
+    """
+    validate_digest(digest)
     algo, hex_val = digest.split(":", 1)
     return f"blobs/{algo}/{hex_val}"
 
