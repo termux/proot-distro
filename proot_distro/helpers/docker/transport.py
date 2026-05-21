@@ -115,9 +115,25 @@ def push_denied_msg(image_ref: str, code: int) -> str:
     )
 
 
+_CHALLENGE_PARAM_RE = re.compile(
+    r'(\w+)\s*=\s*(?:"([^"]*)"|([^",\s]+))'
+)
+
+
 def _parse_bearer_challenge(header_value: str) -> dict:
-    """Return the key=value pairs from a Bearer WWW-Authenticate header."""
-    return dict(re.findall(r'(\w+)="([^"]*)"', header_value))
+    """Return the key=value pairs from a Bearer WWW-Authenticate header.
+
+    Per RFC 7235 each auth-param's value may be either a quoted-string
+    or a bare token. Practical registries (Docker Hub, GHCR, ECR) quote
+    everything, but the spec permits e.g.
+        Bearer realm=https://auth.example/token,service=svc
+    on a self-hosted registry. We accept both forms so the probe still
+    works against spec-compliant minimal implementations.
+    """
+    return {
+        key: (quoted if quoted else bare)
+        for key, quoted, bare in _CHALLENGE_PARAM_RE.findall(header_value)
+    }
 
 
 def env_basic_auth() -> str:
