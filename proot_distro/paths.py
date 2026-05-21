@@ -39,6 +39,7 @@ import sys
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.message import crit_error
 from proot_distro.locking import ContainerLock
+from proot_distro.names import is_valid_name
 
 
 def container_dir(name: str) -> str:
@@ -66,13 +67,19 @@ def resolve_container_path(spec: str) -> str:
 
     For a `name:path` spec the result is forced to stay inside the
     container's rootfs — an attempt to traverse out with `..` segments
-    is rejected with a fatal error. For a plain path the spec is just
-    expanded to its absolute form.
+    is rejected with a fatal error. An empty name (`:path`) is also
+    rejected: without the check rootfs would degenerate to CONTAINERS_DIR
+    itself and the spec would silently scribble into a stranger area
+    of the runtime tree. For a plain path the spec is just expanded
+    to its absolute form.
     """
     if ":" not in spec:
         return os.path.normpath(os.path.abspath(spec))
 
     name, _, rel_path = spec.partition(":")
+    if not is_valid_name(name):
+        crit_error(f"invalid container name '{name}' in spec '{spec}'.")
+        sys.exit(1)
     rootfs = os.path.normpath(container_rootfs(name))
     if not os.path.isdir(rootfs):
         crit_error(f"container '{name}' does not exist.")
