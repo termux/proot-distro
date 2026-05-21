@@ -119,8 +119,8 @@ On startup the tool verifies that `proot` is available. If it isn't:
 - Otherwise, an install hint is printed and the program exits.
 
 PRoot-Distro also refuses to run inside another `proot` (nested proot
-is not supported by `proot` itself) and prints a yellow warning if
-launched as the `root` user.
+is not supported by `proot` itself) and prints a warning if launched
+as the `root` user.
 
 ### Quick start
 
@@ -177,8 +177,9 @@ from a local archive file.
 
 | Option | Description |
 |---|---|
-| `--name NAME` | Set a custom local name for the container. Defaults to the image name without tag/registry, or the archive filename without extension. Must start with a letter or digit; may contain only letters, digits, `_`, `.`, `-`. Empty name is rejected. |
-| `--architecture ARCH` | Override the target CPU architecture. Accepts native names (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings (`linux/arm64`, `linux/amd64`, `linux/arm/v7`, `linux/386`, `linux/riscv64`). Defaults to the host CPU. |
+| `-n`, `--name NAME` | Set a custom local name for the container. Defaults to the image name without tag/registry, or the archive filename without extension. Must start with a letter or digit; may contain only letters, digits, `_`, `.`, `-`. Empty name is rejected. The deprecated long form `--override-alias` is still accepted. |
+| `-a`, `--architecture ARCH` | Override the target CPU architecture. Accepts native names (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings (`linux/arm64`, `linux/amd64`, `linux/arm/v7`, `linux/386`, `linux/riscv64`). Defaults to the host CPU. |
+| `-q`, `--quiet` | Suppress non-error output. |
 
 #### From a Docker/OCI registry
 
@@ -221,9 +222,10 @@ When the env var is set, the authentication progress line notes
 `(user credentials)` so you can confirm your credentials are being
 picked up.
 
-Layers are cached in `$BASE_CACHE_DIR/layers/` and reused on
-subsequent installs. If both the resolved manifest and all of its
-layers are already in the cache, installation runs fully offline.
+Layers are cached in `$BASE_CACHE_DIR/oci_layers/` and reused on
+subsequent installs. If both the resolved manifest (cached in
+`$BASE_CACHE_DIR/oci_manifests/`) and all of its layers are already
+present, installation runs fully offline.
 
 **Examples:**
 
@@ -321,10 +323,9 @@ installs entirely without network access.
 | `--architecture ARCH` | Target CPU architecture (default: host). Accepts proot-distro names (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings (`linux/arm64`, …). |
 | `--target STAGE` | Stop after the named stage of a multi-stage build. |
 | `--emulator PATH` | Override the QEMU user-mode binary for cross-architecture builds. |
-| `--output FILE` | Write the built image as an OCI image-layout tarball to FILE. Compression is inferred from the extension (`.oci.tar`, `.oci.tar.gz`, `.oci.tar.xz`). Repeatable. |
+| `-o`, `--output FILE` | Write the built image as an OCI image-layout tarball to FILE. Compression is inferred from the extension (`.oci.tar`, `.oci.tar.gz`, `.oci.tar.xz`). Repeatable. |
 | `--install-as NAME` | After build, install the image as a container named NAME. |
 | `--no-cache` | Disable per-step build caching. |
-| `--pull` | Re-pull base images from the registry even on cache hit. |
 | `-v`, `--verbose` | Echo each instruction and stream `RUN` output. |
 | `-q`, `--quiet` | Suppress non-error output. |
 
@@ -360,8 +361,8 @@ doesn't have `proot` available.
 
 | Output | Trigger | Format |
 |---|---|---|
-| Manifest cache | Always (free) | `dlcache/manifests/<key>.json` referencing layer blobs in `dlcache/layers/`. Installable via `proot-distro install <tag>` with no network access. |
-| OCI tarball | `--output FILE` | Standard OCI image-layout tarball (`oci-layout`, `index.json`, `blobs/sha256/*`). Installable via `proot-distro install ./FILE`; also consumable by `docker load`. |
+| Manifest cache | Always (free) | `$BASE_CACHE_DIR/oci_manifests/<key>.json` referencing layer blobs in `$BASE_CACHE_DIR/oci_layers/`. Installable via `proot-distro install <tag>` with no network access. |
+| OCI tarball | `-o`/`--output FILE` | Standard OCI image-layout tarball (`oci-layout`, `index.json`, `blobs/sha256/*`). Installable via `proot-distro install ./FILE`; also consumable by `docker load`. |
 | Container | `--install-as NAME` | Installed container at `containers/<NAME>/`. Performed after the build by invoking the install command with the just-built tag. |
 
 **Build cache:**
@@ -373,10 +374,9 @@ the relevant inputs (file digests for `COPY`/`ADD`, env+ARG state for
 re-running the instruction. Pass `--no-cache` to skip cache lookups.
 
 The build cache index lives at
-`$BASE_CACHE_DIR/buildcache/index.json`; layer blobs themselves
-are stored alongside registry-pulled blobs in
-`$BASE_CACHE_DIR/layers/`. `proot-distro clear-cache` deletes
-both.
+`$BASE_CACHE_DIR/build_cache_index.json`; layer blobs themselves are
+stored alongside registry-pulled blobs in `$BASE_CACHE_DIR/oci_layers/`.
+`proot-distro clear-cache` deletes both.
 
 **Examples:**
 
@@ -548,18 +548,17 @@ proot-distro login ubuntu --get-proot-cmd
 
 | Option | Description |
 |---|---|
-| `--user USER` | Log in as USER (default: `root`). For containers without `/etc/passwd`, only a numeric UID or the literal `root` is accepted. |
-| `--redirect-ports` | Redirect privileged ports 1–1023 to higher numbers (`22 → 2022`, `80 → 2080`, …). The offset is hardcoded inside `proot`. |
+| `-u`, `--user USER` | Log in as USER (default: `root`). Accepts `name`, numeric `uid`, `name:group`, or `uid:gid`. For containers without `/etc/passwd`, only a numeric UID or the literal `root` is accepted (and a numeric GID when `:group` is given). |
+| `-P`, `--redirect-ports` | Redirect privileged ports 1–1023 to higher numbers (`22 → 2022`, `80 → 2080`, …). The offset is hardcoded inside `proot`. |
 | `--shared-home` | Bind the host home directory into the container (mounted at `/root` for the root user, at the user's home otherwise; for termux-type containers it goes to `/data/data/com.termux/files/home`). |
-| `--termux-home` | Synonym for `--shared-home` (mutually exclusive with it). |
 | `--shared-tmp` | Bind the host `$PREFIX/tmp` to `/tmp` inside the container (Termux only; skipped for termux-type containers). |
 | `--shared-x11` | Bind `$PREFIX/tmp/.X11-unix` to `/tmp/.X11-unix` (Termux only; skipped for termux-type containers). |
-| `--bind SRC[:DST]` | Bind a custom path (repeatable). `SRC` is resolved via `os.path.abspath`. `DST`, when given, must be an absolute path (relative destinations are rejected). Overlap with an existing destination emits a warning but the bind is still added. |
+| `-b`, `--bind SRC[:DST]` | Bind a custom path (repeatable). `SRC` is resolved via `os.path.abspath`. `DST`, when given, must be an absolute path (relative destinations are rejected). Overlap with an existing destination emits a warning but the bind is still added. |
 | `--emulator PATH` | Override the QEMU emulator binary for cross-arch containers. PATH must be executable. Only QEMU user-mode and Blink are known to work. |
 | `--kernel STRING` | Customize the kernel release string reported by `uname -r`. Default: `6.17.0-PRoot-Distro`. |
 | `--hostname STRING` | Customize the hostname inside the container. Default: `localhost`. |
-| `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
-| `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env` and the baseline defaults. |
+| `-w`, `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
+| `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env` and the baseline defaults. |
 | `--get-proot-cmd` | Print the fully assembled `env` + `proot` command line (escaped, with line continuations) and exit without running. |
 
 **Options available only on Termux (Android):**
@@ -581,11 +580,14 @@ mounted inside the container when present and readable:
 /apex
 /data/app
 /data/dalvik-cache
+/data/misc/apexdata/com.android.art/dalvik-cache
 /data/data/<termux-app-package>
 /linkerconfig/com.android.art/ld.config.txt
 /linkerconfig/ld.config.txt
 /odm
+/plat_property_contexts
 /product
+/property_contexts
 /sdcard
 /storage/emulated/0
 /storage/self/primary
@@ -593,6 +595,10 @@ mounted inside the container when present and readable:
 /system_ext
 /vendor
 ```
+
+Each entry is filtered through `realpath` + permission check: traversable
+directories (modes `1`/`5`/`7`) and readable files are bound; anything
+else is silently skipped.
 
 Plus, for normal-type containers, the Termux `$PREFIX` is bound at its
 original path inside the guest so Termux utilities (`termux-api`,
@@ -704,6 +710,10 @@ Show all installed containers (subdirectories of `containers/` that
 have a `rootfs/`). When none are installed, an install suggestion is
 printed.
 
+| Option | Description |
+|---|---|
+| `-q`, `--quiet` | Print only container names, one per line (different from the global `--quiet`). |
+
 ---
 
 ### `remove` — Delete a container
@@ -720,6 +730,7 @@ files are fixed on the fly so the rootfs can always be cleared.
 | Option | Description |
 |---|---|
 | `-v`, `--verbose` | Log each deleted file. |
+| `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 ---
 
@@ -738,6 +749,10 @@ For data-integrity reasons, **CTRL-C and CTRL-\\ are intercepted**
 during the l2s rewrite. The signal is replaced with a one-line warning;
 the rewrite continues until done.
 
+| Option | Description |
+|---|---|
+| `-q`, `--quiet` | Suppress non-error output. |
+
 ---
 
 ### `reset` — Reinstall a container from scratch
@@ -753,6 +768,10 @@ The image reference and target architecture are read from
 `containers/<name>/manifest.json`. If that file is missing, the command
 exits with an error — reset is supported for OCI image installs only
 (plain rootfs tarballs cannot be re-pulled).
+
+| Option | Description |
+|---|---|
+| `-q`, `--quiet` | Suppress non-error output. |
 
 ---
 
@@ -770,9 +789,10 @@ Create a TAR archive of the container. The archive contains
 
 | Option | Description |
 |---|---|
-| `--output FILE` | Write to FILE instead of stdout. Refuses to overwrite an existing file. |
-| `--compress TYPE` | Force compression: `gzip`, `bzip2`, `xz`, or `none`. Overrides extension-based detection. |
+| `-o`, `--output FILE` | Write to FILE instead of stdout. Refuses to overwrite an existing file. |
+| `-c`, `--compress TYPE` | Force compression: `gzip`, `bzip2`, `xz`, or `none`. Overrides extension-based detection. |
 | `-v`, `--verbose` | Log each archived file. |
+| `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 When `--output` is given, the compression algorithm is inferred from
 the file extension (`.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`, `.tar.xz`,
@@ -831,6 +851,7 @@ identify gzip / bzip2 / xz / lzma streams.
 | Option | Description |
 |---|---|
 | `-v`, `--verbose` | Log each extracted file. |
+| `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 **Archive format requirements:**
 
@@ -844,8 +865,12 @@ identify gzip / bzip2 / xz / lzma streams.
   automatically re-rooted to the new layout.
 
 The existing rootfs for each container in the archive is cleared
-recursively on the first entry seen for that container. Hard links are
-resolved using the archive's own paths and recreated with `os.link`.
+recursively on the first entry seen for that container. Hard links
+inside the archive are resolved against the archive's own paths and
+materialised as independent file copies (via `shutil.copy2`) rather
+than real hard links, because the on-disk rootfs uses proot's
+link2symlink emulation and a host-level hard link would alias what
+the guest treats as separate inodes.
 
 `restore` is **TTY-safe** when reading from a pipe that involves an
 interactive producer (`gpg -d archive.gpg | proot-distro restore`):
@@ -883,6 +908,7 @@ container name and a colon: `ubuntu:/etc/resolv.conf`.
 | `-r`, `--recursive` | Copy directories recursively (preserves symlinks). |
 | `-m`, `--move` | Move instead of copying (deletes source after success). |
 | `-v`, `--verbose` | Log each copied file. |
+| `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 Directories `.` and `..` are accepted only as source, not as
 destination. Glob patterns are not supported (rely on the shell).
@@ -938,9 +964,10 @@ recursive — no flag needed.
 
 | Option | Description |
 |---|---|
-| `--checksum` | Compare by size + CRC32 instead of size + mtime (slower, more strict). |
-| `--delete` | Remove destination files and directories that have no counterpart in the source. Applied after the sync pass; only effective when source is a directory. |
+| `-c`, `--checksum` | Compare by size + CRC32 instead of size + mtime (slower, more strict). |
+| `-d`, `--delete` | Remove destination files and directories that have no counterpart in the source. Applied after the sync pass; only effective when source is a directory. |
 | `-v`, `--verbose` | Log each synced or deleted entry. Suppresses the progress bar. |
+| `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 **Examples:**
 
@@ -967,13 +994,16 @@ proot-distro clear-cache
 Aliases: clear, cl
 ```
 
-Remove all cached Docker image layers and resolved manifests from
-`$BASE_CACHE_DIR`. Disk space freed is reported after the operation
-in human-readable units.
+Remove every entry from `$BASE_CACHE_DIR` — registry-pulled and
+build-produced layer blobs (`oci_layers/`), resolved single-arch
+manifests (`oci_manifests/`), and the build cache index
+(`build_cache_index.json`) all go in one pass. Disk space freed is
+reported after the operation in human-readable units.
 
 | Option | Description |
 |---|---|
 | `-v`, `--verbose` | Log each deleted file. |
+| `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 After `clear-cache`, the next `install` (or `reset`) of an image
 requires network access again, and layers must be re-downloaded and
@@ -1088,14 +1118,20 @@ The OCI download cache (`$BASE_CACHE_DIR`) is under `$RUNTIME_DIR`
 on Termux, and under `$XDG_CACHE_HOME/proot-distro/` (default
 `~/.cache/proot-distro/`) on a regular Linux host.
 
+All paths below are relative to `$RUNTIME_DIR` unless noted; cache
+paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
+`$XDG_CACHE_HOME/proot-distro/` elsewhere).
+
 | Path | Contents |
 |---|---|
 | `containers/<name>/rootfs/` | Container root filesystem |
 | `containers/<name>/manifest.json` | Image reference, arch, full OCI manifest, full image config |
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
-| `dlcache/layers/` (Termux) or `$XDG_CACHE_HOME/proot-distro/layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
-| `dlcache/manifests/` (Termux) or `…/manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags) |
-| `dlcache/buildcache/index.json` (Termux) or `…/buildcache/index.json` | `build` cache index: recipe-hash → layer-digest |
+| `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
+| `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
+| `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
+| `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags) |
+| `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |
 | `installed-rootfs/<name>/` | **Legacy** layout; auto-migrated by `login`. |
 
 ---
