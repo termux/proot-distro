@@ -22,9 +22,9 @@
 # build engine computes per instruction. A hit means "we have a
 # pre-built layer that matches this exact (parent + instruction +
 # inputs) combination — apply the cached blob instead of re-executing
-# the instruction." Stored under BASE_CACHE_DIR/buildcache/
-# alongside layers/ and manifests/ so a single `clear-cache` removes
-# all build artefacts together.
+# the instruction." Stored under BASE_CACHE_DIR alongside layers/ and
+# manifests/ so a single `clear-cache` removes all build artefacts
+# together.
 
 import contextlib
 import fcntl
@@ -37,7 +37,7 @@ from proot_distro.atomic import atomic_replace
 from proot_distro.constants import BASE_CACHE_DIR
 
 
-_INDEX_PATH = os.path.join(BASE_CACHE_DIR, "buildcache", "index.json")
+_INDEX_PATH = os.path.join(BASE_CACHE_DIR, "build_cache_index.json")
 _INDEX_LOCK_PATH = _INDEX_PATH + ".lock"
 
 

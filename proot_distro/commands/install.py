@@ -228,7 +228,7 @@ def _run_install(
         elif url is not None:
             os.makedirs(BASE_CACHE_DIR, exist_ok=True)
             fd, tmp_archive = tempfile.mkstemp(
-                prefix=f".pd_dl_{install_name}.",
+                prefix=f"dl_install_{install_name}.",
                 suffix=".tmp",
                 dir=BASE_CACHE_DIR,
             )

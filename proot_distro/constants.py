@@ -74,7 +74,7 @@ IS_TERMUX: bool = _detect_termux()
 
 if IS_TERMUX:
     RUNTIME_DIR = os.path.join(TERMUX_PREFIX, "var", "lib", PROGRAM_NAME)
-    BASE_CACHE_DIR = os.path.join(RUNTIME_DIR, "dlcache")
+    BASE_CACHE_DIR = os.path.join(RUNTIME_DIR, "cache")
 else:
     _xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.join(
         os.path.expanduser("~"), ".local", "share"
@@ -92,8 +92,8 @@ CONTAINERS_DIR = os.path.join(RUNTIME_DIR, "containers")
 LEGACY_ROOTFS_DIR = os.path.join(RUNTIME_DIR, "installed-rootfs")
 
 # Layer and manifest caches (subdirectories of the base cache).
-LAYER_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "layers")
-MANIFEST_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "manifests")
+LAYER_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "oci_layers")
+MANIFEST_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "oci_manifests")
 
 # ---------------------------------------------------------------------------
 # Defaults
