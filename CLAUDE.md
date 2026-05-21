@@ -219,8 +219,10 @@ blocked but `TERMUX_PREFIX/bin` is deduped + appended after image Env
 `su - other` doesn't drop the proot-distro-set vars: POSIX case-guard
 append for PATH; `export K='V'` (with `'\''` idiom) for everything
 except per-session and proot-internal vars
-(HOME/USER/TERM/COLORTERM/PATH/PROOT_*/LD_*). Legacy `termux-prefix.sh`
-unlinked first.
+(HOME/USER/TERM/COLORTERM/PATH/PROOT_*/LD_*). Keys are first matched
+against the identifier regex `^[A-Za-z_][A-Za-z0-9_]*$`; anything that
+would otherwise corrupt the sourced script (spaces, `;`, quotes …) is
+dropped silently. Legacy `termux-prefix.sh` unlinked first.
 
 `minimal` clears almost everything: only `--env` + `TERM` (default
 `xterm-256color`) + inherited `COLORTERM`. `PROOT_L2S_DIR` pinned to
