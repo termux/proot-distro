@@ -18,351 +18,17 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Adaptive help renderer. Help content lives in _HELP_PAGES as
-# plain Python data; _render_page formats it against the detected terminal
-# width. Layout switches at _NARROW_BREAKPOINT (60 cols): below it, option
-# names and descriptions stack vertically — fitting phones running Termux;
-# above it, a two-column grid keeps the page scannable on tablets and
-# laptops. Width is clamped to [_MIN_WIDTH, _MAX_WIDTH] so output stays
-# readable on narrow PTYs and not painfully long on ultra-wide ones.
-
-import os
-import shutil
-import textwrap
+# Architecture: All help-page content as plain Python data. Each entry
+# in HELP_PAGES is a dict consumed by render.render_page. Termux-only
+# options are gated with `*([...] if IS_TERMUX else [])` so the help
+# stays in sync with what argparse actually accepts on the current host.
 
 from proot_distro.constants import (
-    IS_TERMUX,
-    PROGRAM_NAME,
-    PROGRAM_VERSION,
-    RUNTIME_DIR,
-    TERMUX_APP_PACKAGE,
+    IS_TERMUX, PROGRAM_NAME, CANONICAL_PROGRAM_NAME, TERMUX_APP_PACKAGE,
 )
-from proot_distro.colors import C, msg
 
 
-# ---------------------------------------------------------------------------
-# Layout constants and width detection
-# ---------------------------------------------------------------------------
-
-_MIN_WIDTH = 32
-_MAX_WIDTH = 92
-_NARROW_BREAKPOINT = 60
-
-_RULE_DOUBLE = "═"
-_RULE_SINGLE = "─"
-_BULLET = "▸"
-_PROMPT = "$"
-
-
-def _term_width() -> int:
-    # Help text is written to stderr, so prefer stderr's reported size first
-    # and fall back to stdout/stdin and finally COLUMNS for redirected runs.
-    for fd in (2, 1, 0):
-        try:
-            cols = os.get_terminal_size(fd).columns
-        except (OSError, ValueError):
-            continue
-        if cols > 0:
-            return max(_MIN_WIDTH, min(_MAX_WIDTH, cols))
-    try:
-        cols = int(os.environ.get("COLUMNS", "0"))
-    except ValueError:
-        cols = 0
-    if cols > 0:
-        return max(_MIN_WIDTH, min(_MAX_WIDTH, cols))
-    try:
-        cols = shutil.get_terminal_size((72, 24)).columns
-    except (OSError, ValueError):
-        cols = 72
-    return max(_MIN_WIDTH, min(_MAX_WIDTH, cols))
-
-
-def _wrap(text: str, width: int) -> list:
-    width = max(4, width)
-    lines = textwrap.wrap(
-        text,
-        width=width,
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-    return lines or [""]
-
-
-# ---------------------------------------------------------------------------
-# Rendering primitives
-# ---------------------------------------------------------------------------
-
-def _hrule(width: int, char: str, color: str = None) -> str:
-    return f"{color or C['CYAN']}{char * width}{C['RST']}"
-
-
-def _banner(title: str, width: int) -> None:
-    msg()
-    msg(_hrule(width, _RULE_DOUBLE, C["BYELLOW"]))
-    label = f"v{PROGRAM_VERSION}"
-    # 2 left pad, 4 between title and version, 2 right pad
-    if width >= 2 + len(title) + 4 + len(label) + 2:
-        gap = width - 2 - len(title) - len(label) - 2
-        msg(
-            f"  {C['BCYAN']}{title}{C['RST']}"
-            f"{' ' * gap}"
-            f"{C['ICYAN']}{label}{C['RST']}  "
-        )
-    else:
-        msg(f"  {C['BCYAN']}{title}{C['RST']}")
-    msg(_hrule(width, _RULE_DOUBLE, C["BYELLOW"]))
-
-
-def _section(label: str) -> None:
-    msg()
-    msg(f"{C['UBCYAN']}{label}{C['RST']}")
-    msg()
-
-
-def _paragraph(text: str, width: int, indent: int = 2,
-               color: str = None) -> None:
-    color = color or C["CYAN"]
-    pad = " " * indent
-    avail = max(8, width - indent)
-    for i, para in enumerate(text.split("\n\n")):
-        if i > 0:
-            msg()
-        for line in _wrap(para, avail):
-            msg(f"{pad}{color}{line}{C['RST']}")
-
-
-def _usage_line(usage: str, width: int) -> None:
-    parts = usage.split(" ", 1)
-    sub = parts[0]
-    rest = parts[1] if len(parts) > 1 else ""
-    head = (f"  {C['BGREEN']}{PROGRAM_NAME}{C['RST']}"
-            f" {C['UGREEN']}{sub}{C['RST']}")
-    head_visible = 2 + len(PROGRAM_NAME) + 1 + len(sub)
-    if not rest:
-        msg(head)
-        return
-    if head_visible + 1 + len(rest) <= width:
-        msg(f"{head} {C['CYAN']}{rest}{C['RST']}")
-        return
-    msg(head)
-    cont = "    "
-    for line in _wrap(rest, width - len(cont)):
-        msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-
-
-def _aliases_block(aliases) -> None:
-    sep = f"{C['CYAN']}, {C['RST']}"
-    parts = [f"{C['UGREEN']}{a}{C['RST']}" for a in aliases]
-    msg(f"  {C['CYAN']}Aliases:{C['RST']} {sep.join(parts)}")
-
-
-def _options_stacked(options, width: int) -> None:
-    last = len(options) - 1
-    for i, (name, desc) in enumerate(options):
-        msg(f"  {C['GREEN']}{name}{C['RST']}")
-        _paragraph(desc, width, indent=4)
-        if i != last:
-            msg()
-
-
-def _options_block(options, width: int) -> None:
-    if not options:
-        return
-    if width < _NARROW_BREAKPOINT:
-        _options_stacked(options, width)
-        return
-    longest = max(len(name) for name, _ in options)
-    opt_col = min(longest, max(16, width // 3))
-    desc_col = width - opt_col - 4
-    if desc_col < 24:
-        _options_stacked(options, width)
-        return
-    cont = " " * (2 + opt_col + 2)
-    last = len(options) - 1
-    for i, (name, desc) in enumerate(options):
-        wrapped = _wrap(desc, desc_col)
-        if len(name) <= opt_col:
-            head = (
-                f"  {C['GREEN']}{name}{C['RST']}"
-                f"{' ' * (opt_col - len(name))}  "
-                f"{C['CYAN']}{wrapped[0]}{C['RST']}"
-            )
-            msg(head)
-            for line in wrapped[1:]:
-                msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        else:
-            msg(f"  {C['GREEN']}{name}{C['RST']}")
-            for line in wrapped:
-                msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        if i != last:
-            msg()
-
-
-def _commands_block(commands, width: int) -> None:
-    """Like _options_block, but each entry may carry a trailing red warning.
-
-    Each entry is (name, description) or (name, description, warning).
-    """
-    if not commands:
-        return
-    longest = max(len(entry[0]) for entry in commands)
-    name_col = min(longest, max(12, width // 4))
-    desc_col = width - name_col - 4
-    narrow = width < _NARROW_BREAKPOINT or desc_col < 24
-
-    if narrow:
-        last = len(commands) - 1
-        for i, entry in enumerate(commands):
-            name = entry[0]
-            desc = entry[1]
-            warn = entry[2] if len(entry) > 2 else None
-            msg(f"  {C['GREEN']}{name}{C['RST']}")
-            _paragraph(desc, width, indent=4)
-            if warn:
-                msg(f"    {C['RED']}{warn}{C['RST']}")
-            if i != last:
-                msg()
-        return
-
-    cont = " " * (2 + name_col + 2)
-    for entry in commands:
-        name = entry[0]
-        desc = entry[1]
-        warn = entry[2] if len(entry) > 2 else None
-        wrapped = _wrap(desc, desc_col)
-        head = (
-            f"  {C['GREEN']}{name}{C['RST']}"
-            f"{' ' * (name_col - len(name))}  "
-            f"{C['CYAN']}{wrapped[0]}{C['RST']}"
-        )
-        if warn and len(wrapped) == 1 and \
-                len(wrapped[0]) + 1 + len(warn) <= desc_col:
-            msg(f"{head} {C['RED']}{warn}{C['RST']}")
-            continue
-        msg(head)
-        for line in wrapped[1:]:
-            msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        if warn:
-            msg(f"{cont}{C['RED']}{warn}{C['RST']}")
-
-
-def _shell_block(examples, width: int) -> None:
-    avail = max(12, width - 4)
-    wrap_avail = max(4, avail - 2)
-    for ex in examples:
-        wrapped = _wrap(ex, wrap_avail)
-        last = len(wrapped) - 1
-        for i, line in enumerate(wrapped):
-            suffix = "" if i == last else f" {C['CYAN']}\\{C['RST']}"
-            if i == 0:
-                msg(
-                    f"  {C['YELLOW']}{_PROMPT}{C['RST']} "
-                    f"{C['GREEN']}{line}{C['RST']}{suffix}"
-                )
-            else:
-                msg(f"    {C['GREEN']}{line}{C['RST']}{suffix}")
-
-
-def _bullets_block(bullets, width: int) -> None:
-    if not bullets:
-        return
-    longest = max(len(label) for label, _ in bullets)
-    name_col = min(longest, max(16, width // 3))
-    desc_col = width - 4 - name_col - 2
-    narrow = width < _NARROW_BREAKPOINT or desc_col < 16
-
-    if narrow:
-        for label, comment in bullets:
-            msg(
-                f"  {C['CYAN']}{_BULLET}{C['RST']} "
-                f"{C['YELLOW']}{label}{C['RST']}"
-            )
-            if comment:
-                _paragraph(f"({comment})", width, indent=6)
-        return
-
-    cont = " " * (4 + name_col + 2)
-    for label, comment in bullets:
-        pad = " " * max(0, name_col - len(label))
-        if comment:
-            wrapped = _wrap(f"({comment})", desc_col)
-            msg(
-                f"  {C['CYAN']}{_BULLET}{C['RST']} "
-                f"{C['YELLOW']}{label}{C['RST']}{pad}  "
-                f"{C['CYAN']}{wrapped[0]}{C['RST']}"
-            )
-            for line in wrapped[1:]:
-                msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        else:
-            msg(
-                f"  {C['CYAN']}{_BULLET}{C['RST']} "
-                f"{C['YELLOW']}{label}{C['RST']}"
-            )
-
-
-def _footer(width: int) -> None:
-    msg()
-    msg(_hrule(width, _RULE_SINGLE, C["CYAN"]))
-    _paragraph(
-        f"Proot-Distro version '{PROGRAM_VERSION}' by Termux (@sylirre).",
-        width, indent=0, color=C["ICYAN"],
-    )
-    msg()
-
-
-# ---------------------------------------------------------------------------
-# Page renderer
-# ---------------------------------------------------------------------------
-
-def _render_page(page: dict, command_name: str) -> None:
-    width = _term_width()
-    #_banner(f"{PROGRAM_NAME} {command_name}", width)
-
-    if page.get("usage"):
-        _section("USAGE")
-        _usage_line(page["usage"], width)
-        if page.get("aliases"):
-            msg()
-            _aliases_block(page["aliases"])
-
-    if page.get("summary"):
-        _section("DESCRIPTION")
-        _paragraph(page["summary"], width)
-
-    if page.get("options"):
-        _section("OPTIONS")
-        _options_block(page["options"], width)
-
-    if page.get("examples"):
-        _section("EXAMPLES")
-        _shell_block(page["examples"], width)
-
-    for block in page.get("footer", []):
-        title = block.get("title")
-        if title:
-            _section(title)
-        intro = block.get("intro")
-        if intro:
-            _paragraph(intro, width)
-        bullets = block.get("bullets")
-        if bullets:
-            if intro:
-                msg()
-            _bullets_block(bullets, width)
-        examples = block.get("examples")
-        if examples:
-            if intro or bullets:
-                msg()
-            _shell_block(examples, width)
-
-    _footer(width)
-
-
-# ---------------------------------------------------------------------------
-# Per-command help data
-# ---------------------------------------------------------------------------
-
-_HELP_PAGES = {
+HELP_PAGES = {
     "build": {
         "usage": "build [OPTIONS] [PATH]",
         "summary": (
@@ -399,7 +65,7 @@ _HELP_PAGES = {
              "Dockerfile are honoured. Repeatable."),
             ("-a, --architecture [ARCH]",
              "Target CPU architecture (default: host architecture). "
-             "Accepts proot-distro names (aarch64, arm, i686, "
+             f"Accepts {PROGRAM_NAME} names (aarch64, arm, i686, "
              "riscv64, x86_64) or Docker platform strings "
              "(linux/arm64, linux/amd64, ...)."),
             ("--target [STAGE]",
@@ -417,9 +83,6 @@ _HELP_PAGES = {
             ("--no-cache",
              "Disable build-step caching. Each instruction is "
              "executed fresh."),
-            ("--pull",
-             "Force re-pull of base images, ignoring the manifest "
-             "cache."),
             ("-v, --verbose",
              "Echo each instruction and stream RUN output to the "
              "terminal."),
@@ -508,7 +171,7 @@ _HELP_PAGES = {
             ("-h, --help", "Show this help."),
             ("-a, --architecture [ARCH]",
              "Push the manifest built for the given architecture. "
-             "Accepts proot-distro names (aarch64, arm, i686, "
+             f"Accepts {PROGRAM_NAME} names (aarch64, arm, i686, "
              "riscv64, x86_64) or Docker platform strings "
              "(linux/arm64, linux/amd64, ...). Default: host "
              "architecture."),
@@ -606,9 +269,9 @@ _HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
-            ("--move",
+            ("-m, --move",
              "Delete source file after a successful copy."),
-            ("--recursive", "Recursive mode for copying directories."),
+            ("-r, --recursive", "Recursive mode for copying directories."),
             ("-v, --verbose", "Log each copied file."),
             ("-q, --quiet",
              "Suppress non-error output. Mutually exclusive "
@@ -730,7 +393,7 @@ _HELP_PAGES = {
                 "unless using QEMU user mode emulation or user manually "
                 "requested specific directories to be bound.")] if IS_TERMUX else []),
             *([("--minimal",
-                "Enable Isolated Mode with bare mimimum proot configuration. "
+                "Enable Isolated Mode with bare minimum proot configuration. "
                 "Only /dev, /proc and /sys are bound. All proot extensions "
                 "except link2symlink are disabled. No /proc system data "
                 "workarounds, no kernel release override. Specific features "
@@ -819,12 +482,15 @@ _HELP_PAGES = {
                         "\n\n"
                         if IS_TERMUX else ""
                     ) +
-                    "PRoot-Distro does not guarantee that everything "
-                    "inside given distribution will work flawlessly "
-                    "and is not responsible for that. Thus it is not "
-                    "possible to satisfy requirements of utilities "
-                    "needing real root privileges or specific Linux "
-                    "kernel features like namespaces."
+                    f"{CANONICAL_PROGRAM_NAME} comes without any guarantee "
+                    "that any user-selected distribution image will work "
+                    "properly. Any kind of observed bugs could happen "
+                    "either because of proot (third party dependency) "
+                    "design flaws or fundamental incompatibility with "
+                    "given container runtime. For example is not possible "
+                    "to deliver access to restricted interfaces under "
+                    "/dev, /proc and /sys required by udev; cgroups "
+                    "or Linux namespaces required by bwrap."
                     "\n\n"
                     "Devices with ARMv9 CPUs require QEMU user mode "
                     "emulator to be able execute 32-bit programs because "
@@ -942,7 +608,7 @@ _HELP_PAGES = {
                 "unless using QEMU user mode emulation or user manually "
                 "requested specific directories to be bound.")] if IS_TERMUX else []),
             *([("--minimal",
-                "Enable Isolated Mode with bare mimimum proot configuration. "
+                "Enable Isolated Mode with bare minimum proot configuration. "
                 "Only /dev, /proc and /sys are bound. All proot extensions "
                 "except link2symlink are disabled. No /proc system data "
                 "workarounds, no kernel release override. Specific features "
@@ -997,12 +663,15 @@ _HELP_PAGES = {
             {
                 "title": "NOTES",
                 "intro": (
-                    "PRoot-Distro does not guarantee that everything "
-                    "inside given distribution will work flawlessly "
-                    "and is not responsible for that. Thus it is not "
-                    "possible to satisfy requirements of utilities "
-                    "needing real root privileges or specific Linux "
-                    "kernel features like namespaces."
+                    f"{CANONICAL_PROGRAM_NAME} comes without any guarantee "
+                    "that any user-selected distribution image will work "
+                    "properly. Any kind of observed bugs could happen "
+                    "either because of proot (third party dependency) "
+                    "design flaws or fundamental incompatibility with "
+                    "given container runtime. For example is not possible "
+                    "to deliver access to restricted interfaces under "
+                    "/dev, /proc and /sys required by udev; cgroups "
+                    "or Linux namespaces required by bwrap."
                     "\n\n"
                     "Devices with ARMv9 CPUs require QEMU user mode "
                     "emulator to be able execute 32-bit programs because "
@@ -1047,20 +716,8 @@ _HELP_PAGES = {
 }
 
 
-def _make_help_fn(name):
-    def help_fn():
-        _render_page(_HELP_PAGES[name], name)
-    return help_fn
-
-
-_HELP_COMMANDS = {name: _make_help_fn(name) for name in _HELP_PAGES}
-
-
-# ---------------------------------------------------------------------------
-# Top-level help
-# ---------------------------------------------------------------------------
-
-_TOP_COMMANDS = [
+# Top-level command table for the no-args help screen.
+TOP_COMMANDS = [
     ("help", "Show this help."),
     ("install", "Install distribution from OCI image or rootfs archive."),
     ("list", "List created containers."),
@@ -1077,128 +734,3 @@ _TOP_COMMANDS = [
     ("build", "Build an OCI image from a Dockerfile."),
     ("push", "Push a locally built image to a registry."),
 ]
-
-
-def command_help(args=None, configs=None) -> None:  # noqa: ARG001
-    width = _term_width()
-    #_banner(PROGRAM_NAME, width)
-
-    _section("USAGE")
-    _usage_line("[COMMAND] [ARGUMENTS]", width)
-
-    _section("DESCRIPTION")
-    _paragraph(
-        "PRoot-Distro is a wrapper utility for proot user-space emulator "
-        "of chroot, bind --mount and binfmt_misc. This utility provides a "
-        "convenient way for working with Linux containers, leveraging "
-        "support of Docker registries to provide distributions of any kind.",
-        width,
-    )
-
-    _section("COMMANDS")
-    _commands_block(_TOP_COMMANDS, width)
-
-    _section("GETTING HELP")
-    _paragraph(
-        f"Run '{PROGRAM_NAME} <command> --help' for details on any "
-        "command.",
-        width,
-    )
-
-    _section("QUICK START")
-    _paragraph(
-        "Usage of generic distribution images is straightforward. "
-        "Below is an example for Ubuntu 24.04:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} install ubuntu:24.04",
-         f"{PROGRAM_NAME} login ubuntu"], width,
-    )
-    msg()
-    _paragraph(
-        "Some images come preconfigured for specific purposes and "
-        "contain built-in startup script. Often this is a case for "
-        "server software:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} install nextcloud:32",
-         f"{PROGRAM_NAME} run --redirect-ports nextcloud"], width,
-    )
-    msg()
-    _paragraph(
-        "Images that are not officially provided by Docker Hub "
-        "require specifying organization or user name:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} install termux/termux-docker:aarch64"], width,
-    )
-    msg()
-    _paragraph(
-        "If you no longer need a specific container, delete it with:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} remove ubuntu"], width,
-    )
-    msg()
-    _paragraph(
-        "You can discover existing images on Docker Hub "
-        "(https://hub.docker.com/) or other places on the Internet. "
-        "You can also build your own image from a Dockerfile with "
-        f"'{PROGRAM_NAME} build'.",
-        width,
-    )
-
-    _section("DATA LOCATION")
-    msg(f"  {C['YELLOW']}{RUNTIME_DIR}{C['RST']}")
-
-    _section("TROUBLESHOOTING")
-    _paragraph(
-        "If your terminal (theme) does not work well with colors, "
-        "set this environment variable:",
-        width
-    )
-    msg()
-    _shell_block(
-        ["export PD_FORCE_NO_COLORS=true"],
-        width,
-    )
-    msg()
-    _paragraph(
-        "To pull private Docker/OCI images, set credentials via "
-        "PD_DOCKER_AUTH in 'username:password' format before "
-        "running the install command:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"export PD_DOCKER_AUTH=user:password",
-         f"{PROGRAM_NAME} install ghcr.io/myorg/private-image:tag"],
-        width,
-    )
-    msg()
-    _paragraph(
-        "If you have issues with proot during login, try these "
-        "quck troubleshooting steps:",
-        width,
-    )
-    msg()
-    _shell_block(
-        ["pkg upgrade -y", f"PROOT_NO_SECCOMP=1 {PROGRAM_NAME} login <name>"],
-        width,
-    )
-    msg()
-    _paragraph(
-        "Report utility issues to "
-        "https://github.com/termux/proot-distro/issues",
-        width,
-    )
-
-    _footer(width)

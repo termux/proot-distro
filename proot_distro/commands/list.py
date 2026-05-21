@@ -25,16 +25,18 @@
 import os
 
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
-from proot_distro.colors import C, msg
+from proot_distro.message import C, msg
+from proot_distro.paths import container_rootfs
 
 
-def command_list(args, configs: dict) -> None:  # noqa: ARG001
+def command_list(args) -> None:
+    """List every container directory that contains a rootfs/."""
     quiet = getattr(args, "quiet", False)
 
     try:
         entries = sorted(
             e for e in os.listdir(CONTAINERS_DIR)
-            if os.path.isdir(os.path.join(CONTAINERS_DIR, e, "rootfs"))
+            if os.path.isdir(container_rootfs(e))
         )
     except OSError:
         entries = []

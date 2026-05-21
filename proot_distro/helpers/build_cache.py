@@ -22,19 +22,58 @@
 # build engine computes per instruction. A hit means "we have a
 # pre-built layer that matches this exact (parent + instruction +
 # inputs) combination — apply the cached blob instead of re-executing
-# the instruction." Stored under DOWNLOAD_CACHE_DIR/buildcache/
+# the instruction." Stored under BASE_CACHE_DIR/buildcache/
 # alongside layers/ and manifests/ so a single `clear-cache` removes
 # all build artefacts together.
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import time
 
-from proot_distro.constants import DOWNLOAD_CACHE_DIR
+from proot_distro.atomic import atomic_replace
+from proot_distro.constants import BASE_CACHE_DIR
 
 
-_INDEX_PATH = os.path.join(DOWNLOAD_CACHE_DIR, "buildcache", "index.json")
+_INDEX_PATH = os.path.join(BASE_CACHE_DIR, "buildcache", "index.json")
+_INDEX_LOCK_PATH = _INDEX_PATH + ".lock"
+
+
+@contextlib.contextmanager
+def _index_lock():
+    """Hold an exclusive flock on the index for the read-modify-write cycle.
+
+    The index is a single JSON file shared across all builds, so two
+    concurrent `record()` calls would otherwise read-modify-write
+    independently and the last writer would silently drop the other's
+    entry. The flock serialises updates; on filesystems that don't
+    support flock the call proceeds unlocked (last-writer-wins, same
+    behaviour as before).
+    """
+    try:
+        os.makedirs(os.path.dirname(_INDEX_LOCK_PATH), exist_ok=True)
+    except OSError:
+        yield
+        return
+    try:
+        fd = os.open(_INDEX_LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            pass  # Filesystem ignores flock; proceed unlocked.
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 def _load_index():
@@ -53,11 +92,9 @@ def _load_index():
 
 
 def _save_index(data):
-    os.makedirs(os.path.dirname(_INDEX_PATH), exist_ok=True)
-    tmp = _INDEX_PATH + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-    os.replace(tmp, _INDEX_PATH)
+    with atomic_replace(_INDEX_PATH) as tmp:
+        with open(tmp, "w") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
 
 
 def lookup(recipe_hash):
@@ -70,16 +107,19 @@ def lookup(recipe_hash):
 
 def record(recipe_hash, layer_digest, diff_id, size, image_config_patch=None):
     """Record a build-cache entry."""
-    data = _load_index()
-    entries = data.setdefault("entries", {})
-    entries[recipe_hash] = {
-        "layer_digest": layer_digest,
-        "diff_id": diff_id,
-        "size": size,
-        "image_config_patch": image_config_patch or {},
-        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    _save_index(data)
+    # Lock around the full read-modify-write so concurrent builds don't
+    # clobber each other's records.
+    with _index_lock():
+        data = _load_index()
+        entries = data.setdefault("entries", {})
+        entries[recipe_hash] = {
+            "layer_digest": layer_digest,
+            "diff_id": diff_id,
+            "size": size,
+            "image_config_patch": image_config_patch or {},
+            "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _save_index(data)
 
 
 # ---------------------------------------------------------------------------

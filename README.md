@@ -221,7 +221,7 @@ When the env var is set, the authentication progress line notes
 `(user credentials)` so you can confirm your credentials are being
 picked up.
 
-Layers are cached in `$DOWNLOAD_CACHE_DIR/layers/` and reused on
+Layers are cached in `$BASE_CACHE_DIR/layers/` and reused on
 subsequent installs. If both the resolved manifest and all of its
 layers are already in the cache, installation runs fully offline.
 
@@ -373,9 +373,9 @@ the relevant inputs (file digests for `COPY`/`ADD`, env+ARG state for
 re-running the instruction. Pass `--no-cache` to skip cache lookups.
 
 The build cache index lives at
-`$DOWNLOAD_CACHE_DIR/buildcache/index.json`; layer blobs themselves
+`$BASE_CACHE_DIR/buildcache/index.json`; layer blobs themselves
 are stored alongside registry-pulled blobs in
-`$DOWNLOAD_CACHE_DIR/layers/`. `proot-distro clear-cache` deletes
+`$BASE_CACHE_DIR/layers/`. `proot-distro clear-cache` deletes
 both.
 
 **Examples:**
@@ -968,7 +968,7 @@ Aliases: clear, cl
 ```
 
 Remove all cached Docker image layers and resolved manifests from
-`$DOWNLOAD_CACHE_DIR`. Disk space freed is reported after the operation
+`$BASE_CACHE_DIR`. Disk space freed is reported after the operation
 in human-readable units.
 
 | Option | Description |
@@ -1084,7 +1084,7 @@ All runtime data is stored under `$RUNTIME_DIR`:
 - **Regular Linux**: `$XDG_DATA_HOME/proot-distro/` (default
   `~/.local/share/proot-distro/`).
 
-The OCI download cache (`$DOWNLOAD_CACHE_DIR`) is under `$RUNTIME_DIR`
+The OCI download cache (`$BASE_CACHE_DIR`) is under `$RUNTIME_DIR`
 on Termux, and under `$XDG_CACHE_HOME/proot-distro/` (default
 `~/.cache/proot-distro/`) on a regular Linux host.
 

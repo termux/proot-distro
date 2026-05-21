@@ -23,37 +23,37 @@
 #
 #   - Variant A (`store_in_cache`): writes a manifest JSON to
 #     MANIFEST_CACHE_DIR/<key>.json in the same shape that
-#     helpers/docker._load_manifest_cache reads. Combined with the
+#     helpers/docker.load_manifest_cache reads. Combined with the
 #     layer blobs already deposited in LAYER_CACHE_DIR by the build
 #     engine, this lets a subsequent `install <tag>` run entirely
 #     offline (the existing pull_image() fully-offline branch fires).
 #
 #   - Variant B (`write_oci_archive`): assembles a standard OCI
 #     image-layout tarball — oci-layout, index.json, blobs/sha256/*.
-#     This is the same format `_extract_oci()` in commands/install.py
-#     already consumes, so the round-trip install → backup → restore
-#     remains uniform. The archive is also `docker load`-compatible.
+#     This is the same format `_extract_oci()` in
+#     commands/install_local.py already consumes, so a tarball written
+#     by `build -o` can be fed straight back into `install`. The
+#     archive is also `docker load`-compatible.
 
 import hashlib
 import json
 import os
 import tarfile
 
-from proot_distro.constants import (
-    LAYER_CACHE_DIR,
-    MANIFEST_CACHE_DIR,
-)
+from proot_distro.atomic import atomic_replace
+from proot_distro.constants import PROGRAM_NAME
 from proot_distro.helpers.docker import (
-    _layer_cache_path,
-    _manifest_cache_path,
+    layer_cache_path,
+    manifest_cache_path,
     parse_image_ref,
 )
-
-
-_OCI_MANIFEST_MEDIA = "application/vnd.oci.image.manifest.v1+json"
-_OCI_CONFIG_MEDIA = "application/vnd.oci.image.config.v1+json"
-_OCI_LAYER_MEDIA = "application/vnd.oci.image.layer.v1.tar+gzip"
-_OCI_INDEX_MEDIA = "application/vnd.oci.image.index.v1+json"
+from proot_distro.helpers.docker.media import (
+    OCI_CONFIG_MEDIA,
+    OCI_INDEX_MEDIA,
+    OCI_LAYER_MEDIA,
+    OCI_MANIFEST_MEDIA,
+    canonical_json,
+)
 
 
 def build_manifest_and_config(image_config, layers, arch_name):
@@ -76,20 +76,20 @@ def build_manifest_and_config(image_config, layers, arch_name):
     }
     config.setdefault("history", _default_history(layers))
 
-    config_bytes = _canonical_json(config)
+    config_bytes = canonical_json(config)
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
 
     manifest = {
         "schemaVersion": 2,
-        "mediaType": _OCI_MANIFEST_MEDIA,
+        "mediaType": OCI_MANIFEST_MEDIA,
         "config": {
-            "mediaType": _OCI_CONFIG_MEDIA,
+            "mediaType": OCI_CONFIG_MEDIA,
             "digest": config_digest,
             "size": len(config_bytes),
         },
         "layers": [
             {
-                "mediaType": _OCI_LAYER_MEDIA,
+                "mediaType": OCI_LAYER_MEDIA,
                 "digest": l["digest"],
                 "size": l["size"],
             }
@@ -102,14 +102,9 @@ def build_manifest_and_config(image_config, layers, arch_name):
 def _default_history(layers):
     return [
         {"created": "1970-01-01T00:00:00Z",
-         "created_by": f"proot-distro build (layer {i + 1})"}
+         "created_by": f"{PROGRAM_NAME} build (layer {i + 1})"}
         for i, _ in enumerate(layers)
     ]
-
-
-def _canonical_json(obj):
-    """Return canonical (sorted-keys, no-whitespace) JSON bytes."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
 
 
 # ---------------------------------------------------------------------------
@@ -120,22 +115,20 @@ def store_in_cache(image_ref, arch_name_pd, manifest, image_config):
     """Write the manifest into MANIFEST_CACHE_DIR for offline install.
 
     `arch_name_pd` is the proot-distro arch (aarch64, x86_64, …). The
-    cache key matches what helpers/docker._manifest_cache_path uses
+    cache key matches what helpers/docker.manifest_cache_path uses
     so that a subsequent `install <image_ref>` reads it on the
     fully-offline branch of pull_image().
     """
     _, repo, _ = parse_image_ref(image_ref)
-    path = _manifest_cache_path(image_ref, arch_name_pd)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    path = manifest_cache_path(image_ref, arch_name_pd)
     payload = {
         "manifest": manifest,
         "repo": repo,
         "image_config": image_config,
     }
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    with atomic_replace(path) as tmp:
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
     return path
 
 
@@ -180,8 +173,8 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
     OCI layout is present.
     """
     mode = _detect_tar_mode(out_path)
-    config_bytes = _canonical_json(image_config)
-    manifest_bytes = _canonical_json(manifest)
+    config_bytes = canonical_json(image_config)
+    manifest_bytes = canonical_json(manifest)
     config_digest_hex = hashlib.sha256(config_bytes).hexdigest()
     manifest_digest_hex = hashlib.sha256(manifest_bytes).hexdigest()
 
@@ -191,15 +184,15 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
         manifest["config"] = dict(manifest["config"])
         manifest["config"]["digest"] = "sha256:" + config_digest_hex
         manifest["config"]["size"] = len(config_bytes)
-        manifest_bytes = _canonical_json(manifest)
+        manifest_bytes = canonical_json(manifest)
         manifest_digest_hex = hashlib.sha256(manifest_bytes).hexdigest()
 
     index = {
         "schemaVersion": 2,
-        "mediaType": _OCI_INDEX_MEDIA,
+        "mediaType": OCI_INDEX_MEDIA,
         "manifests": [
             {
-                "mediaType": _OCI_MANIFEST_MEDIA,
+                "mediaType": OCI_MANIFEST_MEDIA,
                 "digest": "sha256:" + manifest_digest_hex,
                 "size": len(manifest_bytes),
                 "annotations": {
@@ -208,17 +201,13 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
             }
         ],
     }
-    index_bytes = _canonical_json(index)
-    oci_layout_bytes = _canonical_json({"imageLayoutVersion": "1.0.0"})
-    docker_manifest_bytes = _canonical_json(
+    index_bytes = canonical_json(index)
+    oci_layout_bytes = canonical_json({"imageLayoutVersion": "1.0.0"})
+    docker_manifest_bytes = canonical_json(
         _build_docker_manifest(manifest, config_digest_hex, image_ref)
     )
 
-    out_dir = os.path.dirname(os.path.abspath(out_path)) or "."
-    os.makedirs(out_dir, exist_ok=True)
-
-    tmp = out_path + ".tmp"
-    try:
+    with atomic_replace(os.path.abspath(out_path)) as tmp:
         with tarfile.open(tmp, mode) as tf:
             # oci-layout first so our own install probe detects the
             # OCI format on the first member it sees.
@@ -233,20 +222,13 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
             )
             for layer in manifest["layers"]:
                 hex_digest = layer["digest"].split(":", 1)[1]
-                src = _layer_cache_path(layer["digest"])
+                src = layer_cache_path(layer["digest"])
                 if not os.path.isfile(src):
                     raise RuntimeError(
                         f"Layer blob {layer['digest']} is missing from the "
                         f"cache; cannot package OCI archive."
                     )
                 _add_file(tf, src, f"blobs/sha256/{hex_digest}")
-        os.replace(tmp, out_path)
-    except BaseException:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
 
 
 def _build_docker_manifest(manifest, config_digest_hex, image_ref):
@@ -262,7 +244,7 @@ def _build_docker_manifest(manifest, config_digest_hex, image_ref):
         hex_digest = digest.split(":", 1)[1]
         layer_paths.append(f"blobs/sha256/{hex_digest}")
         layer_sources[digest] = {
-            "mediaType": layer.get("mediaType", _OCI_LAYER_MEDIA),
+            "mediaType": layer.get("mediaType", OCI_LAYER_MEDIA),
             "size": layer["size"],
             "digest": digest,
         }

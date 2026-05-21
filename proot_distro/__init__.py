@@ -17,3 +17,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
+
+"""proot-distro: manage rootless proot-based Linux containers.
+
+Public entry point is :func:`proot_distro.cli.main`, exposed as the
+`proot-distro` and `pd` console scripts via pyproject.toml.
+"""

@@ -29,12 +29,13 @@ import stat
 import sys
 import tarfile
 
-from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
-from proot_distro.colors import C, info, is_quiet, msg, tty_safe_for_writes
-from proot_distro.helpers.download import fmt_size
-from proot_distro.commands.help import _HELP_COMMANDS
-from proot_distro.commands.install import _validate_name
+from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.progress import (
+    REDRAW_THRESHOLD_BYTES, clear_bar, draw_bytes_bar,
+)
 from proot_distro.locking import ContainerLock
+from proot_distro.names import require_valid_name
+from proot_distro.paths import container_manifest, container_rootfs
 
 
 # Maps file-extension suffixes to tarfile compression identifiers.
@@ -190,49 +191,34 @@ def _fix_permissions(rootfs_dir: str) -> None:
                 pass
 
 
-def command_backup(args, configs: dict) -> None:  # noqa: ARG001
-    dist_name = args.alias
+def command_backup(args) -> None:
+    """Archive an installed container to a tar file or stdout."""
+    container_name = args.container_name
     output_path = getattr(args, "output", None)
     compression_arg = getattr(args, "compression", None)
     verbose = getattr(args, "verbose", False)
 
-    if not _validate_name(dist_name):
-        msg()
-        msg(f"{C['BRED']}Error: container name "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
-            f"It must begin with a letter or digit and contain only "
-            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
-        msg()
-        sys.exit(1)
+    require_valid_name(container_name)
 
-    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
-    rootfs_dir = os.path.join(container_dir, "rootfs")
-    manifest_path = os.path.join(container_dir, "manifest.json")
+    rootfs_dir = container_rootfs(container_name)
+    manifest_path = container_manifest(container_name)
 
     if not os.path.isdir(rootfs_dir):
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' does not exist.{C['RST']}")
-        msg()
-        msg(f"{C['CYAN']}You can create it with: "
-            f"{C['GREEN']}{PROGRAM_NAME} install {dist_name}{C['RST']}")
-        msg()
+        crit_error(f"container '{container_name}' does not exist.")
+        sys.exit(1)
+
+    if output_path is not None and not output_path:
+        crit_error("output file path cannot be empty.")
         sys.exit(1)
 
     if output_path:
         if os.path.isdir(output_path):
-            msg()
-            msg(f"{C['BRED']}Error: cannot write to "
-                f"'{C['YELLOW']}{output_path}{C['BRED']}' because this path "
-                f"is a directory.{C['RST']}")
-            _HELP_COMMANDS["backup"]()
+            crit_error(f"cannot write to "
+                       f"'{output_path}' because this path is a directory.")
             sys.exit(1)
         if os.path.isfile(output_path):
-            msg()
-            msg(f"{C['BRED']}Error: file "
-                f"'{C['YELLOW']}{output_path}{C['BRED']}' already exists. "
-                f"Please specify a different name.{C['RST']}")
-            _HELP_COMMANDS["backup"]()
+            crit_error(f"file '{output_path}' already "
+                       f"exists. Please specify a different name.")
             sys.exit(1)
         if compression_arg is not None:
             compression = _COMPRESSION_ARG_MAP[compression_arg]
@@ -240,50 +226,45 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             try:
                 compression = _compression_mode(output_path)
             except ValueError as exc:
-                msg()
-                msg(f"{C['BRED']}Error: {exc}{C['RST']}")
-                msg()
+                crit_error(str(exc).lower())
                 sys.exit(1)
-        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-             f"Tarball will be written to '{output_path}'.{C['RST']}")
     else:
         if sys.stdout.isatty():
-            msg()
-            msg(f"{C['BRED']}Error: archive data cannot be printed to "
-                f"console. Please use option "
-                f"'{C['YELLOW']}--output{C['BRED']}' to specify a file or "
-                f"pipe the output to another command.{C['RST']}")
-            msg()
+            crit_error(f"archive data cannot be printed to "
+                       f"console. Please use option '--output' to "
+                       f"specify a file or pipe the output to "
+                       f"another command.")
             sys.exit(1)
         compression = (
             _COMPRESSION_ARG_MAP[compression_arg]
             if compression_arg is not None
             else ''
         )
-        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-             f"Tarball will be written to stdout.{C['RST']}")
 
-    with ContainerLock(dist_name, exclusive=False, command="backup"):
+    with ContainerLock(container_name, exclusive=False, command="backup"):
         _run_backup(
-            dist_name, container_dir, rootfs_dir, manifest_path,
+            container_name, rootfs_dir, manifest_path,
             output_path, compression, verbose,
         )
 
 
 def _run_backup(
-    dist_name, container_dir, rootfs_dir, manifest_path,
+    container_name, rootfs_dir, manifest_path,
     output_path, compression, verbose,
 ):
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    log_info(f"Backing up '{container_name}'...")
 
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Fixing file permissions in rootfs...{C['RST']}")
+    if output_path:
+        log_info(f"Will write backup data to '{output_path}'.")
+    else:
+        log_info("Will write backup data to stdout.")
+
+    log_info("Fixing file permissions in rootfs...")
     _fix_permissions(rootfs_dir)
 
     # Build the list of entries: manifest.json first, then rootfs tree.
     # Archive prefix is just the container name (e.g. "ubuntu/").
-    arc_prefix = dist_name
+    arc_prefix = container_name
     entries = []
     # manifest.json (optional — may not exist for legacy containers).
     if os.path.isfile(manifest_path):
@@ -302,41 +283,27 @@ def _run_backup(
             pass
 
     done_size = 0
-    use_tty = sys.stderr.isatty() and not is_quiet()
 
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Archiving the container...{C['RST']}")
+    log_info("Archiving the container...")
 
-    # Redraw threshold: update the bar at most once per 256 KiB read so the
-    # _ReadCounter callback doesn't cause excessive stderr writes.
+    # Redraw threshold: update the bar at most once per 256 KiB read so
+    # the _ReadCounter callback doesn't cause excessive stderr writes.
     _last_shown = 0
 
     def _draw_bar() -> None:
         nonlocal _last_shown
-        if not use_tty:
-            return
-        if not tty_safe_for_writes():
-            return
-        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        pct = done_size * 100 // total_size if total_size else 100
-        bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-        sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  "
-            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
-        )
-        sys.stderr.flush()
+        draw_bytes_bar(done_size, total_size)
         _last_shown = done_size
 
     def _on_read(n: int) -> None:
         nonlocal done_size
         done_size += n
-        if done_size - _last_shown >= 262144:
+        if done_size - _last_shown >= REDRAW_THRESHOLD_BYTES:
             _draw_bar()
 
     def _on_entry(arc: str) -> None:
         if verbose:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Adding: '{arc}'{C['RST']}")
+            log_info(f"Adding: '{arc}'")
         _draw_bar()
 
     try:
@@ -352,18 +319,12 @@ def _run_backup(
                 _add_path(tf, src, arc, on_read=_on_read)
                 _on_entry(arc)
 
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-             f"Finished backing up.{C['RST']}")
+        clear_bar()
+        log_info("Finished backing up.")
 
     except KeyboardInterrupt:
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
+        clear_bar()
+        log_error("Aborted by user.")
         if output_path:
             try:
                 os.remove(output_path)
@@ -371,11 +332,8 @@ def _run_backup(
                 pass
         sys.exit(1)
     except (OSError, tarfile.TarError) as exc:
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Failed to create archive: {exc}{C['RST']}")
+        clear_bar()
+        log_error(f"Failed to create backup archive: {exc}")
         if output_path:
             try:
                 os.remove(output_path)

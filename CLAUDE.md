@@ -87,11 +87,11 @@ these and fall back to `/data/data/com.termux/files/...` paths.
 | Constant | Termux | Non-Termux Linux |
 |---|---|---|
 | `RUNTIME_DIR` | `$PREFIX/var/lib/proot-distro` | `$XDG_DATA_HOME/proot-distro` (or `~/.local/share/...`) |
-| `DOWNLOAD_CACHE_DIR` | `$RUNTIME_DIR/dlcache` | `$XDG_CACHE_HOME/proot-distro` (or `~/.cache/...`) |
+| `BASE_CACHE_DIR` | `$RUNTIME_DIR/dlcache` | `$XDG_CACHE_HOME/proot-distro` (or `~/.cache/...`) |
 | `CONTAINERS_DIR` | `$RUNTIME_DIR/containers` | same |
 | `LEGACY_ROOTFS_DIR` | `$RUNTIME_DIR/installed-rootfs` (migration only) | same |
-| `LAYER_CACHE_DIR` | `$DOWNLOAD_CACHE_DIR/layers` | same |
-| `MANIFEST_CACHE_DIR` | `$DOWNLOAD_CACHE_DIR/manifests` | same |
+| `LAYER_CACHE_DIR` | `$BASE_CACHE_DIR/layers` | same |
+| `MANIFEST_CACHE_DIR` | `$BASE_CACHE_DIR/manifests` | same |
 
 Defaults: `DEFAULT_FAKE_KERNEL_RELEASE = "6.17.0-PRoot-Distro"`,
 `DEFAULT_FAKE_KERNEL_VERSION = "#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025
@@ -290,6 +290,23 @@ cannot be pre-scanned for container names. `command_restore` acquires
 the exclusive lock per container on the first `TarInfo` header
 encountered for that container, before any write. Locks are tracked in
 a `pending_locks` dict and released in a `finally` block.
+
+**BuildLock scope**: `BuildLock` (used by `build` and `push`) is keyed
+on the *output* `(image_ref, arch)`, i.e. the `-t` tag the user passed.
+It does **not** cover shared caches that two builds with different
+output tags can still touch simultaneously — most importantly the base
+image they both `FROM`. Two concurrent `build` calls with different
+tags will each pull the same base image and write to the same
+`MANIFEST_CACHE_DIR/<key>.json` and `LAYER_CACHE_DIR/<digest>` paths.
+Those cache writers are made safe at the file-system layer instead: every
+`<path>.tmp` writer in `helpers/docker.py`, `helpers/oci_writer.py`,
+`helpers/download.py`, and `commands/install.py` uses
+`tempfile.mkstemp` in the destination directory so concurrent writers
+pick unique tmp names and `os.replace` is race-free. The build-cache
+index (`buildcache/index.json`) is the one shared file that is not
+content-deterministic — `helpers/build_cache.record()` holds a separate
+`fcntl.flock` over the read-modify-write cycle so concurrent records
+don't lose entries.
 
 ## Command-specific options
 
@@ -633,7 +650,7 @@ registry is detected when the first path component contains `.` or `:`
 `derive_alias(image_ref)` picks the last path component, strips the
 tag: `ghcr.io/foo/bar:latest` → `bar`.
 
-Cache layout in `DOWNLOAD_CACHE_DIR`:
+Cache layout in `BASE_CACHE_DIR`:
 
 - `layers/<digest_with_colon_as_underscore>` — one file per blob.
 - `manifests/<sha256-prefix>.json` — `{manifest, repo, image_config}`.
@@ -846,7 +863,7 @@ Both use pure-Python `tarfile`. Archive structure: `<name>/`,
   components is dropped; container name must match `_NAME_RE`.
 - On first entry for a container, the existing rootfs is cleared with
   a `topdown=False` walk and a "Removing old rootfs... N files" counter.
-- Hard links: resolved via `_dest_path()` and recreated with `os.link`.
+- Hard links: resolved via `_dest_path()` and copied with `shutil.copy2` (never re-linked on the host — proot's `--link2symlink` treats them as independent files).
 - CTRL-C: progress bar cleared, no data removed.
 
 **TTY-contention safety**: both commands gate every stderr write —
@@ -868,7 +885,7 @@ lack a manifest).
 
 ## Clear cache
 
-`command_clear_cache()` walks `DOWNLOAD_CACHE_DIR` to fix
+`command_clear_cache()` walks `BASE_CACHE_DIR` to fix
 read/execute permissions on every entry (`_ensure_readable()`), sums
 sizes, then removes each top-level entry (`shutil.rmtree` for dirs,
 `os.remove` for files). Reports total freed space. Per-entry failures
@@ -1117,7 +1134,7 @@ implemented as a single-line condition that consults
 hashes the parent layer digest plus the canonical form of the
 instruction plus per-instruction extras (the sorted env+ARG scope for
 RUN; not used by COPY/ADD in v1). The index file lives at
-`$DOWNLOAD_CACHE_DIR/buildcache/index.json` and stores
+`$BASE_CACHE_DIR/buildcache/index.json` and stores
 `{recipe_hash → {layer_digest, diff_id, size, image_config_patch,
 created}}`. `clear-cache` does **not** automatically delete the build
 cache index — it lives next to `layers/` and `manifests/` and is

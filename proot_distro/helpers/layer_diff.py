@@ -20,8 +20,10 @@
 
 # Architecture: Snapshot the rootfs before/after a RUN, diff the
 # states, and emit an OCI-format gzipped tar layer that captures the
-# delta (with whiteouts for deletions). The snapshot fingerprint is
-# (size, integer mtime, mode) — a single lstat() per entry, no opens.
+# delta (with whiteouts for deletions). The snapshot fingerprint for a
+# regular file is (size, mtime_ns, mode, crc32): the lstat fields
+# short-circuit obvious changes, and a streaming zlib.crc32 catches
+# the same-(size, mtime) corner cases (touch -r, sub-second rewrites).
 #
 # The layer writer streams the tar payload through a 4-stage pipeline
 # in a single pass:
@@ -39,12 +41,12 @@ import hashlib
 import io
 import os
 import stat
-import sys
 import tarfile
 import zlib
 
-from proot_distro.colors import C
-from proot_distro.helpers.download import fmt_size
+from proot_distro.progress import (
+    clear_bar, draw_bytes_bar, progress_active,
+)
 
 
 _CRC_CHUNK = 65536
@@ -224,33 +226,13 @@ class _ProgressHashTee:
 
 def _make_progress_callback(total_size):
     """Return a (callback, finaliser) pair for a stderr progress bar."""
-    use_tty = sys.stderr.isatty()
-    if not use_tty:
+    if not progress_active():
         return (lambda _done: None), (lambda: None)
 
-    pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-
     def _show(done):
-        if total_size:
-            pct = min(done * 100 // total_size, 100)
-            bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-            sys.stderr.write(
-                f"\r{pfx}[{bar}] {pct:3d}%  "
-                f"{fmt_size(done)} / {fmt_size(total_size)}"
-                f"\033[K{C['RST']}"
-            )
-        else:
-            sys.stderr.write(
-                f"\r{pfx}{fmt_size(done)} packed..."
-                f"\033[K{C['RST']}"
-            )
-        sys.stderr.flush()
+        draw_bytes_bar(done, total_size, noun="packed")
 
-    def _clear():
-        sys.stderr.write("\r\033[K")
-        sys.stderr.flush()
-
-    return _show, _clear
+    return _show, clear_bar
 
 
 def _pack_stream(out_path, total_uncompressed, populate):

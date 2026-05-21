@@ -14,10 +14,8 @@
 # ---------------------------------------------------------------------------
 _proot_distro_containers() {
     local dir
-    if [[ -n "${TERMUX_PREFIX}" ]]; then
-        dir="${TERMUX_PREFIX}/var/lib/proot-distro/containers"
-    elif [[ -n "${ANDROID_ROOT}" ]]; then
-        dir="/data/data/com.termux/files/usr/var/lib/proot-distro/containers"
+    if _proot_distro_is_termux; then
+        dir="${TERMUX__PREFIX:-/data/data/com.termux/files/usr}/var/lib/proot-distro/containers"
     else
         dir="${XDG_DATA_HOME:-${HOME}/.local/share}/proot-distro/containers"
     fi
@@ -89,9 +87,8 @@ _proot_distro() {
                 install)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
-                        '(--name --override-alias)--name[install under a custom container name]:alias' \
-                        '(--name --override-alias)--override-alias[install under a custom container name]:alias' \
-                        '--architecture[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '(-n --name)'{-n,--name}'[install under a custom container name]:alias' \
+                        '(-a --architecture)'{-a,--architecture}'[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:docker image or local archive:_files'
                     ;;
@@ -127,17 +124,17 @@ _proot_distro() {
                     local -a _login_args
                     _login_args=(
                         '(-h --help)'{-h,--help}'[show help]'
-                        '--user[run as this user (default\: root)]:user'
-                        '--redirect-ports[redirect ports below 1024]'
+                        '(-u --user)'{-u,--user}'[run as this user (default\: root)]:user'
+                        '(-P --redirect-ports)'{-P,--redirect-ports}'[redirect ports below 1024]'
                         '--shared-home[mount home inside container]'
                         '--shared-tmp[share /tmp with the host]'
                         '--shared-x11[share the X11 socket (/tmp/.X11-unix)]'
-                        '*--bind[bind-mount PATH\[:DEST\] into the container]:path:_files'
+                        '*'{-b,--bind}'[bind-mount PATH\[:DEST\] into the container]:path:_files'
                         '--emulator[path to QEMU user-mode emulator binary]:path:_files'
                         '--kernel[fake kernel release string]:string'
                         '--hostname[hostname visible inside the container]:string'
-                        '--work-dir[initial working directory]:path:_directories'
-                        '*--env[set environment variable]:VAR=VALUE'
+                        '(-w --work-dir)'{-w,--work-dir}'[initial working directory]:path:_directories'
+                        '*'{-e,--env}'[set environment variable]:VAR=VALUE'
                         '--get-proot-cmd[print the proot command line and exit]'
                         '1:container:_proot_distro_containers'
                         '*:inner command:_command_names -e'
@@ -155,7 +152,8 @@ _proot_distro() {
                 # -----------------------------------------------------------
                 list)
                     _arguments \
-                        '(-h --help)'{-h,--help}'[show help]'
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-q --quiet)'{-q,--quiet}'[suppress non-error output]'
                     ;;
 
                 # -----------------------------------------------------------
@@ -164,8 +162,8 @@ _proot_distro() {
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-v --verbose -q --quiet)'{-v,--verbose}'[print each archived file]' \
                         '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
-                        '--output[write archive to FILE instead of stdout]:file:_files' \
-                        '--compress[compression algorithm]:type:(gzip bzip2 xz none)' \
+                        '(-o --output)'{-o,--output}'[write archive to FILE instead of stdout]:file:_files' \
+                        '(-c --compress)'{-c,--compress}'[compression algorithm]:type:(gzip bzip2 xz none)' \
                         '1:container:_proot_distro_containers'
                     ;;
 
@@ -204,8 +202,8 @@ _proot_distro() {
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-v --verbose -q --quiet)'{-v,--verbose}'[print each synced file]' \
                         '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
-                        '--checksum[use CRC32 checksum instead of size+mtime]' \
-                        '--delete[remove destination entries absent from source]' \
+                        '(-c --checksum)'{-c,--checksum}'[use CRC32 checksum instead of size+mtime]' \
+                        '(-d --delete)'{-d,--delete}'[remove destination entries absent from source]' \
                         '1:source (host path or container\:path):_files' \
                         '2:destination (host path or container\:path):_files'
                     ;;
@@ -215,17 +213,17 @@ _proot_distro() {
                     local -a _run_args
                     _run_args=(
                         '(-h --help)'{-h,--help}'[show help]'
-                        '--user[run as this user (default\: root)]:user'
-                        '--redirect-ports[redirect ports below 1024]'
+                        '(-u --user)'{-u,--user}'[run as this user (default\: root)]:user'
+                        '(-P --redirect-ports)'{-P,--redirect-ports}'[redirect ports below 1024]'
                         '--shared-home[mount home inside container]'
                         '--shared-tmp[share /tmp with the host]'
                         '--shared-x11[share the X11 socket (/tmp/.X11-unix)]'
-                        '*--bind[bind-mount PATH\[:DEST\] into the container]:path:_files'
+                        '*'{-b,--bind}'[bind-mount PATH\[:DEST\] into the container]:path:_files'
                         '--emulator[path to QEMU user-mode emulator binary]:path:_files'
                         '--kernel[fake kernel release string]:string'
                         '--hostname[hostname visible inside the container]:string'
-                        '--work-dir[initial working directory]:path:_directories'
-                        '*--env[set environment variable]:VAR=VALUE'
+                        '(-w --work-dir)'{-w,--work-dir}'[initial working directory]:path:_directories'
+                        '*'{-e,--env}'[set environment variable]:VAR=VALUE'
                         '--get-proot-cmd[print the proot command line and exit]'
                         '1:container:_proot_distro_containers'
                         '*:arguments'
@@ -241,11 +239,29 @@ _proot_distro() {
                     ;;
 
                 # -----------------------------------------------------------
+                build)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-f --file)'{-f,--file}'[path to Dockerfile (- reads from stdin)]:file:_files' \
+                        '*'{-t,--tag}'[image reference to assign (repeatable)]:ref' \
+                        '*--build-arg[set a build-time ARG (repeatable)]:K=V' \
+                        '(-a --architecture)'{-a,--architecture}'[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '--target[stop after this named build stage]:stage' \
+                        '--emulator[path to QEMU user-mode emulator binary]:path:_files' \
+                        '*'{-o,--output}'[write OCI tarball to FILE (repeatable)]:file:_files' \
+                        '--install-as[install image as a local container after build]:name:_proot_distro_containers' \
+                        '--no-cache[disable per-instruction build cache]' \
+                        '(-v --verbose -q --quiet)'{-v,--verbose}'[echo each instruction and stream RUN output]' \
+                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
+                        '1:build context directory:_directories'
+                    ;;
+
+                # -----------------------------------------------------------
                 push)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
-                        '--architecture[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '(-a --architecture)'{-a,--architecture}'[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
                         '1:image reference'
                     ;;
 

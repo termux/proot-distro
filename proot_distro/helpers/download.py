@@ -18,29 +18,24 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Generic HTTP download utilities with progress bars and retry
-# logic. Kept separate from docker.py so the download primitives can be
-# reused independently. Progress output goes to stderr to stay out of data
-# pipelines. sha256_file() is provided for integrity verification.
+# Architecture: Generic HTTP download utilities and a content-hash helper.
+# Both use proot_distro.progress for TTY progress output so the bar looks
+# identical to the one drawn by the Docker pull, OCI extraction, and
+# backup/restore code paths.
 
 import hashlib
 import os
-import sys
 import time
 import urllib.error
 import urllib.request
 
-from proot_distro.constants import PROGRAM_VERSION
-from proot_distro.colors import C, info, is_quiet, msg
+from proot_distro.atomic import atomic_replace
+from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
+from proot_distro.message import msg, log_info, log_error
+from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
-def fmt_size(n_bytes: int) -> str:
-    """Return a human-readable size string (B, KiB, or MiB)."""
-    if n_bytes >= 1 << 20:
-        return f"{n_bytes / (1 << 20):.1f} MiB"
-    if n_bytes >= 1 << 10:
-        return f"{n_bytes / (1 << 10):.1f} KiB"
-    return f"{n_bytes} B"
+__all__ = ("download_file", "sha256_file")
 
 
 def sha256_file(path: str) -> str:
@@ -48,27 +43,12 @@ def sha256_file(path: str) -> str:
     h = hashlib.sha256()
     total = os.path.getsize(path)
     processed = 0
-    use_tty = sys.stderr.isatty() and not is_quiet()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
             processed += len(chunk)
-            if use_tty:
-                pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                if total:
-                    pct = processed * 100 // total
-                    bar_filled = pct // 5
-                    bar = "#" * bar_filled + "-" * (20 - bar_filled)
-                    line = (f"\r{pfx}[{bar}] {pct:3d}%"
-                            f"  {fmt_size(processed)} / {fmt_size(total)}"
-                            f"\033[K{C['RST']}")
-                else:
-                    line = f"\r{pfx}{fmt_size(processed)} processed...\033[K{C['RST']}"
-                sys.stderr.write(line)
-                sys.stderr.flush()
-    if use_tty:
-        sys.stderr.write("\r\033[K")
-        sys.stderr.flush()
+            draw_bytes_bar(processed, total, noun="processed")
+    clear_bar()
     return h.hexdigest()
 
 
@@ -76,69 +56,33 @@ def download_file(
     url: str, dest: str, max_retries: int = 5, retry_delay: int = 5
 ) -> None:
     """Download *url* to *dest* with progress output, redirects, and retries."""
-    tmp = dest + ".tmp"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
+    )
     for attempt in range(max_retries):
         try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": f"proot-distro/{PROGRAM_VERSION}"},
-            )
-            with urllib.request.urlopen(req) as resp, open(tmp, "wb") as fh:
-                total = int(resp.headers.get("Content-Length", 0))
-                downloaded = 0
-                use_tty = sys.stderr.isatty() and not is_quiet()
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    downloaded += len(chunk)
-                    if use_tty:
-                        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        if total:
-                            pct = downloaded * 100 // total
-                            bar_filled = pct // 5
-                            bar = "#" * bar_filled + "-" * (20 - bar_filled)
-                            line = (f"\r{pfx}[{bar}] {pct:3d}%"
-                                    f"  {fmt_size(downloaded)}"
-                                    f" / {fmt_size(total)}\033[K{C['RST']}")
-                        else:
-                            line = (f"\r{pfx}"
-                                    f"{fmt_size(downloaded)} downloaded..."
-                                    f"\033[K{C['RST']}")
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
-                if use_tty:
-                    sys.stderr.write("\r\033[K")
-                    sys.stderr.flush()
-            os.replace(tmp, dest)
-            info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                 f"Finished downloading ({fmt_size(downloaded)}).{C['RST']}")
+            with atomic_replace(dest) as tmp:
+                with urllib.request.urlopen(req) as resp, open(tmp, "wb") as fh:
+                    total = int(resp.headers.get("Content-Length", 0))
+                    downloaded = 0
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        downloaded += len(chunk)
+                        draw_bytes_bar(downloaded, total, noun="downloaded")
+            clear_bar()
+            log_info(f"Finished downloading ({fmt_size(downloaded)}).")
             return
         except KeyboardInterrupt:
-            if sys.stderr.isatty():
-                sys.stderr.write("\r\033[K")
-                sys.stderr.flush()
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
+            clear_bar()
             raise
         except (urllib.error.URLError, OSError) as exc:
-            if sys.stderr.isatty():
-                sys.stderr.write("\r\033[K")
-                sys.stderr.flush()
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
+            clear_bar()
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-            else:
-                msg()
-                msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-                    f"Download failure, please check your network "
-                    f"connection.{C['RST']}")
-                raise RuntimeError(
-                    f"Failed to download {url}: {exc}"
-                ) from exc
+                continue
+            msg()
+            log_error("Download failure, please check your network connection.")
+            raise RuntimeError(f"Cannot download {url}: {exc}") from exc

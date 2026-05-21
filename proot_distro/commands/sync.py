@@ -29,36 +29,17 @@
 # counterpart in the source are removed after the sync pass. Paths may be
 # plain host paths or container-prefixed ('ubuntu:/etc') references.
 
-import hashlib
 import os
 import shutil
 import stat
 import sys
 from contextlib import ExitStack
 
-from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, info, is_quiet, msg
-from proot_distro.locking import ContainerLock
-
-
-def _container_from_spec(spec: str):
-    """Return the container name from a 'dist:path' spec, or None."""
-    return spec.split(":", 1)[0] if ":" in spec else None
-
-
-def _resolve_sync_path(spec: str) -> str:
-    """Resolve a 'dist:path' or plain host path to an absolute host path."""
-    if ":" in spec:
-        dist, _, rel_path = spec.partition(":")
-        rootfs = os.path.join(CONTAINERS_DIR, dist, "rootfs")
-        if not os.path.isdir(rootfs):
-            msg()
-            msg(f"{C['BRED']}Error: distribution "
-                f"'{C['YELLOW']}{dist}{C['BRED']}' is not installed.{C['RST']}")
-            msg()
-            sys.exit(1)
-        return os.path.normpath(os.path.join(rootfs, rel_path.lstrip("/")))
-    return os.path.normpath(os.path.abspath(spec))
+from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.paths import (
+    container_locks_for_spec_pair, resolve_container_path,
+)
+from proot_distro.progress import clear_bar, draw_count_bar
 
 
 def _file_checksum(path: str) -> int:
@@ -108,10 +89,7 @@ def _ensure_parent_writable(path: str) -> None:
         if not (st.st_mode & stat.S_IWUSR):
             os.chmod(parent, st.st_mode | stat.S_IWUSR | stat.S_IXUSR)
     except OSError as exc:
-        msg()
-        msg(f"{C['BRED']}Error: cannot make '{parent}' writable: "
-            f"{exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot make '{parent}' writable: {exc}")
         sys.exit(1)
 
 
@@ -122,10 +100,7 @@ def _ensure_writable(path: str) -> None:
         if not (st.st_mode & stat.S_IWUSR):
             os.chmod(path, st.st_mode | stat.S_IWUSR)
     except OSError as exc:
-        msg()
-        msg(f"{C['BRED']}Error: cannot set write permission on "
-            f"'{path}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot set write permission on '{path}': {exc}")
         sys.exit(1)
 
 
@@ -148,16 +123,10 @@ def _sync_dir(dst_path: str, src_st: os.stat_result) -> bool:
         try:
             os.makedirs(dst_path, exist_ok=True)
         except OSError as exc:
-            msg()
-            msg(f"{C['BRED']}Error: cannot create directory "
-                f"'{dst_path}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot create directory '{dst_path}': {exc}")
             sys.exit(1)
     except OSError as exc:
-        msg()
-        msg(f"{C['BRED']}Error: cannot create directory "
-            f"'{dst_path}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot create directory '{dst_path}': {exc}")
         sys.exit(1)
 
     try:
@@ -184,16 +153,10 @@ def _sync_symlink(src_path: str, dst_path: str) -> bool:
             try:
                 os.unlink(dst_path)
             except OSError as exc:
-                msg()
-                msg(f"{C['BRED']}Error: cannot remove existing path "
-                    f"'{dst_path}': {exc}{C['RST']}")
-                msg()
+                log_error(f"Cannot remove existing path '{dst_path}': {exc}")
                 sys.exit(1)
         except OSError as exc:
-            msg()
-            msg(f"{C['BRED']}Error: cannot remove existing path "
-                f"'{dst_path}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot remove existing path '{dst_path}': {exc}")
             sys.exit(1)
 
     try:
@@ -203,16 +166,10 @@ def _sync_symlink(src_path: str, dst_path: str) -> bool:
         try:
             os.symlink(target, dst_path)
         except OSError as exc:
-            msg()
-            msg(f"{C['BRED']}Error: cannot create symlink "
-                f"'{dst_path}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot create symlink '{dst_path}': {exc}")
             sys.exit(1)
     except OSError as exc:
-        msg()
-        msg(f"{C['BRED']}Error: cannot create symlink "
-            f"'{dst_path}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot create symlink '{dst_path}': {exc}")
         sys.exit(1)
 
     return True
@@ -240,20 +197,14 @@ def _sync_file(src_path: str, src_st: os.stat_result, dst_path: str) -> None:
                 os.unlink(tmp)
             except OSError:
                 pass
-            msg()
-            msg(f"{C['BRED']}Error: cannot write to "
-                f"'{dst_path}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot write to '{dst_path}': {exc}")
             sys.exit(1)
     except OSError as exc:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        msg()
-        msg(f"{C['BRED']}Error: cannot write to "
-            f"'{dst_path}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot write to '{dst_path}': {exc}")
         sys.exit(1)
 
     try:
@@ -276,20 +227,14 @@ def _sync_file(src_path: str, src_st: os.stat_result, dst_path: str) -> None:
                 os.unlink(tmp)
             except OSError:
                 pass
-            msg()
-            msg(f"{C['BRED']}Error: cannot replace "
-                f"'{dst_path}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot replace '{dst_path}': {exc}")
             sys.exit(1)
     except OSError as exc:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        msg()
-        msg(f"{C['BRED']}Error: cannot replace "
-            f"'{dst_path}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot replace '{dst_path}': {exc}")
         sys.exit(1)
 
 
@@ -302,16 +247,10 @@ def _unlink_robust(path: str) -> None:
         try:
             os.unlink(path)
         except OSError as exc:
-            msg()
-            msg(f"{C['BRED']}Error: cannot delete "
-                f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot delete '{path}': {exc}")
             sys.exit(1)
     except OSError as exc:
-        msg()
-        msg(f"{C['BRED']}Error: cannot delete "
-            f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot delete '{path}': {exc}")
         sys.exit(1)
 
 
@@ -335,25 +274,25 @@ def _rmtree_robust(path: str) -> None:
         try:
             shutil.rmtree(path)
         except OSError as exc:
-            msg()
-            msg(f"{C['BRED']}Error: cannot remove "
-                f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot remove '{path}': {exc}")
             sys.exit(1)
     except OSError as exc:
-        msg()
-        msg(f"{C['BRED']}Error: cannot remove "
-            f"'{C['YELLOW']}{path}{C['BRED']}': {exc}{C['RST']}")
-        msg()
+        log_error(f"Cannot remove '{path}': {exc}")
         sys.exit(1)
 
 
-def _collect_extras(dest_path: str, src_rels: set) -> list:
+def _collect_extras(
+    dest_path: str,
+    src_rels: set,
+    skipped_src_rels: set = frozenset(),
+) -> list:
     """Return (path, is_tree) for every destination entry absent from src_rels.
 
     is_tree is True for real directories (to be removed recursively) and
     False for plain files and symlinks. Extra directories are not descended
     into — the whole subtree is captured as a single is_tree=True entry.
+    Entries whose relative path is in skipped_src_rels are left untouched
+    because the corresponding source directory was unreadable.
     """
     extras = []
     for dirpath, dirnames, filenames in os.walk(
@@ -367,7 +306,9 @@ def _collect_extras(dest_path: str, src_rels: set) -> list:
             full = os.path.join(dirpath, d)
             rel_d = os.path.join(rel_dir, d) if rel_dir != "." else d
             is_link = os.path.islink(full)
-            if rel_d not in src_rels:
+            if rel_d in skipped_src_rels:
+                dirnames.pop(i)
+            elif rel_d not in src_rels:
                 extras.append((full, not is_link))
                 dirnames.pop(i)
             elif is_link:
@@ -382,29 +323,46 @@ def _collect_extras(dest_path: str, src_rels: set) -> list:
     return extras
 
 
-def _collect_entries(src: str) -> list:
-    """Return (abs_path, rel_path) pairs for every syncable entry under src.
+def _collect_entries(src: str) -> tuple[list, set]:
+    """Return (entries, skipped_rels).
 
-    rel_path is "" when the entry is the source root (file or directory).
-    Directories appear before their contents. Symlinks-to-directories are
-    yielded as single entries; os.walk does not descend into them.
-    Block/char devices, FIFOs, and sockets are excluded.
+    entries: (abs_path, rel_path) pairs for every syncable entry under src.
+    rel_path is "" for the source root. Directories appear before their
+    contents. Symlinks-to-directories are single entries. Block/char/FIFO/
+    socket entries are excluded.
+
+    skipped_rels: relative paths of subdirectories that could not be
+    traversed (e.g. permission denied). A warning is emitted for each.
     """
     entries = []
+    skipped_rels = set()
+
     try:
         src_st = os.lstat(src)
     except OSError:
-        return entries
+        return entries, skipped_rels
 
     m = src_st.st_mode
     if stat.S_ISBLK(m) or stat.S_ISCHR(m) or stat.S_ISFIFO(m) or stat.S_ISSOCK(m):
-        return entries
+        return entries, skipped_rels
 
     if not stat.S_ISDIR(m):
         entries.append((src, ""))
-        return entries
+        return entries, skipped_rels
 
-    for dirpath, dirnames, filenames in os.walk(src, followlinks=False, topdown=True):
+    def _on_error(exc: OSError) -> None:
+        if exc.filename:
+            rel = os.path.relpath(exc.filename, src)
+            if rel != ".":
+                skipped_rels.add(rel)
+                log_error(
+                    f"Warning: directory '{exc.filename}' is not readable, "
+                    f"skipping."
+                )
+
+    for dirpath, dirnames, filenames in os.walk(
+        src, followlinks=False, topdown=True, onerror=_on_error
+    ):
         rel = os.path.relpath(dirpath, src)
 
         if rel != ".":
@@ -427,62 +385,46 @@ def _collect_entries(src: str) -> list:
             file_rel = os.path.join(rel, fname) if rel != "." else fname
             entries.append((fpath, file_rel))
 
-    return entries
+    return entries, skipped_rels
 
 
-def command_sync(args, configs: dict) -> None:  # noqa: ARG001
+def command_sync(args) -> None:
+    """Mirror *src* to *dest*, optionally deleting orphaned entries."""
     src = args.source
     dest = args.destination
     verbose = getattr(args, "verbose", False)
     use_checksum = getattr(args, "checksum", False)
     delete = getattr(args, "delete", False)
 
-    src_c = _container_from_spec(src)
-    dst_c = _container_from_spec(dest)
-
-    _locks = []
-    if src_c and dst_c:
-        if src_c == dst_c:
-            _locks.append(ContainerLock(src_c, exclusive=True, command="sync"))
-        else:
-            for name in sorted({src_c, dst_c}):
-                _locks.append(ContainerLock(
-                    name, exclusive=(name == dst_c), command="sync"
-                ))
-    elif dst_c:
-        _locks.append(ContainerLock(dst_c, exclusive=True, command="sync"))
-    elif src_c:
-        _locks.append(ContainerLock(src_c, exclusive=False, command="sync"))
-
-    with ExitStack() as _stack:
-        for _lock in _locks:
-            _stack.enter_context(_lock)
+    with ExitStack() as stack:
+        for lock in container_locks_for_spec_pair(src, dest, command="sync"):
+            stack.enter_context(lock)
         _do_sync(src, dest, verbose, use_checksum, delete)
 
 
 def _do_sync(src, dest, verbose, use_checksum, delete):
-    src_path = _resolve_sync_path(src)
-    dest_path = _resolve_sync_path(dest)
+    src_path = resolve_container_path(src)
+    dest_path = resolve_container_path(dest)
 
     try:
         src_st = os.lstat(src_path)
     except OSError:
-        msg()
-        msg(f"{C['BRED']}Error: cannot access source "
-            f"'{C['YELLOW']}{src}{C['BRED']}': path does not exist.{C['RST']}")
-        msg()
+        crit_error(f"source path '{src}' does not exist.")
         sys.exit(1)
 
     src_is_dir = stat.S_ISDIR(src_st.st_mode)
+
+    if src_is_dir and not os.access(src_path, os.R_OK | os.X_OK):
+        crit_error(f"source directory '{src}' is not readable.")
+        sys.exit(1)
 
     # If src is a file and dest is an existing dir, place file inside it.
     if not src_is_dir and os.path.isdir(dest_path):
         dest_path = os.path.join(dest_path, os.path.basename(src_path))
 
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Source:      '{src_path}'{C['RST']}")
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Destination: '{dest_path}'{C['RST']}")
+    log_info("Synchronizing files...")
+    log_info(f"Source: '{src_path}'")
+    log_info(f"Destination: '{dest_path}'")
 
     if src_is_dir:
         try:
@@ -492,53 +434,29 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
             try:
                 os.makedirs(dest_path, exist_ok=True)
             except OSError as exc:
-                msg()
-                msg(f"{C['BRED']}Error: cannot create destination "
-                    f"'{dest_path}': {exc}{C['RST']}")
-                msg()
+                log_error(f"Cannot create destination '{dest_path}': {exc}")
                 sys.exit(1)
         except OSError as exc:
-            msg()
-            msg(f"{C['BRED']}Error: cannot create destination "
-                f"'{dest_path}': {exc}{C['RST']}")
-            msg()
+            log_error(f"Cannot create destination '{dest_path}': {exc}")
             sys.exit(1)
 
-    entries = _collect_entries(src_path)
+    entries, skipped_rels = _collect_entries(src_path)
     total = max(len(entries), 1)
     done = 0
-    # Suppress the bar in verbose mode: log lines already provide per-file
-    # feedback and the bar would flicker between every line, clogging output.
-    # Also suppress in quiet mode.
-    use_tty = sys.stderr.isatty() and not verbose and not is_quiet()
 
     def _show_progress() -> None:
-        if not use_tty:
+        # Suppress the bar in verbose mode: per-file log lines already
+        # provide feedback and the bar would flicker between each line.
+        if verbose:
             return
-        pct = done * 100 // total
-        bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  {done} / {total} files\033[K{C['RST']}"
-        )
-        sys.stderr.flush()
-
-    def _log(text: str) -> None:
-        # The progress bar leaves the cursor at the end of its line with no
-        # trailing newline. Clear the line before printing so that log
-        # messages and the redrawn progress bar never mix on the same line.
-        if use_tty:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(text)
+        draw_count_bar(done, total, unit="files")
 
     try:
         for abs_path, rel_path in entries:
             try:
                 item_st = os.lstat(abs_path)
             except OSError as exc:
-                _log(f"{C['BLUE']}[{C['YELLOW']}!{C['BLUE']}] {C['CYAN']}"
-                     f"Warning: cannot stat '{abs_path}': {exc}{C['RST']}")
+                log_error(f"Warning: cannot stat '{abs_path}': {exc}")
                 done += 1
                 _show_progress()
                 continue
@@ -558,60 +476,48 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
             if stat.S_ISDIR(m):
                 created = _sync_dir(dst_item, item_st)
                 if verbose and created:
-                    _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                         f"({done + 1}/{total}) Add: "
-                         f"{abs_path} -> {dst_item}{C['RST']}")
+                    log_info(f"({done + 1}/{total}) New directory: "
+                             f"{os.path.join(dest,rel_path)}")
 
             elif stat.S_ISLNK(m):
-                op = "Update" if os.path.lexists(dst_item) else "Add"
+                op = "Modified" if os.path.lexists(dst_item) else "New"
                 changed = _sync_symlink(abs_path, dst_item)
                 if verbose and changed:
-                    _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                         f"({done + 1}/{total}) {op}: "
-                         f"{abs_path} -> {dst_item}{C['RST']}")
+                    log_info(f"({done + 1}/{total}) {op} symlink: "
+                             f"{os.path.join(dest,rel_path)}")
 
             elif stat.S_ISREG(m):
                 if not os.access(abs_path, os.R_OK):
-                    _log(f"{C['BLUE']}[{C['YELLOW']}!{C['BLUE']}] {C['CYAN']}"
-                         f"Warning: '{abs_path}' is not readable, "
-                         f"skipping.{C['RST']}")
+                    log_error(f"Warning: file '{abs_path}' is not readable, "
+                              f"skipping.")
                 elif _needs_update(abs_path, item_st, dst_item, use_checksum):
-                    op = "Update" if os.path.lexists(dst_item) else "Add"
+                    op = "Modified" if os.path.lexists(dst_item) else "New"
                     _sync_file(abs_path, item_st, dst_item)
                     if verbose:
-                        _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                             f"({done + 1}/{total}) {op}: "
-                             f"{abs_path} -> {dst_item}{C['RST']}")
+                        log_info(f"({done + 1}/{total}) {op} file: "
+                                 f"{os.path.join(dest,rel_path)}")
 
             done += 1
             _show_progress()
 
     except KeyboardInterrupt:
-        if use_tty:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
+        log_error("Aborted by user.")
         sys.exit(1)
 
-    if use_tty:
-        sys.stderr.write("\r\033[K")
-        sys.stderr.flush()
+    clear_bar()
 
     # --delete pass: remove destination entries absent from the source.
     # Only meaningful when source is a directory; silently skipped otherwise.
     if delete and src_is_dir:
         src_rels = {rel for _, rel in entries if rel}
-        extras = _collect_extras(dest_path, src_rels)
+        extras = _collect_extras(dest_path, src_rels, skipped_rels)
         del_total = len(extras)
         for del_n, (path, is_tree) in enumerate(extras, start=1):
             if verbose:
-                _log(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                     f"({del_n}/{del_total}) Delete: {path}{C['RST']}")
+                log_info(f"({del_n}/{del_total}) Delete: {path}")
             if is_tree:
                 _rmtree_robust(path)
             else:
                 _unlink_robust(path)
 
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Finished synchronizing.{C['RST']}")
+    log_info("Finished synchronizing.")

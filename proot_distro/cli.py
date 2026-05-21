@@ -18,14 +18,17 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Entry point for all CLI parsing. Uses argparse with
-# add_help=False so --help is handled manually, avoiding "required argument"
-# errors when a subcommand's --help is invoked without positional args.
-# Command aliases are resolved before dispatch so handlers always see the
-# canonical command name. Missing required positionals are caught manually
-# and trigger per-command help text.
+# Architecture: CLI entry point. Most of the heavy lifting now lives
+# elsewhere:
+#
+#   parser.py             — argparse construction + ALIAS_TO_CANONICAL.
+#   commands/help/        — HELP_COMMANDS dispatcher + per-command pages.
+#   commands/*            — one module (or subpackage) per subcommand.
+#
+# main() routes signals, checks the runtime environment (root warn,
+# nested-proot rejection, proot probe), runs the parser, validates
+# required positionals, and dispatches to the matching command.
 
-import argparse
 import os
 import shutil
 import signal
@@ -33,7 +36,11 @@ import subprocess
 import sys
 
 from proot_distro.constants import IS_TERMUX, PROGRAM_NAME
-from proot_distro.colors import C, msg, set_quiet
+from proot_distro.message import C, msg, set_quiet, crit_error
+from proot_distro.parser import (
+    ALIAS_TO_CANONICAL, REQUIRED_ARGS, build_parser,
+)
+from proot_distro.commands.help import command_help, HELP_COMMANDS
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.rename import command_rename
@@ -48,316 +55,7 @@ from proot_distro.commands.sync import command_sync
 from proot_distro.commands.run import command_run
 from proot_distro.commands.build import command_build
 from proot_distro.commands.push import command_push
-from proot_distro.commands.help import command_help, _HELP_COMMANDS
 
-
-class _PdArgumentParser(argparse.ArgumentParser):
-    _pd_command: "str | None" = None
-
-    def error(self, message: str) -> None:
-        msg()
-        msg(f"{C['BRED']}Error: {message}{C['RST']}")
-        if self._pd_command and self._pd_command in _HELP_COMMANDS:
-            _HELP_COMMANDS[self._pd_command]()
-        msg()
-        sys.exit(1)
-
-
-def build_parser() -> "_PdArgumentParser":
-    parser = _PdArgumentParser(
-        prog=PROGRAM_NAME,
-        description="Manage Linux proot containers.",
-        add_help=False,
-    )
-    parser.add_argument("-h", "--help", action="store_true")
-    sub = parser.add_subparsers(dest="command")
-
-    # help
-    sub.add_parser("help", aliases=["hel", "he", "h"], add_help=False)
-
-    # install
-    p_install = sub.add_parser(
-        "install", aliases=["add", "i", "in", "ins"], add_help=False
-    )
-    p_install._pd_command = "install"
-    p_install.add_argument("alias", nargs="?", default=None, metavar="IMAGE")
-    _p_install_name = p_install.add_mutually_exclusive_group()
-    _p_install_name.add_argument("-n", "--name", dest="custom_dist_name", metavar="ALIAS")
-    _p_install_name.add_argument(
-        "--override-alias", dest="custom_dist_name", metavar="ALIAS"
-    )
-    p_install.add_argument(
-        "-a", "--architecture", dest="override_arch", metavar="ARCH",
-    )
-    p_install.add_argument("-q", "--quiet", action="store_true")
-    p_install.add_argument("-h", "--help", action="store_true")
-
-    # remove
-    p_remove = sub.add_parser("remove", aliases=["rm"], add_help=False)
-    p_remove._pd_command = "remove"
-    p_remove.add_argument("alias", nargs="?", default=None)
-    _p_remove_vq = p_remove.add_mutually_exclusive_group()
-    _p_remove_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_remove_vq.add_argument("-q", "--quiet", action="store_true")
-    p_remove.add_argument("-h", "--help", action="store_true")
-
-    # rename
-    p_rename = sub.add_parser("rename", add_help=False)
-    p_rename._pd_command = "rename"
-    p_rename.add_argument("orig_alias", nargs="?", default=None)
-    p_rename.add_argument("new_alias", nargs="?", default=None)
-    p_rename.add_argument("-q", "--quiet", action="store_true")
-    p_rename.add_argument("-h", "--help", action="store_true")
-
-    # reset
-    p_reset = sub.add_parser("reset", add_help=False)
-    p_reset._pd_command = "reset"
-    p_reset.add_argument("alias", nargs="?", default=None)
-    p_reset.add_argument("-q", "--quiet", action="store_true")
-    p_reset.add_argument("-h", "--help", action="store_true")
-
-    # login
-    p_login = sub.add_parser("login", aliases=["sh"], add_help=False)
-    p_login._pd_command = "login"
-    p_login.add_argument("alias", nargs="?", default=None)
-    p_login.add_argument("-u", "--user", default="root")
-    _p_login_ports = p_login.add_mutually_exclusive_group()
-    _p_login_ports.add_argument(
-        "-P", "--redirect-ports", dest="redirect_ports", action="store_true"
-    )
-    _p_login_ports.add_argument(
-        "--fix-low-ports", dest="redirect_ports", action="store_true"
-    )
-    if IS_TERMUX:
-        _p_login_isolation = p_login.add_mutually_exclusive_group()
-        _p_login_isolation.add_argument("--isolated", action="store_true")
-        _p_login_isolation.add_argument("--minimal", action="store_true")
-    _p_login_shared_home = p_login.add_mutually_exclusive_group()
-    _p_login_shared_home.add_argument(
-        "--shared-home", dest="shared_home", action="store_true"
-    )
-    _p_login_shared_home.add_argument(
-        "--termux-home", dest="shared_home", action="store_true"
-    )
-    p_login.add_argument(
-        "--shared-tmp", dest="shared_tmp", action="store_true"
-    )
-    p_login.add_argument(
-        "--shared-x11", dest="shared_x11", action="store_true"
-    )
-    p_login.add_argument(
-        "-b", "--bind", action="append", metavar="PATH[:PATH]"
-    )
-    if IS_TERMUX:
-        p_login.add_argument(
-            "--no-link2symlink", dest="no_link2symlink", action="store_true"
-        )
-        p_login.add_argument(
-            "--no-sysvipc", dest="no_sysvipc", action="store_true"
-        )
-        p_login.add_argument(
-            "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
-        )
-    p_login.add_argument("--emulator", dest="emulator", metavar="PATH")
-    p_login.add_argument("--kernel", metavar="STRING")
-    p_login.add_argument("--hostname", metavar="STRING")
-    p_login.add_argument("-w", "--work-dir", dest="work_dir", metavar="PATH")
-    p_login.add_argument("-e", "--env", action="append", metavar="VAR=VALUE")
-    p_login.add_argument("--get-proot-cmd", dest="get_proot_cmd", action="store_true")
-    p_login.add_argument("login_cmd", nargs="*")
-    p_login.add_argument("-h", "--help", action="store_true")
-
-    # list
-    p_list = sub.add_parser("list", aliases=["li", "ls"], add_help=False)
-    p_list._pd_command = "list"
-    p_list.add_argument("-h", "--help", action="store_true")
-    p_list.add_argument("-q", "--quiet", action="store_true")
-
-    # backup
-    p_backup = sub.add_parser(
-        "backup", aliases=["bak", "bkp"], add_help=False
-    )
-    p_backup._pd_command = "backup"
-    p_backup.add_argument("alias", nargs="?", default=None)
-    p_backup.add_argument("-o", "--output", metavar="FILE")
-    p_backup.add_argument(
-        "-c", "--compress", dest="compression",
-        choices=["gzip", "bzip2", "xz", "none"], metavar="TYPE",
-    )
-    _p_backup_vq = p_backup.add_mutually_exclusive_group()
-    _p_backup_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_backup_vq.add_argument("-q", "--quiet", action="store_true")
-    p_backup.add_argument("-h", "--help", action="store_true")
-
-    # restore
-    p_restore = sub.add_parser("restore", add_help=False)
-    p_restore._pd_command = "restore"
-    p_restore.add_argument("archive", nargs="?")
-    _p_restore_vq = p_restore.add_mutually_exclusive_group()
-    _p_restore_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_restore_vq.add_argument("-q", "--quiet", action="store_true")
-    p_restore.add_argument("-h", "--help", action="store_true")
-
-    # clear-cache
-    p_clear = sub.add_parser(
-        "clear-cache", aliases=["clear", "cl"], add_help=False
-    )
-    p_clear._pd_command = "clear-cache"
-    _p_clear_vq = p_clear.add_mutually_exclusive_group()
-    _p_clear_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_clear_vq.add_argument("-q", "--quiet", action="store_true")
-    p_clear.add_argument("-h", "--help", action="store_true")
-
-    # copy
-    p_copy = sub.add_parser("copy", aliases=["cp"], add_help=False)
-    p_copy._pd_command = "copy"
-    p_copy.add_argument("source", nargs="?", default=None)
-    p_copy.add_argument("destination", nargs="?", default=None)
-    _p_copy_vq = p_copy.add_mutually_exclusive_group()
-    _p_copy_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_copy_vq.add_argument("-q", "--quiet", action="store_true")
-    p_copy.add_argument("-m", "--move", action="store_true")
-    p_copy.add_argument("-r", "--recursive", action="store_true")
-    p_copy.add_argument("-h", "--help", action="store_true")
-
-    # sync
-    p_sync = sub.add_parser("sync", add_help=False)
-    p_sync._pd_command = "sync"
-    p_sync.add_argument("source", nargs="?", default=None)
-    p_sync.add_argument("destination", nargs="?", default=None)
-    _p_sync_vq = p_sync.add_mutually_exclusive_group()
-    _p_sync_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_sync_vq.add_argument("-q", "--quiet", action="store_true")
-    p_sync.add_argument("-c", "--checksum", action="store_true")
-    p_sync.add_argument("-d", "--delete", action="store_true")
-    p_sync.add_argument("-h", "--help", action="store_true")
-
-    # build
-    p_build = sub.add_parser("build", add_help=False)
-    p_build._pd_command = "build"
-    p_build.add_argument("path", nargs="?", default=".", metavar="PATH")
-    p_build.add_argument("-f", "--file", dest="dockerfile", metavar="PATH")
-    p_build.add_argument(
-        "-t", "--tag", dest="tags", action="append",
-        default=[], metavar="REF",
-    )
-    p_build.add_argument(
-        "--build-arg", dest="build_args", action="append",
-        default=[], metavar="K=V",
-    )
-    p_build.add_argument(
-        "-a", "--architecture", dest="override_arch", metavar="ARCH",
-    )
-    p_build.add_argument(
-        "--target", dest="target_stage", metavar="STAGE",
-    )
-    p_build.add_argument("--emulator", dest="emulator", metavar="PATH")
-    p_build.add_argument(
-        "-o", "--output", dest="outputs", action="append",
-        default=[], metavar="FILE",
-    )
-    p_build.add_argument(
-        "--install-as", dest="install_as", metavar="NAME",
-    )
-    p_build.add_argument(
-        "--no-cache", dest="no_cache", action="store_true",
-    )
-    p_build.add_argument(
-        "--pull", dest="force_pull", action="store_true",
-    )
-    _p_build_vq = p_build.add_mutually_exclusive_group()
-    _p_build_vq.add_argument("-v", "--verbose", action="store_true")
-    _p_build_vq.add_argument("-q", "--quiet", action="store_true")
-    p_build.add_argument("-h", "--help", action="store_true")
-
-    # push
-    p_push = sub.add_parser("push", add_help=False)
-    p_push._pd_command = "push"
-    p_push.add_argument("image_ref", nargs="?", default=None, metavar="IMAGE")
-    p_push.add_argument(
-        "-a", "--architecture", dest="override_arch", metavar="ARCH",
-    )
-    p_push.add_argument("-q", "--quiet", action="store_true")
-    p_push.add_argument("-h", "--help", action="store_true")
-
-    # run
-    p_run = sub.add_parser("run", add_help=False)
-    p_run._pd_command = "run"
-    p_run.add_argument("alias", nargs="?", default=None)
-    p_run.add_argument("-u", "--user", default="root")
-    p_run.add_argument(
-        "-P", "--redirect-ports", dest="redirect_ports", action="store_true"
-    )
-    if IS_TERMUX:
-        _p_run_isolation = p_run.add_mutually_exclusive_group()
-        _p_run_isolation.add_argument("--isolated", action="store_true")
-        _p_run_isolation.add_argument("--minimal", action="store_true")
-    _p_run_shared_home = p_run.add_mutually_exclusive_group()
-    _p_run_shared_home.add_argument(
-        "--shared-home", dest="shared_home", action="store_true"
-    )
-    _p_run_shared_home.add_argument(
-        "--termux-home", dest="shared_home", action="store_true"
-    )
-    p_run.add_argument(
-        "--shared-tmp", dest="shared_tmp", action="store_true"
-    )
-    p_run.add_argument(
-        "--shared-x11", dest="shared_x11", action="store_true"
-    )
-    p_run.add_argument(
-        "-b", "--bind", action="append", metavar="PATH[:PATH]"
-    )
-    if IS_TERMUX:
-        p_run.add_argument(
-            "--no-link2symlink", dest="no_link2symlink", action="store_true"
-        )
-        p_run.add_argument(
-            "--no-sysvipc", dest="no_sysvipc", action="store_true"
-        )
-        p_run.add_argument(
-            "--no-kill-on-exit", dest="no_kill_on_exit", action="store_true"
-        )
-    p_run.add_argument("--emulator", dest="emulator", metavar="PATH")
-    p_run.add_argument("--kernel", metavar="STRING")
-    p_run.add_argument("--hostname", metavar="STRING")
-    p_run.add_argument("-w", "--work-dir", dest="work_dir", metavar="PATH")
-    p_run.add_argument("-e", "--env", action="append", metavar="VAR=VALUE")
-    p_run.add_argument("--get-proot-cmd", action="store_true")
-    p_run.add_argument("-h", "--help", action="store_true")
-
-    return parser
-
-
-_ALIAS_TO_CANONICAL = {
-    "add": "install", "i": "install", "in": "install", "ins": "install",
-    "rm": "remove",
-    "sh": "login",
-    "li": "list", "ls": "list",
-    "bak": "backup", "bkp": "backup",
-    "clear": "clear-cache", "cl": "clear-cache",
-    "cp": "copy",
-    "h": "help", "he": "help", "hel": "help",
-}
-
-# Maps each canonical command to required (arg_name, error_message) pairs.
-_REQUIRED_ARGS = {
-    "install": [("alias", "Docker image reference is not specified"
-                 " (e.g. 'ubuntu:24.04').")],
-    "remove":  [("alias", "container name is not specified.")],
-    "rename":  [("orig_alias", "the original container name is not specified."),
-                ("new_alias",  "the new container name is not specified.")],
-    "reset":   [("alias", "container name is not specified.")],
-    "login":   [("alias", "container name is not specified.")],
-    "backup":  [("alias", "container name is not specified.")],
-    "copy":    [("source",      "source path is not specified."),
-                ("destination", "destination path is not specified.")],
-    "sync":    [("source",      "source path is not specified."),
-                ("destination", "destination path is not specified.")],
-    "run":     [("alias", "container name is not specified.")],
-    "push":    [("image_ref", "image reference is not specified"
-                 " (e.g. 'myrepo/myapp:1.0').")],
-}
 
 _COMMAND_HANDLERS = {
     "install":     command_install,
@@ -382,16 +80,7 @@ def _sigquit_to_keyboard_interrupt(_signum, _frame):
     raise KeyboardInterrupt()
 
 
-def main() -> None:
-    # Route SIGQUIT (Ctrl-\) through KeyboardInterrupt so every
-    # 'except KeyboardInterrupt' block in the codebase handles it the
-    # same as SIGINT (Ctrl-C). The default disposition of SIGQUIT is
-    # to terminate the process with a core dump, which would skip
-    # progress-bar cleanup, partial-file removal, and "Aborted by
-    # user" messaging that the Ctrl-C handlers already provide.
-    signal.signal(signal.SIGQUIT, _sigquit_to_keyboard_interrupt)
-
-    # Warn if running as root.
+def _warn_if_root() -> None:
     if os.getuid() == 0:
         msg()
         msg(f"{C['BRED']}Warning: {PROGRAM_NAME} should not be executed as "
@@ -399,74 +88,154 @@ def main() -> None:
             f"environment, lost data and bricked devices.{C['RST']}")
         msg()
 
-    # Warn if running inside proot (nested proot).
+
+def _refuse_nested_proot() -> None:
+    """Exit when we're running inside a proot — nested proot is unsupported."""
     try:
         with open(f"/proc/{os.getpid()}/status") as fh:
             for line in fh:
-                if line.startswith("TracerPid:"):
-                    tracer_pid = int(line.split()[1])
-                    if tracer_pid != 0:
-                        with open(f"/proc/{tracer_pid}/status") as tfh:
-                            for tline in tfh:
-                                if tline.startswith("Name:") and "proot" in tline:
-                                    msg()
-                                    msg(f"{C['BRED']}Error: {PROGRAM_NAME} "
-                                        f"should not be executed under "
-                                        f"PRoot.{C['RST']}")
-                                    msg()
-                                    sys.exit(1)
-                    break
+                if not line.startswith("TracerPid:"):
+                    continue
+                tracer_pid = int(line.split()[1])
+                if tracer_pid == 0:
+                    return
+                try:
+                    with open(f"/proc/{tracer_pid}/status") as tfh:
+                        for tline in tfh:
+                            if tline.startswith("Name:") and "proot" in tline:
+                                crit_error(f"{PROGRAM_NAME} should not be "
+                                           f"executed under PRoot.")
+                                sys.exit(1)
+                except OSError:
+                    return
+                return
     except OSError:
         pass
 
-    # Check that proot is installed. `build` and `push` are exempt from
-    # this startup probe: `build` may run a Dockerfile with no RUN
-    # instructions in pure-Python mode, and `push` only reads from the
-    # local manifest/layer cache and uploads to a registry. `build`
-    # runs its own check after parsing the Dockerfile and refuses only
-    # when RUN (or ONBUILD RUN) is actually present.
-    _first_canonical = ""
-    if len(sys.argv) >= 2:
-        first_arg = sys.argv[1]
-        _first_canonical = _ALIAS_TO_CANONICAL.get(first_arg, first_arg)
-    if (_first_canonical not in ("build", "push")
-            and shutil.which("proot") is None):
-        msg()
-        msg(f"{C['BRED']}Error: unable to find proot utility.{C['RST']}")
-        msg()
-        if IS_TERMUX:
-            if sys.stdin.isatty():
-                sys.stderr.write(
-                    f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}"
-                )
-                sys.stderr.flush()
-                try:
-                    answer = input().strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    answer = ""
-                if answer in ("y", "yes"):
-                    msg()
-                    try:
-                        subprocess.run(
-                            ["pkg", "install", "-y", "-q", "proot"], check=True
-                        )
-                    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-                        msg()
-                        msg(f"{C['BRED']}Error: failed to install proot: "
-                            f"{exc}{C['RST']}")
-                        msg()
-                        sys.exit(1)
-                else:
-                    msg()
-                    msg(f"{C['CYAN']}Install it manually with: "
-                        f"{C['GREEN']}pkg install proot{C['RST']}")
-                    msg()
-                    sys.exit(1)
-            else:
-                msg(f"{C['CYAN']}Install it with: "
-                    f"{C['GREEN']}pkg install proot{C['RST']}")
-                msg()
+
+def _ensure_proot_available(first_canonical: str) -> None:
+    """Verify proot is on PATH; offer to install it on Termux.
+
+    `build` and `push` are exempt from this startup probe: `build` may
+    run a Dockerfile with no RUN instructions in pure-Python mode, and
+    `push` only reads from the local manifest/layer cache and uploads
+    to a registry. `build` runs its own check after parsing the
+    Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
+    present.
+    """
+    if first_canonical in ("build", "push"):
+        return
+    if shutil.which("proot") is not None:
+        return
+
+    msg()
+    crit_error("proot utility does not exist on your system.")
+    msg()
+
+    if not IS_TERMUX:
         sys.exit(1)
+
+    if not sys.stdin.isatty():
+        msg(f"{C['CYAN']}Install it with: "
+            f"{C['GREEN']}pkg install proot{C['RST']}")
+        msg()
+        sys.exit(1)
+
+    sys.stderr.write(
+        f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}"
+    )
+    sys.stderr.flush()
+    try:
+        answer = input().strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer not in ("y", "yes"):
+        msg()
+        msg(f"{C['CYAN']}Install it manually with: "
+            f"{C['GREEN']}pkg install proot{C['RST']}")
+        msg()
+        sys.exit(1)
+
+    msg()
+    try:
+        subprocess.run(["pkg", "install", "-y", "-q", "proot"], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        msg()
+        crit_error(f"failed to install proot: {exc}")
+        msg()
+        sys.exit(1)
+
+
+def _dispatch_help(raw_args) -> bool:
+    """Render per-command help when ``-h``/``--help``/``--usage`` is given.
+
+    Intercepting before argparse runs ensures missing required
+    positionals never produce an error instead of help. Returns True
+    iff help was rendered (and the caller should exit cleanly).
+    """
+    if len(raw_args) < 2 or raw_args[1] not in ("-h", "--help", "--usage"):
+        return False
+    cmd = ALIAS_TO_CANONICAL.get(raw_args[0], raw_args[0])
+    if cmd in HELP_COMMANDS:
+        HELP_COMMANDS[cmd]()
+        return True
+    return False
+
+
+def _reject_unknown_command(raw_args) -> None:
+    """Exit with help text when the first arg names no known command."""
+    if not raw_args:
+        return
+    first = raw_args[0]
+    if (
+        not first.startswith("-")
+        and first not in _COMMAND_HANDLERS
+        and first not in ALIAS_TO_CANONICAL
+    ):
+        msg()
+        crit_error(f"unknown command '{first}'.")
+        command_help()
+        msg()
+        sys.exit(1)
+
+
+def _split_separator(canonical, raw_args, args):
+    """Set args.login_cmd / args.run_args from tokens after a literal '--'."""
+    if canonical == "login":
+        if "--" in raw_args:
+            sep_idx = raw_args.index("--")
+            args.login_cmd = raw_args[sep_idx + 1:]
+        else:
+            args.login_cmd = []
+    elif canonical == "run":
+        if "--" in raw_args:
+            sep_idx = raw_args.index("--")
+            args.run_args = raw_args[sep_idx + 1:]
+        else:
+            args.run_args = []
+
+
+def main() -> None:
+    """CLI entry point — installed as both `proot-distro` and `pd`.
+
+    Validates the runtime environment, parses arguments, and dispatches
+    to the chosen command's handler.
+    """
+    # Route SIGQUIT (Ctrl-\) through KeyboardInterrupt so every
+    # `except KeyboardInterrupt` block in the codebase handles it the
+    # same as SIGINT (Ctrl-C). The default disposition of SIGQUIT is
+    # to terminate the process with a core dump, which would skip
+    # progress-bar cleanup, partial-file removal, and "Aborted by
+    # user" messaging that the Ctrl-C handlers already provide.
+    signal.signal(signal.SIGQUIT, _sigquit_to_keyboard_interrupt)
+
+    _warn_if_root()
+    _refuse_nested_proot()
+
+    first_canonical = ""
+    if len(sys.argv) >= 2:
+        first_canonical = ALIAS_TO_CANONICAL.get(sys.argv[1], sys.argv[1])
+    _ensure_proot_available(first_canonical)
 
     if len(sys.argv) < 2 or sys.argv[1] in (
         "-h", "--help", "help", "hel", "he", "h"
@@ -475,32 +244,14 @@ def main() -> None:
         sys.exit(0)
 
     raw_args = sys.argv[1:]
+    if _dispatch_help(raw_args):
+        sys.exit(0)
 
-    # Intercept subcommand-level --help/-h before argparse runs so that
-    # missing required positionals don't produce an error instead of help.
-    if len(raw_args) >= 2 and raw_args[1] in ("-h", "--help", "--usage"):
-        cmd = _ALIAS_TO_CANONICAL.get(raw_args[0], raw_args[0])
-        if cmd in _HELP_COMMANDS:
-            _HELP_COMMANDS[cmd]()
-            sys.exit(0)
-
-    # Validate the command before argparse runs. An unknown subcommand name
-    # causes _SubParsersAction to raise ArgumentError, which parse_known_args
-    # routes through self.error() — printing argparse's own message and
-    # exiting before our custom error handler is ever reached.
-    _first = raw_args[0] if raw_args else None
-    if (
-        _first is not None
-        and not _first.startswith("-")
-        and _first not in _COMMAND_HANDLERS
-        and _first not in _ALIAS_TO_CANONICAL
-    ):
-        msg()
-        msg(f"{C['BRED']}Error: unknown command "
-            f"'{C['YELLOW']}{_first}{C['BRED']}'.{C['RST']}")
-        command_help()
-        msg()
-        sys.exit(1)
+    # Validate the command before argparse runs. An unknown subcommand
+    # name causes _SubParsersAction to raise ArgumentError, which
+    # parse_known_args routes through self.error() — printing
+    # argparse's own message before our custom error handler runs.
+    _reject_unknown_command(raw_args)
 
     parser = build_parser()
     args, unknown = parser.parse_known_args(raw_args)
@@ -508,25 +259,23 @@ def main() -> None:
     command = args.command
     if command is None:
         msg()
-        msg(f"{C['BRED']}Error: unknown command "
-            f"'{C['YELLOW']}{raw_args[0]}{C['BRED']}'.{C['RST']}")
+        crit_error(f"unknown command '{raw_args[0]}'.")
         command_help()
         msg()
         sys.exit(1)
 
-    canonical = _ALIAS_TO_CANONICAL.get(command, command)
+    canonical = ALIAS_TO_CANONICAL.get(command, command)
 
-    # Show per-command help.
     if getattr(args, "help", False):
-        if canonical in _HELP_COMMANDS:
-            _HELP_COMMANDS[canonical]()
+        if canonical in HELP_COMMANDS:
+            HELP_COMMANDS[canonical]()
         else:
             command_help()
         sys.exit(0)
 
-    # Check for unrecognized options/arguments. For login and run, args after
-    # '--' are passed to the inner command and must not be flagged — re-parse
-    # only the portion before '--' to get a clean unknown list.
+    # For login and run, anything after a literal '--' is the inner
+    # command and must not be flagged as unknown — re-parse only the
+    # portion before '--' to get a clean unknown list.
     check_unknown = unknown
     if canonical in ("login", "run") and "--" in raw_args:
         sep_idx = raw_args.index("--")
@@ -535,52 +284,33 @@ def main() -> None:
         bad = check_unknown[0]
         kind = "unrecognized option" if bad.startswith("-") else "unexpected argument"
         msg()
-        msg(f"{C['BRED']}Error: {kind}: "
-            f"'{C['YELLOW']}{bad}{C['BRED']}'.{C['RST']}")
-        if canonical in _HELP_COMMANDS:
-            _HELP_COMMANDS[canonical]()
+        crit_error(f"{kind}: '{bad}'.")
+        if canonical in HELP_COMMANDS:
+            HELP_COMMANDS[canonical]()
         msg()
         sys.exit(1)
 
-    # Validate required positional arguments.
-    for arg_name, error_msg in _REQUIRED_ARGS.get(canonical, []):
+    for arg_name, error_msg in REQUIRED_ARGS.get(canonical, []):
         if getattr(args, arg_name, None) is None:
             msg()
-            msg(f"{C['BRED']}Error: {error_msg}{C['RST']}")
-            if canonical in _HELP_COMMANDS:
-                _HELP_COMMANDS[canonical]()
+            crit_error(error_msg)
+            if canonical in HELP_COMMANDS:
+                HELP_COMMANDS[canonical]()
             sys.exit(1)
 
-    # For login, handle the -- separator to split login_cmd.
-    if canonical == "login" and "--" in raw_args:
-        sep_idx = raw_args.index("--")
-        args.login_cmd = raw_args[sep_idx + 1:]
-    elif canonical == "login":
-        args.login_cmd = []
+    _split_separator(canonical, raw_args, args)
 
-    # For run, handle the -- separator to split run_args.
-    if canonical == "run" and "--" in raw_args:
-        sep_idx = raw_args.index("--")
-        args.run_args = raw_args[sep_idx + 1:]
-    elif canonical == "run":
-        args.run_args = []
-
-    # Enable quiet mode globally before dispatch so helpers in
-    # helpers/docker.py, helpers/download.py, etc. silence their info
-    # lines and progress bars too. 'list --quiet' has a different
-    # semantic (print container names only) and does not use info(), so
-    # setting the global flag is harmless for it.
+    # Enable quiet mode globally before dispatch so helpers
+    # (helpers/docker, helpers/download, etc.) silence their info
+    # lines and progress bars too. `list --quiet` has different
+    # semantics (print container names only) and does not use log_info(),
+    # so the global flag is harmless for it.
     if canonical != "list" and getattr(args, "quiet", False):
         set_quiet(True)
 
-    configs = {}
-
     handler = _COMMAND_HANDLERS.get(canonical)
     if handler is None:
-        msg()
-        msg(f"{C['BRED']}Error: unknown command "
-            f"'{C['YELLOW']}{command}{C['BRED']}'.{C['RST']}")
-        msg()
+        crit_error(f"unknown command '{command}'.")
         sys.exit(1)
 
-    handler(args, configs)
+    handler(args)

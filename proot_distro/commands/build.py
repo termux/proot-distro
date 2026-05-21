@@ -28,18 +28,20 @@
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
+from contextlib import ExitStack
+from types import SimpleNamespace
+
+from proot_distro.commands.install import command_install
 
 from proot_distro.constants import (
-    CONTAINERS_DIR,
-    DOWNLOAD_CACHE_DIR,
-    IS_TERMUX,
     PROGRAM_NAME,
     RUNTIME_DIR,
 )
-from proot_distro.colors import C, msg
+from proot_distro.paths import container_rootfs
+from proot_distro.message import C, msg, log_info, log_error, crit_error
+from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.helpers.dockerfile import (
     DockerfileSyntaxError,
@@ -48,28 +50,22 @@ from proot_distro.helpers.dockerfile import (
 from proot_distro.helpers.build_engine import (
     BuildEngine,
     BuildError,
-    needs_proot,
 )
 from proot_distro.helpers.oci_writer import (
     build_manifest_and_config,
     store_in_cache,
     write_oci_archive,
 )
-from proot_distro.helpers.docker import (
-    _ARCH_TO_DOCKER,
-    _manifest_cache_path,
-    parse_image_ref,
-)
-
-
-_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
+from proot_distro.helpers.docker import ARCH_TO_DOCKER
+from proot_distro.names import is_valid_name, require_valid_name
+from proot_distro.progress import fmt_size
 
 
 # ---------------------------------------------------------------------------
 # Top-level command
 # ---------------------------------------------------------------------------
 
-def command_build(args, configs):  # noqa: ARG001
+def command_build(args):
     """Implements `proot-distro build`."""
 
     build_path = getattr(args, "path", None) or "."
@@ -80,9 +76,23 @@ def command_build(args, configs):  # noqa: ARG001
     target_stage = getattr(args, "target_stage", None) or None
     emulator = getattr(args, "emulator", None) or ""
     outputs = list(getattr(args, "outputs", []) or [])
-    install_as = getattr(args, "install_as", None) or ""
+    install_as = getattr(args, "install_as", None)
+
+    if dockerfile_path is not None and not dockerfile_path:
+        crit_error("Dockerfile path cannot be empty.")
+        sys.exit(1)
+
+    for out_file in outputs:
+        if not out_file:
+            crit_error("output file path cannot be empty.")
+            sys.exit(1)
+
+    if install_as is not None and not install_as:
+        crit_error("--install-as value cannot be empty.")
+        sys.exit(1)
+
+    install_as = install_as or ""
     no_cache = bool(getattr(args, "no_cache", False))
-    force_pull = bool(getattr(args, "force_pull", False))
     verbose = bool(getattr(args, "verbose", False))
     quiet = bool(getattr(args, "quiet", False))
 
@@ -95,12 +105,12 @@ def command_build(args, configs):  # noqa: ARG001
     else:
         dockerfile = os.path.abspath(os.path.expanduser(dockerfile_path))
 
-    if dockerfile != "-" and not os.path.isfile(dockerfile):
-        _err(f"Dockerfile not found: '{dockerfile}'.")
+    if not os.path.isdir(build_dir):
+        crit_error(f"build context '{build_dir}' is not a directory.")
         sys.exit(1)
 
-    if not os.path.isdir(build_dir):
-        _err(f"Build context '{build_dir}' is not a directory.")
+    if dockerfile != "-" and not os.path.isfile(dockerfile):
+        crit_error(f"required file '{dockerfile}' does not exist.")
         sys.exit(1)
 
     # ----- read + parse Dockerfile -----
@@ -111,51 +121,46 @@ def command_build(args, configs):  # noqa: ARG001
             with open(dockerfile, "rb") as fh:
                 text = fh.read().decode("utf-8", errors="replace")
     except OSError as exc:
-        _err(f"Cannot read Dockerfile: {exc}")
+        crit_error(f"cannot read Dockerfile: {exc}")
         sys.exit(1)
 
     try:
-        directives, instructions = parse_dockerfile(text)
+        _directives, instructions = parse_dockerfile(text)
     except DockerfileSyntaxError as exc:
-        _err(f"Dockerfile syntax error: {exc}")
+        crit_error(f"syntax error in Dockerfile: {exc}")
         sys.exit(1)
 
     if not instructions:
-        _err("Dockerfile contains no instructions.")
+        crit_error("no instructions in Dockerfile.")
         sys.exit(1)
-
-    # ----- proot requirement gate -----
-    if needs_proot(instructions):
-        if shutil.which("proot") is None:
-            _err(
-                "This Dockerfile uses RUN, which requires the 'proot' "
-                "utility. Install it and try again."
-            )
-            if IS_TERMUX and sys.stdin.isatty():
-                if not _prompt_proot_install():
-                    sys.exit(1)
-            else:
-                if IS_TERMUX:
-                    msg(f"{C['CYAN']}Install it with: "
-                        f"{C['GREEN']}pkg install proot{C['RST']}")
-                msg()
-                sys.exit(1)
 
     # ----- target architecture -----
     if override_arch:
         target_arch = normalize_arch(override_arch)
         if target_arch is None:
-            _err(f"Unknown architecture '{override_arch}'.")
+            crit_error(f"unknown architecture '{override_arch}'.")
             sys.exit(1)
     else:
         target_arch = get_device_cpu_arch()
+
+    # ----- Validate install-as container name -----
+    if install_as:
+        require_valid_name(install_as, kind="--install-as value")
+
+        if os.path.isdir(container_rootfs(install_as)):
+            crit_error(
+                f"container '{install_as}' defined by --install-as already "
+                f"exists. Use '{PROGRAM_NAME} remove {install_as}' first or "
+                f"'{PROGRAM_NAME} reset {install_as}' to rebuild."
+            )
+            sys.exit(1)
 
     # ----- determine the canonical tag set -----
     if not tags:
         derived = _derive_tag_from_path(build_dir, dockerfile)
         if not derived:
-            _err(
-                "Cannot derive a tag from the build path; pass --tag "
+            crit_error(
+                "cannot derive a tag from the build path. Pass '--tag' "
                 "explicitly (e.g. --tag myapp:latest)."
             )
             sys.exit(1)
@@ -163,8 +168,8 @@ def command_build(args, configs):  # noqa: ARG001
 
     for t in tags:
         if not _is_valid_tag(t):
-            _err(
-                f"Tag '{t}' is not valid. A tag must start with an "
+            crit_error(
+                f"tag '{t}' is not valid. A tag must start with an "
                 f"alphanumeric character and contain only letters, "
                 f"digits, underscores, dots, hyphens, slashes, or a "
                 f"single colon for the version."
@@ -174,110 +179,122 @@ def command_build(args, configs):  # noqa: ARG001
     tags = [_with_explicit_tag(t) for t in tags]
     primary_tag = tags[0]
 
-    # ----- run the build -----
-    tmp_root = tempfile.mkdtemp(
-        prefix="pd-build-", dir=os.path.join(RUNTIME_DIR, "build-tmp")
-        if _ensure_dir(os.path.join(RUNTIME_DIR, "build-tmp"))
-        else None,
-    )
-
-    engine = BuildEngine(
-        build_dir=build_dir,
-        tmp_root=tmp_root,
-        target_arch_pd=target_arch,
-        user_build_args=build_args,
-        target_stage=target_stage,
-        verbose=verbose,
-        quiet=quiet,
-        no_cache=no_cache,
-        force_pull=force_pull,
-        emulator=emulator,
-    )
-
-    # Single try/except/finally covers the whole post-setup work so
-    # KeyboardInterrupt during any phase (engine, cache write, OCI
-    # archive write, install-as) is reported cleanly and tmp_root is
-    # always removed.
-    try:
-        try:
-            final_stage = engine.run(instructions)
-        except BuildError as exc:
-            _err(f"Build failed: {exc}")
+    # ----- refuse to overwrite existing output files -----
+    for out_file in outputs:
+        out_abs = os.path.abspath(os.path.expanduser(out_file))
+        if os.path.exists(out_abs):
+            crit_error(
+                f"file '{out_abs}' already exists. "
+                f"Please specify a different name."
+            )
             sys.exit(1)
 
-        # ----- assemble manifest + image_config -----
-        arch_docker = _ARCH_TO_DOCKER.get(target_arch, (target_arch, ""))[0]
-        manifest, image_config = build_manifest_and_config(
-            final_stage.image_config,
-            final_stage.layers,
-            arch_docker,
+    # Acquire one exclusive BuildLock per tag for the duration of the
+    # build. Sorted by lock path so two concurrent builds with
+    # overlapping but differently-ordered tag sets can't deadlock.
+    build_locks = sorted(
+        [BuildLock(t, target_arch, command="build") for t in tags],
+        key=lambda l: l.lock_path,
+    )
+
+    with ExitStack() as lock_stack:
+        for lock in build_locks:
+            lock_stack.enter_context(lock)
+
+        # ----- run the build -----
+        build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
+        try:
+            os.makedirs(build_tmp, exist_ok=True)
+        except OSError:
+            build_tmp = None
+        tmp_root = tempfile.mkdtemp(prefix="pd-build-", dir=build_tmp)
+
+        engine = BuildEngine(
+            build_dir=build_dir,
+            tmp_root=tmp_root,
+            target_arch_pd=target_arch,
+            user_build_args=build_args,
+            target_stage=target_stage,
+            verbose=verbose,
+            quiet=quiet,
+            no_cache=no_cache,
+            emulator=emulator,
         )
 
-        # Write the manifest cache for every tag so each can be
-        # installed offline by name.
-        for t in tags:
+        # Single try/except/finally covers the whole post-setup work so
+        # KeyboardInterrupt during any phase (engine, cache write, OCI
+        # archive write, install-as) is reported cleanly and tmp_root is
+        # always removed.
+        try:
             try:
-                store_in_cache(t, target_arch, manifest, image_config)
-            except OSError as exc:
-                _err(f"Failed to write manifest cache for '{t}': {exc}")
+                final_stage = engine.run(instructions)
+            except BuildError as exc:
+                log_error(f"Build failed: {exc}")
                 sys.exit(1)
 
-        # OCI tarball outputs.
-        for out_file in outputs:
-            out_abs = os.path.abspath(os.path.expanduser(out_file))
-            try:
-                if not quiet:
-                    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        f"Writing OCI archive to "
-                        f"'{C['YELLOW']}{out_abs}{C['CYAN']}'...{C['RST']}")
-                write_oci_archive(out_abs, manifest, image_config, primary_tag)
-            except (OSError, RuntimeError) as exc:
-                _err(f"Failed to write '{out_file}': {exc}")
-                sys.exit(1)
+            # ----- assemble manifest + image_config -----
+            arch_docker = ARCH_TO_DOCKER.get(target_arch, (target_arch, ""))[0]
+            manifest, image_config = build_manifest_and_config(
+                final_stage.image_config,
+                final_stage.layers,
+                arch_docker,
+            )
 
-        # Build summary.
-        if not quiet:
-            total_size = sum(l["size"] for l in final_stage.layers)
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Build complete.{C['RST']}")
-            msg()
-            msg(f"{C['CYAN']}Tag(s): "
-                f"{C['GREEN']}{', '.join(tags)}{C['RST']}")
-            msg(f"{C['CYAN']}Layers: "
-                f"{C['GREEN']}{len(final_stage.layers)}"
-                f" ({_fmt_size(total_size)} total){C['RST']}")
-            msg()
+            # Write the manifest cache for every tag so each can be
+            # installed offline by name.
+            for t in tags:
+                try:
+                    store_in_cache(t, target_arch, manifest, image_config)
+                except OSError as exc:
+                    log_error(f"Cannot write manifest cache for '{t}': {exc}")
+                    sys.exit(1)
 
-        # Optional --install-as: install the built image as a
-        # container directly. The fastest path is to invoke
-        # command_install with the primary_tag — pull_image() will
-        # find the manifest cache and the layer blobs we just wrote,
-        # and install offline.
-        if install_as:
-            _install_as_container(install_as, primary_tag, target_arch, quiet)
+            # OCI tarball outputs.
+            for out_file in outputs:
+                out_abs = os.path.abspath(os.path.expanduser(out_file))
+                try:
+                    if not quiet:
+                        log_info(f"Writing OCI archive to '{out_abs}'...")
+                    write_oci_archive(out_abs, manifest, image_config, primary_tag)
+                except (OSError, RuntimeError) as exc:
+                    log_error(f"Cannot write '{out_file}': {exc}")
+                    sys.exit(1)
 
-        # Final hint when no --output and no --install-as were given.
-        if not outputs and not install_as and not quiet:
-            msg(f"{C['CYAN']}Install with: "
-                f"{C['GREEN']}{PROGRAM_NAME} install {primary_tag}{C['RST']}")
-            msg()
-    except KeyboardInterrupt:
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
-        sys.exit(1)
-    finally:
-        _cleanup(tmp_root)
+            # Build summary.
+            if not quiet:
+                total_size = sum(l["size"] for l in final_stage.layers)
+                log_info("Build complete.")
+                msg()
+                msg(f"{C['CYAN']}Tag(s): "
+                    f"{C['GREEN']}{', '.join(tags)}{C['RST']}")
+                msg(f"{C['CYAN']}Layers: "
+                    f"{C['GREEN']}{len(final_stage.layers)}"
+                    f" ({fmt_size(total_size)} total){C['RST']}")
+                msg()
+
+            # Optional --install-as: install the built image as a
+            # container directly. The fastest path is to invoke
+            # command_install with the primary_tag — pull_image() will
+            # find the manifest cache and the layer blobs we just wrote,
+            # and install offline.
+            if install_as:
+                _install_as_container(install_as, primary_tag, target_arch, quiet)
+
+            # Final hint when no --output and no --install-as were given.
+            if not outputs and not install_as and not quiet:
+                msg(f"{C['CYAN']}Install with: "
+                    f"{C['GREEN']}{PROGRAM_NAME} install {primary_tag}{C['RST']}")
+                msg()
+        except KeyboardInterrupt:
+            log_error("Aborted by user.")
+            sys.exit(1)
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-def _err(text):
-    msg()
-    msg(f"{C['BRED']}Error: {text}{C['RST']}")
-    msg()
-
 
 def _parse_build_args(raw):
     out = {}
@@ -300,7 +317,7 @@ def _derive_tag_from_path(build_dir, dockerfile):
     base = base.lower()
     base = re.sub(r"[^a-z0-9_.\-]", "-", base).strip("-")
     base = re.sub(r"-+", "-", base)
-    if not base or not _NAME_RE.match(base):
+    if not base or not is_valid_name(base):
         return ""
     return f"{base}:latest"
 
@@ -327,90 +344,18 @@ def _is_valid_tag(tag):
     else:
         name_part = tag
     last = name_part.split("/")[-1]
-    return bool(_NAME_RE.match(last))
-
-
-def _ensure_dir(path):
-    try:
-        os.makedirs(path, exist_ok=True)
-        return True
-    except OSError:
-        return False
-
-
-def _cleanup(tmp_root):
-    try:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-    except OSError:
-        pass
-
-
-def _fmt_size(n):
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
-    f = float(n)
-    for u in units:
-        if f < 1024.0:
-            return f"{f:.1f} {u}"
-        f /= 1024.0
-    return f"{f:.1f} PiB"
-
-
-def _prompt_proot_install():
-    sys.stderr.write(
-        f"{C['CYAN']}Would you like to install it now? [y/N] {C['RST']}"
-    )
-    sys.stderr.flush()
-    try:
-        answer = input().strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return False
-    if answer not in ("y", "yes"):
-        msg(f"{C['CYAN']}Install it manually with: "
-            f"{C['GREEN']}pkg install proot{C['RST']}")
-        return False
-    try:
-        subprocess.run(["pkg", "install", "-y", "-q", "proot"], check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        _err(f"Failed to install proot: {exc}")
-        return False
-    return True
+    return is_valid_name(last)
 
 
 def _install_as_container(install_name, image_ref, target_arch, quiet):
     """Run the install command for `image_ref` aliased as `install_name`."""
-    from proot_distro.commands.install import command_install
-
-    # Validate the install_name early so we don't half-create a
-    # container directory and then bail.
-    if not _NAME_RE.match(install_name):
-        _err(
-            f"--install-as name '{install_name}' is not valid. "
-            f"It must start with a letter or digit and contain only "
-            f"letters, digits, underscores, dots, or hyphens."
-        )
-        sys.exit(1)
-
-    container_dir = os.path.join(CONTAINERS_DIR, install_name)
-    rootfs_dir = os.path.join(container_dir, "rootfs")
-    if os.path.isdir(rootfs_dir):
-        _err(
-            f"Container '{install_name}' already exists. Use "
-            f"'{PROGRAM_NAME} remove {install_name}' first, or "
-            f"'{PROGRAM_NAME} reset {install_name}' to rebuild."
-        )
-        sys.exit(1)
-
     if not quiet:
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Installing built image as "
-            f"'{C['YELLOW']}{install_name}{C['CYAN']}'..."
-            f"{C['RST']}")
+        log_info(f"Installing built image as '{install_name}'...")
 
-    class _Args:
-        pass
-
-    a = _Args()
-    a.alias = image_ref
-    a.custom_dist_name = install_name
-    a.override_arch = target_arch
-    command_install(a, {})
+    command_install(
+        SimpleNamespace(
+            image_ref=image_ref,
+            custom_container_name=install_name,
+            override_arch=target_arch,
+        )
+    )

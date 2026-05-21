@@ -29,24 +29,26 @@
 import sys
 import urllib.error
 
-from proot_distro.colors import C, msg
+from proot_distro.message import C, msg, log_info, log_error, crit_error
+from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.helpers.docker import (
-    _load_manifest_cache,
+    load_manifest_cache,
     parse_image_ref,
     push_image,
 )
-from proot_distro.helpers.download import fmt_size
+from proot_distro.progress import fmt_size
+from proot_distro.constants import PROGRAM_NAME
 
 
-def command_push(args, configs):  # noqa: ARG001
+def command_push(args):
     """Implements `proot-distro push`."""
     image_ref = getattr(args, "image_ref", None) or ""
     override_arch = getattr(args, "override_arch", None) or ""
     quiet = bool(getattr(args, "quiet", False))
 
     if not image_ref:
-        _err("image reference is not specified (e.g. 'myrepo/myapp:1.0').")
+        crit_error("image reference is not specified (e.g. 'myrepo/myapp:1.0').")
         sys.exit(1)
 
     # Append :latest the same way build does, so users can push using the
@@ -58,7 +60,7 @@ def command_push(args, configs):  # noqa: ARG001
     if override_arch:
         target_arch = normalize_arch(override_arch)
         if target_arch is None:
-            _err(f"unknown architecture '{override_arch}'.")
+            crit_error(f"unknown architecture '{override_arch}'.")
             sys.exit(1)
     else:
         target_arch = get_device_cpu_arch()
@@ -66,12 +68,12 @@ def command_push(args, configs):  # noqa: ARG001
     # Pre-flight check: refuse early when no manifest is cached for this
     # image_ref + arch. This catches a typoed tag before we open a
     # network connection.
-    manifest, _, _ = _load_manifest_cache(image_ref, target_arch)
+    manifest, _, _ = load_manifest_cache(image_ref, target_arch)
     if manifest is None:
-        _err(
+        crit_error(
             f"No image found in local cache for "
             f"'{image_ref}' ({target_arch}). "
-            f"Build it first with: proot-distro build -t {image_ref}"
+            f"Build it first with: {PROGRAM_NAME} build -t {image_ref}"
         )
         sys.exit(1)
 
@@ -79,38 +81,35 @@ def command_push(args, configs):  # noqa: ARG001
     display_registry = registry or "docker.io"
 
     if not quiet:
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}Pushing "
-            f"'{C['YELLOW']}{image_ref}{C['CYAN']}' ({target_arch}) "
-            f"to '{C['YELLOW']}{display_registry}{C['CYAN']}'..."
-            f"{C['RST']}")
+        log_info(f"Pushing '{image_ref}' ({target_arch}) "
+                 f"to '{display_registry}'...")
 
     try:
-        result = push_image(image_ref, target_arch)
+        with BuildLock(image_ref, target_arch, command="push"):
+            result = push_image(image_ref, target_arch)
     except KeyboardInterrupt:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
+        log_error("Aborted by user.")
         sys.exit(1)
     except (urllib.error.URLError, OSError) as exc:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        _err(f"Network error: {exc}")
+        log_error(f"Network error: {exc}")
         sys.exit(1)
     except RuntimeError as exc:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
-        _err(str(exc))
+        log_error(f"Error: {exc}")
         sys.exit(1)
 
     if quiet:
         return
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Push complete.{C['RST']}")
+    log_info("Push complete.")
     msg()
     msg(f"{C['CYAN']}Repository: "
         f"{C['GREEN']}{result['registry']}/{result['repo']}{C['RST']}")
@@ -121,10 +120,4 @@ def command_push(args, configs):  # noqa: ARG001
             f"{C['GREEN']}{result['manifest_digest']}{C['RST']}")
     msg(f"{C['CYAN']}Uploaded:   "
         f"{C['GREEN']}{fmt_size(result['bytes_uploaded'])}{C['RST']}")
-    msg()
-
-
-def _err(text):
-    msg()
-    msg(f"{C['BRED']}Error: {text}{C['RST']}")
     msg()

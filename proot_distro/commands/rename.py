@@ -20,64 +20,43 @@
 
 # Architecture: Renames a container directory (containers/<old> to
 # containers/<new>) and updates any proot link2symlink (l2s) symlinks
-# that point into the old rootfs path. Validation reuses _validate_name()
-# from install.py so that name format rules are enforced in one place.
+# that point into the old rootfs path. Name validation goes through
+# the shared names module so format rules stay consistent across
+# every command that accepts a container identifier.
 
 import os
-import signal
 import sys
 
-from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, info, msg
-from proot_distro.commands.install import _validate_name
+from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.l2s import rewrite_l2s_targets
 from proot_distro.locking import ContainerLock
+from proot_distro.names import require_valid_name
+from proot_distro.paths import container_dir, container_rootfs
 
 
-def command_rename(args, configs: dict) -> None:  # noqa: ARG001
-    orig = args.orig_alias
-    new = args.new_alias
+def command_rename(args) -> None:
+    """Rename a container directory and rewrite its l2s symlinks."""
+    orig = args.orig_name
+    new = args.new_name
 
     if orig == new:
-        msg()
-        msg(f"{C['BRED']}Error: original and new names must differ.{C['RST']}")
-        msg()
+        crit_error("original and new names must differ.")
         sys.exit(1)
 
-    if not _validate_name(orig):
-        msg()
-        msg(f"{C['BRED']}Error: invalid original name "
-            f"'{C['YELLOW']}{orig}{C['BRED']}'. "
-            f"Must start with alphanumeric and contain only "
-            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
-        msg()
-        sys.exit(1)
+    require_valid_name(orig, kind="original container name")
+    require_valid_name(new, kind="new container name")
 
-    if not _validate_name(new):
-        msg()
-        msg(f"{C['BRED']}Error: invalid new name "
-            f"'{C['YELLOW']}{new}{C['BRED']}'. "
-            f"Must start with alphanumeric and contain only "
-            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
-        msg()
-        sys.exit(1)
-
-    orig_dir = os.path.join(CONTAINERS_DIR, orig)
-    new_dir = os.path.join(CONTAINERS_DIR, new)
-    orig_rootfs = os.path.join(orig_dir, "rootfs")
-    new_rootfs = os.path.join(new_dir, "rootfs")
+    orig_dir = container_dir(orig)
+    new_dir = container_dir(new)
+    orig_rootfs = container_rootfs(orig)
+    new_rootfs = container_rootfs(new)
 
     if not os.path.isdir(orig_rootfs):
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{orig}{C['BRED']}' is not installed.{C['RST']}")
-        msg()
+        crit_error(f"container '{orig}' is not installed.")
         sys.exit(1)
 
     if os.path.isdir(new_dir):
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{new}{C['BRED']}' already exists.{C['RST']}")
-        msg()
+        crit_error(f"container '{new}' already exists.")
         sys.exit(1)
 
     # Acquire locks in sorted order to ensure consistent ordering.
@@ -88,44 +67,12 @@ def command_rename(args, configs: dict) -> None:  # noqa: ARG001
 
 
 def _do_rename(orig, new, orig_dir, new_dir, new_rootfs, orig_rootfs):
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Renaming '{orig}' to '{new}'...{C['RST']}")
+    log_info(f"Renaming '{orig}' to '{new}'...")
     try:
         os.rename(orig_dir, new_dir)
     except OSError as exc:
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Failed to rename container: {exc}{C['RST']}")
+        log_error(f"Failed to rename container: {exc}")
         sys.exit(1)
 
-    # Update proot link2symlink (l2s) symlinks that point into the old path.
-    # SIGINT is deferred for this block: an interrupt mid-rewrite would leave
-    # some symlinks pointing at the old (now-gone) path, breaking the container.
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Updating PRoot link2symlink extension files "
-         f"(may take a long time)...{C['RST']}")
-    def _warn_no_interrupt(_signum, _frame):
-        msg(f"\n{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['RED']}"
-            f"Terminating now will leave link2symlink symlinks broken. "
-            f"Please wait for the operation to complete.{C['RST']}")
-
-    _old_sigint = signal.signal(signal.SIGINT, _warn_no_interrupt)
-    _old_sigquit = signal.signal(signal.SIGQUIT, _warn_no_interrupt)
-    try:
-        for dirpath, _dirs, filenames in os.walk(new_rootfs):
-            for fname in filenames:
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    if os.path.islink(fpath):
-                        target = os.readlink(fpath)
-                        if target.startswith(orig_rootfs):
-                            new_target = new_rootfs + target[len(orig_rootfs):]
-                            os.unlink(fpath)
-                            os.symlink(new_target, fpath)
-                except OSError:
-                    pass
-    finally:
-        signal.signal(signal.SIGINT, _old_sigint)
-        signal.signal(signal.SIGQUIT, _old_sigquit)
-
-    info(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-         f"Finished renaming the container.{C['RST']}")
+    rewrite_l2s_targets(new_rootfs, orig_rootfs)
+    log_info("Finished renaming the container.")

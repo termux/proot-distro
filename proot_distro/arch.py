@@ -26,14 +26,21 @@
 
 import ctypes
 import os
+import shutil
 import struct
 import sys
 
-from proot_distro.constants import PREFIX, CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.message import crit_error
+from proot_distro.constants import TERMUX_PREFIX
+from proot_distro.paths import container_rootfs
 
 
 def get_device_cpu_arch() -> str:
+    """Return the host CPU arch in proot-distro's naming scheme.
+
+    armv7l / armv8l are collapsed to "arm"; everything else is the
+    raw `uname -m` value.
+    """
     machine = os.uname().machine
     if machine in ("armv7l", "armv8l"):
         return "arm"
@@ -88,20 +95,20 @@ def _elf_arch(path: str) -> str:
         return ""
 
 
-def detect_installed_arch(dist_name_or_rootfs: str) -> str:
+def detect_installed_arch(container_name_or_rootfs: str) -> str:
     """Detect CPU architecture of an installed container by reading ELF headers.
 
     Accepts either a plain container name (resolved as
     ``CONTAINERS_DIR/<name>/rootfs``) or a full path to the rootfs directory.
     """
-    if os.sep in dist_name_or_rootfs or dist_name_or_rootfs.startswith("/"):
-        root = dist_name_or_rootfs
+    if os.sep in container_name_or_rootfs or container_name_or_rootfs.startswith("/"):
+        root = container_name_or_rootfs
     else:
-        root = os.path.join(CONTAINERS_DIR, dist_name_or_rootfs, "rootfs")
+        root = container_rootfs(container_name_or_rootfs)
 
     candidates = [
         "/usr/bin/bash", "/usr/bin/sh", "/usr/bin/su", "/usr/bin/busybox",
-        "/data/data/com.termux/files/usr/bin/bash",
+        f"{TERMUX_PREFIX}/bin/bash",
         "/bin/bash", "/bin/sh", "/bin/su", "/bin/busybox",
     ]
     for rel in candidates:
@@ -144,12 +151,24 @@ def normalize_arch(arch: str):
     return _DOCKER_TO_PROOT.get(s)
 
 
-_QEMU_BINS = {
-    "aarch64": f"{PREFIX}/bin/qemu-aarch64",
-    "arm":     f"{PREFIX}/bin/qemu-arm",
-    "i686":    f"{PREFIX}/bin/qemu-i386",
-    "riscv64": f"{PREFIX}/bin/qemu-riscv64",
-    "x86_64":  f"{PREFIX}/bin/qemu-x86_64",
+# Machine string reported by `uname -m` for each proot-distro arch.
+# Used to assemble proot's --kernel-release tuple so emulated containers
+# return the right name from uname(2).
+ARCH_UNAME_M = {
+    "aarch64": "aarch64",
+    "arm":     "armv7l",
+    "i686":    "i686",
+    "x86_64":  "x86_64",
+    "riscv64": "riscv64",
+}
+
+
+_QEMU_BIN_NAMES = {
+    "aarch64": "qemu-aarch64",
+    "arm":     "qemu-arm",
+    "i686":    "qemu-i386",
+    "riscv64": "qemu-riscv64",
+    "x86_64":  "qemu-x86_64",
 }
 
 _QEMU_PKGS = {
@@ -172,11 +191,7 @@ def get_emulator_args(
     if emulator_override:
         emu_path = emulator_override
         if not os.path.isfile(emu_path) or not os.access(emu_path, os.X_OK):
-            msg()
-            msg(f"{C['BRED']}Error: emulator "
-                f"'{C['YELLOW']}{emu_path}{C['BRED']}' is not found or "
-                f"not executable.{C['RST']}")
-            msg()
+            crit_error(f"emulator '{emu_path}' is not found or not executable.")
             sys.exit(1)
     else:
         if dist_arch == device_arch:
@@ -188,30 +203,25 @@ def get_emulator_args(
         if dist_arch == "i686" and device_arch == "x86_64":
             return []
 
-        emu_path = _QEMU_BINS.get(dist_arch, "")
-        if not emu_path:
-            msg()
-            msg(f"{C['BRED']}Error: unsupported architecture "
-                f"'{C['YELLOW']}{dist_arch}{C['BRED']}'. "
-                f"Valid values are: aarch64, arm, i686, riscv64, "
-                f"x86_64.{C['RST']}")
-            msg()
+        bin_name = _QEMU_BIN_NAMES.get(dist_arch, "")
+        if not bin_name:
+            crit_error(f"unsupported architecture '{dist_arch}'. "
+                       f"Valid values are: aarch64, arm, i686, riscv64, "
+                       f"x86_64.")
             sys.exit(1)
 
-        if not os.path.isfile(emu_path) or not os.access(emu_path, os.X_OK):
+        emu_path = shutil.which(bin_name) or ""
+        if not emu_path:
             pkg = _QEMU_PKGS.get(dist_arch, f"qemu-user-{dist_arch}")
-            msg()
-            msg(f"{C['BRED']}Error: your distribution requires package "
-                f"'{C['YELLOW']}{pkg}{C['BRED']}' which is not "
-                f"installed.{C['RST']}")
-            msg()
+            crit_error(f"selected container requires emulator package "
+                       f"'{pkg}' which is not installed.")
             sys.exit(1)
 
     args = ["-q", emu_path]
     # Extra bindings needed for QEMU to locate Android system libraries.
     for path in (
         "/apex", "/linkerconfig/ld.config.txt",
-        f"{PREFIX}", "/system", "/vendor",
+        f"{TERMUX_PREFIX}", "/system", "/vendor",
         "/plat_property_contexts", "/property_contexts",
     ):
         if os.path.exists(path):

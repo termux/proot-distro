@@ -8,10 +8,8 @@
 
 _proot_distro_get_containers() {
     local dir
-    if [[ -n "${TERMUX_PREFIX}" ]]; then
-        dir="${TERMUX_PREFIX}/var/lib/proot-distro/containers"
-    elif [[ -n "${ANDROID_ROOT}" ]]; then
-        dir="/data/data/com.termux/files/usr/var/lib/proot-distro/containers"
+    if _proot_distro_is_termux; then
+        dir="${TERMUX__PREFIX:-/data/data/com.termux/files/usr}/var/lib/proot-distro/containers"
     else
         dir="${XDG_DATA_HOME:-${HOME}/.local/share}/proot-distro/containers"
     fi
@@ -54,14 +52,14 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         install)
             case "${prev}" in
-                --name|--override-alias)
+                -n|--name)
                     return ;;
-                --architecture)
+                -a|--architecture)
                     COMPREPLY=($(compgen -W "aarch64 arm i686 riscv64 x86_64" -- "${cur}"))
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--name --override-alias --architecture --quiet --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-n --name -a --architecture -q --quiet -h --help" -- "${cur}"))
             elif [[ "${cur}" == /* || "${cur}" == ./* || "${cur}" == ../* ]]; then
                 _filedir
             fi
@@ -105,18 +103,18 @@ _proot_distro() {
                 fi
             done
             case "${prev}" in
-                --user)      return ;;
-                --bind)      _filedir;   return ;;
-                --emulator)  _filedir;   return ;;
-                --kernel)    return ;;
-                --hostname)  return ;;
-                --work-dir)  _filedir -d; return ;;
-                --env)       return ;;
+                -u|--user)      return ;;
+                -b|--bind)      _filedir;    return ;;
+                --emulator)     _filedir;    return ;;
+                --kernel)       return ;;
+                --hostname)     return ;;
+                -w|--work-dir)  _filedir -d; return ;;
+                -e|--env)       return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                local opts="--user --redirect-ports --shared-home --shared-tmp --shared-x11
-                    --bind --emulator --kernel --hostname --work-dir
-                    --env --get-proot-cmd --help"
+                local opts="-u --user -P --redirect-ports --shared-home --shared-tmp --shared-x11
+                    -b --bind --emulator --kernel --hostname -w --work-dir
+                    -e --env --get-proot-cmd -h --help"
                 _proot_distro_is_termux && \
                     opts+=" --isolated --minimal --no-link2symlink --no-sysvipc --no-kill-on-exit"
                 COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
@@ -127,21 +125,21 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         list)
-            COMPREPLY=($(compgen -W "--help" -- "${cur}"))
+            COMPREPLY=($(compgen -W "-q --quiet -h --help" -- "${cur}"))
             ;;
 
         # -----------------------------------------------------------------------
         backup)
             case "${prev}" in
-                --output)
+                -o|--output)
                     _filedir
                     return ;;
-                --compress)
+                -c|--compress)
                     COMPREPLY=($(compgen -W "gzip bzip2 xz none" -- "${cur}"))
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--output --compress --verbose --quiet --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-o --output -c --compress -v --verbose -q --quiet -h --help" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -185,7 +183,7 @@ _proot_distro() {
         # -----------------------------------------------------------------------
         sync)
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--verbose --quiet --checksum --delete --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-v --verbose -q --quiet -c --checksum -d --delete -h --help" -- "${cur}"))
             else
                 if [[ "${cur}" == *:* ]]; then
                     _filedir
@@ -211,18 +209,18 @@ _proot_distro() {
                 fi
             done
             case "${prev}" in
-                --user)      return ;;
-                --bind)      _filedir;   return ;;
-                --emulator)  _filedir;   return ;;
-                --kernel)    return ;;
-                --hostname)  return ;;
-                --work-dir)  _filedir -d; return ;;
-                --env)       return ;;
+                -u|--user)      return ;;
+                -b|--bind)      _filedir;    return ;;
+                --emulator)     _filedir;    return ;;
+                --kernel)       return ;;
+                --hostname)     return ;;
+                -w|--work-dir)  _filedir -d; return ;;
+                -e|--env)       return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                local opts="--user --redirect-ports --shared-home --shared-tmp --shared-x11
-                    --bind --emulator --kernel --hostname --work-dir
-                    --env --get-proot-cmd --help"
+                local opts="-u --user -P --redirect-ports --shared-home --shared-tmp --shared-x11
+                    -b --bind --emulator --kernel --hostname -w --work-dir
+                    -e --env --get-proot-cmd -h --help"
                 _proot_distro_is_termux && \
                     opts+=" --isolated --minimal --no-link2symlink --no-sysvipc --no-kill-on-exit"
                 COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
@@ -232,14 +230,48 @@ _proot_distro() {
             ;;
 
         # -----------------------------------------------------------------------
+        build)
+            case "${prev}" in
+                -f|--file)
+                    _filedir
+                    return ;;
+                -t|--tag)
+                    return ;;
+                --build-arg)
+                    return ;;
+                -a|--architecture)
+                    COMPREPLY=($(compgen -W "aarch64 arm i686 riscv64 x86_64" -- "${cur}"))
+                    return ;;
+                --target)
+                    return ;;
+                --emulator)
+                    _filedir
+                    return ;;
+                -o|--output)
+                    _filedir
+                    return ;;
+                --install-as)
+                    COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
+                    return ;;
+            esac
+            if [[ "${cur}" == -* ]]; then
+                COMPREPLY=($(compgen -W "-f --file -t --tag --build-arg -a --architecture
+                    --target --emulator -o --output --install-as --no-cache
+                    -v --verbose -q --quiet -h --help" -- "${cur}"))
+            else
+                _filedir -d
+            fi
+            ;;
+
+        # -----------------------------------------------------------------------
         push)
             case "${prev}" in
-                --architecture)
+                -a|--architecture)
                     COMPREPLY=($(compgen -W "aarch64 arm i686 riscv64 x86_64" -- "${cur}"))
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--architecture --quiet --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-a --architecture -q --quiet -h --help" -- "${cur}"))
             fi
             ;;
 
