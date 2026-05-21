@@ -21,8 +21,10 @@
 # Architecture: The stateful interpreter at the core of `proot-distro
 # build`. Walks the parsed instructions, dispatches each one to a
 # handler (metadata-only handlers live in handlers.py, the RUN
-# handler in run_step.py, COPY/ADD in copy_step.py), and tracks the
-# evolving image config + per-stage state in Stage instances.
+# handler in run_step.py, COPY/ADD in copy_step.py), tracks the
+# evolving image config + per-stage state in Stage instances, and
+# appends an OCI history entry per dispatched instruction so the
+# image_config["history"] array stays in sync with rootfs.diff_ids.
 
 import json
 import os
@@ -187,7 +189,7 @@ class BuildEngine:
             return
         log_info(text)
 
-    # ----- dispatcher ------------------------------------------------------
+    # ----- dispatcher + history -------------------------------------------
 
     def _dispatch(self, instr):
         name = instr["name"]
@@ -204,6 +206,7 @@ class BuildEngine:
             )
         if name == "ONBUILD":
             do_onbuild(self, instr)
+            self._record_history(instr, layer_added=False)
             return
         if name in EXPANDS_VARS and not instr["exec_form"]:
             instr = self._expand_instruction(instr)
@@ -213,7 +216,40 @@ class BuildEngine:
             raise BuildError(
                 f"Unsupported instruction '{name}' at line {instr['lineno']}."
             )
+        self._run_with_history(handler, instr)
+
+    def _run_with_history(self, handler, instr):
+        """Run handler, then append a history entry for the instruction.
+
+        Whether the entry is marked empty_layer depends on whether the
+        handler grew `stage.layers`. The OCI image-config spec requires
+        the count of non-empty-layer history entries to equal
+        len(rootfs.diff_ids); registries (notably Docker Hub) render
+        this array in their "Image Layers" UI, so an out-of-date
+        history makes built layers invisible.
+        """
+        layers_before = len(self.current.layers)
         handler(self, instr)
+        layer_added = len(self.current.layers) > layers_before
+        self._record_history(instr, layer_added=layer_added)
+
+    def _record_history(self, instr, layer_added):
+        """Append one entry to image_config["history"] for `instr`.
+
+        `created_by` is the raw Dockerfile line (what Docker Hub
+        displays under each step); `created` is fixed to the epoch so
+        the image config is reproducible across builds. Entries that
+        did not produce a filesystem layer carry empty_layer=true, so
+        the count of non-empty entries always equals len(diff_ids).
+        """
+        entry = {
+            "created": "1970-01-01T00:00:00Z",
+            "created_by": instr.get("raw") or instr["name"],
+        }
+        if not layer_added:
+            entry["empty_layer"] = True
+        cfg = self.current.image_config
+        cfg.setdefault("history", []).append(entry)
 
     def _expand_instruction(self, instr):
         """Return a copy of instr with its `value` variable-expanded."""
@@ -344,10 +380,16 @@ class BuildEngine:
                             f"ONBUILD trigger uses unsupported "
                             f"instruction '{ti['name']}'."
                         )
-                    h(self, ti)
+                    self._run_with_history(h, ti)
 
     def _inherit_from_stage(self, new_stage, parent):
-        """Apply parent's layers to new_stage.rootfs_dir; copy config."""
+        """Apply parent's layers to new_stage.rootfs_dir; copy config.
+
+        The deep-copy via JSON round-trip carries the parent's
+        `history` array along with the rest of image_config, so the
+        new stage starts with the inherited entries and subsequent
+        instructions append to the same list.
+        """
         new_stage.image_config = json.loads(
             json.dumps(parent.image_config)
         )

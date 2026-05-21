@@ -41,7 +41,6 @@ import os
 import tarfile
 
 from proot_distro.atomic import atomic_replace
-from proot_distro.constants import PROGRAM_NAME
 from proot_distro.helpers.docker import (
     layer_cache_path,
     manifest_cache_path,
@@ -60,12 +59,16 @@ def build_manifest_and_config(image_config, layers, arch_name):
     """Assemble the OCI image manifest and image config blobs.
 
     `image_config` is the in-progress config dict managed by the
-    build engine. `layers` is the ordered list of
-    {"digest", "size", "diff_id"} entries for this image. `arch_name`
-    is the Docker arch name (e.g. "arm64", "amd64", "386").
+    build engine — its `history` array is taken verbatim (the engine
+    appends one entry per dispatched instruction so the count of
+    non-empty-layer entries already matches len(layers)). `layers` is
+    the ordered list of {"digest", "size", "diff_id"} entries for
+    this image. `arch_name` is the Docker arch name (e.g. "arm64",
+    "amd64", "386").
 
     Returns (manifest_dict, image_config_dict). The image_config has
-    `architecture`, `os`, and `rootfs.diff_ids` populated.
+    `architecture`, `os`, and `rootfs.diff_ids` populated and carries
+    whatever `history` the engine produced.
     """
     config = dict(image_config)
     config["architecture"] = arch_name
@@ -74,7 +77,11 @@ def build_manifest_and_config(image_config, layers, arch_name):
         "type": "layers",
         "diff_ids": [l["diff_id"] for l in layers],
     }
-    config.setdefault("history", _default_history(layers))
+    # Defensive: every code path that reaches here is expected to have
+    # populated history during dispatch. The setdefault is just so
+    # tests / future callers that construct an image_config by hand
+    # don't blow up on a missing key.
+    config.setdefault("history", [])
 
     config_bytes = canonical_json(config)
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
@@ -97,14 +104,6 @@ def build_manifest_and_config(image_config, layers, arch_name):
         ],
     }
     return manifest, config
-
-
-def _default_history(layers):
-    return [
-        {"created": "1970-01-01T00:00:00Z",
-         "created_by": f"{PROGRAM_NAME} build (layer {i + 1})"}
-        for i, _ in enumerate(layers)
-    ]
 
 
 # ---------------------------------------------------------------------------
