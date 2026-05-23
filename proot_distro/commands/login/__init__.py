@@ -456,7 +456,7 @@ def _command_login_inner(container_name: str, args) -> None:
     child_env.pop("LD_PRELOAD", None)
 
     if getattr(args, "get_proot_cmd", False):
-        parts = ["env"]
+        parts = ["env", "-i"]
         for k, v in child_env.items():
             parts.append(f"{k}={dq(v)}")
         parts.extend(dq(a) for a in proot_args)
