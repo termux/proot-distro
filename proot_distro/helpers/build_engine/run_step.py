@@ -182,7 +182,8 @@ def _exec_proot(engine, stage, command, stdin_input):
             if os.path.exists(f"/proc/self/fd/{i}"):
                 proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
         setup_fake_sysdata(rootfs)
-        proot_args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
+        sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
+        proot_args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")
         proot_args += fake_proc_bindings(rootfs)
         tmp_dir = os.path.join(rootfs, "tmp")
         os.makedirs(tmp_dir, exist_ok=True)

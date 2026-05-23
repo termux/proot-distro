@@ -21,10 +21,8 @@
 # Architecture: Supplies fake /proc and /sys content that proot bind-mounts
 # read-only into the container. Android restricts or blocks several /proc
 # files; providing static replacements ensures distro tools that read them
-# (top, htop, etc.) work correctly. The fake files live inside the
-# container's own rootfs (containers/<name>/rootfs/proc/.* and sys/.empty)
-# so they are removed together with the container and stay aligned with the
-# new storage layout.
+# (top, htop, etc.) work correctly. The fake files live under
+# containers/<name>/sysdata/ so they are removed together with the container.
 
 import os
 
@@ -248,12 +246,13 @@ def setup_fake_sysdata(rootfs: str) -> None:
     """Create fake /proc and /sys stubs required by proot on Android.
 
     *rootfs* is the absolute path to the container's rootfs directory
-    (e.g. ``$RUNTIME_DIR/containers/<name>/rootfs``).
+    (e.g. ``$RUNTIME_DIR/containers/<name>/rootfs``).  Fake files are
+    written to a sibling ``sysdata/`` directory, not into the rootfs.
     """
-    for d in ("proc", "sys", "sys/.empty"):
-        p = os.path.join(rootfs, d)
-        os.makedirs(p, exist_ok=True)
-        os.chmod(p, 0o700)
+    sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
+    sys_empty = os.path.join(sysdata_dir, "sys_empty")
+    os.makedirs(sys_empty, exist_ok=True)
+    os.chmod(sysdata_dir, 0o700)
 
     fake_version = (
         f"Linux version {DEFAULT_FAKE_KERNEL_RELEASE} (proot@termux) "
@@ -261,16 +260,16 @@ def setup_fake_sysdata(rootfs: str) -> None:
         f"{DEFAULT_FAKE_KERNEL_VERSION}\n"
     )
 
-    _write_if_missing(os.path.join(rootfs, "proc/.loadavg"), _FAKE_LOADAVG)
-    _write_if_missing(os.path.join(rootfs, "proc/.stat"), _FAKE_STAT)
-    _write_if_missing(os.path.join(rootfs, "proc/.uptime"), _FAKE_UPTIME)
-    _write_if_missing(os.path.join(rootfs, "proc/.version"), fake_version)
-    _write_if_missing(os.path.join(rootfs, "proc/.vmstat"), _FAKE_VMSTAT)
+    _write_if_missing(os.path.join(sysdata_dir, "loadavg"), _FAKE_LOADAVG)
+    _write_if_missing(os.path.join(sysdata_dir, "stat"), _FAKE_STAT)
+    _write_if_missing(os.path.join(sysdata_dir, "uptime"), _FAKE_UPTIME)
+    _write_if_missing(os.path.join(sysdata_dir, "version"), fake_version)
+    _write_if_missing(os.path.join(sysdata_dir, "vmstat"), _FAKE_VMSTAT)
     _write_if_missing(
-        os.path.join(rootfs, "proc/.sysctl_entry_cap_last_cap"), "40\n"
+        os.path.join(sysdata_dir, "sysctl_entry_cap_last_cap"), "40\n"
     )
     _write_if_missing(
-        os.path.join(rootfs, "proc/.sysctl_inotify_max_user_watches"),
+        os.path.join(sysdata_dir, "sysctl_inotify_max_user_watches"),
         "4096\n",
     )
 
@@ -280,22 +279,23 @@ def fake_proc_bindings(rootfs: str) -> list:
 
     *rootfs* is the absolute path to the container's rootfs directory.
     """
+    sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
     bindings = []
     checks = [
-        ("/proc/loadavg",                        "proc/.loadavg"),
-        ("/proc/stat",                            "proc/.stat"),
-        ("/proc/uptime",                          "proc/.uptime"),
-        ("/proc/version",                         "proc/.version"),
-        ("/proc/vmstat",                          "proc/.vmstat"),
-        ("/proc/sys/kernel/cap_last_cap",         "proc/.sysctl_entry_cap_last_cap"),
-        ("/proc/sys/fs/inotify/max_user_watches", "proc/.sysctl_inotify_max_user_watches"),
+        ("/proc/loadavg",                        "loadavg"),
+        ("/proc/stat",                            "stat"),
+        ("/proc/uptime",                          "uptime"),
+        ("/proc/version",                         "version"),
+        ("/proc/vmstat",                          "vmstat"),
+        ("/proc/sys/kernel/cap_last_cap",         "sysctl_entry_cap_last_cap"),
+        ("/proc/sys/fs/inotify/max_user_watches", "sysctl_inotify_max_user_watches"),
     ]
-    for real, fake_rel in checks:
+    for real, fake_name in checks:
         try:
             with open(real, "rb") as fh:
                 fh.read(1)
         except OSError:
             bindings.append(
-                f"--bind={os.path.join(rootfs, fake_rel)}:{real}"
+                f"--bind={os.path.join(sysdata_dir, fake_name)}:{real}"
             )
     return bindings

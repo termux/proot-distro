@@ -173,7 +173,8 @@ def _add_termux_dev_binds(args, rootfs):
     for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
         if os.path.exists(f"/proc/self/fd/{i}"):
             args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
-    args.append(f"--bind={rootfs}/sys/.empty:/sys/fs/selinux")
+    sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
+    args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")
     args += fake_proc_bindings(rootfs)
 
     tmp_dir = os.path.join(rootfs, "tmp")
