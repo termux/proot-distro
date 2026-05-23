@@ -460,7 +460,7 @@ def _command_login_inner(container_name: str, args) -> None:
         for k, v in child_env.items():
             parts.append(f"{k}={dq(v)}")
         parts.extend(dq(a) for a in proot_args)
-        msg(" \\\n  ".join(parts))
+        print(" \\\n  ".join(parts))
         sys.exit(0)
 
     os.execvpe(proot_bin, proot_args, child_env)
