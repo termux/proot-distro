@@ -17,3 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
+
+# Architecture: One file (or sub-package) per top-level proot-distro
+# command. Each module exposes a single `command_<name>(args)` entry
+# point that is wired into the dispatcher by proot_distro.cli.

@@ -18,351 +18,202 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Adaptive help renderer. Help content lives in _HELP_PAGES as
-# plain Python data; _render_page formats it against the detected terminal
-# width. Layout switches at _NARROW_BREAKPOINT (60 cols): below it, option
-# names and descriptions stack vertically — fitting phones running Termux;
-# above it, a two-column grid keeps the page scannable on tablets and
-# laptops. Width is clamped to [_MIN_WIDTH, _MAX_WIDTH] so output stays
-# readable on narrow PTYs and not painfully long on ultra-wide ones.
-
-import os
-import shutil
-import textwrap
+# Architecture: All help-page content as plain Python data. Each entry
+# in HELP_PAGES is a dict consumed by render.render_page. Termux-only
+# options are gated with `*([...] if IS_TERMUX else [])` so the help
+# stays in sync with what argparse actually accepts on the current host.
 
 from proot_distro.constants import (
-    IS_TERMUX,
-    PROGRAM_NAME,
-    PROGRAM_VERSION,
-    RUNTIME_DIR,
-    TERMUX_APP_PACKAGE,
+    IS_TERMUX, PROGRAM_NAME, CANONICAL_PROGRAM_NAME, TERMUX_APP_PACKAGE,
 )
-from proot_distro.colors import C, msg
 
 
-# ---------------------------------------------------------------------------
-# Layout constants and width detection
-# ---------------------------------------------------------------------------
+HELP_PAGES = {
+    "build": {
+        "usage": "build [OPTIONS] [PATH]",
+        "summary": (
+            "Build an OCI/Docker-compatible image from a Dockerfile."
+            "\n\n"
+            "PATH is the build context directory containing the "
+            "Dockerfile (default: '.'). All COPY/ADD source paths "
+            "resolve relative to it. A '.dockerignore' file in the "
+            "context excludes patterns from COPY/ADD."
+            "\n\n"
+            "By default the image is stored in the local manifest "
+            "cache under the tag given by --tag (default: the "
+            "basename of PATH plus ':latest'). Once stored, "
+            f"'{PROGRAM_NAME} install <tag>' resolves the tag against "
+            "the cache first and installs entirely offline."
+            "\n\n"
+            "Use --output FILE to additionally write a standalone "
+            "OCI image-layout tarball that 'docker load' or "
+            f"'{PROGRAM_NAME} install FILE' also understands."
+            "\n\n"
+            "Use --install-as NAME to turn the freshly built image "
+            "into a container in one step."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-f, --file [PATH]",
+             "Use a Dockerfile at PATH instead of <PATH>/Dockerfile. "
+             "Pass '-' to read the Dockerfile from standard input."),
+            ("-t, --tag [REF]",
+             "Image reference to assign. Repeatable. Defaults to "
+             "'<basename(PATH)>:latest'."),
+            ("--build-arg [K=V]",
+             "Set a build-time ARG. Only ARGs declared in the "
+             "Dockerfile are honoured. Repeatable."),
+            ("-a, --architecture [ARCH]",
+             "Target CPU architecture (default: host architecture). "
+             f"Accepts {PROGRAM_NAME} names (aarch64, arm, i686, "
+             "riscv64, x86_64) or Docker platform strings "
+             "(linux/arm64, linux/amd64, ...)."),
+            ("--target [STAGE]",
+             "Stop after the named stage of a multi-stage build."),
+            ("--emulator [PATH]",
+             "Override the QEMU user-mode binary used for "
+             "cross-architecture builds."),
+            ("-o, --output [FILE]",
+             "Write the built image as an OCI tarball to FILE. "
+             "Compression is inferred from the extension "
+             "(.oci.tar, .oci.tar.gz, .oci.tar.xz). Repeatable."),
+            ("--install-as [NAME]",
+             "Install the built image as a container named NAME "
+             "after the build completes."),
+            ("--no-cache",
+             "Disable build-step caching. Each instruction is "
+             "executed fresh."),
+            ("-v, --verbose",
+             "Echo each instruction and stream RUN output to the "
+             "terminal."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} build -t myapp:1.0 .",
+            f"{PROGRAM_NAME} build -t myapp:1.0 --output myapp.oci.tar.gz .",
+            f"{PROGRAM_NAME} build -t myapp --install-as myapp .",
+            f"{PROGRAM_NAME} build -f Dockerfile.arm "
+                f"--architecture aarch64 .",
+        ],
+        "footer": [
+            {
+                "title": "PROOT REQUIREMENT",
+                "intro": (
+                    "If the Dockerfile contains any RUN (or "
+                    "ONBUILD RUN) instruction, proot must be "
+                    "installed on the host because RUN executes the "
+                    "given command against the in-progress rootfs "
+                    "under proot. Dockerfiles composed only of FROM, "
+                    "COPY, ADD, ENV, ARG, LABEL, USER, WORKDIR, "
+                    "CMD, ENTRYPOINT, EXPOSE, VOLUME, STOPSIGNAL, "
+                    "HEALTHCHECK, SHELL, MAINTAINER, and "
+                    "ONBUILD<non-RUN> build in pure-Python mode and "
+                    "do not require proot."
+                ),
+            },
+            {
+                "title": "AFTER BUILD",
+                "intro": (
+                    "Without --output and --install-as, the image is "
+                    "stored only in the local cache. "
+                    f"'{PROGRAM_NAME} install <tag>' resolves the "
+                    "tag against the cache first; install proceeds "
+                    "without network access when the manifest and "
+                    "all layers are cached."
+                ),
+            },
+            {
+                "title": "LIMITATIONS",
+                "intro": (
+                    "RUN steps run under proot, not a real container "
+                    "runtime. No PID, network or IPC isolation, no "
+                    "cgroups, no seccomp profiles. BuildKit-only "
+                    "features (RUN --mount, --network, --security; "
+                    "COPY --link, --parents) are rejected with an "
+                    "error. Multi-platform manifest lists are not "
+                    "produced — build once per architecture."
+                ),
+            },
+        ],
+    },
 
-_MIN_WIDTH = 32
-_MAX_WIDTH = 92
-_NARROW_BREAKPOINT = 60
+    "push": {
+        "usage": "push [OPTIONS] IMAGE",
+        "summary": (
+            "Push a locally built image to a Docker/OCI registry. The "
+            "image must have been produced by '"
+            f"{PROGRAM_NAME} build -t IMAGE' first; the manifest and "
+            "blobs are read straight from the local cache."
+            "\n\n"
+            "IMAGE is the same reference passed to 'build -t', for "
+            "example 'myuser/myapp:1.0' (Docker Hub) or "
+            "'ghcr.io/myorg/myapp:1.0' (custom registry). When no tag "
+            "component is present, ':latest' is appended."
+            "\n\n"
+            "By default the architecture matches the host. Use "
+            "--architecture to push an image built for a different "
+            "target arch (the manifest cache is keyed by IMAGE+arch)."
+            "\n\n"
+            "Layers and the image config blob that are already present "
+            "on the registry are detected via HEAD requests and "
+            "skipped, so re-pushing an unchanged image transfers only "
+            "the small manifest."
+            "\n\n"
+            "Private repositories require authentication. Set "
+            "PD_DOCKER_AUTH=\"user:password\" (or "
+            "\"user:personal-access-token\") before running push. "
+            "Self-hosted registries that allow anonymous push do not "
+            "need PD_DOCKER_AUTH set."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-a, --architecture [ARCH]",
+             "Push the manifest built for the given architecture. "
+             f"Accepts {PROGRAM_NAME} names (aarch64, arm, i686, "
+             "riscv64, x86_64) or Docker platform strings "
+             "(linux/arm64, linux/amd64, ...). Default: host "
+             "architecture."),
+            ("-q, --quiet", "Suppress non-error output."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} push myuser/myapp:1.0",
+            f"{PROGRAM_NAME} push ghcr.io/myorg/myapp:1.0",
+            f"{PROGRAM_NAME} push --architecture aarch64 myuser/myapp:1.0",
+        ],
+        "footer": [
+            {
+                "title": "AUTHENTICATION",
+                "intro": (
+                    "Set PD_DOCKER_AUTH in 'username:password' format "
+                    "before running push. The colon is mandatory; "
+                    "bare tokens without a username cannot be used "
+                    "because registry auth requires a token exchange "
+                    "with Basic credentials. For GitHub Container "
+                    "Registry, use a personal access token with the "
+                    "'write:packages' scope as the password."
+                ),
+                "examples": [
+                    "export PD_DOCKER_AUTH=user:password",
+                    f"{PROGRAM_NAME} push ghcr.io/myorg/myapp:1.0",
+                ],
+            },
+            {
+                "title": "NOTES",
+                "intro": (
+                    "Multi-architecture manifest lists are not "
+                    "produced. To publish a multi-arch image, build "
+                    "and push each architecture under the same tag — "
+                    "the registry overwrites the tag with the "
+                    "most-recently pushed manifest. Producing a "
+                    "manifest index that points at multiple "
+                    "single-arch manifests is out of scope."
+                ),
+            },
+        ],
+    },
 
-_RULE_DOUBLE = "═"
-_RULE_SINGLE = "─"
-_BULLET = "▸"
-_PROMPT = "$"
-
-
-def _term_width() -> int:
-    # Help text is written to stderr, so prefer stderr's reported size first
-    # and fall back to stdout/stdin and finally COLUMNS for redirected runs.
-    for fd in (2, 1, 0):
-        try:
-            cols = os.get_terminal_size(fd).columns
-        except (OSError, ValueError):
-            continue
-        if cols > 0:
-            return max(_MIN_WIDTH, min(_MAX_WIDTH, cols))
-    try:
-        cols = int(os.environ.get("COLUMNS", "0"))
-    except ValueError:
-        cols = 0
-    if cols > 0:
-        return max(_MIN_WIDTH, min(_MAX_WIDTH, cols))
-    try:
-        cols = shutil.get_terminal_size((72, 24)).columns
-    except (OSError, ValueError):
-        cols = 72
-    return max(_MIN_WIDTH, min(_MAX_WIDTH, cols))
-
-
-def _wrap(text: str, width: int) -> list:
-    width = max(4, width)
-    lines = textwrap.wrap(
-        text,
-        width=width,
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-    return lines or [""]
-
-
-# ---------------------------------------------------------------------------
-# Rendering primitives
-# ---------------------------------------------------------------------------
-
-def _hrule(width: int, char: str, color: str = None) -> str:
-    return f"{color or C['CYAN']}{char * width}{C['RST']}"
-
-
-def _banner(title: str, width: int) -> None:
-    msg()
-    msg(_hrule(width, _RULE_DOUBLE, C["BYELLOW"]))
-    label = f"v{PROGRAM_VERSION}"
-    # 2 left pad, 4 between title and version, 2 right pad
-    if width >= 2 + len(title) + 4 + len(label) + 2:
-        gap = width - 2 - len(title) - len(label) - 2
-        msg(
-            f"  {C['BCYAN']}{title}{C['RST']}"
-            f"{' ' * gap}"
-            f"{C['ICYAN']}{label}{C['RST']}  "
-        )
-    else:
-        msg(f"  {C['BCYAN']}{title}{C['RST']}")
-    msg(_hrule(width, _RULE_DOUBLE, C["BYELLOW"]))
-
-
-def _section(label: str) -> None:
-    msg()
-    msg(f"{C['UBCYAN']}{label}{C['RST']}")
-    msg()
-
-
-def _paragraph(text: str, width: int, indent: int = 2,
-               color: str = None) -> None:
-    color = color or C["CYAN"]
-    pad = " " * indent
-    avail = max(8, width - indent)
-    for i, para in enumerate(text.split("\n\n")):
-        if i > 0:
-            msg()
-        for line in _wrap(para, avail):
-            msg(f"{pad}{color}{line}{C['RST']}")
-
-
-def _usage_line(usage: str, width: int) -> None:
-    parts = usage.split(" ", 1)
-    sub = parts[0]
-    rest = parts[1] if len(parts) > 1 else ""
-    head = (f"  {C['BGREEN']}{PROGRAM_NAME}{C['RST']}"
-            f" {C['UGREEN']}{sub}{C['RST']}")
-    head_visible = 2 + len(PROGRAM_NAME) + 1 + len(sub)
-    if not rest:
-        msg(head)
-        return
-    if head_visible + 1 + len(rest) <= width:
-        msg(f"{head} {C['CYAN']}{rest}{C['RST']}")
-        return
-    msg(head)
-    cont = "    "
-    for line in _wrap(rest, width - len(cont)):
-        msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-
-
-def _aliases_block(aliases) -> None:
-    sep = f"{C['CYAN']}, {C['RST']}"
-    parts = [f"{C['UGREEN']}{a}{C['RST']}" for a in aliases]
-    msg(f"  {C['CYAN']}Aliases:{C['RST']} {sep.join(parts)}")
-
-
-def _options_stacked(options, width: int) -> None:
-    last = len(options) - 1
-    for i, (name, desc) in enumerate(options):
-        msg(f"  {C['GREEN']}{name}{C['RST']}")
-        _paragraph(desc, width, indent=4)
-        if i != last:
-            msg()
-
-
-def _options_block(options, width: int) -> None:
-    if not options:
-        return
-    if width < _NARROW_BREAKPOINT:
-        _options_stacked(options, width)
-        return
-    longest = max(len(name) for name, _ in options)
-    opt_col = min(longest, max(16, width // 3))
-    desc_col = width - opt_col - 4
-    if desc_col < 24:
-        _options_stacked(options, width)
-        return
-    cont = " " * (2 + opt_col + 2)
-    last = len(options) - 1
-    for i, (name, desc) in enumerate(options):
-        wrapped = _wrap(desc, desc_col)
-        if len(name) <= opt_col:
-            head = (
-                f"  {C['GREEN']}{name}{C['RST']}"
-                f"{' ' * (opt_col - len(name))}  "
-                f"{C['CYAN']}{wrapped[0]}{C['RST']}"
-            )
-            msg(head)
-            for line in wrapped[1:]:
-                msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        else:
-            msg(f"  {C['GREEN']}{name}{C['RST']}")
-            for line in wrapped:
-                msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        if i != last:
-            msg()
-
-
-def _commands_block(commands, width: int) -> None:
-    """Like _options_block, but each entry may carry a trailing red warning.
-
-    Each entry is (name, description) or (name, description, warning).
-    """
-    if not commands:
-        return
-    longest = max(len(entry[0]) for entry in commands)
-    name_col = min(longest, max(12, width // 4))
-    desc_col = width - name_col - 4
-    narrow = width < _NARROW_BREAKPOINT or desc_col < 24
-
-    if narrow:
-        last = len(commands) - 1
-        for i, entry in enumerate(commands):
-            name = entry[0]
-            desc = entry[1]
-            warn = entry[2] if len(entry) > 2 else None
-            msg(f"  {C['GREEN']}{name}{C['RST']}")
-            _paragraph(desc, width, indent=4)
-            if warn:
-                msg(f"    {C['RED']}{warn}{C['RST']}")
-            if i != last:
-                msg()
-        return
-
-    cont = " " * (2 + name_col + 2)
-    for entry in commands:
-        name = entry[0]
-        desc = entry[1]
-        warn = entry[2] if len(entry) > 2 else None
-        wrapped = _wrap(desc, desc_col)
-        head = (
-            f"  {C['GREEN']}{name}{C['RST']}"
-            f"{' ' * (name_col - len(name))}  "
-            f"{C['CYAN']}{wrapped[0]}{C['RST']}"
-        )
-        if warn and len(wrapped) == 1 and \
-                len(wrapped[0]) + 1 + len(warn) <= desc_col:
-            msg(f"{head} {C['RED']}{warn}{C['RST']}")
-            continue
-        msg(head)
-        for line in wrapped[1:]:
-            msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        if warn:
-            msg(f"{cont}{C['RED']}{warn}{C['RST']}")
-
-
-def _shell_block(examples, width: int) -> None:
-    avail = max(12, width - 4)
-    wrap_avail = max(4, avail - 2)
-    for ex in examples:
-        wrapped = _wrap(ex, wrap_avail)
-        last = len(wrapped) - 1
-        for i, line in enumerate(wrapped):
-            suffix = "" if i == last else f" {C['CYAN']}\\{C['RST']}"
-            if i == 0:
-                msg(
-                    f"  {C['YELLOW']}{_PROMPT}{C['RST']} "
-                    f"{C['GREEN']}{line}{C['RST']}{suffix}"
-                )
-            else:
-                msg(f"    {C['GREEN']}{line}{C['RST']}{suffix}")
-
-
-def _bullets_block(bullets, width: int) -> None:
-    if not bullets:
-        return
-    longest = max(len(label) for label, _ in bullets)
-    name_col = min(longest, max(16, width // 3))
-    desc_col = width - 4 - name_col - 2
-    narrow = width < _NARROW_BREAKPOINT or desc_col < 16
-
-    if narrow:
-        for label, comment in bullets:
-            msg(
-                f"  {C['CYAN']}{_BULLET}{C['RST']} "
-                f"{C['YELLOW']}{label}{C['RST']}"
-            )
-            if comment:
-                _paragraph(f"({comment})", width, indent=6)
-        return
-
-    cont = " " * (4 + name_col + 2)
-    for label, comment in bullets:
-        pad = " " * max(0, name_col - len(label))
-        if comment:
-            wrapped = _wrap(f"({comment})", desc_col)
-            msg(
-                f"  {C['CYAN']}{_BULLET}{C['RST']} "
-                f"{C['YELLOW']}{label}{C['RST']}{pad}  "
-                f"{C['CYAN']}{wrapped[0]}{C['RST']}"
-            )
-            for line in wrapped[1:]:
-                msg(f"{cont}{C['CYAN']}{line}{C['RST']}")
-        else:
-            msg(
-                f"  {C['CYAN']}{_BULLET}{C['RST']} "
-                f"{C['YELLOW']}{label}{C['RST']}"
-            )
-
-
-def _footer(width: int) -> None:
-    msg()
-    msg(_hrule(width, _RULE_SINGLE, C["CYAN"]))
-    _paragraph(
-        f"Proot-Distro version '{PROGRAM_VERSION}' by Termux (@sylirre).",
-        width, indent=0, color=C["ICYAN"],
-    )
-    msg()
-
-
-# ---------------------------------------------------------------------------
-# Page renderer
-# ---------------------------------------------------------------------------
-
-def _render_page(page: dict, command_name: str) -> None:
-    width = _term_width()
-    #_banner(f"{PROGRAM_NAME} {command_name}", width)
-
-    if page.get("usage"):
-        _section("USAGE")
-        _usage_line(page["usage"], width)
-        if page.get("aliases"):
-            msg()
-            _aliases_block(page["aliases"])
-
-    if page.get("summary"):
-        _section("DESCRIPTION")
-        _paragraph(page["summary"], width)
-
-    if page.get("options"):
-        _section("OPTIONS")
-        _options_block(page["options"], width)
-
-    if page.get("examples"):
-        _section("EXAMPLES")
-        _shell_block(page["examples"], width)
-
-    for block in page.get("footer", []):
-        title = block.get("title")
-        if title:
-            _section(title)
-        intro = block.get("intro")
-        if intro:
-            _paragraph(intro, width)
-        bullets = block.get("bullets")
-        if bullets:
-            if intro:
-                msg()
-            _bullets_block(bullets, width)
-        examples = block.get("examples")
-        if examples:
-            if intro or bullets:
-                msg()
-            _shell_block(examples, width)
-
-    _footer(width)
-
-
-# ---------------------------------------------------------------------------
-# Per-command help data
-# ---------------------------------------------------------------------------
-
-_HELP_PAGES = {
     "backup": {
         "usage": "backup [OPTIONS] CONTAINER",
         "aliases": ("bak", "bkp"),
@@ -373,16 +224,19 @@ _HELP_PAGES = {
             "uncompressed by default."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--compress [TYPE]",
+            ("-h, --help", "Show this help."),
+            ("-c, --compress [TYPE]",
              "Force a specific compression algorithm, overriding the "
              "file extension. Supported values: gzip, bzip2, xz, none."),
-            ("--output [FILE]",
+            ("-o, --output [FILE]",
              "Write the archive to FILE instead of stdout. When "
              "--compress is not given, compression is inferred from "
              "the file extension like tar.gz or txz."),
-            ("--verbose",
+            ("-v, --verbose",
              "Log each file name as it is added to the archive."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} backup ubuntu --output ~/ubuntu.tar.xz",
@@ -397,8 +251,11 @@ _HELP_PAGES = {
             "layers)."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--verbose", "Log each removed file."),
+            ("-h, --help", "Show this help."),
+            ("-v, --verbose", "Log each removed file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
     },
 
@@ -411,11 +268,14 @@ _HELP_PAGES = {
             "path or a 'container:path' reference."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--move",
+            ("-h, --help", "Show this help."),
+            ("-m, --move",
              "Delete source file after a successful copy."),
-            ("--recursive", "Recursive mode for copying directories."),
-            ("--verbose", "Log each copied file."),
+            ("-r, --recursive", "Recursive mode for copying directories."),
+            ("-v, --verbose", "Log each copied file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} copy ./file.txt ubuntu:/root/file.txt",
@@ -433,11 +293,12 @@ _HELP_PAGES = {
     },
 
     "install": {
-        "usage": "install [OPTIONS] (IMAGE:TAG or /path/to/roofs.tar)",
+        "usage": "install [OPTIONS] (IMAGE:TAG or URL or FILE)",
         "aliases": ("add", "i", "in", "ins"),
         "summary": (
             "Create a proot container from a given source: Docker image, "
-            "a local OCI image archive or plain rootfs tarball."
+            "OCI image archive, rootfs tarball or a web URL providing "
+            "either of supported archive file formats."
             "\n\n"
             "Installation from Docker image require specifying a reference, "
             "for example 'ubuntu:24.04'. Official images can be specified by "
@@ -460,33 +321,41 @@ _HELP_PAGES = {
             "It is possible to install distribution with architecture "
             "that differs from your host CPU. In such cases you will need "
             "a QEMU user mode emulator to be able run it."
+            "\n\n"
+            "Private images require authentication. Set the environment "
+            "variable PD_DOCKER_AUTH=\"user:password\" before running "
+            "the install command. Some registries use a personal access "
+            "token instead of password."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--name [NAME]",
+            ("-h, --help", "Show this help."),
+            ("-n, --name [NAME]",
              "Set a custom name for the container. Must start with "
              "alphanumeric character and then may contain only latin "
              "letters, numbers and special symbols dot, minus, underscore. "
              "Default equals to image name without tag and registry prefix."),
-            ("--architecture [ARCH]",
+            ("-a, --architecture [ARCH]",
              "Override the target CPU architecture. Accepts native "
              "names (aarch64, arm, i686, riscv64, x86_64) or Docker "
              "platform strings (linux/arm64, linux/amd64, linux/arm/v7, "
              "linux/386, linux/riscv64)."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [
             f"{PROGRAM_NAME} install ubuntu:24.04",
-            f"{PROGRAM_NAME} install debian --architecture x86_64",
-            f"{PROGRAM_NAME} install ~/linuxfromscratch.tgz --name lfs"
+            f"{PROGRAM_NAME} install -a x86_64 debian",
+            f"{PROGRAM_NAME} install -n dist https://example.com/rootfs.tar",
+            f"{PROGRAM_NAME} install -n dist ~/rootfs.tgz"
         ],
     },
 
     "list": {
-        "usage": "list",
+        "usage": "list [OPTIONS]",
         "aliases": ("li", "ls"),
         "summary": "List all installed proot containers.",
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
+            ("-q, --quiet", "Print only container names, one per line."),
         ],
     },
 
@@ -507,9 +376,14 @@ _HELP_PAGES = {
             )
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--user [USER]", "Switch to USER instead of root."),
-            ("--redirect-ports",
+            ("-h, --help", "Show this help."),
+            ("-u, --user [USER]",
+             "User identity to switch to instead of root. Accepted forms: "
+             "'name' (username from /etc/passwd), "
+             "'name:group' (username and group name from /etc/passwd and /etc/group), "
+             "'uid' (numeric UID), "
+             "'uid:gid' (numeric UID and GID)."),
+            ("-P, --redirect-ports",
              "Replace privileged port bindings with higher port numbers "
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
               "hardcoded into proot executable itself and can't be "
@@ -519,7 +393,7 @@ _HELP_PAGES = {
                 "unless using QEMU user mode emulation or user manually "
                 "requested specific directories to be bound.")] if IS_TERMUX else []),
             *([("--minimal",
-                "Enable Isolated Mode with bare mimimum proot configuration. "
+                "Enable Isolated Mode with bare minimum proot configuration. "
                 "Only /dev, /proc and /sys are bound. All proot extensions "
                 "except link2symlink are disabled. No /proc system data "
                 "workarounds, no kernel release override. Specific features "
@@ -538,7 +412,7 @@ _HELP_PAGES = {
              + (" Takes priority over Isolated Mode."
                 " Inherited by --shared-tmp."
                 " Already included in default mode." if IS_TERMUX else "")),
-            ("--bind [SRC:DEST]",
+            ("-b, --bind [SRC:DEST]",
              "Custom filesystem binding. Can be specified multiple times."
              + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
             *([("--no-link2symlink",
@@ -557,8 +431,8 @@ _HELP_PAGES = {
             ("--kernel [TEXT]",
              "Customize the kernel release string reported by uname."),
             ("--hostname [TEXT]", "Customize the system hostname."),
-            ("--work-dir [PATH]", "Set the initial working directory."),
-            ("--env VAR=VALUE",
+            ("-w, --work-dir [PATH]", "Set the initial working directory."),
+            ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
             ("--get-proot-cmd",
@@ -608,12 +482,15 @@ _HELP_PAGES = {
                         "\n\n"
                         if IS_TERMUX else ""
                     ) +
-                    "PRoot-Distro does not guarantee that everything "
-                    "inside given distribution will work flawlessly "
-                    "and is not responsible for that. Thus it is not "
-                    "possible to satisfy requirements of utilities "
-                    "needing real root privileges or specific Linux "
-                    "kernel features like namespaces."
+                    f"{CANONICAL_PROGRAM_NAME} comes without any guarantee "
+                    "that any user-selected distribution image will work "
+                    "properly. Any kind of observed bugs could happen "
+                    "either because of proot (third party dependency) "
+                    "design flaws or fundamental incompatibility with "
+                    "given container runtime. For example is not possible "
+                    "to deliver access to restricted interfaces under "
+                    "/dev, /proc and /sys required by udev; cgroups "
+                    "or Linux namespaces required by bwrap."
                     "\n\n"
                     "Devices with ARMv9 CPUs require QEMU user mode "
                     "emulator to be able execute 32-bit programs because "
@@ -632,8 +509,11 @@ _HELP_PAGES = {
             "No confirmation is requested, be careful."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--verbose", "Log each deleted file."),
+            ("-h, --help", "Show this help."),
+            ("-v, --verbose", "Log each deleted file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
     },
 
@@ -641,7 +521,8 @@ _HELP_PAGES = {
         "usage": "rename OLDNAME NEWNAME",
         "summary": "Rename the installed proot container.",
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
         "footer": [
             {
@@ -666,7 +547,8 @@ _HELP_PAGES = {
             "Works only with containers created from Docker images."
         ),
         "options": [
-            ("--help", "Show this help."),
+            ("-h, --help", "Show this help."),
+            ("-q, --quiet", "Suppress non-error output."),
         ],
     },
 
@@ -677,8 +559,11 @@ _HELP_PAGES = {
             "is not specified, archive data is read from stdin."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--verbose", "Log each extracted file."),
+            ("-h, --help", "Show this help."),
+            ("-v, --verbose", "Log each extracted file."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "footer": [
             {
@@ -706,9 +591,14 @@ _HELP_PAGES = {
             "Primarily intended to be used with server images."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--user [USER]", "Switch to USER instead of root."),
-            ("--redirect-ports",
+            ("-h, --help", "Show this help."),
+            ("-u, --user [USER]",
+             "User identity to switch to instead of root. Accepted forms: "
+             "'name' (username from /etc/passwd), "
+             "'name:group' (username and group name from /etc/passwd and /etc/group), "
+             "'uid' (numeric UID), "
+             "'uid:gid' (numeric UID and GID)."),
+            ("-P, --redirect-ports",
              "Replace privileged port bindings with higher port numbers "
               "(22 -> 2022, 80 -> 2080, etc). Port shift offset is "
               "hardcoded into proot executable itself and can't be "
@@ -718,7 +608,7 @@ _HELP_PAGES = {
                 "unless using QEMU user mode emulation or user manually "
                 "requested specific directories to be bound.")] if IS_TERMUX else []),
             *([("--minimal",
-                "Enable Isolated Mode with bare mimimum proot configuration. "
+                "Enable Isolated Mode with bare minimum proot configuration. "
                 "Only /dev, /proc and /sys are bound. All proot extensions "
                 "except link2symlink are disabled. No /proc system data "
                 "workarounds, no kernel release override. Specific features "
@@ -737,7 +627,7 @@ _HELP_PAGES = {
              + (" Takes priority over Isolated Mode."
                 " Inherited by --shared-tmp."
                 " Already included in default mode." if IS_TERMUX else "")),
-            ("--bind [SRC:DEST]",
+            ("-b, --bind [SRC:DEST]",
              "Custom filesystem binding. Can be specified multiple times."
              + (" Takes priority over Isolated Mode." if IS_TERMUX else "")),
             *([("--no-link2symlink",
@@ -756,8 +646,8 @@ _HELP_PAGES = {
             ("--kernel [TEXT]",
              "Customize the kernel release string reported by uname."),
             ("--hostname [TEXT]", "Customize the system hostname."),
-            ("--work-dir [PATH]", "Set the initial working directory."),
-            ("--env VAR=VALUE",
+            ("-w, --work-dir [PATH]", "Set the initial working directory."),
+            ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
             ("--get-proot-cmd",
@@ -773,12 +663,15 @@ _HELP_PAGES = {
             {
                 "title": "NOTES",
                 "intro": (
-                    "PRoot-Distro does not guarantee that everything "
-                    "inside given distribution will work flawlessly "
-                    "and is not responsible for that. Thus it is not "
-                    "possible to satisfy requirements of utilities "
-                    "needing real root privileges or specific Linux "
-                    "kernel features like namespaces."
+                    f"{CANONICAL_PROGRAM_NAME} comes without any guarantee "
+                    "that any user-selected distribution image will work "
+                    "properly. Any kind of observed bugs could happen "
+                    "either because of proot (third party dependency) "
+                    "design flaws or fundamental incompatibility with "
+                    "given container runtime. For example is not possible "
+                    "to deliver access to restricted interfaces under "
+                    "/dev, /proc and /sys required by udev; cgroups "
+                    "or Linux namespaces required by bwrap."
                     "\n\n"
                     "Devices with ARMv9 CPUs require QEMU user mode "
                     "emulator to be able execute 32-bit programs because "
@@ -802,15 +695,18 @@ _HELP_PAGES = {
             "'container:path' reference."
         ),
         "options": [
-            ("--help", "Show this help."),
-            ("--checksum",
+            ("-h, --help", "Show this help."),
+            ("-c, --checksum",
              "Compare files by size and CRC32 checksum instead of "
              "size and modification time. Slower but with high precision."),
-            ("--delete",
+            ("-d, --delete",
              "After syncing, remove destination files and "
              "directories that have no counterpart in the source. "
              "Only effective when source is a directory."),
-            ("--verbose", "Log each synced or deleted entry."),
+            ("-v, --verbose", "Log each synced or deleted entry."),
+            ("-q, --quiet",
+             "Suppress non-error output. Mutually exclusive "
+             "with --verbose."),
         ],
         "examples": [
             f"{PROGRAM_NAME} sync ./dotfiles/ ubuntu:/root/",
@@ -820,20 +716,8 @@ _HELP_PAGES = {
 }
 
 
-def _make_help_fn(name):
-    def help_fn():
-        _render_page(_HELP_PAGES[name], name)
-    return help_fn
-
-
-_HELP_COMMANDS = {name: _make_help_fn(name) for name in _HELP_PAGES}
-
-
-# ---------------------------------------------------------------------------
-# Top-level help
-# ---------------------------------------------------------------------------
-
-_TOP_COMMANDS = [
+# Top-level command table for the no-args help screen.
+TOP_COMMANDS = [
     ("help", "Show this help."),
     ("install", "Install distribution from OCI image or rootfs archive."),
     ("list", "List created containers."),
@@ -847,117 +731,6 @@ _TOP_COMMANDS = [
     ("clear-cache", "Delete cached downloads."),
     ("copy", "Copy files from/to container."),
     ("sync", "Sync files from/to container."),
+    ("build", "Build an OCI image from a Dockerfile."),
+    ("push", "Push a locally built image to a registry."),
 ]
-
-
-def command_help(args=None, configs=None) -> None:  # noqa: ARG001
-    width = _term_width()
-    #_banner(PROGRAM_NAME, width)
-
-    _section("USAGE")
-    _usage_line("[COMMAND] [ARGUMENTS]", width)
-
-    _section("DESCRIPTION")
-    _paragraph(
-        "PRoot-Distro is a wrapper utility for proot user-space emulator "
-        "of chroot, bind --mount and binfmt_misc. This utility provides a "
-        "convenient way for working with Linux containers, leveraging "
-        "support of Docker registries to provide distributions of any kind.",
-        width,
-    )
-
-    _section("COMMANDS")
-    _commands_block(_TOP_COMMANDS, width)
-
-    _section("GETTING HELP")
-    _paragraph(
-        f"Run '{PROGRAM_NAME} <command> --help' for details on any "
-        "command.",
-        width,
-    )
-
-    _section("QUICK START")
-    _paragraph(
-        "Usage of generic distribution images is straightforward. "
-        "Below is an example for Ubuntu 24.04:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} install ubuntu:24.04",
-         f"{PROGRAM_NAME} login ubuntu"], width,
-    )
-    msg()
-    _paragraph(
-        "Some images come preconfigured for specific purposes and "
-        "contain built-in startup script. Often this is a case for "
-        "server software:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} install nextcloud:32",
-         f"{PROGRAM_NAME} run --redirect-ports nextcloud"], width,
-    )
-    msg()
-    _paragraph(
-        "Images that are not officially provided by Docker Hub "
-        "require specifying organization or user name:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} install termux/termux-docker:aarch64"], width,
-    )
-    msg()
-    _paragraph(
-        "If you no longer need a specific container, delete it with:",
-        width,
-    )
-    msg()
-    _shell_block(
-        [f"{PROGRAM_NAME} remove ubuntu"], width,
-    )
-    msg()
-    _paragraph(
-        "You can discover existing images on Docker Hub "
-        "(https://hub.docker.com/) or other places on the Internet. "
-        "Current version of PRoot-Distro does not support building "
-        "distribution images and you will need external utilities for "
-        "that.",
-        width,
-    )
-
-    _section("DATA LOCATION")
-    msg(f"  {C['YELLOW']}{RUNTIME_DIR}{C['RST']}")
-
-    _section("TROUBLESHOOTING")
-    _paragraph(
-        "If your terminal (theme) does not work well with colors, "
-        "set this environment variable:",
-        width
-    )
-    msg()
-    _shell_block(
-        ["export PD_FORCE_NO_COLORS=true"],
-        width,
-    )
-    msg()
-    _paragraph(
-        "If you have issues with proot during login, try these "
-        "quck troubleshooting steps:",
-        width,
-    )
-    msg()
-    _shell_block(
-        ["pkg upgrade -y", f"PROOT_NO_SECCOMP=1 {PROGRAM_NAME} login <name>"],
-        width,
-    )
-    msg()
-    _paragraph(
-        "Report utility issues to "
-        "https://github.com/termux/proot-distro/issues",
-        width,
-    )
-
-    _footer(width)

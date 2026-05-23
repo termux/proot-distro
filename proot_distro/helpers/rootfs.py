@@ -19,10 +19,10 @@
 #
 
 # Architecture: Post-extraction rootfs fixup helpers. Each function targets a
-# single aspect of Termux/Android integration (DNS, PATH, Android UIDs, etc.).
-# Kept separate from the install command so the same fixups can be applied by
-# other entry points (e.g. restore). No subprocess calls here — only Python
-# standard-library filesystem operations.
+# single aspect of Termux/Android integration (resolv.conf, /etc/hosts,
+# Android UIDs). Kept separate from the install command so the same fixups
+# can be applied by other entry points (e.g. restore). No subprocess calls
+# here — only Python standard-library filesystem operations.
 
 import grp
 import os
@@ -50,11 +50,12 @@ def write_resolv_conf(rootfs: str) -> None:
 def write_hosts(rootfs: str) -> None:
     """Write a minimal /etc/hosts into the rootfs."""
     path = os.path.join(rootfs, "etc", "hosts")
+    # Unlink any pre-existing entry first. Some images ship /etc/hosts
+    # as a symlink (e.g. to a runtime-provided path); opening for write
+    # would otherwise follow the symlink and overwrite whatever it
+    # points at instead of replacing the host file inside the rootfs.
     try:
-        os.chmod(
-            path,
-            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
-        )
+        os.remove(path)
     except OSError:
         pass
     with open(path, "w") as fh:

@@ -28,34 +28,27 @@ import json
 import os
 import shutil
 import sys
+from types import SimpleNamespace
 
-from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
+from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.commands.remove import _remove_path
-from proot_distro.commands.install import command_install, _validate_name
+from proot_distro.commands.install import command_install
+from proot_distro.locking import ContainerLock
+from proot_distro.names import require_valid_name
+from proot_distro.paths import container_manifest, container_rootfs
 
 
-def command_reset(args, configs: dict) -> None:
-    dist_name = args.alias
+def command_reset(args) -> None:
+    """Wipe the rootfs and reinstall from the cached image manifest."""
+    container_name = args.container_name
 
-    if not _validate_name(dist_name):
-        msg()
-        msg(f"{C['BRED']}Error: container name "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
-            f"It must begin with a letter or digit and contain only "
-            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
-        msg()
-        sys.exit(1)
+    require_valid_name(container_name)
 
-    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
-    rootfs_dir = os.path.join(container_dir, "rootfs")
-    manifest_path = os.path.join(container_dir, "manifest.json")
+    rootfs_dir = container_rootfs(container_name)
+    manifest_path = container_manifest(container_name)
 
     if not os.path.isdir(rootfs_dir):
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
-        msg()
+        crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
 
     # Read original image_ref and arch from the stored manifest.
@@ -71,32 +64,26 @@ def command_reset(args, configs: dict) -> None:
             pass
 
     if not image_ref:
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' has no OCI manifest. "
-            f"Reset is supported for OCI images only.{C['RST']}")
-        msg()
+        crit_error(f"container '{container_name}' has no OCI "
+                   f"manifest. Reset is supported for OCI images only.")
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Removing rootfs of "
-        f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    with ContainerLock(container_name, exclusive=True, command="reset"):
+        log_info(f"Removing rootfs of '{container_name}'...")
 
-    if not _remove_path(rootfs_dir):
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Finished with errors. Some files could not be deleted. "
-            f"Proceeding anyway.{C['RST']}")
-        try:
-            shutil.rmtree(rootfs_dir, ignore_errors=True)
-        except OSError:
-            pass
+        if not _remove_path(rootfs_dir):
+            log_error("Finished with errors. Some files could not be deleted. "
+                      "Proceeding anyway.")
+            try:
+                shutil.rmtree(rootfs_dir, ignore_errors=True)
+            except OSError:
+                pass
 
-    # Rebuild args for install: reuse dist name and the stored image/arch.
-    class _ResetArgs:
-        alias = image_ref
-        custom_dist_name = dist_name
-
-    reset_args = _ResetArgs()
-    reset_args.override_arch = override_arch
-
-    command_install(reset_args, configs)
+        # Rebuild args for install: reuse dist name and the stored image/arch.
+        command_install(
+            SimpleNamespace(
+                image_ref=image_ref,
+                custom_container_name=container_name,
+                override_arch=override_arch,
+            )
+        )

@@ -26,8 +26,9 @@ import os
 import shutil
 import stat
 
-from proot_distro.constants import DOWNLOAD_CACHE_DIR
-from proot_distro.colors import C, msg
+from proot_distro.constants import BASE_CACHE_DIR
+from proot_distro.message import log_info, log_error
+from proot_distro.progress import fmt_size
 
 
 def _ensure_readable(path: str) -> None:
@@ -42,16 +43,16 @@ def _ensure_readable(path: str) -> None:
         pass
 
 
-def command_clear_cache(args, configs: dict) -> None:  # noqa: ARG001
+def command_clear_cache(args) -> None:
+    """Empty BASE_CACHE_DIR (Docker layers + manifests + build cache)."""
     verbose = getattr(args, "verbose", False)
 
-    if not os.path.isdir(DOWNLOAD_CACHE_DIR):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Download cache is empty.{C['RST']}")
+    if not os.path.isdir(BASE_CACHE_DIR):
+        log_info("Cache is empty.")
         return
 
     total = 0
-    for dirpath, _dirs, filenames in os.walk(DOWNLOAD_CACHE_DIR):
+    for dirpath, _dirs, filenames in os.walk(BASE_CACHE_DIR):
         _ensure_readable(dirpath)
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)
@@ -61,39 +62,27 @@ def command_clear_cache(args, configs: dict) -> None:  # noqa: ARG001
             except OSError:
                 pass
 
-    if total == 0 and not any(True for _ in os.scandir(DOWNLOAD_CACHE_DIR)):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Download cache is empty.{C['RST']}")
+    if total == 0 and not any(True for _ in os.scandir(BASE_CACHE_DIR)):
+        log_info("Cache is empty.")
         return
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Clearing download cache...{C['RST']}")
+    log_info("Clearing cache...")
 
-    for entry in os.scandir(DOWNLOAD_CACHE_DIR):
+    for entry in os.scandir(BASE_CACHE_DIR):
         try:
             if entry.is_dir(follow_symlinks=False):
                 if verbose:
                     for dirpath, _dirs, filenames in os.walk(entry.path):
                         for fname in filenames:
-                            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                                f"{C['CYAN']}Removing: "
-                                f"'{os.path.join(dirpath, fname)}'{C['RST']}")
+                            log_info(
+                                f"Removing: '{os.path.join(dirpath, fname)}'"
+                            )
                 shutil.rmtree(entry.path)
             else:
                 if verbose:
-                    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        f"Removing: '{entry.path}'{C['RST']}")
+                    log_info(f"Removing: '{entry.path}'")
                 os.remove(entry.path)
         except OSError as exc:
-            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-                f"Failed to remove '{entry.path}': {exc}{C['RST']}")
+            log_error(f"Cannot remove '{entry.path}': {exc}")
 
-    if total >= 1 << 20:
-        total_str = f"{total / (1 << 20):.1f} MiB"
-    elif total >= 1 << 10:
-        total_str = f"{total / (1 << 10):.1f} KiB"
-    else:
-        total_str = f"{total} B"
-
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Reclaimed {total_str} of disk space.{C['RST']}")
+    log_info(f"Reclaimed {fmt_size(total)} of disk space.")

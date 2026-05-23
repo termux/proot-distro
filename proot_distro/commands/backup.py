@@ -29,11 +29,14 @@ import stat
 import sys
 import tarfile
 
-from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
-from proot_distro.colors import C, msg, tty_safe_for_writes
-from proot_distro.helpers.download import fmt_size
-from proot_distro.commands.help import _HELP_COMMANDS
-from proot_distro.commands.install import _validate_name
+from proot_distro.l2s import resolve_l2s_target
+from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.progress import (
+    REDRAW_THRESHOLD_BYTES, clear_bar, draw_bytes_bar,
+)
+from proot_distro.locking import ContainerLock
+from proot_distro.names import require_valid_name
+from proot_distro.paths import container_manifest, container_rootfs
 
 
 # Maps file-extension suffixes to tarfile compression identifiers.
@@ -77,16 +80,28 @@ def _compression_mode(filename: str) -> str:
     return ''
 
 
-def _iter_entries(root: str, arcroot: str):
+def _iter_entries(root: str, arcroot: str, skip_top_level=()):
     """Yield *(src_path, arcname)* for every entry under *root*.
 
     Symlinks to subdirectories are yielded as single entries; os.walk is
     prevented from descending into them. All sibling entries are sorted.
+
+    *skip_top_level* is a collection of directory names that should be
+    omitted when they appear directly under *root* (no descent, no
+    yielded entry). Used to exclude proot's `.l2s/` backing store
+    whose contents are inlined into symlinks elsewhere in the tree.
     """
+    skip = set(skip_top_level)
     for dirpath, dirnames, filenames in os.walk(
         root, followlinks=False, topdown=True
     ):
         rel = os.path.relpath(dirpath, root)
+        if rel == '.' and skip:
+            dirnames[:] = [d for d in dirnames if d not in skip]
+        # Sort up front so every sibling — symlink-to-dir yields below,
+        # subsequent descents, and file yields further down — comes out
+        # in deterministic order.
+        dirnames.sort()
         arc_dir = arcroot if rel == '.' else os.path.join(arcroot, rel)
 
         yield (dirpath, arc_dir)
@@ -99,8 +114,6 @@ def _iter_entries(root: str, arcroot: str):
                 dirnames.pop(i)
             else:
                 i += 1
-
-        dirnames.sort()
 
         for fname in sorted(filenames):
             yield (os.path.join(dirpath, fname), os.path.join(arc_dir, fname))
@@ -128,13 +141,22 @@ class _ReadCounter:
 
 
 def _add_path(
-    tf: tarfile.TarFile, src: str, arcname: str, on_read=None
+    tf: tarfile.TarFile, src: str, arcname: str,
+    rootfs: str, on_read=None,
 ) -> None:
     """Add *src* to *tf* as *arcname*, stripping ownership info.
 
     Block/character devices, FIFOs, and sockets are silently skipped.
-    Symlinks are stored as symlinks (not followed). Regular files and
-    directories are stored with their permissions intact.
+    Symlinks are stored as symlinks (not followed) unless they are
+    proot link2symlink emulated hard links — i.e. symlinks whose target
+    basename matches the link2symlink prefix (see resolve_l2s_target).
+    Those are resolved to the backing file's content and packed as
+    regular files so the archive is self-contained and survives being
+    restored to a different path. Regular files and directories are
+    stored with their permissions intact.
+
+    *rootfs* is the container's rootfs root, used to confine resolved
+    l2s targets to the rootfs subtree.
 
     *on_read*, when provided, is called with the byte count of each chunk
     read from a regular file so callers can track progress during compression.
@@ -147,6 +169,49 @@ def _add_path(
     if (stat.S_ISBLK(m) or stat.S_ISCHR(m)
             or stat.S_ISFIFO(m) or stat.S_ISSOCK(m)):
         return
+
+    # Detect proot link2symlink symlinks (regardless of whether their
+    # intermediate is stashed in <rootfs>/.l2s/ or alongside the
+    # original) and pack their backing files' content as regular
+    # files. Multiple l2s symlinks sharing one backing file become
+    # independent regular files in the archive — the guest-side
+    # hard-link semantics are lost, file content is preserved, and
+    # the archive carries no absolute paths into the source rootfs
+    # that would dangle after restore.
+    if stat.S_ISLNK(m):
+        try:
+            target = os.readlink(src)
+        except OSError:
+            target = None
+        if target is not None:
+            l2s_path = resolve_l2s_target(src, target, rootfs)
+            if l2s_path is not None:
+                try:
+                    cst = os.stat(l2s_path)
+                except OSError:
+                    cst = None
+                if cst is not None and stat.S_ISREG(cst.st_mode):
+                    info = tarfile.TarInfo(arcname)
+                    info.type = tarfile.REGTYPE
+                    info.size = cst.st_size
+                    info.mode = stat.S_IMODE(cst.st_mode)
+                    info.mtime = int(cst.st_mtime)
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ''
+                    info.gname = ''
+                    try:
+                        with open(l2s_path, 'rb') as fh:
+                            tf.addfile(
+                                info,
+                                _ReadCounter(fh, on_read) if on_read else fh,
+                            )
+                    except OSError:
+                        pass
+                    return
+                # Backing file missing or non-regular: fall through and
+                # store the symlink as-is.
+
     try:
         info = tf.gettarinfo(src, arcname=arcname)
     except OSError:
@@ -189,49 +254,34 @@ def _fix_permissions(rootfs_dir: str) -> None:
                 pass
 
 
-def command_backup(args, configs: dict) -> None:  # noqa: ARG001
-    dist_name = args.alias
+def command_backup(args) -> None:
+    """Archive an installed container to a tar file or stdout."""
+    container_name = args.container_name
     output_path = getattr(args, "output", None)
     compression_arg = getattr(args, "compression", None)
     verbose = getattr(args, "verbose", False)
 
-    if not _validate_name(dist_name):
-        msg()
-        msg(f"{C['BRED']}Error: container name "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
-            f"It must begin with a letter or digit and contain only "
-            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
-        msg()
-        sys.exit(1)
+    require_valid_name(container_name)
 
-    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
-    rootfs_dir = os.path.join(container_dir, "rootfs")
-    manifest_path = os.path.join(container_dir, "manifest.json")
+    rootfs_dir = container_rootfs(container_name)
+    manifest_path = container_manifest(container_name)
 
     if not os.path.isdir(rootfs_dir):
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' does not exist.{C['RST']}")
-        msg()
-        msg(f"{C['CYAN']}You can create it with: "
-            f"{C['GREEN']}{PROGRAM_NAME} install {dist_name}{C['RST']}")
-        msg()
+        crit_error(f"container '{container_name}' does not exist.")
+        sys.exit(1)
+
+    if output_path is not None and not output_path:
+        crit_error("output file path cannot be empty.")
         sys.exit(1)
 
     if output_path:
         if os.path.isdir(output_path):
-            msg()
-            msg(f"{C['BRED']}Error: cannot write to "
-                f"'{C['YELLOW']}{output_path}{C['BRED']}' because this path "
-                f"is a directory.{C['RST']}")
-            _HELP_COMMANDS["backup"]()
+            crit_error(f"cannot write to "
+                       f"'{output_path}' because this path is a directory.")
             sys.exit(1)
         if os.path.isfile(output_path):
-            msg()
-            msg(f"{C['BRED']}Error: file "
-                f"'{C['YELLOW']}{output_path}{C['BRED']}' already exists. "
-                f"Please specify a different name.{C['RST']}")
-            _HELP_COMMANDS["backup"]()
+            crit_error(f"file '{output_path}' already "
+                       f"exists. Please specify a different name.")
             sys.exit(1)
         if compression_arg is not None:
             compression = _COMPRESSION_ARG_MAP[compression_arg]
@@ -239,92 +289,106 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             try:
                 compression = _compression_mode(output_path)
             except ValueError as exc:
-                msg()
-                msg(f"{C['BRED']}Error: {exc}{C['RST']}")
-                msg()
+                crit_error(str(exc).lower())
                 sys.exit(1)
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Tarball will be written to '{output_path}'.{C['RST']}")
     else:
         if sys.stdout.isatty():
-            msg()
-            msg(f"{C['BRED']}Error: archive data cannot be printed to "
-                f"console. Please use option "
-                f"'{C['YELLOW']}--output{C['BRED']}' to specify a file or "
-                f"pipe the output to another command.{C['RST']}")
-            msg()
+            crit_error(f"archive data cannot be printed to "
+                       f"console. Please use option '--output' to "
+                       f"specify a file or pipe the output to "
+                       f"another command.")
             sys.exit(1)
         compression = (
             _COMPRESSION_ARG_MAP[compression_arg]
             if compression_arg is not None
             else ''
         )
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Tarball will be written to stdout.{C['RST']}")
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Backing up '{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    with ContainerLock(container_name, exclusive=False, command="backup"):
+        _run_backup(
+            container_name, rootfs_dir, manifest_path,
+            output_path, compression, verbose,
+        )
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Fixing file permissions in rootfs...{C['RST']}")
+
+def _run_backup(
+    container_name, rootfs_dir, manifest_path,
+    output_path, compression, verbose,
+):
+    log_info(f"Backing up '{container_name}'...")
+
+    if output_path:
+        log_info(f"Will write backup data to '{output_path}'.")
+    else:
+        log_info("Will write backup data to stdout.")
+
+    log_info("Fixing file permissions in rootfs...")
     _fix_permissions(rootfs_dir)
 
     # Build the list of entries: manifest.json first, then rootfs tree.
     # Archive prefix is just the container name (e.g. "ubuntu/").
-    arc_prefix = dist_name
+    # `.l2s` is skipped at the rootfs root because its files are inlined
+    # into their referring symlinks by _add_path.
+    arc_prefix = container_name
     entries = []
     # manifest.json (optional — may not exist for legacy containers).
     if os.path.isfile(manifest_path):
         entries.append((manifest_path, os.path.join(arc_prefix, "manifest.json")))
     # rootfs tree.
-    entries.extend(_iter_entries(rootfs_dir, os.path.join(arc_prefix, "rootfs")))
+    entries.extend(_iter_entries(
+        rootfs_dir, os.path.join(arc_prefix, "rootfs"),
+        skip_top_level=(".l2s",),
+    ))
 
-    # Pre-compute total size of regular files to drive the progress bar.
+    # Pre-compute total size of payload bytes to drive the progress bar.
+    # Regular files contribute their own size; l2s symlinks contribute
+    # the size of their backing file (since _add_path will inline that
+    # content in place of the symlink).
     total_size = 0
     for src, _arc in entries:
         try:
             st = os.lstat(src)
-            if stat.S_ISREG(st.st_mode):
-                total_size += st.st_size
         except OSError:
-            pass
+            continue
+        if stat.S_ISREG(st.st_mode):
+            total_size += st.st_size
+        elif stat.S_ISLNK(st.st_mode):
+            try:
+                target = os.readlink(src)
+            except OSError:
+                continue
+            l2s_path = resolve_l2s_target(src, target, rootfs_dir)
+            if l2s_path is None:
+                continue
+            try:
+                cst = os.stat(l2s_path)
+            except OSError:
+                continue
+            if stat.S_ISREG(cst.st_mode):
+                total_size += cst.st_size
 
     done_size = 0
-    use_tty = sys.stderr.isatty()
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Archiving the container...{C['RST']}")
+    log_info("Archiving the container...")
 
-    # Redraw threshold: update the bar at most once per 256 KiB read so the
-    # _ReadCounter callback doesn't cause excessive stderr writes.
+    # Redraw threshold: update the bar at most once per 256 KiB read so
+    # the _ReadCounter callback doesn't cause excessive stderr writes.
     _last_shown = 0
 
     def _draw_bar() -> None:
         nonlocal _last_shown
-        if not use_tty:
-            return
-        if not tty_safe_for_writes():
-            return
-        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        pct = done_size * 100 // total_size if total_size else 100
-        bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-        sys.stderr.write(
-            f"\r{pfx}[{bar}] {pct:3d}%  "
-            f"{fmt_size(done_size)} / {fmt_size(total_size)}\033[K{C['RST']}"
-        )
-        sys.stderr.flush()
+        draw_bytes_bar(done_size, total_size)
         _last_shown = done_size
 
     def _on_read(n: int) -> None:
         nonlocal done_size
         done_size += n
-        if done_size - _last_shown >= 262144:
+        if done_size - _last_shown >= REDRAW_THRESHOLD_BYTES:
             _draw_bar()
 
     def _on_entry(arc: str) -> None:
         if verbose:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Adding: '{arc}'{C['RST']}")
+            log_info(f"Adding: '{arc}'")
         _draw_bar()
 
     try:
@@ -337,21 +401,15 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
             mode=tar_mode,
         ) as tf:
             for src, arc in entries:
-                _add_path(tf, src, arc, on_read=_on_read)
+                _add_path(tf, src, arc, rootfs_dir, on_read=_on_read)
                 _on_entry(arc)
 
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Finished backing up.{C['RST']}")
+        clear_bar()
+        log_info("Finished backing up.")
 
     except KeyboardInterrupt:
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
+        clear_bar()
+        log_error("Aborted by user.")
         if output_path:
             try:
                 os.remove(output_path)
@@ -359,11 +417,8 @@ def command_backup(args, configs: dict) -> None:  # noqa: ARG001
                 pass
         sys.exit(1)
     except (OSError, tarfile.TarError) as exc:
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Failed to create archive: {exc}{C['RST']}")
+        clear_bar()
+        log_error(f"Failed to create backup archive: {exc}")
         if output_path:
             try:
                 os.remove(output_path)

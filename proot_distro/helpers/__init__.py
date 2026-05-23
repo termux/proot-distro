@@ -18,6 +18,19 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Helper sub-package grouping reusable utilities that are shared
-# across multiple proot-distro commands (download, Docker/OCI registry access,
-# rootfs fixup). Keeping them here avoids coupling command modules to each other.
+# Architecture: Reusable building blocks used across multiple commands.
+# Each module covers one concern:
+#
+#   build_cache.py   — recipe-hash → cached layer index used by `build`.
+#   build_engine/    — Dockerfile interpreter (FROM/RUN/COPY/...).
+#   docker/          — pure-Python OCI/Docker registry client.
+#   dockerfile.py    — Dockerfile lexer + parser.
+#   download.py      — HTTP GET with progress + retries.
+#   layer_diff.py    — rootfs snapshot/diff, layer-tar writer (RUN step).
+#   oci_writer.py    — manifest cache + OCI tarball outputs of `build`.
+#   rootfs.py        — post-extraction rootfs fixups (DNS, hosts, UIDs).
+#   tar_extract.py   — streaming tar -> rootfs extractor with OCI
+#                      whiteout support and strip-count parameter.
+#
+# Keeping these in a sub-package avoids the alternative of coupling
+# command modules to each other for shared low-level routines.

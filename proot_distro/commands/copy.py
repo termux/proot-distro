@@ -26,141 +26,101 @@
 import os
 import shutil
 import sys
+from contextlib import ExitStack
 
-from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
-
-
-def _resolve_copy_path(spec: str) -> str:
-    """Resolve a 'dist:path' or plain path to a real host path."""
-    if ":" in spec:
-        dist, _, rel_path = spec.partition(":")
-        rootfs = os.path.join(CONTAINERS_DIR, dist, "rootfs")
-        if not os.path.isdir(rootfs):
-            msg()
-            msg(f"{C['BRED']}Error: distribution "
-                f"'{C['YELLOW']}{dist}{C['BRED']}' is not installed.{C['RST']}")
-            msg()
-            sys.exit(1)
-        return os.path.normpath(os.path.join(rootfs, rel_path.lstrip("/")))
-    return os.path.normpath(os.path.abspath(spec))
+from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.paths import (
+    container_locks_for_spec_pair,
+    resolve_container_path,
+)
+from proot_distro.progress import clear_bar
 
 
-def command_copy(args, configs: dict) -> None:
+def command_copy(args) -> None:
+    """Copy or move files between host paths and container paths."""
     src = args.source
     dest = args.destination
     verbose = getattr(args, "verbose", False)
     move_mode = getattr(args, "move", False)
     recursive = getattr(args, "recursive", False)
 
-    src_path = _resolve_copy_path(src)
-    dest_path = _resolve_copy_path(dest)
+    with ExitStack() as stack:
+        for lock in container_locks_for_spec_pair(src, dest, command="copy"):
+            stack.enter_context(lock)
+        _do_copy(src, dest, verbose, move_mode, recursive)
+
+
+def _do_copy(src, dest, verbose, move_mode, recursive):
+    src_path = resolve_container_path(src)
+    dest_path = resolve_container_path(dest)
 
     # Reject '.' or '..' as destination component (but allow as source).
     dest_base = os.path.basename(dest_path)
     if dest_base in (".", ".."):
-        msg()
-        msg(f"{C['BRED']}Error: '.' and '..' are not allowed as copy "
-            f"destination.{C['RST']}")
-        msg()
+        crit_error("paths '.' and '..' are not allowed as copy destination.")
         sys.exit(1)
 
     if not os.path.exists(src_path):
-        msg()
-        msg(f"{C['BRED']}Error: cannot copy "
-            f"'{C['YELLOW']}{src}{C['BRED']}' because the path does not "
-            f"exist.{C['RST']}")
-        msg()
+        crit_error(f"cannot copy '{src}' because the path does not exist.")
         sys.exit(1)
 
     if not os.access(src_path, os.R_OK):
-        msg()
-        msg(f"{C['BRED']}Error: source "
-            f"'{C['YELLOW']}{src_path}{C['BRED']}' is not readable.{C['RST']}")
-        msg()
+        crit_error(f"source path '{src_path}' is not readable.")
         sys.exit(1)
 
     if os.path.isdir(src_path) and not recursive and not move_mode:
-        msg()
-        msg(f"{C['BRED']}Error: source is a directory. Use "
-            f"'{C['YELLOW']}--recursive{C['BRED']}' to copy "
-            f"directories.{C['RST']}")
-        msg()
+        crit_error(f"source path is a directory. Use option '--recursive' "
+                   f"to copy directories.")
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Source: '{src_path}'{C['RST']}")
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Destination: '{dest_path}'{C['RST']}")
+    log_info(f"Source: '{src_path}'")
+    log_info(f"Destination: '{dest_path}'")
 
     dest_dir = os.path.dirname(dest_path)
     if not os.path.isdir(dest_dir):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Creating directory '{dest_dir}'...{C['RST']}")
+        log_info(f"Creating directory '{dest_dir}'...")
         try:
             os.makedirs(dest_dir, exist_ok=True)
-        except OSError:
-            msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-                f"Failure.{C['RST']}")
-            msg()
-            msg(f"{C['BRED']}Error: unable to create directory at "
-                f"'{C['YELLOW']}{dest_dir}{C['BRED']}'.{C['RST']}")
-            msg()
+        except OSError as exc:
+            log_error(f"Cannot create directory '{dest_dir}': {exc}")
             sys.exit(1)
 
     def _verbose_copy2(src, dst, *, follow_symlinks=True):
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Copying: '{src}' -> '{dst}'{C['RST']}")
+        log_info(f"Copying: '{src}' -> '{dst}'")
         return shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
 
     try:
         if move_mode:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Moving files...{C['RST']}")
+            log_info("Moving files...")
             if verbose:
                 if os.path.isdir(src_path):
                     for root, _dirs, files in os.walk(src_path):
                         for fname in files:
                             fpath = os.path.join(root, fname)
                             rel = os.path.relpath(fpath, src_path)
-                            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                                f"{C['CYAN']}Moving: '{fpath}' -> "
-                                f"'{os.path.join(dest_path, rel)}'{C['RST']}")
+                            log_info(
+                                f"Moving: '{fpath}' -> "
+                                f"'{os.path.join(dest_path, rel)}'"
+                            )
                 else:
-                    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        f"Moving: '{src_path}' -> '{dest_path}'{C['RST']}")
+                    log_info(f"Moving: '{src_path}' -> '{dest_path}'")
             shutil.move(src_path, dest_path)
         else:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Copying files, this may take a while...{C['RST']}")
+            log_info("Copying files, this may take a while...")
             copy_fn = _verbose_copy2 if verbose else shutil.copy2
             if os.path.isdir(src_path):
                 shutil.copytree(src_path, dest_path, symlinks=True,
                                 copy_function=copy_fn)
             else:
                 if verbose:
-                    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                        f"Copying: '{src_path}' -> '{dest_path}'{C['RST']}")
+                    log_info(f"Copying: '{src_path}' -> '{dest_path}'")
                 shutil.copy2(src_path, dest_path)
     except KeyboardInterrupt:
-        if sys.stderr.isatty():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
+        clear_bar()
+        log_error("Aborted by user.")
         sys.exit(1)
-    except OSError:
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Failure.{C['RST']}")
-        msg()
-        if move_mode:
-            msg(f"{C['BRED']}Error: unable to move file into "
-                f"'{C['YELLOW']}{dest_path}{C['BRED']}'.{C['RST']}")
-        else:
-            msg(f"{C['BRED']}Error: unable to copy file into "
-                f"'{C['YELLOW']}{dest_path}{C['BRED']}'.{C['RST']}")
-        msg()
+    except OSError as exc:
+        log_error(f"Error: {exc}")
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished copying files.{C['RST']}")
+    log_info("Finished copying files.")

@@ -28,39 +28,26 @@
 # os.path.getsize() — instant, no upfront scan needed.
 
 import os
-import re
 import shutil
 import stat
 import sys
 import tarfile
 
-from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg, tty_safe_for_writes
-from proot_distro.helpers.download import fmt_size
-
-
-_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
-
-
-class _ByteCounter:
-    """Thin file wrapper that counts raw bytes passing through read()."""
-
-    def __init__(self, fh):
-        self._fh = fh
-        self.count = 0
-
-    def read(self, size=-1):
-        data = self._fh.read(size)
-        self.count += len(data)
-        return data
-
-    def readinto(self, buf):
-        n = self._fh.readinto(buf)
-        self.count += n
-        return n
-
-    def __getattr__(self, name):
-        return getattr(self._fh, name)
+from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
+from proot_distro.message import (
+    C, msg, log_info, log_error, crit_error,
+)
+from proot_distro.progress import (
+    ByteCounter, clear_bar, draw_bytes_bar, progress_active,
+)
+from proot_distro.commands.help import HELP_COMMANDS
+from proot_distro.locking import (
+    ContainerLock, container_lock_path, read_lock_info,
+)
+from proot_distro.names import is_valid_name
+from proot_distro.paths import (
+    container_dir, container_manifest, container_rootfs,
+)
 
 
 # Magic-byte signatures used to identify compressed streams.
@@ -83,6 +70,41 @@ def _detect_compression(header: bytes) -> str:
     return ''
 
 
+def _clear_existing_rootfs(container_name: str) -> None:
+    """Remove the destination rootfs before extracting a new copy.
+
+    Streams a `Removing old rootfs... N files` counter to stderr so
+    the user gets feedback during long-running clears (multi-GB rootfs
+    on slow flash).
+    """
+    rootfs_dir = container_rootfs(container_name)
+    if not os.path.isdir(rootfs_dir):
+        return
+    pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+    count = 0
+    clear_bar()
+    for dp, dns, fns in os.walk(rootfs_dir, topdown=False, followlinks=False):
+        for fname in fns:
+            try:
+                os.unlink(os.path.join(dp, fname))
+            except OSError:
+                pass
+            count += 1
+            if progress_active():
+                sys.stderr.write(
+                    f"\r{pfx}Removing old rootfs..."
+                    f" {count} files{C['RST']}"
+                )
+                sys.stderr.flush()
+        for dname in dns:
+            try:
+                os.rmdir(os.path.join(dp, dname))
+            except OSError:
+                pass
+    shutil.rmtree(rootfs_dir, ignore_errors=True)
+    clear_bar()
+
+
 def _remove_existing(dest: str, member: tarfile.TarInfo) -> None:
     """Remove any existing filesystem entry at *dest* before extraction."""
     try:
@@ -94,109 +116,100 @@ def _remove_existing(dest: str, member: tarfile.TarInfo) -> None:
         pass
 
 
+_SKIP = (None, None)
+
+
 def _dest_path(member_name: str) -> tuple:
     """Map a TAR member name to (container_name, dest_path_in_containers).
 
-    Returns (None, None) if the member should be skipped.
+    Returns (None, None) if the member should be skipped. Supported
+    archive layouts:
 
-    Supports three archive layouts:
       1. New format:    <name>/manifest.json or <name>/rootfs/...
       2. Legacy format: installed-rootfs/<name>/...
-      3. No subdir or bare ./: rejected (returns skip sentinel).
+      3. No subdir or bare ./: rejected.
 
-    Member names containing '..' or absolute path components anywhere are
-    rejected to prevent a crafted archive from writing outside
-    CONTAINERS_DIR. The container name is also validated against _NAME_RE.
+    Members containing '..' or absolute path components are rejected so
+    a crafted archive cannot escape the containers directory. The name
+    itself is checked against the shared name regex.
     """
-    name = member_name.lstrip('/')
-    if not name or name in ('.', ''):
-        return (None, None)
+    name = member_name.lstrip("/")
+    if not name or name == ".":
+        return _SKIP
 
-    parts = name.split('/')
+    parts = name.split("/")
 
-    # Reject any member containing '..' or '.' or empty components.
-    # This blocks path traversal via crafted archives.
-    if any(p in ('..', '.', '') for p in parts):
-        return (None, None)
+    # Reject '..' / '.' / empty components — blocks path traversal.
+    if any(p in ("..", ".", "") for p in parts):
+        return _SKIP
 
     # Archive starts at root with no real subdirectory — reject.
-    if len(parts) == 1 and not name.endswith('/'):
-        return (None, None)
+    if len(parts) == 1 and not name.endswith("/"):
+        return _SKIP
 
-    # Legacy format: installed-rootfs/<distro_name>/...
+    # Legacy format: installed-rootfs/<name>/...  ->  containers/<name>/rootfs/...
     if parts[0] == _LEGACY_PREFIX:
         if len(parts) < 2:
-            return (None, None)
-        dist_name = parts[1]
-        if not _NAME_RE.match(dist_name):
-            return (None, None)
-        if len(parts) == 2:
-            # Entry is the legacy rootfs dir itself.
-            new_path = os.path.join(CONTAINERS_DIR, dist_name, "rootfs")
-            return (dist_name, new_path)
-        # Re-root: installed-rootfs/<name>/X → containers/<name>/rootfs/X
-        rel = '/'.join(parts[2:])
-        new_path = os.path.join(CONTAINERS_DIR, dist_name, "rootfs", rel)
-        return (dist_name, new_path)
+            return _SKIP
+        container_name = parts[1]
+        if not is_valid_name(container_name):
+            return _SKIP
+        rest = parts[2:]
+        if not rest:
+            return (container_name, container_rootfs(container_name))
+        return (container_name, os.path.join(container_rootfs(container_name), *rest))
 
-    # New format: <name>/manifest.json or <name>/rootfs/...
-    dist_name = parts[0]
-    if not _NAME_RE.match(dist_name):
-        return (None, None)
+    # New format: <name>/...
+    container_name = parts[0]
+    if not is_valid_name(container_name):
+        return _SKIP
 
     if len(parts) == 1:
-        # Top-level container directory entry.
-        return (dist_name, os.path.join(CONTAINERS_DIR, dist_name))
+        return (container_name, container_dir(container_name))
 
     sub = parts[1]
+    rest = parts[2:]
 
-    if sub == "manifest.json" and len(parts) == 2:
-        return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "manifest.json"))
+    if sub == "manifest.json" and not rest:
+        return (container_name, container_manifest(container_name))
 
     if sub == "rootfs":
-        if len(parts) == 2:
-            return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "rootfs"))
-        rel = '/'.join(parts[2:])
-        return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "rootfs", rel))
+        if not rest:
+            return (container_name, container_rootfs(container_name))
+        return (container_name, os.path.join(container_rootfs(container_name), *rest))
 
-    # <name>/something_else — treat as going inside rootfs for compatibility.
-    rel = '/'.join(parts[1:])
-    return (dist_name, os.path.join(CONTAINERS_DIR, dist_name, "rootfs", rel))
+    # <name>/<anything_else>  -> treated as a path inside rootfs for
+    # back-compat with archives created by very old versions.
+    return (container_name, os.path.join(container_rootfs(container_name), *parts[1:]))
 
 
-def command_restore(args, configs: dict) -> None:  # noqa: ARG001
+def command_restore(args) -> None:
+    """Reinstate one or more containers from a tar backup."""
     archive = getattr(args, "archive", None)
     verbose = getattr(args, "verbose", False)
 
     if archive:
         if not os.path.exists(archive):
-            msg()
-            msg(f"{C['BRED']}Error: file "
-                f"'{C['YELLOW']}{archive}{C['BRED']}' does not exist.{C['RST']}")
-            msg()
+            crit_error(f"file '{archive}' does not exist.")
             sys.exit(1)
         if os.path.isdir(archive):
-            msg()
-            msg(f"{C['BRED']}Error: path "
-                f"'{C['YELLOW']}{archive}{C['BRED']}' is a directory.{C['RST']}")
-            msg()
+            crit_error(f"path '{archive}' is a directory.")
+            sys.exit(1)
+        if not os.access(archive, os.R_OK):
+            crit_error(f"file '{archive}' is not readable.")
             sys.exit(1)
     else:
         if sys.stdin.isatty():
-            from proot_distro.commands.help import _HELP_COMMANDS
             msg()
-            msg(f"{C['BRED']}Error: archive file path is not specified and it "
-                f"looks like nothing is being piped via stdin "
-                f"either.{C['RST']}")
-            _HELP_COMMANDS["restore"]()
+            crit_error("archive file path is not specified and "
+                       "nothing is being piped via stdin.")
+            HELP_COMMANDS["restore"]()
             sys.exit(1)
 
     os.makedirs(CONTAINERS_DIR, exist_ok=True)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Extracting container from the archive...{C['RST']}")
+    log_info("Restoring container from the backup...")
 
-    use_tty = sys.stderr.isatty()
     done_size = 0
     total_size = 0
     counter = None
@@ -206,26 +219,11 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
         nonlocal done_size
         done_size += member_size
         if verbose:
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Extracting: '{member_name}'{C['RST']}")
-        if not use_tty:
-            return
-        if not tty_safe_for_writes():
-            return
-        pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
+            log_info(f"Extracting: '{member_name}'")
         if counter is not None and total_size:
-            done = counter.count
-            pct = min(done * 100 // total_size, 100)
-            bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-            sys.stderr.write(
-                f"\r{pfx}[{bar}] {pct:3d}%  "
-                f"{fmt_size(done)} / {fmt_size(total_size)}\033[K{C['RST']}"
-            )
+            draw_bytes_bar(counter.count, total_size)
         else:
-            sys.stderr.write(
-                f"\r{pfx}{fmt_size(done_size)} extracted...\033[K{C['RST']}"
-            )
-        sys.stderr.flush()
+            draw_bytes_bar(done_size, 0, noun="extracted")
 
     def _check_bare_root(member_name: str) -> bool:
         """Return True if this member has no real subdirectory (reject)."""
@@ -236,11 +234,14 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
         return len(parts) == 1 and not name.endswith('/')
 
     raw_fh = None
+    # Per-container exclusive locks acquired lazily on first member encounter,
+    # before any modification to that container's rootfs.
+    pending_locks: dict = {}
     try:
         if archive:
             total_size = os.path.getsize(archive)
             raw_fh = open(archive, 'rb')
-            counter = _ByteCounter(raw_fh)
+            counter = ByteCounter(raw_fh)
             tf_kwargs = dict(fileobj=counter, mode='r|*')
         else:
             header = sys.stdin.buffer.peek(6)[:6]
@@ -253,60 +254,35 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                     continue
 
                 if _check_bare_root(member.name):
-                    if use_tty and tty_safe_for_writes():
-                        sys.stderr.write("\r\033[K")
-                        sys.stderr.flush()
-                    msg()
-                    msg(f"{C['BRED']}Error: archive is not compatible "
-                        f"with proot-distro. Files must be stored under "
-                        f"a container name subdirectory "
-                        f"(e.g. ubuntu/rootfs/...).{C['RST']}")
-                    msg()
+                    clear_bar()
+                    log_error(f"Cannot restore: provided file has invalid "
+                              f"structure. Only archives created by "
+                              f"'{PROGRAM_NAME} backup' are supported.")
                     sys.exit(1)
 
-                dist_name, dest = _dest_path(member.name)
-                if dist_name is None:
+                container_name, dest = _dest_path(member.name)
+                if container_name is None:
                     continue
 
-                # On the first entry for a given container's rootfs, clear it.
-                if dist_name not in cleared:
-                    rootfs_dir = os.path.join(
-                        CONTAINERS_DIR, dist_name, "rootfs"
+                # Acquire exclusive lock for this container before
+                # touching it. Restore archives are streamed so we can't
+                # pre-scan the names; lock lazily on first sighting.
+                if container_name not in pending_locks:
+                    lock = ContainerLock(
+                        container_name, exclusive=True, command="restore"
                     )
-                    if os.path.isdir(rootfs_dir):
-                        pfx = (
-                            f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] "
-                            f"{C['CYAN']}"
-                        )
-                        count = 0
-                        if use_tty and tty_safe_for_writes():
-                            sys.stderr.write("\r\033[K")
-                            sys.stderr.flush()
-                        for dp, dns, fns in os.walk(
-                            rootfs_dir, topdown=False, followlinks=False
-                        ):
-                            for fname in fns:
-                                try:
-                                    os.unlink(os.path.join(dp, fname))
-                                except OSError:
-                                    pass
-                                count += 1
-                                if use_tty and tty_safe_for_writes():
-                                    sys.stderr.write(
-                                        f"\r{pfx}Removing old rootfs..."
-                                        f" {count} files{C['RST']}"
-                                    )
-                                    sys.stderr.flush()
-                            for dname in dns:
-                                try:
-                                    os.rmdir(os.path.join(dp, dname))
-                                except OSError:
-                                    pass
-                        shutil.rmtree(rootfs_dir, ignore_errors=True)
-                        if use_tty and tty_safe_for_writes():
-                            sys.stderr.write("\r\033[K")
-                            sys.stderr.flush()
-                    cleared.add(dist_name)
+                    if not lock.acquire():
+                        hint = read_lock_info(container_lock_path(container_name))
+                        clear_bar()
+                        log_error(f"Cannot restore: container "
+                                  f"'{container_name}' is busy{hint}.")
+                        sys.exit(1)
+                    pending_locks[container_name] = lock
+
+                # On the first entry for a given container's rootfs, clear it.
+                if container_name not in cleared:
+                    _clear_existing_rootfs(container_name)
+                    cleared.add(container_name)
 
                 _remove_existing(dest, member)
 
@@ -324,15 +300,23 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
                     os.symlink(member.linkname, dest)
 
                 elif member.islnk():
-                    # Resolve hard link within the containers dir.
-                    link_src_name, link_src = _dest_path(member.linkname)
+                    # Copy hard-linked files rather than recreating the link,
+                    # since containers use proot's --link2symlink and hard
+                    # links on the host fs would share inodes across what the
+                    # guest treats as independent files.
+                    _, link_src = _dest_path(member.linkname)
                     if link_src is None:
                         continue
                     parent = os.path.dirname(dest)
                     if parent:
                         os.makedirs(parent, exist_ok=True)
                     try:
-                        os.link(link_src, dest)
+                        shutil.copy2(link_src, dest)
+                        if member.mode:
+                            try:
+                                os.chmod(dest, stat.S_IMODE(member.mode))
+                            except OSError:
+                                pass
                     except OSError:
                         pass
 
@@ -362,31 +346,22 @@ def command_restore(args, configs: dict) -> None:  # noqa: ARG001
 
                 _on_entry(member.size, member.name)
 
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
+        clear_bar()
 
-        msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            f"Finished restoring the container.{C['RST']}")
+        log_info("Finished restoring the container.")
 
     except KeyboardInterrupt:
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Aborted by user.{C['RST']}")
+        clear_bar()
+        log_error("Aborted by user.")
         sys.exit(1)
     except (EOFError, OSError, tarfile.TarError) as exc:
-        if use_tty and tty_safe_for_writes():
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Failed to restore container: {exc}{C['RST']}")
-        msg()
-        msg(f"{C['BRED']}The archive may be corrupted or was not created by "
-            f"PRoot-Distro.{C['RST']}")
-        msg()
+        clear_bar()
+        log_error(f"Failed to restore container: {exc}")
+        log_error(f"{C['BRED']}The archive either was corrupted or has "
+                  f"unexpected structure.{C['RST']}")
         sys.exit(1)
     finally:
         if raw_fh is not None:
             raw_fh.close()
+        for lock in pending_locks.values():
+            lock.release()

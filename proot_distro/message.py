@@ -30,6 +30,11 @@
 # writes (info lines, progress bars) would land on top of the other
 # program's display. msg() and the backup progress bar consult this so
 # that piping into curses/no-echo consumers stays clean.
+#
+# A process-global "quiet" flag is also exported: set_quiet(True) (called
+# by command handlers when --quiet was passed) makes is_quiet() return True
+# so progress-bar code paths in helpers can skip their writes. msg() itself
+# is unaffected — error messages must always reach the user.
 
 import os
 import sys
@@ -38,9 +43,6 @@ try:
     import termios
 except ImportError:
     termios = None
-
-from proot_distro.constants import PROGRAM_VERSION
-
 
 _RST       = "\033[0m"
 _BOLD      = "\033[1m"
@@ -146,12 +148,55 @@ def tty_safe_for_writes() -> bool:
     return bool(lflag & termios.ECHO) and bool(lflag & termios.ICANON)
 
 
+_quiet = False
+
+
+def set_quiet(value: bool) -> None:
+    """Enable or disable quiet mode for the rest of the process.
+
+    Called by command handlers that accept --quiet. When enabled, log_info()
+    becomes a no-op and is_quiet() returns True so progress-bar code
+    paths in helpers can also bail out.
+    """
+    global _quiet
+    _quiet = bool(value)
+
+
+def is_quiet() -> bool:
+    """Return True when quiet mode has been enabled for this process."""
+    return _quiet
+
+
 def msg(*args):
+    """Print *args* to stderr after clearing any partial progress line.
+
+    Suppressed when the TTY is currently being used by another program
+    (pinentry, curses) — see tty_safe_for_writes for the rationale.
+    """
     if not tty_safe_for_writes():
         return
+    sys.stderr.write("\r\033[K")
+    sys.stderr.flush()
     print(*args, file=sys.stderr)
 
 
-def show_version():
-    msg(f"{C['ICYAN']}Proot-Distro version '{PROGRAM_VERSION}'"
-        f" by Termux (@sylirre).{C['RST']}")
+def log_info(text: str):
+    """Emit a `[*] text` info line. No-op under --quiet."""
+    if _quiet:
+        return
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
+
+
+def log_error(text: str):
+    """Emit a `[!] text` error line. Always shown — even under --quiet."""
+    msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
+
+
+def warn(text: str):
+    """Emit a 'Warning: text' line in yellow."""
+    msg(f"{C['BYELLOW']}Warning: {C['YELLOW']}{text}{C['RST']}")
+
+
+def crit_error(text: str):
+    """Emit an 'Error: text' line in red. Caller typically calls sys.exit(1)."""
+    msg(f"{C['BRED']}Error: {C['RED']}{text}{C['RST']}")

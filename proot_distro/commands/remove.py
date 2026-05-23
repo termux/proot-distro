@@ -26,9 +26,10 @@ import os
 import stat
 import sys
 
-from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.colors import C, msg
-from proot_distro.commands.install import _validate_name
+from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.locking import ContainerLock
+from proot_distro.names import require_valid_name
+from proot_distro.paths import container_dir, container_rootfs
 
 
 def _remove_path(path: str, on_remove=None) -> bool:
@@ -87,44 +88,30 @@ def _remove_path(path: str, on_remove=None) -> bool:
     return ok
 
 
-def command_remove(args, configs: dict) -> None:  # noqa: ARG001
-    dist_name = args.alias
+def command_remove(args) -> None:
+    """Delete an installed container's directory tree."""
+    container_name = args.container_name
     verbose = getattr(args, "verbose", False)
 
-    if not _validate_name(dist_name):
-        msg()
-        msg(f"{C['BRED']}Error: container name "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not valid. "
-            f"It must begin with a letter or digit and contain only "
-            f"letters, digits, underscores, dots, or hyphens.{C['RST']}")
-        msg()
-        sys.exit(1)
+    require_valid_name(container_name)
 
-    container_dir = os.path.join(CONTAINERS_DIR, dist_name)
-    rootfs_dir = os.path.join(container_dir, "rootfs")
+    rootfs_dir = container_rootfs(container_name)
 
     if not os.path.isdir(rootfs_dir):
-        msg()
-        msg(f"{C['BRED']}Error: container "
-            f"'{C['YELLOW']}{dist_name}{C['BRED']}' is not installed.{C['RST']}")
-        msg()
+        crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Removing container "
-        f"'{C['YELLOW']}{dist_name}{C['CYAN']}'...{C['RST']}")
+    with ContainerLock(container_name, exclusive=True, command="remove"):
+        log_info(f"Removing container '{container_name}'...")
 
-    on_remove = None
-    if verbose:
-        def on_remove(path):
-            msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-                f"Removed: '{path}'{C['RST']}")
+        on_remove = None
+        if verbose:
+            def on_remove(path):
+                log_info(f"Removed: '{path}'")
 
-    if not _remove_path(container_dir, on_remove):
-        msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}"
-            f"Finished with errors. Some files probably were not "
-            f"deleted.{C['RST']}")
-        sys.exit(1)
+        if not _remove_path(container_dir(container_name), on_remove):
+            log_error("Finished with errors. Some files probably were not "
+                      "deleted.")
+            sys.exit(1)
 
-    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-        f"Finished removing the container.{C['RST']}")
+    log_info("Finished removing the container.")
