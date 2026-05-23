@@ -33,6 +33,8 @@ from proot_distro.constants import (
 
 _FAKE_LOADAVG = "0.12 0.07 0.02 2/165 765\n"
 
+_FAKE_OVERFLOW_ID = "65534\n"
+
 _FAKE_STAT = """\
 cpu  1957 0 2877 93280 262 342 254 87 0 0
 cpu0 31 0 226 12027 82 10 4 9 0 0
@@ -272,6 +274,14 @@ def setup_fake_sysdata(rootfs: str) -> None:
         os.path.join(sysdata_dir, "sysctl_inotify_max_user_watches"),
         "4096\n",
     )
+    _write_if_missing(
+        os.path.join(sysdata_dir, "sysctl_kernel_overflowuid"),
+        _FAKE_OVERFLOW_ID,
+    )
+    _write_if_missing(
+        os.path.join(sysdata_dir, "sysctl_kernel_overflowgid"),
+        _FAKE_OVERFLOW_ID,
+    )
 
 
 def fake_proc_bindings(rootfs: str) -> list:
@@ -289,6 +299,8 @@ def fake_proc_bindings(rootfs: str) -> list:
         ("/proc/vmstat",                          "vmstat"),
         ("/proc/sys/kernel/cap_last_cap",         "sysctl_entry_cap_last_cap"),
         ("/proc/sys/fs/inotify/max_user_watches", "sysctl_inotify_max_user_watches"),
+        ("/proc/sys/kernel/overflowuid",           "sysctl_kernel_overflowuid"),
+        ("/proc/sys/kernel/overflowgid",           "sysctl_kernel_overflowgid"),
     ]
     for real, fake_name in checks:
         try:
