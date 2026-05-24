@@ -237,6 +237,11 @@ def command_restore(args) -> None:
     # Per-container exclusive locks acquired lazily on first member encounter,
     # before any modification to that container's rootfs.
     pending_locks: dict = {}
+    # Dirs whose archived mode lacks owner rwx: temporarily widened so we
+    # can write into them, with the final chmod deferred until extraction
+    # finishes. Applied in reverse insertion order so children are sealed
+    # before their parents.
+    deferred_dir_modes: list = []
     try:
         if archive:
             total_size = os.path.getsize(archive)
@@ -288,10 +293,18 @@ def command_restore(args) -> None:
 
                 if member.isdir():
                     os.makedirs(dest, exist_ok=True)
-                    try:
-                        os.chmod(dest, stat.S_IMODE(member.mode))
-                    except OSError:
-                        pass
+                    mode = stat.S_IMODE(member.mode)
+                    if (mode & stat.S_IRWXU) != stat.S_IRWXU:
+                        try:
+                            os.chmod(dest, mode | stat.S_IRWXU)
+                        except OSError:
+                            pass
+                        deferred_dir_modes.append((dest, mode))
+                    else:
+                        try:
+                            os.chmod(dest, mode)
+                        except OSError:
+                            pass
 
                 elif member.issym():
                     parent = os.path.dirname(dest)
@@ -345,6 +358,15 @@ def command_restore(args) -> None:
                     continue
 
                 _on_entry(member.size, member.name)
+
+        # Apply deferred directory modes now that all writes are done.
+        # Reverse order so a parent that ends up unsearchable doesn't
+        # block sealing its children.
+        for path, mode in reversed(deferred_dir_modes):
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                pass
 
         clear_bar()
 
