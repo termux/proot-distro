@@ -112,7 +112,7 @@ def command_help(args=None) -> None:
     )
     msg()
     shell_block(
-        [f"{PROGRAM_NAME} install termux/termux-docker:aarch64"], width,
+        [f"{PROGRAM_NAME} install termux/termux-docker"], width,
     )
     msg()
     paragraph(

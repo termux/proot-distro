@@ -388,7 +388,7 @@ HELP_PAGES = {
                     ("opensuse/tumbleweed:latest", None),
                     ("rockylinux/rockylinux:latest", None),
                     ("aclemons/slackware:current", None),
-                    ("termux/termux-docker:aarch64", None),
+                    ("termux/termux-docker:latest", None),
                     ("arfshl/trisquel:latest", None),
                     ("ubuntu:24.04", None),
                     ("ghcr.io/void-linux/void-musl:latest", None),
