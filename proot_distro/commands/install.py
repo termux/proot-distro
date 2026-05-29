@@ -281,6 +281,10 @@ def _run_install(
     except (EOFError, OSError, tarfile.TarError, RuntimeError) as exc:
         clear_bar()
         log_error(f"Failed to install: {exc}")
+        log_error(
+            "See 'proot-distro install --help' on how to install "
+            "distribution image."
+        )
         _cleanup()
         sys.exit(1)
     except Exception:
