@@ -125,7 +125,8 @@ def _pick_platform(
         available.append(f"{a}/{v}" if v else a)
     raise RuntimeError(
         f"No image found for architecture '{arch}' in '{image_ref}'. "
-        f"Available Linux platforms: {', '.join(available) or 'none'}"
+        f"Available Linux platforms: {', '.join(available) or 'none'}. "
+        f"Visit https://hub.docker.com to look for alternatives."
     )
 
 
