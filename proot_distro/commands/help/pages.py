@@ -347,6 +347,54 @@ HELP_PAGES = {
             f"{PROGRAM_NAME} install -n dist https://example.com/rootfs.tar",
             f"{PROGRAM_NAME} install -n dist ~/rootfs.tgz"
         ],
+        "footer": [
+            {
+                "title": "WHERE TO FIND IMAGES",
+                "intro": (
+                    f"{CANONICAL_PROGRAM_NAME} does not provide images on its "
+                    "behalf. Users must find desired distribution image "
+                    "themselves, but without any guarantee that particular "
+                    "chosen distribution exists either as Docker image, "
+                    "as ordinary rootfs archive or available for CPU "
+                    "architecture of the host.\n\n"
+                    "Common web resources where to look for distributions:"
+                ),
+                "bullets": [
+                    ("Docker Hub: https://hub.docker.com/", None),
+                    ("AWS Gallery: https://gallery.ecr.aws/", None),
+                    ("GitHub GHCR: https://github.com/search (make sure to enable Packages filter)", None),
+                    ("Official website of distribution", None),
+                ]
+            },
+            {
+                "title": "RECOMMENDED IMAGES",
+                "intro": (
+                    "This list provided just as reference and is not final. "
+                    "Docker Hub and other container image registries provide "
+                    "hundreds of builds of bare distributions as well as of "
+                    "packaged applications."
+                ),
+                "bullets": [
+                    ("alpine:latest", None),
+                    ("archlinux/archlinux:latest", None),
+                    ("danhunsaker/archlinuxarm:latest", None),
+                    ("chimeralinux/chimera:latest", None),
+                    ("debian:stable", None),
+                    ("fedora:latest", None),
+                    ("gentoo/stage3:latest", None),
+                    ("manjarolinux/base:latest", None),
+                    ("nixos/nix:latest", None),
+                    ("opensuse/leap:latest", None),
+                    ("opensuse/tumbleweed:latest", None),
+                    ("rockylinux/rockylinux:latest", None),
+                    ("aclemons/slackware:current", None),
+                    ("termux/termux-docker:aarch64", None),
+                    ("arfshl/trisquel:latest", None),
+                    ("ubuntu:24.04", None),
+                    ("ghcr.io/void-linux/void-musl:latest", None),
+                ]
+            },
+        ],
     },
 
     "list": {
