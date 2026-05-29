@@ -79,6 +79,10 @@ def command_help(args=None) -> None:
         f"Run '{PROGRAM_NAME} <command> --help' for details on any command.",
         width,
     )
+    paragraph(
+        f"Read documentation at https://github.com/termux/proot-distro/blob/master/README.md",
+        width,
+    )
 
     section("QUICK START")
     paragraph(
