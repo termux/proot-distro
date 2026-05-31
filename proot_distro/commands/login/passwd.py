@@ -28,6 +28,8 @@ import errno
 import os
 import stat
 
+from proot_distro.l2s import resolve_l2s_target
+
 
 def resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
     """Resolve an absolute guest path to its real host path.
@@ -37,9 +39,17 @@ def resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
     under *rootfs* via os.path.normpath, which both prevents .. escape
     and handles Nix-style images where /etc/passwd is a symlink to an
     absolute store path that only exists inside the guest.
+
+    proot's --link2symlink extension stores hard-link backing files
+    under <rootfs>/.l2s/ and replaces the original paths with symlinks
+    whose targets are host-absolute paths into that directory. These
+    must NOT be re-rooted under rootfs the way ordinary guest-absolute
+    symlinks are; instead the rootfs prefix is stripped to recover the
+    guest-relative path and the loop continues normally.
     """
+    rootfs_abs = os.path.abspath(rootfs)
     for _ in range(40):
-        host_path = rootfs + guest_path
+        host_path = rootfs_abs + guest_path
         try:
             st = os.lstat(host_path)
         except OSError:
@@ -47,6 +57,10 @@ def resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
         if not stat.S_ISLNK(st.st_mode):
             return host_path
         target = os.readlink(host_path)
+        l2s_abs = resolve_l2s_target(host_path, target, rootfs_abs)
+        if l2s_abs is not None:
+            guest_path = l2s_abs[len(rootfs_abs):]
+            continue
         if os.path.isabs(target):
             guest_path = os.path.normpath(target)
         else:
