@@ -156,18 +156,6 @@ def command_help(args=None) -> None:
     )
     msg()
     paragraph(
-        "If you have issues with proot during login, try these "
-        "quick troubleshooting steps:",
-        width,
-    )
-    msg()
-    shell_block(
-        ["pkg upgrade -y",
-         f"PROOT_NO_SECCOMP=1 {PROGRAM_NAME} login <name>"],
-        width,
-    )
-    msg()
-    paragraph(
         "Report utility issues to "
         "https://github.com/termux/proot-distro/issues",
         width,

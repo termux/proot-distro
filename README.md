@@ -1148,7 +1148,6 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `XDG_CACHE_HOME` | On non-Termux hosts, base for `$XDG_CACHE_HOME/proot-distro/`. Defaults to `~/.cache`. |
 | `PD_DOCKER_AUTH` | Credentials for pulling and pushing Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install`, `build` (`FROM` base-image pulls), and `push` (with `pull,push` scope). |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
-| `PROOT_NO_SECCOMP` | Inherited and forwarded to `proot`. Set to `1` if `login` fails with seccomp-related errors on the host kernel. Skipped in `--minimal` mode. |
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
 | `COLUMNS` | Fallback terminal width for `--help` rendering. |
 | `TERM`, `COLORTERM` | Inherited from the host and exported into the guest (always; even in `--minimal`). In `normal`-type containers, `TERM` defaults to `xterm-256color` when unset on the host. |
@@ -1207,9 +1206,6 @@ cp proot_distro/completions/proot-distro.fish \
 - **No cgroups / namespaces**: features that need real Linux kernel
   namespaces (`unshare`, container-in-container, network namespaces)
   do not work — proot is path translation, not kernel isolation.
-- **seccomp**: some Android kernels restrict `ptrace` calls used by
-  proot via seccomp policies. If `login` fails with seccomp-related
-  errors, set `PROOT_NO_SECCOMP=1`.
 - **No nesting**: PRoot-Distro refuses to run inside another `proot`,
   because `proot` itself cannot trace a process already being traced.
 
