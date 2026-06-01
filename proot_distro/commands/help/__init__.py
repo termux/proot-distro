@@ -64,7 +64,7 @@ def command_help(args=None) -> None:
     section("DESCRIPTION")
     paragraph(
         "PRoot-Distro is a wrapper utility for proot user-space "
-        "emulator of chroot, bind --mount and binfmt_misc. This "
+        "emulator of chroot, mount --bind and binfmt_misc. This "
         "utility provides a convenient way for working with Linux "
         "containers, leveraging support of Docker registries to "
         "provide distributions of any kind.",
