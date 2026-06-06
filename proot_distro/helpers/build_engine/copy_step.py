@@ -49,6 +49,7 @@ from proot_distro.helpers.docker import (
     AuthStrippingRedirectHandler, layer_cache_path, pull_image,
 )
 from proot_distro.helpers.layer_diff import write_files_layer
+from proot_distro.helpers.tar_extract import _safe_resolve
 
 
 def do_copy(engine, instr):
@@ -430,11 +431,26 @@ def _extract_tar_into_dest(src_full, dest, file_map, uid, gid):
 
 
 def _materialise_files(rootfs_dir, file_map):
-    """Apply file_map entries to rootfs_dir on disk."""
+    """Apply file_map entries to rootfs_dir on disk.
+
+    Sorting the arcnames guarantees every parent is materialised before
+    its children, so a symlink entry lands before anything written
+    "through" it. The destination's parent is then resolved with
+    _safe_resolve, which follows existing symlink components but clamps
+    each hop inside rootfs_dir — otherwise an ADD'd tar (or a stage)
+    could ship `evil -> /` followed by `evil/passwd` and the write would
+    escape onto the host. The final component is left unresolved so we
+    replace the entry itself, never a same-named symlink's target.
+    """
     for arcname in sorted(file_map.keys()):
         entry = file_map[arcname]
-        host = os.path.join(rootfs_dir, arcname.lstrip("/"))
-        parent = os.path.dirname(host)
+        parts = [p for p in arcname.split("/") if p not in ("", ".")]
+        if not parts or ".." in parts:
+            continue
+        parent = _safe_resolve(rootfs_dir, parts[:-1])
+        if parent is None:
+            continue
+        host = os.path.join(parent, parts[-1])
         try:
             os.makedirs(parent, exist_ok=True)
         except OSError:

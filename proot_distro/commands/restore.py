@@ -48,6 +48,7 @@ from proot_distro.names import is_valid_name
 from proot_distro.paths import (
     container_dir, container_manifest, container_rootfs,
 )
+from proot_distro.helpers.tar_extract import _safe_resolve
 
 
 # Magic-byte signatures used to identify compressed streams.
@@ -183,6 +184,39 @@ def _dest_path(member_name: str) -> tuple:
     return (container_name, os.path.join(container_rootfs(container_name), *parts[1:]))
 
 
+def _safe_dest(container_name: str, dest: str, *, follow_final: bool = False):
+    """Re-resolve *dest* so its parent can't be redirected out of the
+    container by a symlink planted earlier in the same archive.
+
+    `_dest_path` already strips '..'/'.'/absolute components from the
+    member *name*, but a crafted backup can still ship a symlink (e.g.
+    `<name>/rootfs/evil -> /`) followed by `<name>/rootfs/evil/passwd`,
+    and a naive write would follow that symlink onto the host. The
+    parent chain is walked with _safe_resolve, which follows existing
+    symlink components but clamps every hop inside the container's own
+    directory. With follow_final the whole path is resolved (used for a
+    hardlink's read source); otherwise the last component is left
+    unresolved so we act on the entry itself, not on a same-named
+    symlink's target. Mirrors the hardening in helpers/tar_extract.py.
+
+    Returns the safe absolute path, or None if resolution failed
+    (symlink loop) and the caller should skip the member.
+    """
+    root = container_dir(container_name)
+    rel = os.path.relpath(dest, root)
+    if rel == os.curdir:            # dest is the container dir itself
+        return root
+    parts = rel.split(os.sep)
+    if os.pardir in parts:         # defensive: dest is always built under root
+        return None
+    if follow_final:
+        return _safe_resolve(root, parts)
+    safe_parent = _safe_resolve(root, parts[:-1])
+    if safe_parent is None:
+        return None
+    return os.path.join(safe_parent, parts[-1])
+
+
 def command_restore(args) -> None:
     """Reinstate one or more containers from a tar backup."""
     archive = getattr(args, "archive", None)
@@ -289,6 +323,13 @@ def command_restore(args) -> None:
                     _clear_existing_rootfs(container_name)
                     cleared.add(container_name)
 
+                # Resolve the parent through any symlink planted by an
+                # earlier member, clamped inside this container's dir, so
+                # the write below can't escape onto the host fs.
+                dest = _safe_dest(container_name, dest)
+                if dest is None:
+                    continue
+
                 _remove_existing(dest, member)
 
                 if member.isdir():
@@ -317,7 +358,15 @@ def command_restore(args) -> None:
                     # since containers use proot's --link2symlink and hard
                     # links on the host fs would share inodes across what the
                     # guest treats as independent files.
-                    _, link_src = _dest_path(member.linkname)
+                    link_container, link_src = _dest_path(member.linkname)
+                    if link_src is None:
+                        continue
+                    # Clamp the read source inside the container too, so a
+                    # linkname routed through a planted symlink can't copy
+                    # a host file into the rootfs.
+                    link_src = _safe_dest(
+                        link_container, link_src, follow_final=True
+                    )
                     if link_src is None:
                         continue
                     parent = os.path.dirname(dest)
