@@ -37,13 +37,25 @@
 #     dropped so a crafted archive cannot escape the rootfs. Bare "."
 #     components are kept (OCI layers commonly use "./foo" paths);
 #     os.path.join collapses them so they cannot escape either.
-#   - Hard-link targets (member.linkname) get the same filtering as
-#     member.name. Without it, a malicious archive could set linkname
-#     to "../../etc/shadow" and we'd shutil.copy2 the host's file into
-#     a member-defined dest inside the rootfs.
+#   - Every destination's parent is resolved through any pre-existing
+#     symlink components with each hop clamped inside the rootfs
+#     (_safe_resolve): absolute symlink targets are re-rooted at the
+#     rootfs and ".." can never ascend past it. Without this an earlier
+#     member could ship `evil -> /` (or `evil -> ../../`) and a later
+#     `evil/passwd` would be written *through* that symlink onto the
+#     host. Re-rooting mirrors proot's runtime view (guest '/' is the
+#     rootfs), so a legitimate absolute symlink still resolves to the
+#     right in-rootfs location instead of escaping.
+#   - Hard-link targets (member.linkname) get the same filtering and
+#     clamped resolution as member.name. Without it a malicious archive
+#     could set linkname to "../../etc/shadow" (or route it through a
+#     planted symlink) and we'd shutil.copy2 the host's file into a
+#     member-defined dest inside the rootfs.
 #   - Hard links are deferred until every regular file has been
-#     written, then copied with shutil.copy2 so the link source
-#     definitely exists and mtime survives the round-trip.
+#     written, then both endpoints are re-resolved (so a symlink
+#     planted *after* the link member can't redirect the copy) and
+#     copied with shutil.copy2 so the link source definitely exists and
+#     mtime survives the round-trip.
 #   - Directory mtimes are stamped last (writing into a dir bumps its
 #     mtime, so this must follow all writes).
 #   - Directories get at least S_IRWXU so subsequent writes succeed
@@ -92,8 +104,18 @@ def extract_tar_to_rootfs(
                 draw_bytes_bar(counter.count, total_size)
 
     # All regular files written; now copy hard links. shutil.copy2
-    # preserves mtime, which was already set above.
-    for dest, src in deferred_links:
+    # preserves mtime, which was already set above. Both endpoints are
+    # re-resolved here (not at defer time) so a symlink planted by a
+    # later member can't redirect either the read source or the write
+    # dest outside the rootfs.
+    for dest_parts, src_parts in deferred_links:
+        parent = _safe_resolve(rootfs_dir, dest_parts[:-1])
+        if parent is None:
+            continue
+        dest = os.path.join(parent, dest_parts[-1])
+        src = _safe_resolve(rootfs_dir, src_parts)
+        if src is None:
+            continue
         if os.path.lexists(dest):
             try:
                 os.remove(dest)
@@ -133,11 +155,15 @@ def _process_member(member, tf, rootfs_dir, *, strip, handle_whiteouts,
     if not rel_path or rel_path == ".":
         return
 
-    parent = (
-        os.path.join(rootfs_dir, *rel_parts[:-1])
-        if len(rel_parts) > 1 else rootfs_dir
-    )
-    dest = os.path.join(rootfs_dir, rel_path)
+    # Resolve the destination's parent through any pre-existing symlink
+    # components, clamping every hop inside rootfs_dir (see module
+    # docstring). The final component is deliberately *not* followed so
+    # we operate on the entry itself, never on whatever a same-named
+    # symlink points at.
+    parent = _safe_resolve(rootfs_dir, rel_parts[:-1])
+    if parent is None:
+        return
+    dest = os.path.join(parent, rel_parts[-1])
 
     if handle_whiteouts and _apply_whiteout(rel_parts, parent):
         return
@@ -145,6 +171,11 @@ def _process_member(member, tf, rootfs_dir, *, strip, handle_whiteouts,
     os.makedirs(parent, exist_ok=True)
 
     if member.isdir():
+        # A symlink already occupying this name would make os.makedirs
+        # (and the chmod/utime below) act on its target, so drop it
+        # first — overlay semantics replace a symlink with a real dir.
+        if os.path.islink(dest):
+            _remove_fstree(dest)
         os.makedirs(dest, exist_ok=True)
         try:
             os.chmod(dest, stat.S_IMODE(member.mode) | stat.S_IRWXU)
@@ -156,7 +187,7 @@ def _process_member(member, tf, rootfs_dir, *, strip, handle_whiteouts,
         _write_symlink(dest, member)
 
     elif member.islnk():
-        _defer_hardlink(member, rootfs_dir, strip, dest, deferred_links)
+        _defer_hardlink(member, strip, rel_parts, deferred_links)
 
     elif member.isreg():
         _write_regular(dest, member, tf)
@@ -202,7 +233,7 @@ def _write_symlink(dest: str, member) -> None:
         pass
 
 
-def _defer_hardlink(member, rootfs_dir, strip, dest, deferred_links):
+def _defer_hardlink(member, strip, rel_parts, deferred_links):
     """Queue a hardlink for copy after all regular files are written.
 
     The linkname is filtered identically to member.name: leading slashes
@@ -211,6 +242,11 @@ def _defer_hardlink(member, rootfs_dir, strip, dest, deferred_links):
     could point linkname at a host path (e.g. "../../etc/shadow") and
     shutil.copy2 would resolve it through the rootfs prefix, copying
     host content into the member-defined dest inside the rootfs.
+
+    Only the (validated) relative components of both endpoints are
+    stored; the on-disk paths are resolved with _safe_resolve at copy
+    time so a symlink planted by a later member can't redirect the read
+    source or the write dest out of the rootfs.
     """
     lparts = member.linkname.lstrip("/").rstrip("/").split("/")
     if len(lparts) <= strip:
@@ -218,8 +254,60 @@ def _defer_hardlink(member, rootfs_dir, strip, dest, deferred_links):
     rel_lparts = lparts[strip:]
     if any(p in ("..", "") for p in rel_lparts):
         return
-    link_src = os.path.join(rootfs_dir, *rel_lparts)
-    deferred_links.append((dest, link_src))
+    deferred_links.append((rel_parts, rel_lparts))
+
+
+def _safe_resolve(root, parts):
+    """Resolve *parts* beneath *root*, clamping every hop inside it.
+
+    Walks *parts* component by component starting at *root*. Existing
+    symlink components are followed, but their targets are interpreted
+    relative to *root*: an absolute target re-roots at *root* and ".."
+    can never ascend above it. This both blocks symlink-traversal
+    escapes and matches proot's runtime view, where the guest '/' is
+    the rootfs, so legitimate absolute symlinks resolve to the right
+    in-rootfs location. Components that don't exist yet are taken
+    verbatim (a not-yet-written subtree can't be a symlink).
+
+    Returns an absolute path guaranteed to live within *root*, or None
+    if a symlink loop / excessive chain is hit (caller skips the entry).
+    Pass parent components only when the final element must not be
+    followed (file/dir/symlink writes); pass the full path to resolve a
+    hardlink's source file.
+    """
+    resolved: list = []
+    pending = list(parts)
+    link_budget = 40
+    while pending:
+        comp = pending.pop(0)
+        if comp in ("", "."):
+            continue
+        if comp == "..":
+            if resolved:
+                resolved.pop()
+            continue
+        current = os.path.join(root, *resolved, comp)
+        try:
+            st = os.lstat(current)
+        except OSError:
+            # Doesn't exist yet (or unreadable) — safe to take as-is.
+            resolved.append(comp)
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            link_budget -= 1
+            if link_budget < 0:
+                return None
+            try:
+                target = os.readlink(current)
+            except OSError:
+                return None
+            tparts = target.split("/")
+            if target.startswith("/"):
+                resolved = []  # absolute target: re-root at *root*
+            pending[:0] = tparts
+        else:
+            resolved.append(comp)
+    return os.path.join(root, *resolved)
 
 
 def _write_regular(dest: str, member, tf) -> None:
