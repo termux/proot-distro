@@ -1,0 +1,87 @@
+# Tests for proot_distro.parser — argparse construction, alias table, and
+# required-arg metadata.
+
+import pytest
+
+from proot_distro import parser
+from proot_distro.constants import IS_TERMUX
+
+
+def test_install_parsing():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["install", "ubuntu:24.04"])
+    assert args.command == "install"
+    assert args.image_ref == "ubuntu:24.04"
+    assert unknown == []
+
+
+def test_install_missing_positional_is_none():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["install"])
+    assert args.image_ref is None  # nargs="?", validated later by REQUIRED_ARGS
+
+
+def test_custom_name_flag():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["install", "ubuntu", "-n", "mybox"])
+    assert args.custom_container_name == "mybox"
+
+
+@pytest.mark.parametrize("alias,canonical", [
+    ("add", "install"), ("i", "install"), ("in", "install"), ("ins", "install"),
+    ("rm", "remove"),
+    ("sh", "login"),
+    ("li", "list"), ("ls", "list"),
+    ("bak", "backup"), ("bkp", "backup"),
+    ("clear", "clear-cache"), ("cl", "clear-cache"),
+    ("cp", "copy"),
+    ("h", "help"), ("he", "help"), ("hel", "help"),
+])
+def test_alias_table(alias, canonical):
+    assert parser.ALIAS_TO_CANONICAL[alias] == canonical
+
+
+def test_required_args_table():
+    assert ("image_ref",) == tuple(a for a, _ in parser.REQUIRED_ARGS["install"])
+    names = {a for a, _ in parser.REQUIRED_ARGS["rename"]}
+    assert names == {"orig_name", "new_name"}
+    # restore intentionally absent (decides from stdin TTY state).
+    assert "restore" not in parser.REQUIRED_ARGS
+
+
+def test_each_subcommand_parses():
+    p = parser.build_parser()
+    for argv, cmd in [
+        (["remove", "box"], "remove"),
+        (["rename", "a", "b"], "rename"),
+        (["reset", "box"], "reset"),
+        (["list"], "list"),
+        (["backup", "box"], "backup"),
+        (["restore", "f.tar"], "restore"),
+        (["clear-cache"], "clear-cache"),
+        (["copy", "a", "b"], "copy"),
+        (["sync", "a", "b"], "sync"),
+        (["build", "."], "build"),
+        (["push", "me/app:1"], "push"),
+        (["run", "box"], "run"),
+        (["login", "box"], "login"),
+    ]:
+        args, _ = p.parse_known_args(argv)
+        assert args.command == cmd
+
+
+def test_build_multiple_tags_and_outputs():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(
+        ["build", ".", "-t", "a:1", "-t", "b:2", "-o", "x.tar"]
+    )
+    assert args.tags == ["a:1", "b:2"]
+    assert args.outputs == ["x.tar"]
+
+
+@pytest.mark.skipif(IS_TERMUX, reason="Termux-only flags present on Termux")
+def test_termux_only_flags_absent_off_termux():
+    p = parser.build_parser()
+    _args, unknown = p.parse_known_args(["login", "box", "--isolated"])
+    # --isolated is only registered on Termux, so off-Termux it is unknown.
+    assert "--isolated" in unknown

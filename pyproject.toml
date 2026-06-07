@@ -11,6 +11,9 @@ requires-python = ">=3.9"
 license = "GPL-3.0-only"
 dependencies = []
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.urls]
 'Homepage' = 'https://github.com/termux/proot-distro'
 'Repository' = 'https://github.com/termux/proot-distro'
@@ -30,3 +33,10 @@ include = ["proot_distro*"]
 "share/bash-completion/completions" = ["proot_distro/completions/proot-distro.bash"]
 "share/zsh/site-functions" = ["proot_distro/completions/_proot-distro"]
 "share/fish/vendor_completions.d" = ["proot_distro/completions/proot-distro.fish"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "live: hits the network or executes proot; skipped unless RUN_LIVE_TESTS=1 is set",
+]
