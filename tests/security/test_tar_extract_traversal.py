@@ -123,43 +123,62 @@ def test_symlink_dotdot_target_stays_inside(env):
     _assert_no_escape(tmp_path, sentinel)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="SECURITY GAP: extract_tar_to_rootfs filters '..' in member names "
-           "but follows a symlinked parent component. A hostile archive that "
-           "first creates 'evil' -> /abs/existing-dir and then writes "
-           "'evil/<file>' escapes the rootfs and writes through the symlink "
-           "to the host. Fix: refuse to descend into a path component that is "
-           "a symlink (e.g. O_NOFOLLOW per component / secure-join). Strict "
-           "xfail flips to a failure once the escape is blocked.",
-)
-def test_writethrough_absolute_symlink_to_existing_dir_blocked(env):
-    # The destination dir the symlink points at must exist for the host write
-    # to land — the env fixture's `outside/` (holding the sentinel) is one.
+# A hostile archive can point a symlink at an *absolute* path and then write
+# "through" it. The extractor's _safe_resolve walks each parent component
+# clamped inside the rootfs and re-roots an absolute symlink target at the
+# rootfs (matching proot's runtime view where the guest '/' is the rootfs), so
+# the write is contained instead of escaping to the host. These tests pin that
+# protection down — they fail if the clamping regresses.
+
+def test_writethrough_absolute_symlink_to_existing_dir_contained(env):
+    # Single archive: 'evil' -> /abs/existing-host-dir, then 'evil/pwned'.
     tmp_path, root, sentinel = env
     outside = str(tmp_path / "outside")
     _extract(tmp_path, root, [
         {"name": "evil", "type": "symlink", "linkname": outside},  # abs target
         {"name": "evil/pwned", "type": "file", "data": b"ESCAPED"},
     ])
-    # Secure invariant: nothing is written through the symlink onto the host.
+    # Nothing was written through the symlink onto the host directory.
     assert not os.path.exists(os.path.join(outside, "pwned"))
-    # And the sentinel beside it is untouched.
     assert sentinel.read_text() == "SECRET"
+    assert sorted(os.listdir(outside)) == ["secret"]
+
+
+def test_writethrough_absolute_symlink_across_layers_contained(env):
+    # The realistic OCI vector: one layer plants 'evil' -> /abs/host-dir and a
+    # *later* layer writes 'evil/pwned' through the now-existing symlink. The
+    # pre-existing absolute symlink must not be followed out of the rootfs.
+    from _builders import make_tar
+    from proot_distro.helpers.docker.layers import apply_layer
+
+    tmp_path, root, sentinel = env
+    outside = str(tmp_path / "outside")
+    l1 = tmp_path / "layer1.tar.gz"
+    l2 = tmp_path / "layer2.tar.gz"
+    make_tar(str(l1),
+             [{"name": "evil", "type": "symlink", "linkname": outside}],
+             compression="gz")
+    make_tar(str(l2),
+             [{"name": "evil/pwned", "type": "file", "data": b"ESCAPED"}],
+             compression="gz")
+    apply_layer(str(l1), root)
+    apply_layer(str(l2), root)
+
+    assert not os.path.exists(os.path.join(outside, "pwned"))
+    assert sorted(os.listdir(outside)) == ["secret"]
+    # The planted symlink itself is preserved inside the rootfs.
+    assert os.path.islink(os.path.join(root, "evil"))
 
 
 def test_writethrough_absolute_symlink_to_missing_dir_no_escape(env):
-    # When the absolute target does not exist, the write must not create it
-    # outside the rootfs (extraction may instead abort — also acceptable).
+    # Even when the absolute target does not exist, no file is created outside
+    # the rootfs.
     tmp_path, root, sentinel = env
     missing = str(tmp_path / "nonexistent_target")
-    try:
-        _extract(tmp_path, root, [
-            {"name": "evil", "type": "symlink", "linkname": missing},
-            {"name": "evil/pwned", "type": "file", "data": b"ESCAPED"},
-        ])
-    except OSError:
-        pass  # aborting on the dangling-symlink collision is a safe outcome
+    _extract(tmp_path, root, [
+        {"name": "evil", "type": "symlink", "linkname": missing},
+        {"name": "evil/pwned", "type": "file", "data": b"ESCAPED"},
+    ])
     assert not os.path.exists(os.path.join(missing, "pwned"))
 
 
