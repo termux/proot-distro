@@ -386,6 +386,8 @@ def command_restore(args) -> None:
                               f"container at a time.")
                     sys.exit(1)
 
+                log_info(f"Destination: {restore_name}")
+
                 # Non-rootfs members (only manifest.json in a real backup)
                 # are held back: the manifest is buffered and written only if
                 # the restore succeeds, so a rootfs-less archive never
@@ -541,7 +543,7 @@ def command_restore(args) -> None:
 
         clear_bar()
 
-        log_info("Finished restoring the container.")
+        log_info(f"Finished restoring the container '{restore_name}'.")
 
     except KeyboardInterrupt:
         clear_bar()
