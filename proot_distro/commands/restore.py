@@ -20,6 +20,8 @@
 
 # Architecture: Extracts a proot container backup from a TAR archive.
 # Expected archive structure: <name>/manifest.json + <name>/rootfs/*.
+# Exactly one container is restored per archive (all `backup` ever
+# writes); a member naming a second container is rejected.
 # Legacy archives with installed-rootfs/<name> layout are also accepted:
 # contents are re-rooted to containers/<name>/rootfs/. Archives with no
 # subdirectory are rejected. Compression is auto-detected via tarfile r|*
@@ -218,7 +220,14 @@ def _safe_dest(container_name: str, dest: str, *, follow_final: bool = False):
 
 
 def command_restore(args) -> None:
-    """Reinstate one or more containers from a tar backup."""
+    """Reinstate a single container from a tar backup.
+
+    An archive is expected to hold exactly one container (this is all
+    `backup` ever produces). The first valid member fixes the target;
+    any member naming a different container makes the restore ambiguous
+    and is rejected, so a hand-crafted or legacy multi-container archive
+    can never silently overwrite more than the user asked for.
+    """
     archive = getattr(args, "archive", None)
     verbose = getattr(args, "verbose", False)
 
@@ -247,7 +256,6 @@ def command_restore(args) -> None:
     done_size = 0
     total_size = 0
     counter = None
-    cleared: set = set()
 
     def _on_entry(member_size: int, member_name: str) -> None:
         nonlocal done_size
@@ -268,9 +276,13 @@ def command_restore(args) -> None:
         return len(parts) == 1 and not name.endswith('/')
 
     raw_fh = None
-    # Per-container exclusive locks acquired lazily on first member encounter,
-    # before any modification to that container's rootfs.
-    pending_locks: dict = {}
+    # Restore targets exactly one container. The first valid member fixes
+    # the name; its exclusive lock is acquired lazily on that first sighting,
+    # before any modification to the container's rootfs. A member naming a
+    # different container is rejected (see the loop below).
+    restore_name = None
+    lock = None
+    cleared = False
     # Dirs whose archived mode lacks owner rwx: temporarily widened so we
     # can write into them, with the final chmod deferred until extraction
     # finishes. Applied in reverse insertion order so children are sealed
@@ -303,10 +315,14 @@ def command_restore(args) -> None:
                 if container_name is None:
                     continue
 
-                # Acquire exclusive lock for this container before
-                # touching it. Restore archives are streamed so we can't
-                # pre-scan the names; lock lazily on first sighting.
-                if container_name not in pending_locks:
+                # Only one container may be restored per archive. The first
+                # valid member fixes the target and acquires its exclusive
+                # lock; a member naming a different container is rejected so a
+                # multi-container archive can't overwrite more than the user
+                # asked for. Archives are streamed, so this is detected on the
+                # fly rather than by pre-scanning the member names.
+                if restore_name is None:
+                    restore_name = container_name
                     lock = ContainerLock(
                         container_name, exclusive=True, command="restore"
                     )
@@ -316,12 +332,18 @@ def command_restore(args) -> None:
                         log_error(f"Cannot restore: container "
                                   f"'{container_name}' is busy{hint}.")
                         sys.exit(1)
-                    pending_locks[container_name] = lock
+                elif container_name != restore_name:
+                    clear_bar()
+                    log_error(f"Cannot restore: archive contains more than "
+                              f"one container ('{restore_name}' and "
+                              f"'{container_name}'). Restore handles a single "
+                              f"container at a time.")
+                    sys.exit(1)
 
-                # On the first entry for a given container's rootfs, clear it.
-                if container_name not in cleared:
-                    _clear_existing_rootfs(container_name)
-                    cleared.add(container_name)
+                # On the first entry for the container's rootfs, clear it.
+                if not cleared:
+                    _clear_existing_rootfs(restore_name)
+                    cleared = True
 
                 # Resolve the parent through any symlink planted by an
                 # earlier member, clamped inside this container's dir, so
@@ -359,7 +381,10 @@ def command_restore(args) -> None:
                     # links on the host fs would share inodes across what the
                     # guest treats as independent files.
                     link_container, link_src = _dest_path(member.linkname)
-                    if link_src is None:
+                    if link_src is None or link_container != restore_name:
+                        # Skip a linkname that resolves nowhere or points at
+                        # a different container — it must not read out of an
+                        # unrelated container's rootfs.
                         continue
                     # Clamp the read source inside the container too, so a
                     # linkname routed through a planted symlink can't copy
@@ -434,5 +459,5 @@ def command_restore(args) -> None:
     finally:
         if raw_fh is not None:
             raw_fh.close()
-        for lock in pending_locks.values():
+        if lock is not None:
             lock.release()

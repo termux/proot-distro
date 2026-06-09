@@ -621,6 +621,9 @@ HELP_PAGES = {
                     "file header. Supported: gzip, bzip2, xz, "
                     "uncompressed tar. Applies to both file and "
                     "stdin input."
+                    "\n\n"
+                    "Only one container is restored per archive. An "
+                    "archive holding more than one container is rejected."
                 ),
             },
         ],

@@ -89,7 +89,10 @@ def test_restore_hostile_archive_contained(tmp_path):
         {"name": "box/rootfs/etc/hostname", "type": "file", "data": b"guest"},
         {"name": "box/rootfs/bad", "type": "hardlink",
          "linkname": "../../../../etc/shadow"},
-        {"name": "/abs/evil", "type": "file", "data": b"P"},
+        # Absolute-looking member must be re-rooted under the same container,
+        # never escape onto the host. (A second container name would be
+        # rejected outright — see test_restore_multiple_containers_rejected.)
+        {"name": "/box/evil", "type": "file", "data": b"P"},
     ])
 
     # The good container was created inside the sandbox.
@@ -98,9 +101,24 @@ def test_restore_hostile_archive_contained(tmp_path):
     )
     # The hostile hard link was not materialised from the host.
     assert not os.path.exists(os.path.join(container_rootfs("box"), "bad"))
+    # The absolute member landed inside the container, not on the host.
+    assert os.path.exists(os.path.join(container_rootfs("box"), "evil"))
     # Nothing escaped to the host.
     assert sentinel.read_text() == "SECRET"
     assert not os.path.exists(os.path.join(os.path.dirname(str(tmp_path)), "escape"))
+
+
+def test_restore_multiple_containers_rejected(tmp_path):
+    # An archive holding members for two distinct containers must be
+    # refused: restore handles a single container at a time.
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/rootfs/etc/hostname", "type": "file", "data": b"a"},
+            {"name": "other/rootfs/etc/hostname", "type": "file", "data": b"b"},
+        ])
+    assert exc.value.code == 1
+    # The second container was never created.
+    assert not os.path.exists(container_dir("other"))
 
 
 def test_restore_bare_root_archive_rejected(tmp_path):
