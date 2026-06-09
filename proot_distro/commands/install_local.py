@@ -115,6 +115,11 @@ def _oci_read_json(tf, member_map, path):
     member = member_map.get(path)
     if member is None:
         raise RuntimeError(f"OCI archive is missing required file: {path}")
+    if not member.isreg():
+        # Reject hardlinks and symlinks: Python's extractfile() follows them
+        # within the archive, letting a crafted outer tar redirect a JSON read
+        # to an unrelated member (e.g. a layer blob used as index.json).
+        raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
     fobj = tf.extractfile(member)
     if fobj is None:
         raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
@@ -174,6 +179,13 @@ def _oci_cache_layer(tf, member_map, digest):
     member = member_map.get(blob_path)
     if member is None:
         raise RuntimeError(f"OCI archive is missing layer blob: {blob_path}")
+    if not member.isreg():
+        # Reject hardlinks and symlinks: Python's extractfile() follows them
+        # within the archive, letting a crafted outer tar swap one image's
+        # layer for another's without any digest check catching the swap.
+        raise RuntimeError(
+            f"OCI layer blob is not a regular file: {blob_path}"
+        )
     fobj = tf.extractfile(member)
     if fobj is None:
         raise RuntimeError(

@@ -161,7 +161,8 @@ def _add_bytes(tf, name, data):
 
 
 def make_oci_archive(path, layers, *, arch="x86_64", image_ref="test:latest",
-                     image_config=None, bad_index_digest=None):
+                     image_config=None, bad_index_digest=None,
+                     outer_extra_members=None):
     """Build a valid OCI image-layout tarball consumable by `install`.
 
     *layers* is a list of member-spec lists (one per layer). When
@@ -235,6 +236,8 @@ def make_oci_archive(path, layers, *, arch="x86_64", image_ref="test:latest",
         _add_bytes(tf, "index.json", canonical_json(index))
         for hexd, data in blobs.items():
             _add_bytes(tf, "blobs/sha256/" + hexd, data)
+        if outer_extra_members:
+            _add_members(tf, outer_extra_members)
 
     return {
         "manifest": manifest,
