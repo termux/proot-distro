@@ -24,11 +24,13 @@
 # writes); a member naming a second container is rejected.
 # Legacy archives with installed-rootfs/<name> layout are also accepted:
 # contents are re-rooted to containers/<name>/rootfs/. Archives with no
-# subdirectory, and archives that carry no rootfs at all, are rejected;
-# the clear/manifest writes are deferred to the first rootfs member so a
-# rejected archive leaves the target untouched. Compression is auto-detected
-# via tarfile r|* (archive file) or from header magic bytes (stdin). For
-# file input,
+# subdirectory, and archives that do not produce a rootfs directory, are
+# rejected: the clear is deferred to the first rootfs member that actually
+# materialises and the manifest is written only on success, so a rejected
+# archive leaves the target untouched (or, if a broken rootfs was written,
+# the partial result is removed rather than left rootfs-less). Compression
+# is auto-detected via tarfile r|* (archive file) or from header magic
+# bytes (stdin). For file input,
 # progress is tracked in compressed bytes consumed so total_size is
 # os.path.getsize() — instant, no upfront scan needed.
 
@@ -245,11 +247,13 @@ def command_restore(args) -> None:
     and is rejected, so a hand-crafted or legacy multi-container archive
     can never silently overwrite more than the user asked for.
 
-    The archive must carry a rootfs. The destructive steps (clearing the
-    old rootfs, writing the manifest) are deferred until the first rootfs
-    member is seen, so a rootfs-less archive — a manifest-only or empty
-    backup, or the wrong file entirely — leaves the target untouched and
-    is rejected.
+    The archive must produce a rootfs directory. The destructive clear is
+    deferred until the first rootfs member that actually materialises, and
+    the manifest is written only once the rootfs is confirmed. A rootfs-less
+    archive — a manifest-only or empty backup, or the wrong file entirely —
+    therefore leaves the target untouched and is rejected; an archive that
+    writes a broken (non-directory) rootfs has that partial result removed
+    so no rootfs-less container is left behind.
     """
     archive = getattr(args, "archive", None)
     verbose = getattr(args, "verbose", False)
@@ -300,15 +304,17 @@ def command_restore(args) -> None:
 
     raw_fh = None
     # Restore targets exactly one container and only mutates it once the
-    # archive is confirmed to carry a rootfs. The first valid member fixes
-    # the name and acquires the exclusive lock (non-destructive); the
-    # destructive clear and the manifest write are deferred to the first
-    # rootfs member (the "commit" point). A member naming a different
-    # container is rejected (see the loop below).
+    # archive proves it carries real filesystem content. The first valid
+    # member fixes the name and acquires the exclusive lock (non-destructive).
+    # The destructive clear is deferred to the first rootfs member that is
+    # actually materialised, and the manifest is buffered and written only on
+    # success — so an archive that yields no rootfs leaves the target
+    # untouched, and one that yields a broken rootfs is removed rather than
+    # left rootfs-less. A member naming a different container is rejected.
     restore_name = None
     lock = None
     committed = False
-    pending_manifest = None     # (bytes, mode) held back until commit
+    pending_manifest = None     # (bytes, mode) written only on success
     # Dirs whose archived mode lacks owner rwx: temporarily widened so we
     # can write into them, with the final chmod deferred until extraction
     # finishes. Applied in reverse insertion order so children are sealed
@@ -327,16 +333,6 @@ def command_restore(args) -> None:
             os.chmod(mpath, mode)
         except OSError:
             pass
-
-    def _commit() -> None:
-        # First rootfs member: the point of no return. Clear the old rootfs
-        # and flush the buffered manifest (if the archive carried one).
-        nonlocal committed, pending_manifest
-        _clear_existing_rootfs(restore_name)
-        committed = True
-        if pending_manifest is not None:
-            _write_manifest(*pending_manifest)
-            pending_manifest = None
 
     try:
         if archive:
@@ -391,10 +387,9 @@ def command_restore(args) -> None:
                     sys.exit(1)
 
                 # Non-rootfs members (only manifest.json in a real backup)
-                # are held back until the archive proves it carries a rootfs.
-                # The manifest is buffered so a rootfs-less archive never
-                # clobbers the target's metadata or leaves a phantom dir;
-                # any other non-rootfs member is ignored.
+                # are held back: the manifest is buffered and written only if
+                # the restore succeeds, so a rootfs-less archive never
+                # clobbers the target's metadata. Anything else is ignored.
                 if not _is_rootfs_dest(restore_name, dest):
                     if member.isreg() and dest == container_manifest(restore_name):
                         fobj = tf.extractfile(member)
@@ -404,18 +399,9 @@ def command_restore(args) -> None:
                                 data = fobj.read()
                             finally:
                                 fobj.close()
-                        mode = stat.S_IMODE(member.mode)
-                        if committed:
-                            _write_manifest(data, mode)
-                        else:
-                            pending_manifest = (data, mode)
+                        pending_manifest = (data, stat.S_IMODE(member.mode))
                         _on_entry(member.size, member.name)
                     continue
-
-                # First rootfs member: clear the old rootfs and flush the
-                # buffered manifest. This is the destructive commit point.
-                if not committed:
-                    _commit()
 
                 # Resolve the parent through any symlink planted by an
                 # earlier member, clamped inside this container's dir, so
@@ -423,6 +409,35 @@ def command_restore(args) -> None:
                 dest = _safe_dest(container_name, dest)
                 if dest is None:
                     continue
+
+                # Resolve a hardlink's source, and skip members that will not
+                # materialise (dangling hardlink, unknown type) *before*
+                # clearing anything — so an archive whose only rootfs entries
+                # don't resolve never destroys the existing rootfs.
+                link_src = None
+                if member.islnk():
+                    link_container, raw_src = _dest_path(member.linkname)
+                    if raw_src is None or link_container != restore_name:
+                        # Linkname resolves nowhere or points at a different
+                        # container — must not read out of an unrelated rootfs.
+                        continue
+                    # Clamp the read source inside the container too, so a
+                    # linkname routed through a planted symlink can't copy
+                    # a host file into the rootfs.
+                    link_src = _safe_dest(
+                        link_container, raw_src, follow_final=True
+                    )
+                    if link_src is None:
+                        continue
+                elif not (member.isdir() or member.issym() or member.isreg()):
+                    continue
+
+                # The member will produce rootfs content: clear the old rootfs
+                # once, now. This is the destructive commit point, reached only
+                # for a member that actually materialises something.
+                if not committed:
+                    _clear_existing_rootfs(restore_name)
+                    committed = True
 
                 _remove_existing(dest, member)
 
@@ -452,20 +467,6 @@ def command_restore(args) -> None:
                     # since containers use proot's --link2symlink and hard
                     # links on the host fs would share inodes across what the
                     # guest treats as independent files.
-                    link_container, link_src = _dest_path(member.linkname)
-                    if link_src is None or link_container != restore_name:
-                        # Skip a linkname that resolves nowhere or points at
-                        # a different container — it must not read out of an
-                        # unrelated container's rootfs.
-                        continue
-                    # Clamp the read source inside the container too, so a
-                    # linkname routed through a planted symlink can't copy
-                    # a host file into the rootfs.
-                    link_src = _safe_dest(
-                        link_container, link_src, follow_final=True
-                    )
-                    if link_src is None:
-                        continue
                     parent = os.path.dirname(dest)
                     if parent:
                         os.makedirs(parent, exist_ok=True)
@@ -500,16 +501,27 @@ def command_restore(args) -> None:
                     finally:
                         fobj.close()
 
-                else:
-                    continue
-
                 _on_entry(member.size, member.name)
 
-        # The archive carried no rootfs (manifest-only, empty, or the wrong
-        # file): nothing was committed, so the target is untouched — reject.
+        # A usable restore must have produced a real rootfs directory.
         if not committed:
+            # No rootfs content was ever written (manifest-only, empty, or
+            # the wrong file): the target was never touched — reject it.
             clear_bar()
             log_error(f"Cannot restore: archive does not contain a "
+                      f"container rootfs. Only archives created by "
+                      f"'{PROGRAM_NAME} backup' are supported.")
+            sys.exit(1)
+
+        rootfs_dir = container_rootfs(restore_name)
+        if os.path.islink(rootfs_dir) or not os.path.isdir(rootfs_dir):
+            # Content was written but it did not yield a real directory at the
+            # rootfs path — a stray file, or a symlink standing in for the
+            # rootfs (which would also escape the container). Remove the broken
+            # result so no rootfs-less container is left behind.
+            clear_bar()
+            shutil.rmtree(container_dir(restore_name), ignore_errors=True)
+            log_error(f"Cannot restore: archive did not produce a valid "
                       f"container rootfs. Only archives created by "
                       f"'{PROGRAM_NAME} backup' are supported.")
             sys.exit(1)
@@ -522,6 +534,10 @@ def command_restore(args) -> None:
                 os.chmod(path, mode)
             except OSError:
                 pass
+
+        # Write the buffered manifest now that the rootfs is confirmed.
+        if pending_manifest is not None:
+            _write_manifest(*pending_manifest)
 
         clear_bar()
 

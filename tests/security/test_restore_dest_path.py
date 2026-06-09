@@ -148,3 +148,41 @@ def test_restore_empty_archive_rejected(tmp_path):
     with pytest.raises(SystemExit) as exc:
         _run_restore(tmp_path, [])
     assert exc.value.code == 1
+
+
+def test_restore_rootfs_as_file_rejected(tmp_path):
+    # A member that drops a plain file where the rootfs directory should be
+    # does not yield a usable container. The broken result must be removed,
+    # not reported as a successful restore.
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/manifest.json", "type": "file", "data": b"{}"},
+            {"name": "box/rootfs", "type": "file", "data": b"NOTADIR"},
+        ])
+    assert exc.value.code == 1
+    assert not os.path.exists(container_dir("box"))
+
+
+def test_restore_rootfs_as_symlink_rejected(tmp_path):
+    # A symlink standing in where the rootfs directory should be is not a
+    # valid rootfs (and would escape the container); reject and clean up.
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/manifest.json", "type": "file", "data": b"{}"},
+            {"name": "box/rootfs", "type": "symlink", "linkname": "/etc"},
+        ])
+    assert exc.value.code == 1
+    assert not os.path.exists(container_dir("box"))
+
+
+def test_restore_dangling_rootfs_member_rejected(tmp_path):
+    # The only rootfs entry is a hardlink that resolves nowhere: nothing is
+    # materialised, so the restore is rejected and no container is created.
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/manifest.json", "type": "file", "data": b"{}"},
+            {"name": "box/rootfs/x", "type": "hardlink",
+             "linkname": "../../../../etc/shadow"},
+        ])
+    assert exc.value.code == 1
+    assert not os.path.exists(container_dir("box"))

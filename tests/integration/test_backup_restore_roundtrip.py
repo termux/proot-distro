@@ -125,6 +125,33 @@ def test_restore_rootfs_less_archive_preserves_existing(tmp_path, builders):
     assert open(container_manifest("keep")).read() == before_manifest
 
 
+def test_restore_dangling_rootfs_preserves_existing(tmp_path, builders):
+    # An archive whose only rootfs entries do not resolve (here a dangling
+    # hardlink) must be rejected without clearing the installed container:
+    # the destructive clear is deferred until a member actually materialises,
+    # and the manifest is written only on success.
+    from _builders import make_tar
+
+    manifest = builders.simple_image_manifest(env=["KEEP=1"])
+    builders.make_container("keep", manifest=manifest)
+    before_tree = builders.tree_snapshot(container_rootfs("keep"))
+    before_manifest = open(container_manifest("keep")).read()
+
+    arc = tmp_path / "dangling.tar"
+    make_tar(str(arc), [
+        {"name": "keep/manifest.json", "type": "file", "data": b'{"other":1}'},
+        {"name": "keep/rootfs/x", "type": "hardlink",
+         "linkname": "../../../../etc/shadow"},
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        _restore(arc)
+    assert exc.value.code == 1
+    # Installed rootfs and manifest are byte-for-byte untouched.
+    assert builders.tree_snapshot(container_rootfs("keep")) == before_tree
+    assert open(container_manifest("keep")).read() == before_manifest
+
+
 def test_backup_refuses_tty_stdout(monkeypatch, builders, capsys):
     builders.make_container("box")
 
