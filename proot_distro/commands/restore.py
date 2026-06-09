@@ -378,6 +378,7 @@ def command_restore(args) -> None:
                         log_error(f"Cannot restore: container "
                                   f"'{container_name}' is busy{hint}.")
                         sys.exit(1)
+                    log_info(f"Destination: {restore_name}")
                 elif container_name != restore_name:
                     clear_bar()
                     log_error(f"Cannot restore: archive contains more than "
@@ -385,8 +386,6 @@ def command_restore(args) -> None:
                               f"'{container_name}'). Restore handles a single "
                               f"container at a time.")
                     sys.exit(1)
-
-                log_info(f"Destination: {restore_name}")
 
                 # Non-rootfs members (only manifest.json in a real backup)
                 # are held back: the manifest is buffered and written only if
