@@ -129,3 +129,22 @@ def test_restore_bare_root_archive_rejected(tmp_path):
     with pytest.raises(SystemExit) as exc:
         restore.command_restore(args)
     assert exc.value.code == 1
+
+
+def test_restore_manifest_only_rejected(tmp_path):
+    # An archive that carries a manifest but no rootfs is not a usable
+    # backup: it must be refused and must not create a phantom container.
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/manifest.json", "type": "file", "data": b"{}"},
+        ])
+    assert exc.value.code == 1
+    assert not os.path.exists(container_dir("box"))
+
+
+def test_restore_empty_archive_rejected(tmp_path):
+    # An archive with no usable members carries no rootfs — reject it
+    # rather than reporting a bogus success.
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [])
+    assert exc.value.code == 1

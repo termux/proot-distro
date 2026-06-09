@@ -623,7 +623,8 @@ HELP_PAGES = {
                     "stdin input."
                     "\n\n"
                     "Only one container is restored per archive. An "
-                    "archive holding more than one container is rejected."
+                    "archive holding more than one container, or no "
+                    "container rootfs at all, is rejected."
                 ),
             },
         ],

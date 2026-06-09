@@ -101,6 +101,30 @@ def test_roundtrip_restrictive_dir_mode_preserved(tmp_path, builders):
             os.chmod(restored, 0o755)
 
 
+def test_restore_rootfs_less_archive_preserves_existing(tmp_path, builders):
+    # A rootfs-less archive (manifest only) naming an installed container
+    # must be rejected without disturbing what is already on disk — the
+    # destructive steps are deferred until a rootfs member is seen.
+    from _builders import make_tar
+
+    manifest = builders.simple_image_manifest(env=["KEEP=1"])
+    builders.make_container("keep", manifest=manifest)
+    before_tree = builders.tree_snapshot(container_rootfs("keep"))
+    before_manifest = open(container_manifest("keep")).read()
+
+    arc = tmp_path / "noroot.tar"
+    make_tar(str(arc), [
+        {"name": "keep/manifest.json", "type": "file", "data": b'{"other":1}'},
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        _restore(arc)
+    assert exc.value.code == 1
+    # Existing rootfs and manifest are byte-for-byte untouched.
+    assert builders.tree_snapshot(container_rootfs("keep")) == before_tree
+    assert open(container_manifest("keep")).read() == before_manifest
+
+
 def test_backup_refuses_tty_stdout(monkeypatch, builders, capsys):
     builders.make_container("box")
 
