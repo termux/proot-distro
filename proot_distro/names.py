@@ -33,7 +33,7 @@ from proot_distro.message import crit_error
 # Container names: start with an alphanumeric, then any of letter/digit/
 # underscore/dot/hyphen. Same rule used everywhere a container name is
 # accepted as input or derived from a Docker image reference.
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*\Z")
 
 NAME_RULE_HINT = (
     "It must begin with a letter or digit and contain only letters, "

@@ -43,12 +43,6 @@ def test_invalid_names(name):
     assert names.is_valid_name(name) is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_NAME_RE uses `$`, which matches before a single trailing newline; "
-           "a name like 'foo\\n' is wrongly accepted. Switch `$` -> `\\Z` to "
-           "fix. Strict xfail flips to a failure once corrected.",
-)
 def test_trailing_newline_should_be_rejected():
     assert names.is_valid_name("foo\n") is False
 
