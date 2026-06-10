@@ -135,8 +135,13 @@ def command_install(args) -> None:
         image_ref, local_path, url, custom_container_name,
     )
 
+    allow_insecure = bool(getattr(args, "allow_insecure", False))
+
     with ContainerLock(install_name, exclusive=True, command="install"):
-        _run_install(install_name, image_ref, local_path, url, dist_arch)
+        _run_install(
+            install_name, image_ref, local_path, url, dist_arch,
+            allow_insecure,
+        )
 
 
 def _resolve_install_name(image_ref, local_path, url, custom_container_name):
@@ -181,6 +186,7 @@ def _run_install(
     local_path,
     url,
     dist_arch: str,
+    allow_insecure: bool = False,
 ) -> None:
     """Inner install logic — called with the container lock already held."""
     container_path = container_dir(install_name)
@@ -239,7 +245,9 @@ def _run_install(
             metadata = install_from_local_file(tmp_archive, rootfs_dir, dist_arch)
         else:
             os.makedirs(BASE_CACHE_DIR, exist_ok=True)
-            metadata = pull_image(image_ref, rootfs_dir, dist_arch)
+            metadata = pull_image(
+                image_ref, rootfs_dir, dist_arch, insecure=allow_insecure
+            )
 
         # Write manifest.json when metadata is available (Docker pull
         # or OCI local). Skipped for plain tarballs (metadata is None).

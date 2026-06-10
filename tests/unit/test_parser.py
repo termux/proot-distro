@@ -27,6 +27,21 @@ def test_custom_name_flag():
     assert args.custom_container_name == "mybox"
 
 
+def test_install_allow_insecure_defaults_false():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["install", "ubuntu"])
+    assert args.allow_insecure is False
+
+
+def test_install_allow_insecure_flag():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(
+        ["install", "192.168.1.1:5000/img:latest", "--allow-insecure"]
+    )
+    assert args.allow_insecure is True
+    assert unknown == []
+
+
 @pytest.mark.parametrize("alias,canonical", [
     ("add", "install"), ("i", "install"), ("in", "install"), ("ins", "install"),
     ("rm", "remove"),

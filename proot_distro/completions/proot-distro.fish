@@ -96,6 +96,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
     -s a -l architecture -r -d 'Target CPU architecture' \
     -a 'aarch64\tAArch64 arm\tARM(32-bit) i686\tx86(32-bit) riscv64\tRISC-V x86_64\tx86_64'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
+    -l allow-insecure  -d 'Allow pulling from an HTTP-only (insecure) registry'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
     -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
     -s h -l help       -d 'Show help'

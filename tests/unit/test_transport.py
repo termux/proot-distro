@@ -146,6 +146,66 @@ def test_get_auth_token_open_registry_returns_empty(monkeypatch):
     assert transport.get_auth_token("x/y", registry="open.example") == ""
 
 
+# ----- insecure (HTTP) registries -----------------------------------------
+
+def test_registry_base_url_scheme():
+    assert transport.registry_base_url("reg.example") == "https://reg.example"
+    assert (transport.registry_base_url("reg.example", insecure=True)
+            == "http://reg.example")
+    # Docker Hub (empty registry) is always HTTPS, even when insecure.
+    assert (transport.registry_base_url("", insecure=True)
+            == transport.REGISTRY_URL)
+
+
+def test_insecure_registry_msg_mentions_flag():
+    m = transport.insecure_registry_msg("192.168.1.1:5000")
+    assert "192.168.1.1:5000" in m
+    assert "--allow-insecure" in m
+
+
+def test_get_auth_token_insecure_uses_http(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, *a, **k):
+        calls.append(req.full_url)
+        return _FakeResp({})  # /v2/ answered 200 -> no token needed
+
+    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    tok = transport.get_auth_token("x/y", registry="reg.example", insecure=True)
+    assert tok == ""
+    assert calls == ["http://reg.example/v2/"]  # probed over plain HTTP
+
+
+def test_get_auth_token_http_only_registry_raises(monkeypatch):
+    # The HTTPS probe fails at the TLS level (what a plaintext server returns
+    # to an HTTPS ClientHello); the registry answers over HTTP -> a
+    # RuntimeError telling the user to pass --allow-insecure.
+    def fake_urlopen(req, *a, **k):
+        if req.full_url.startswith("https://"):
+            raise urllib.error.URLError("wrong version number")
+        return _FakeResp({})  # http confirmation probe succeeds
+
+    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert "--allow-insecure" in str(exc.value)
+    assert "reg.example" in str(exc.value)
+
+
+def test_get_auth_token_unreachable_reraises_urlerror(monkeypatch):
+    # Both HTTPS and HTTP probes fail -> genuine outage; the original
+    # connection error propagates rather than the insecure-registry hint.
+    def fake_urlopen(req, *a, **k):
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(urllib.error.URLError):
+        transport.get_auth_token("x/y", registry="reg.example")
+
+
 # ----- message helpers ----------------------------------------------------
 
 def test_auth_note(monkeypatch):

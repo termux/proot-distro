@@ -89,6 +89,7 @@ _proot_distro() {
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-n --name)'{-n,--name}'[install under a custom container name]:alias' \
                         '(-a --architecture)'{-a,--architecture}'[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '--allow-insecure[allow pulling from an HTTP-only (insecure) registry]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:docker image or local archive:_files'
                     ;;

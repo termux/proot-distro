@@ -179,6 +179,9 @@ def _install(sub):
     p.add_argument(
         "-a", "--architecture", dest="override_arch", metavar="ARCH",
     )
+    p.add_argument(
+        "--allow-insecure", dest="allow_insecure", action="store_true",
+    )
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
 

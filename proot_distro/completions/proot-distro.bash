@@ -59,7 +59,7 @@ _proot_distro() {
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "-n --name -a --architecture -q --quiet -h --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-n --name -a --architecture --allow-insecure -q --quiet -h --help" -- "${cur}"))
             elif [[ "${cur}" == /* || "${cur}" == ./* || "${cur}" == ../* ]]; then
                 _filedir
             fi

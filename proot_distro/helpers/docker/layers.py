@@ -39,6 +39,7 @@ from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
 
 def download_blob(
     repo: str, digest: str, token: str, registry: str = "",
+    insecure: bool = False,
 ) -> str:
     """Download a blob to the layer cache; return the local file path.
 
@@ -59,7 +60,7 @@ def download_blob(
             f"is supported)."
         )
 
-    base = registry_base_url(registry)
+    base = registry_base_url(registry, insecure)
     url = f"{base}/v2/{repo}/blobs/{digest}"
     headers = {**_ua()}
     if token:

@@ -80,9 +80,48 @@ def auth_opener():
     return _auth_stripping_opener
 
 
-def registry_base_url(registry: str) -> str:
-    """Return the base URL for *registry* (empty string ⇒ Docker Hub)."""
-    return f"https://{registry}" if registry else REGISTRY_URL
+def registry_base_url(registry: str, insecure: bool = False) -> str:
+    """Return the base URL for *registry* (empty string ⇒ Docker Hub).
+
+    HTTPS is used by default. When *insecure* is set the custom registry
+    is addressed over plain HTTP — the opt-in behaviour behind the
+    install command's ``--allow-insecure``. Docker Hub (empty registry)
+    is always served over HTTPS and ignores *insecure*.
+    """
+    if not registry:
+        return REGISTRY_URL
+    scheme = "http" if insecure else "https"
+    return f"{scheme}://{registry}"
+
+
+def insecure_registry_msg(registry: str) -> str:
+    """Return the error shown when an HTTPS-only pull hits an HTTP registry."""
+    return (
+        f"Registry '{registry}' is served over plain HTTP, not HTTPS. "
+        f"proot-distro enforces TLS by default. If you trust this registry "
+        f"and the network path to it, re-run with '--allow-insecure' to "
+        f"permit the unencrypted connection."
+    )
+
+
+def _http_registry_reachable(registry: str, timeout: float = 6.0) -> bool:
+    """Return True if *registry* answers a /v2/ probe over plaintext HTTP.
+
+    Used only on the error path, after an HTTPS probe failed at the
+    connection/TLS level, to decide whether the failure is because the
+    registry is HTTP-only (so we can point the user at ``--allow-insecure``)
+    rather than simply unreachable. Any HTTP-level response — including
+    401/404 — confirms the host speaks HTTP on that endpoint.
+    """
+    req = urllib.request.Request(f"http://{registry}/v2/", headers=_ua())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read(64)
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
 
 
 def auth_denied_msg(image_ref: str, code: int) -> str:
@@ -158,6 +197,7 @@ def env_basic_auth() -> str:
 
 def get_auth_token(
     repo: str, registry: str = "", actions: str = "pull",
+    insecure: bool = False,
 ) -> str:
     """Obtain an OAuth2 token for *repo* with the requested *actions* scope.
 
@@ -174,6 +214,12 @@ def get_auth_token(
     endpoint for anonymous requests. For any other registry the Bearer
     realm is discovered by probing /v2/ and following the standard OCI
     auth challenge.
+
+    The custom-registry probe uses HTTPS unless *insecure* is set. When
+    enforcing HTTPS and the probe fails at the connection/TLS level, the
+    registry is re-probed over plain HTTP; if it answers there, a
+    RuntimeError pointing the user at ``--allow-insecure`` is raised so
+    an HTTP-only registry is distinguished from an unreachable one.
     """
     basic_auth = env_basic_auth()
 
@@ -193,8 +239,9 @@ def get_auth_token(
     # serving public images still require this dance — they answer 401
     # to unauthenticated requests and embed the token endpoint in the
     # challenge.
+    scheme = "http" if insecure else "https"
     probe_req = urllib.request.Request(
-        f"https://{registry}/v2/", headers=_ua()
+        f"{scheme}://{registry}/v2/", headers=_ua()
     )
     try:
         with urllib.request.urlopen(probe_req) as resp:
@@ -224,6 +271,15 @@ def get_auth_token(
         with urllib.request.urlopen(token_req) as resp:
             data = json.loads(resp.read())
         return data.get("token") or data.get("access_token", "")
+    except urllib.error.URLError as exc:
+        # Connection/TLS-level failure (DNS, refused, or a TLS handshake
+        # error such as the WRONG_VERSION_NUMBER a plaintext server returns
+        # to an HTTPS ClientHello). When enforcing HTTPS, confirm whether
+        # the registry actually speaks plain HTTP before blaming the
+        # network — if it does, point the user at --allow-insecure.
+        if not insecure and _http_registry_reachable(registry):
+            raise RuntimeError(insecure_registry_msg(registry)) from exc
+        raise
 
 
 def auth_note(prefix_space: bool = True) -> str:

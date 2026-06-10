@@ -53,6 +53,7 @@ from proot_distro.helpers.docker.transport import (
     auth_opener,
     env_basic_auth,
     get_auth_token,
+    insecure_registry_msg,
     push_denied_msg,
     registry_base_url,
 )
@@ -75,6 +76,7 @@ __all__ = (
     "download_blob",
     "env_basic_auth",
     "get_auth_token",
+    "insecure_registry_msg",
     "layer_cache_path",
     "load_manifest_cache",
     "manifest_cache_path",

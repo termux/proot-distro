@@ -76,9 +76,10 @@ _ACCEPT_HEADER = ", ".join([
 
 
 def _get_manifest(
-    repo: str, ref: str, token: str, registry: str = ""
+    repo: str, ref: str, token: str, registry: str = "",
+    insecure: bool = False,
 ) -> dict:
-    base = registry_base_url(registry)
+    base = registry_base_url(registry, insecure)
     url = f"{base}/v2/{repo}/manifests/{ref}"
     headers = {**_ua(), "Accept": _ACCEPT_HEADER}
     if token:
@@ -130,15 +131,17 @@ def _pick_platform(
     )
 
 
-def _resolve_single_manifest(image_ref: str, arch: str) -> tuple:
+def _resolve_single_manifest(
+    image_ref: str, arch: str, insecure: bool = False
+) -> tuple:
     """Return (single_image_manifest, token, repo, registry) for the arch."""
     registry, repo, tag = parse_image_ref(image_ref)
 
     log_info(f"Authenticating with registry{auth_note()}...")
-    token = get_auth_token(repo, registry)
+    token = get_auth_token(repo, registry, insecure=insecure)
 
     log_info(f"Fetching manifest for '{image_ref}'...")
-    manifest = _get_manifest(repo, tag, token, registry)
+    manifest = _get_manifest(repo, tag, token, registry, insecure)
 
     if manifest["_ct"] in _MANIFEST_LIST_TYPES or "manifests" in manifest:
         docker_arch, docker_variant = ARCH_TO_DOCKER.get(arch, (arch, ""))
@@ -149,19 +152,22 @@ def _resolve_single_manifest(image_ref: str, arch: str) -> tuple:
             image_ref,
         )
         log_info(f"Fetching {arch} manifest...")
-        manifest = _get_manifest(repo, target["digest"], token, registry)
+        manifest = _get_manifest(
+            repo, target["digest"], token, registry, insecure
+        )
 
     return manifest, token, repo, registry
 
 
 def _fetch_config_blob(
-    repo: str, cfg_digest: str, token: str, registry: str = ""
+    repo: str, cfg_digest: str, token: str, registry: str = "",
+    insecure: bool = False,
 ) -> dict:
     """Fetch the image config blob; return parsed dict (empty on error)."""
     if not cfg_digest:
         return {}
     try:
-        base = registry_base_url(registry)
+        base = registry_base_url(registry, insecure)
         url = f"{base}/v2/{repo}/blobs/{cfg_digest}"
         headers = {**_ua()}
         if token:
@@ -173,13 +179,20 @@ def _fetch_config_blob(
         return {}
 
 
-def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
+def pull_image(
+    image_ref: str, rootfs_dir: str, arch: str, insecure: bool = False
+) -> dict:
     """Pull an OCI/Docker image and extract all layers into *rootfs_dir*.
 
     The manifest is checked in the local cache first. If cached and
     every layer is present, the install runs entirely without network
     access. If the manifest is cached but some layers are missing, only
     an auth token is fetched before downloading the missing layers.
+
+    Registry traffic uses HTTPS unless *insecure* is set, in which case a
+    custom registry is contacted over plain HTTP (Docker Hub stays HTTPS
+    regardless). With HTTPS enforced, an HTTP-only registry surfaces a
+    RuntimeError that points the user at ``--allow-insecure``.
 
     Returns ``{"manifest": ..., "image_config": ...}``. The caller is
     expected to persist these into ``containers/<name>/manifest.json``
@@ -203,7 +216,7 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
                      f"layer(s) for '{image_ref}' ({arch})...")
             try:
                 log_info(f"Authenticating with registry{auth_note()}...")
-                token = get_auth_token(repo, registry)
+                token = get_auth_token(repo, registry, insecure=insecure)
             except (urllib.error.URLError, OSError) as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
                     if net_err.code in (401, 403):
@@ -222,7 +235,7 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
     else:
         try:
             manifest, token, repo, registry = _resolve_single_manifest(
-                image_ref, arch
+                image_ref, arch, insecure
             )
         except (urllib.error.URLError, OSError) as net_err:
             if isinstance(net_err, urllib.error.HTTPError):
@@ -238,7 +251,9 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             log_error(f"No cached manifest found for '{image_ref}' ({arch}).")
             raise RuntimeError(f"Network error: {net_err}") from net_err
         cfg_digest = manifest.get("config", {}).get("digest", "")
-        image_config = _fetch_config_blob(repo, cfg_digest, token, registry)
+        image_config = _fetch_config_blob(
+            repo, cfg_digest, token, registry, insecure
+        )
         save_manifest_cache(image_ref, arch, manifest, repo, image_config)
 
     layers = manifest.get("layers", [])
@@ -270,7 +285,9 @@ def pull_image(image_ref: str, rootfs_dir: str, arch: str) -> dict:
             log_info(f"{short_id}: Downloading layer "
                      f"{i + 1}/{n_layers}{size_str}...")
             try:
-                layer_path = download_blob(repo, digest, token or "", registry)
+                layer_path = download_blob(
+                    repo, digest, token or "", registry, insecure
+                )
             except urllib.error.HTTPError as dl_err:
                 if dl_err.code in (401, 403):
                     raise RuntimeError(
