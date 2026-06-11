@@ -25,8 +25,10 @@
 
 import hashlib
 import os
+import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from proot_distro.atomic import atomic_replace
@@ -35,7 +37,37 @@ from proot_distro.message import msg, log_info, log_error
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
-__all__ = ("download_file", "sha256_file")
+__all__ = ("download_file", "is_plaintext_http_tls_error", "sha256_file")
+
+
+# OpenSSL handshake-failure reasons that mean the peer answered our TLS
+# ClientHello with plaintext bytes — the signature of a server that only
+# speaks plain HTTP reached over an https:// URL. WRONG_VERSION_NUMBER is what
+# modern OpenSSL reports; the others cover older or edge builds. These are
+# *not* emitted for genuine TLS problems (expired/untrusted cert,
+# protocol-version mismatch), so matching them does not misclassify a real
+# HTTPS endpoint.
+_PLAINTEXT_HTTP_TLS_REASONS = frozenset({
+    "WRONG_VERSION_NUMBER",
+    "UNKNOWN_PROTOCOL",
+    "HTTP_REQUEST",
+})
+
+
+def is_plaintext_http_tls_error(exc: urllib.error.URLError) -> bool:
+    """Return True if *exc* is a TLS handshake failure caused by the peer
+    replying with plaintext HTTP rather than a genuine TLS error.
+
+    ``urlopen`` of an https:// URL against a server that only speaks plain
+    HTTP raises ``URLError`` whose ``reason`` is an ``ssl.SSLError`` with a
+    telltale reason string (e.g. WRONG_VERSION_NUMBER). That alone proves the
+    peer is HTTP-only — no second network probe is needed. Shared by the
+    Docker registry transport and the generic URL downloader.
+    """
+    reason = getattr(exc, "reason", None)
+    if not isinstance(reason, ssl.SSLError):
+        return False
+    return (getattr(reason, "reason", None) or "") in _PLAINTEXT_HTTP_TLS_REASONS
 
 
 def sha256_file(path: str) -> str:
@@ -80,6 +112,18 @@ def download_file(
             raise
         except (urllib.error.URLError, OSError) as exc:
             clear_bar()
+            # A plaintext-HTTP reply to an https:// URL is deterministic —
+            # retrying cannot fix it. Surface a meaningful error immediately
+            # instead of looping and then printing a raw SSL error.
+            if (isinstance(exc, urllib.error.URLError)
+                    and is_plaintext_http_tls_error(exc)):
+                host = urllib.parse.urlparse(url).netloc or url
+                raise RuntimeError(
+                    f"The URL '{url}' uses HTTPS, but the server at '{host}' "
+                    f"responded over plain HTTP (no TLS). If you trust this "
+                    f"source, retry with the same URL using the 'http://' "
+                    f"scheme instead."
+                ) from exc
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
                 continue

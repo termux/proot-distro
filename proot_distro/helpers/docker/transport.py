@@ -39,6 +39,7 @@ import urllib.parse
 import urllib.request
 
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
+from proot_distro.helpers.download import is_plaintext_http_tls_error
 
 
 REGISTRY_URL = "https://registry-1.docker.io"
@@ -107,11 +108,12 @@ def insecure_registry_msg(registry: str) -> str:
 def _http_registry_reachable(registry: str, timeout: float = 6.0) -> bool:
     """Return True if *registry* answers a /v2/ probe over plaintext HTTP.
 
-    Used only on the error path, after an HTTPS probe failed at the
-    connection/TLS level, to decide whether the failure is because the
-    registry is HTTP-only (so we can point the user at ``--allow-insecure``)
-    rather than simply unreachable. Any HTTP-level response — including
-    401/404 — confirms the host speaks HTTP on that endpoint.
+    Fallback used on the error path when the TLS error itself is not a
+    conclusive plaintext signal (see is_plaintext_http_tls_error), to
+    decide whether an HTTPS failure is because the registry is HTTP-only
+    (so we can point the user at ``--allow-insecure``) rather than simply
+    unreachable. Any HTTP-level response — including 401/404 — confirms the
+    host speaks HTTP on that endpoint.
     """
     req = urllib.request.Request(f"http://{registry}/v2/", headers=_ua())
     try:
@@ -273,11 +275,18 @@ def get_auth_token(
         return data.get("token") or data.get("access_token", "")
     except urllib.error.URLError as exc:
         # Connection/TLS-level failure (DNS, refused, or a TLS handshake
-        # error such as the WRONG_VERSION_NUMBER a plaintext server returns
-        # to an HTTPS ClientHello). When enforcing HTTPS, confirm whether
-        # the registry actually speaks plain HTTP before blaming the
-        # network — if it does, point the user at --allow-insecure.
-        if not insecure and _http_registry_reachable(registry):
+        # error). When enforcing HTTPS, work out whether it is because the
+        # registry is HTTP-only — so we can point the user at
+        # --allow-insecure instead of surfacing a raw SSL error. Two signals,
+        # cheapest first:
+        #   1. The handshake error itself says the peer replied with
+        #      plaintext (WRONG_VERSION_NUMBER and friends) — conclusive,
+        #      no extra request needed.
+        #   2. Otherwise actively re-probe the registry over plain HTTP.
+        if not insecure and (
+            is_plaintext_http_tls_error(exc)
+            or _http_registry_reachable(registry)
+        ):
             raise RuntimeError(insecure_registry_msg(registry)) from exc
         raise
 

@@ -6,6 +6,7 @@ import base64
 import email.message
 import io
 import json
+import ssl
 
 import urllib.error
 import urllib.request
@@ -199,6 +200,42 @@ def test_get_auth_token_unreachable_reraises_urlerror(monkeypatch):
     # connection error propagates rather than the insecure-registry hint.
     def fake_urlopen(req, *a, **k):
         raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(urllib.error.URLError):
+        transport.get_auth_token("x/y", registry="reg.example")
+
+
+def _ssl_error(reason: str) -> ssl.SSLError:
+    err = ssl.SSLError(1, f"[SSL: {reason}] {reason.lower()}")
+    err.reason = reason
+    return err
+
+
+def test_get_auth_token_detects_plaintext_from_ssl_error(monkeypatch):
+    # The HTTPS probe fails with WRONG_VERSION_NUMBER and the active HTTP
+    # confirmation probe ALSO fails. The friendly error must still fire,
+    # driven solely by the SSL handshake signature.
+    def fake_urlopen(req, *a, **k):
+        if req.full_url.startswith("https://"):
+            raise urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
+        raise urllib.error.URLError("http confirmation probe also down")
+
+    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert "--allow-insecure" in str(exc.value)
+
+
+def test_get_auth_token_cert_error_is_not_insecure(monkeypatch):
+    # A real HTTPS registry with a bad cert must NOT be reported as HTTP-only;
+    # the original SSL error propagates (no --allow-insecure suggestion).
+    def fake_urlopen(req, *a, **k):
+        if req.full_url.startswith("https://"):
+            raise urllib.error.URLError(_ssl_error("CERTIFICATE_VERIFY_FAILED"))
+        raise urllib.error.URLError("no http here")  # https-only host
 
     monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
