@@ -242,6 +242,4 @@ def download_file(
                 raise RuntimeError(
                     f"Cannot download {url}: HTTP {exc.code} {exc.reason}"
                 ) from exc
-        msg()
-        log_error("Download failure, please check your network connection.")
         raise RuntimeError(f"Cannot download {url}: {exc}") from exc
