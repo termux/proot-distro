@@ -184,6 +184,49 @@ def test_download_file_server_error_retries(tmp_path, monkeypatch):
     assert len(calls) == 3  # exhausted every retry
 
 
+def test_download_file_retry_is_logged(tmp_path, monkeypatch):
+    # Each transient failure that is about to be retried must be logged so the
+    # user sees the retry happening (attempt number and the underlying error),
+    # and no retry line is logged for the final, fatal attempt.
+    logged = []
+    monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
+
+    def fake_urlopen(req, *a, **k):
+        raise urllib.error.URLError("connection reset")
+
+    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError):
+        download.download_file(
+            "https://example.com/rootfs.tar", str(dest),
+            max_retries=3, retry_delay=0,
+        )
+    retry_lines = [t for t in logged if "retrying" in t.lower()]
+    assert len(retry_lines) == 2  # logged before retry 2 and 3, not the last
+    assert "attempt 1/3" in retry_lines[0]
+    assert "connection reset" in retry_lines[0]
+
+
+def test_download_file_no_retry_log_on_fail_fast(tmp_path, monkeypatch):
+    # A deterministic 404 fails immediately, so there must be no retry log.
+    logged = []
+    monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
+
+    def fake_urlopen(req, *a, **k):
+        raise urllib.error.HTTPError(
+            req.full_url, 404, "Not Found", email.message.Message(), None
+        )
+
+    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError):
+        download.download_file(
+            "https://example.com/rootfs.tar", str(dest),
+            max_retries=5, retry_delay=0,
+        )
+    assert not [t for t in logged if "retrying" in t.lower()]
+
+
 def test_download_file_insecure_passes_unverified_context(tmp_path, monkeypatch):
     # With insecure=True the download is performed with an SSL context that
     # skips verification, so a bad certificate no longer blocks it.

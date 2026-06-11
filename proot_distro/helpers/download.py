@@ -197,6 +197,10 @@ def download_file(
                         f"'http://' scheme instead."
                     ) from exc
             if attempt < max_retries - 1:
+                log_info(
+                    f"Download attempt {attempt + 1}/{max_retries} failed "
+                    f"({exc}); retrying in {retry_delay}s..."
+                )
                 time.sleep(retry_delay)
                 continue
             msg()
