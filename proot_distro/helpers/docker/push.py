@@ -301,7 +301,8 @@ def push_image(image_ref: str, arch: str) -> dict:
 
     log_info(f"Authenticating with registry{auth_note()}...")
     try:
-        token = get_auth_token(repo, registry, actions="pull,push")
+        # push always uses verified HTTPS; the resolved base is ignored.
+        token, _base = get_auth_token(repo, registry, actions="pull,push")
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             raise RuntimeError(push_denied_msg(image_ref, exc.code)) from exc

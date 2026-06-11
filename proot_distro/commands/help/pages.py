@@ -340,9 +340,11 @@ HELP_PAGES = {
              "platform strings (linux/arm64, linux/amd64, linux/arm/v7, "
              "linux/386, linux/riscv64)."),
             ("--allow-insecure",
-             "Permit pulling from a custom registry served over plain "
-             "HTTP instead of HTTPS. Use this only for trusted registries "
-             "on a network path you control."),
+             "Permit insecure transport: a custom registry served over "
+             "plain HTTP, or an HTTPS endpoint (registry or download URL) "
+             "whose TLS certificate is untrusted, expired, self-signed, or "
+             "for a different hostname. Use only for trusted sources on a "
+             "network path you control."),
             ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [

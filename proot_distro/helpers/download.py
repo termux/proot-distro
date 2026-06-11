@@ -37,7 +37,55 @@ from proot_distro.message import msg, log_info, log_error
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
-__all__ = ("download_file", "is_plaintext_http_tls_error", "sha256_file")
+__all__ = (
+    "certificate_error_msg",
+    "download_file",
+    "insecure_ssl_context",
+    "is_cert_verification_error",
+    "is_plaintext_http_tls_error",
+    "sha256_file",
+)
+
+
+def insecure_ssl_context() -> ssl.SSLContext:
+    """Return an SSL context that skips certificate and hostname checks.
+
+    Used only when the caller explicitly opts in via ``--allow-insecure``,
+    so an HTTPS endpoint with an untrusted/expired/self-signed certificate
+    (or a hostname mismatch) can still be reached. This disables the
+    protection TLS provides against impersonation — never the default.
+    """
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def is_cert_verification_error(exc: urllib.error.URLError) -> bool:
+    """Return True if *exc* is a TLS certificate verification failure.
+
+    Covers an untrusted CA, an expired or self-signed certificate, and a
+    hostname mismatch — i.e. the server *does* speak TLS, but its
+    certificate is not trusted. Distinct from is_plaintext_http_tls_error,
+    which means the peer is not speaking TLS at all.
+    """
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return True
+    return (
+        isinstance(reason, ssl.SSLError)
+        and getattr(reason, "reason", None) == "CERTIFICATE_VERIFY_FAILED"
+    )
+
+
+def certificate_error_msg(target: str) -> str:
+    """Return the error shown when *target* presents an untrusted certificate."""
+    return (
+        f"TLS certificate verification failed for '{target}' — the server's "
+        f"certificate is untrusted, expired, self-signed, or issued for a "
+        f"different hostname. If you trust this endpoint, re-run with "
+        f"'--allow-insecure' to skip certificate verification."
+    )
 
 
 # OpenSSL handshake-failure reasons that mean the peer answered our TLS
@@ -85,16 +133,25 @@ def sha256_file(path: str) -> str:
 
 
 def download_file(
-    url: str, dest: str, max_retries: int = 5, retry_delay: int = 5
+    url: str, dest: str, max_retries: int = 5, retry_delay: int = 5,
+    insecure: bool = False,
 ) -> None:
-    """Download *url* to *dest* with progress output, redirects, and retries."""
+    """Download *url* to *dest* with progress output, redirects, and retries.
+
+    HTTPS certificates are verified by default. When *insecure* is set the
+    download proceeds even if the server presents an untrusted/expired/
+    self-signed certificate — the opt-in behaviour behind the install
+    command's ``--allow-insecure``.
+    """
     req = urllib.request.Request(
         url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
     )
+    context = insecure_ssl_context() if insecure else None
     for attempt in range(max_retries):
         try:
             with atomic_replace(dest) as tmp:
-                with urllib.request.urlopen(req) as resp, open(tmp, "wb") as fh:
+                with urllib.request.urlopen(req, context=context) as resp, \
+                        open(tmp, "wb") as fh:
                     total = int(resp.headers.get("Content-Length", 0))
                     downloaded = 0
                     while True:
@@ -112,18 +169,22 @@ def download_file(
             raise
         except (urllib.error.URLError, OSError) as exc:
             clear_bar()
-            # A plaintext-HTTP reply to an https:// URL is deterministic —
-            # retrying cannot fix it. Surface a meaningful error immediately
-            # instead of looping and then printing a raw SSL error.
-            if (isinstance(exc, urllib.error.URLError)
-                    and is_plaintext_http_tls_error(exc)):
+            # Some TLS failures are deterministic — retrying cannot fix them,
+            # so surface a meaningful error immediately instead of looping and
+            # then printing a raw SSL error.
+            if isinstance(exc, urllib.error.URLError):
                 host = urllib.parse.urlparse(url).netloc or url
-                raise RuntimeError(
-                    f"The URL '{url}' uses HTTPS, but the server at '{host}' "
-                    f"responded over plain HTTP (no TLS). If you trust this "
-                    f"source, retry with the same URL using the 'http://' "
-                    f"scheme instead."
-                ) from exc
+                # An untrusted/expired/self-signed certificate.
+                if not insecure and is_cert_verification_error(exc):
+                    raise RuntimeError(certificate_error_msg(host)) from exc
+                # A plaintext-HTTP reply to an https:// URL.
+                if is_plaintext_http_tls_error(exc):
+                    raise RuntimeError(
+                        f"The URL '{url}' uses HTTPS, but the server at "
+                        f"'{host}' responded over plain HTTP (no TLS). If you "
+                        f"trust this source, retry with the same URL using the "
+                        f"'http://' scheme instead."
+                    ) from exc
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
                 continue

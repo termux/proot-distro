@@ -54,9 +54,8 @@ from proot_distro.helpers.docker.refs import ARCH_TO_DOCKER, parse_image_ref
 from proot_distro.helpers.docker.transport import (
     auth_denied_msg,
     auth_note,
-    auth_opener,
     get_auth_token,
-    registry_base_url,
+    opener,
     _ua,
 )
 
@@ -76,16 +75,15 @@ _ACCEPT_HEADER = ", ".join([
 
 
 def _get_manifest(
-    repo: str, ref: str, token: str, registry: str = "",
+    repo: str, ref: str, token: str, base: str,
     insecure: bool = False,
 ) -> dict:
-    base = registry_base_url(registry, insecure)
     url = f"{base}/v2/{repo}/manifests/{ref}"
     headers = {**_ua(), "Accept": _ACCEPT_HEADER}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as resp:
+    with opener(insecure).open(req) as resp:
         body = resp.read()
         ct = resp.headers.get("Content-Type", "")
     data = json.loads(body)
@@ -134,14 +132,14 @@ def _pick_platform(
 def _resolve_single_manifest(
     image_ref: str, arch: str, insecure: bool = False
 ) -> tuple:
-    """Return (single_image_manifest, token, repo, registry) for the arch."""
+    """Return (single_image_manifest, token, repo, base) for the arch."""
     registry, repo, tag = parse_image_ref(image_ref)
 
     log_info(f"Authenticating with registry{auth_note()}...")
-    token = get_auth_token(repo, registry, insecure=insecure)
+    token, base = get_auth_token(repo, registry, insecure=insecure)
 
     log_info(f"Fetching manifest for '{image_ref}'...")
-    manifest = _get_manifest(repo, tag, token, registry, insecure)
+    manifest = _get_manifest(repo, tag, token, base, insecure)
 
     if manifest["_ct"] in _MANIFEST_LIST_TYPES or "manifests" in manifest:
         docker_arch, docker_variant = ARCH_TO_DOCKER.get(arch, (arch, ""))
@@ -153,27 +151,26 @@ def _resolve_single_manifest(
         )
         log_info(f"Fetching {arch} manifest...")
         manifest = _get_manifest(
-            repo, target["digest"], token, registry, insecure
+            repo, target["digest"], token, base, insecure
         )
 
-    return manifest, token, repo, registry
+    return manifest, token, repo, base
 
 
 def _fetch_config_blob(
-    repo: str, cfg_digest: str, token: str, registry: str = "",
+    repo: str, cfg_digest: str, token: str, base: str,
     insecure: bool = False,
 ) -> dict:
     """Fetch the image config blob; return parsed dict (empty on error)."""
     if not cfg_digest:
         return {}
     try:
-        base = registry_base_url(registry, insecure)
         url = f"{base}/v2/{repo}/blobs/{cfg_digest}"
         headers = {**_ua()}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(url, headers=headers)
-        with auth_opener().open(req) as resp:
+        with opener(insecure).open(req) as resp:
             return json.loads(resp.read())
     except Exception:
         return {}
@@ -189,16 +186,19 @@ def pull_image(
     access. If the manifest is cached but some layers are missing, only
     an auth token is fetched before downloading the missing layers.
 
-    Registry traffic uses HTTPS unless *insecure* is set, in which case a
-    custom registry is contacted over plain HTTP (Docker Hub stays HTTPS
-    regardless). With HTTPS enforced, an HTTP-only registry surfaces a
-    RuntimeError that points the user at ``--allow-insecure``.
+    Registry traffic uses verified HTTPS unless *insecure* is set. With
+    *insecure* a custom registry is reached over HTTPS with certificate
+    verification disabled, falling back to plain HTTP when the registry only
+    speaks HTTP (Docker Hub stays verified-HTTPS regardless). When enforcing
+    HTTPS, an untrusted certificate or an HTTP-only registry surfaces a
+    RuntimeError pointing the user at ``--allow-insecure``.
 
     Returns ``{"manifest": ..., "image_config": ...}``. The caller is
     expected to persist these into ``containers/<name>/manifest.json``
     so `run`, `reset`, and `login` can later read image_config.
     """
     token = None
+    base = None
 
     manifest, repo, image_config = load_manifest_cache(image_ref, arch)
     registry = parse_image_ref(image_ref)[0]
@@ -216,7 +216,9 @@ def pull_image(
                      f"layer(s) for '{image_ref}' ({arch})...")
             try:
                 log_info(f"Authenticating with registry{auth_note()}...")
-                token = get_auth_token(repo, registry, insecure=insecure)
+                token, base = get_auth_token(
+                    repo, registry, insecure=insecure
+                )
             except (urllib.error.URLError, OSError) as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
                     if net_err.code in (401, 403):
@@ -234,7 +236,7 @@ def pull_image(
                 raise RuntimeError(f"Network error: {net_err}") from net_err
     else:
         try:
-            manifest, token, repo, registry = _resolve_single_manifest(
+            manifest, token, repo, base = _resolve_single_manifest(
                 image_ref, arch, insecure
             )
         except (urllib.error.URLError, OSError) as net_err:
@@ -252,7 +254,7 @@ def pull_image(
             raise RuntimeError(f"Network error: {net_err}") from net_err
         cfg_digest = manifest.get("config", {}).get("digest", "")
         image_config = _fetch_config_blob(
-            repo, cfg_digest, token, registry, insecure
+            repo, cfg_digest, token, base, insecure
         )
         save_manifest_cache(image_ref, arch, manifest, repo, image_config)
 
@@ -286,7 +288,7 @@ def pull_image(
                      f"{i + 1}/{n_layers}{size_str}...")
             try:
                 layer_path = download_blob(
-                    repo, digest, token or "", registry, insecure
+                    repo, digest, token or "", base, insecure
                 )
             except urllib.error.HTTPError as dl_err:
                 if dl_err.code in (401, 403):

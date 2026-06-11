@@ -32,13 +32,13 @@ from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
 from proot_distro.helpers.docker.cache import layer_cache_path
 from proot_distro.helpers.docker.transport import (
-    auth_opener, registry_base_url, _ua,
+    opener, _ua,
 )
 from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
 
 
 def download_blob(
-    repo: str, digest: str, token: str, registry: str = "",
+    repo: str, digest: str, token: str, base: str,
     insecure: bool = False,
 ) -> str:
     """Download a blob to the layer cache; return the local file path.
@@ -60,7 +60,6 @@ def download_blob(
             f"is supported)."
         )
 
-    base = registry_base_url(registry, insecure)
     url = f"{base}/v2/{repo}/blobs/{digest}"
     headers = {**_ua()}
     if token:
@@ -70,7 +69,7 @@ def download_blob(
 
     try:
         with atomic_replace(dest) as tmp:
-            with auth_opener().open(req) as resp, open(tmp, "wb") as fh:
+            with opener(insecure).open(req) as resp, open(tmp, "wb") as fh:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
                 while True:

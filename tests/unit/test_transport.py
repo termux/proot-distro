@@ -83,7 +83,7 @@ def test_redirect_keeps_auth_same_host():
     assert new_req.get_header("Authorization") == "Bearer TOKEN"
 
 
-# ----- token exchange (mocked urlopen) ------------------------------------
+# ----- token exchange (mocked) --------------------------------------------
 
 class _FakeResp:
     def __init__(self, payload):
@@ -99,6 +99,28 @@ class _FakeResp:
         return False
 
 
+class _FakeOpener:
+    """Stand-in for the object returned by transport.opener(insecure)."""
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def open(self, req, *a, **k):
+        return self._fn(req, *a, **k)
+
+
+def _patch_opener(monkeypatch, fn):
+    monkeypatch.setattr(
+        transport, "opener", lambda insecure=False: _FakeOpener(fn)
+    )
+
+
+def _ssl_error(reason: str) -> ssl.SSLError:
+    err = ssl.SSLError(1, f"[SSL: {reason}] {reason.lower()}")
+    err.reason = reason
+    return err
+
+
 def test_get_auth_token_docker_hub(monkeypatch):
     captured = {}
 
@@ -108,15 +130,16 @@ def test_get_auth_token_docker_hub(monkeypatch):
 
     monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    tok = transport.get_auth_token("library/ubuntu")
+    tok, base = transport.get_auth_token("library/ubuntu")
     assert tok == "DOCKERHUB_TKN"
+    assert base == transport.REGISTRY_URL
     assert "scope=repository:library/ubuntu:pull" in captured["url"]
 
 
 def test_get_auth_token_custom_registry_challenge(monkeypatch):
     calls = []
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         calls.append(req.full_url)
         if req.full_url == "https://reg.example/v2/":
             hdrs = email.message.Message()
@@ -128,26 +151,28 @@ def test_get_auth_token_custom_registry_challenge(monkeypatch):
             )
         return _FakeResp({"token": "CUSTOM_TKN"})
 
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    _patch_opener(monkeypatch, fake_open)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    tok = transport.get_auth_token("team/app", registry="reg.example",
-                                   actions="pull,push")
+    tok, base = transport.get_auth_token(
+        "team/app", registry="reg.example", actions="pull,push"
+    )
     assert tok == "CUSTOM_TKN"
-    # Probed /v2/ then redeemed the realm with the right scope+service.
+    assert base == "https://reg.example"
+    # Probed /v2/ over HTTPS then redeemed the realm with scope+service.
     assert calls[0] == "https://reg.example/v2/"
     assert any("scope=repository:team/app:pull,push" in u for u in calls[1:])
     assert any("service=reg.example" in u for u in calls[1:])
 
 
 def test_get_auth_token_open_registry_returns_empty(monkeypatch):
-    def fake_urlopen(req, *a, **k):
-        return _FakeResp({})  # /v2/ answered 200 -> no auth needed
+    _patch_opener(monkeypatch, lambda req, *a, **k: _FakeResp({}))
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    tok, base = transport.get_auth_token("x/y", registry="open.example")
+    assert tok == ""
+    assert base == "https://open.example"
 
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
-    assert transport.get_auth_token("x/y", registry="open.example") == ""
 
-
-# ----- insecure (HTTP) registries -----------------------------------------
+# ----- insecure transport: HTTP-only registries ---------------------------
 
 def test_registry_base_url_scheme():
     assert transport.registry_base_url("reg.example") == "https://reg.example"
@@ -164,30 +189,56 @@ def test_insecure_registry_msg_mentions_flag():
     assert "--allow-insecure" in m
 
 
-def test_get_auth_token_insecure_uses_http(monkeypatch):
+def test_get_auth_token_insecure_bad_cert_uses_https(monkeypatch):
+    # Under --allow-insecure, HTTPS is tried first (so a registry with an
+    # untrusted certificate is reached); no HTTP fallback when HTTPS answers.
     calls = []
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         calls.append(req.full_url)
-        return _FakeResp({})  # /v2/ answered 200 -> no token needed
+        return _FakeResp({})
 
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    _patch_opener(monkeypatch, fake_open)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    tok = transport.get_auth_token("x/y", registry="reg.example", insecure=True)
+    tok, base = transport.get_auth_token(
+        "x/y", registry="reg.example", insecure=True
+    )
     assert tok == ""
-    assert calls == ["http://reg.example/v2/"]  # probed over plain HTTP
+    assert base == "https://reg.example"
+    assert calls == ["https://reg.example/v2/"]
+
+
+def test_get_auth_token_insecure_http_only_falls_back_to_http(monkeypatch):
+    # Under --allow-insecure, an HTTP-only registry (its HTTPS probe returns
+    # plaintext) is retried over http:// and resolves to an http base.
+    calls = []
+
+    def fake_open(req, *a, **k):
+        calls.append(req.full_url)
+        if req.full_url.startswith("https://"):
+            raise urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
+        return _FakeResp({})
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    tok, base = transport.get_auth_token(
+        "x/y", registry="reg.example", insecure=True
+    )
+    assert tok == ""
+    assert base == "http://reg.example"
+    assert calls == ["https://reg.example/v2/", "http://reg.example/v2/"]
 
 
 def test_get_auth_token_http_only_registry_raises(monkeypatch):
-    # The HTTPS probe fails at the TLS level (what a plaintext server returns
-    # to an HTTPS ClientHello); the registry answers over HTTP -> a
-    # RuntimeError telling the user to pass --allow-insecure.
-    def fake_urlopen(req, *a, **k):
-        if req.full_url.startswith("https://"):
-            raise urllib.error.URLError("wrong version number")
-        return _FakeResp({})  # http confirmation probe succeeds
+    # Enforcing HTTPS: the HTTPS probe gets a plaintext WRONG_VERSION_NUMBER.
+    # The SSL signature alone drives the friendly error, even when the active
+    # HTTP re-probe is unavailable.
+    def fake_open(req, *a, **k):
+        raise urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
 
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setattr(transport, "_http_registry_reachable",
+                        lambda *a, **k: False)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
     with pytest.raises(RuntimeError) as exc:
         transport.get_auth_token("x/y", registry="reg.example")
@@ -195,52 +246,49 @@ def test_get_auth_token_http_only_registry_raises(monkeypatch):
     assert "reg.example" in str(exc.value)
 
 
-def test_get_auth_token_unreachable_reraises_urlerror(monkeypatch):
-    # Both HTTPS and HTTP probes fail -> genuine outage; the original
-    # connection error propagates rather than the insecure-registry hint.
-    def fake_urlopen(req, *a, **k):
-        raise urllib.error.URLError("offline")
+def test_get_auth_token_http_only_via_active_probe(monkeypatch):
+    # Enforcing HTTPS: HTTPS fails with a non-conclusive error, but an active
+    # HTTP /v2/ re-probe confirms the registry is HTTP-only.
+    def fake_open(req, *a, **k):
+        raise urllib.error.URLError("connection reset")
 
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    with pytest.raises(urllib.error.URLError):
-        transport.get_auth_token("x/y", registry="reg.example")
-
-
-def _ssl_error(reason: str) -> ssl.SSLError:
-    err = ssl.SSLError(1, f"[SSL: {reason}] {reason.lower()}")
-    err.reason = reason
-    return err
-
-
-def test_get_auth_token_detects_plaintext_from_ssl_error(monkeypatch):
-    # The HTTPS probe fails with WRONG_VERSION_NUMBER and the active HTTP
-    # confirmation probe ALSO fails. The friendly error must still fire,
-    # driven solely by the SSL handshake signature.
-    def fake_urlopen(req, *a, **k):
-        if req.full_url.startswith("https://"):
-            raise urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
-        raise urllib.error.URLError("http confirmation probe also down")
-
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setattr(transport, "_http_registry_reachable",
+                        lambda *a, **k: True)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
     with pytest.raises(RuntimeError) as exc:
         transport.get_auth_token("x/y", registry="reg.example")
     assert "--allow-insecure" in str(exc.value)
 
 
-def test_get_auth_token_cert_error_is_not_insecure(monkeypatch):
-    # A real HTTPS registry with a bad cert must NOT be reported as HTTP-only;
-    # the original SSL error propagates (no --allow-insecure suggestion).
-    def fake_urlopen(req, *a, **k):
-        if req.full_url.startswith("https://"):
-            raise urllib.error.URLError(_ssl_error("CERTIFICATE_VERIFY_FAILED"))
-        raise urllib.error.URLError("no http here")  # https-only host
+def test_get_auth_token_unreachable_reraises_urlerror(monkeypatch):
+    # HTTPS fails and the registry is not reachable over HTTP either -> a
+    # genuine outage; the original error propagates (no insecure hint).
+    def fake_open(req, *a, **k):
+        raise urllib.error.URLError("offline")
 
-    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setattr(transport, "_http_registry_reachable",
+                        lambda *a, **k: False)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
     with pytest.raises(urllib.error.URLError):
         transport.get_auth_token("x/y", registry="reg.example")
+
+
+# ----- insecure transport: bad TLS certificates ---------------------------
+
+def test_get_auth_token_cert_error_raises_meaningful(monkeypatch):
+    # Enforcing HTTPS: an untrusted certificate yields a meaningful error
+    # pointing at --allow-insecure (not a raw SSL error, not "HTTP-only").
+    def fake_open(req, *a, **k):
+        raise urllib.error.URLError(_ssl_error("CERTIFICATE_VERIFY_FAILED"))
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert "--allow-insecure" in str(exc.value)
+    assert "certificate" in str(exc.value).lower()
 
 
 # ----- message helpers ----------------------------------------------------

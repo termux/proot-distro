@@ -240,7 +240,7 @@ def _run_install(
             )
             os.close(fd)
             log_info("Downloading archive...")
-            download_file(url, tmp_archive)
+            download_file(url, tmp_archive, insecure=allow_insecure)
             log_info("Extracting rootfs from archive...")
             metadata = install_from_local_file(tmp_archive, rootfs_dir, dist_arch)
         else:
