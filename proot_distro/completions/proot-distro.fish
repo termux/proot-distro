@@ -332,6 +332,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
     -s a -l architecture -r -d 'Target CPU architecture' \
     -a 'aarch64\tAArch64 arm\tARM(32-bit) i686\tx86(32-bit) riscv64\tRISC-V x86_64\tx86_64'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
+    -l allow-insecure  -d 'Allow pushing to an HTTP-only or untrusted-TLS registry'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
     -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
     -s h -l help       -d 'Show help'
@@ -467,6 +469,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from build' -s q -l quiet          
 complete -c pd -f -n '__fish_seen_subcommand_from build' -s h -l help             -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s a -l architecture -r -d 'Target CPU architecture' -a 'aarch64 arm i686 riscv64 x86_64'
+complete -c pd -f -n '__fish_seen_subcommand_from push' -l allow-insecure       -d 'Allow pushing to an HTTP-only or untrusted-TLS registry'
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet           -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help            -d 'Show help'
 

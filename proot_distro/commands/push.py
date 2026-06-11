@@ -46,6 +46,7 @@ def command_push(args):
     image_ref = getattr(args, "image_ref", None) or ""
     override_arch = getattr(args, "override_arch", None) or ""
     quiet = bool(getattr(args, "quiet", False))
+    allow_insecure = bool(getattr(args, "allow_insecure", False))
 
     if not image_ref:
         crit_error("image reference is not specified (e.g. 'myrepo/myapp:1.0').")
@@ -86,7 +87,7 @@ def command_push(args):
 
     try:
         with BuildLock(image_ref, target_arch, command="push"):
-            result = push_image(image_ref, target_arch)
+            result = push_image(image_ref, target_arch, insecure=allow_insecure)
     except KeyboardInterrupt:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")

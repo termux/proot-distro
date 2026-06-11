@@ -4,6 +4,7 @@
 # fail fast. The opener is mocked; no network.
 
 import email.message
+import hashlib
 
 import urllib.error
 import urllib.request
@@ -47,7 +48,10 @@ class _FakeOpener:
 
 
 def _patch_opener(monkeypatch, fn):
-    monkeypatch.setattr(push, "auth_opener", lambda: _FakeOpener(fn))
+    monkeypatch.setattr(push, "opener", lambda insecure=False: _FakeOpener(fn))
+
+
+_BASE = "https://reg.example"
 
 
 def _http_error(url, code, reason):
@@ -59,7 +63,7 @@ def _http_error(url, code, reason):
 
 def test_blob_exists_true_on_200(monkeypatch):
     _patch_opener(monkeypatch, lambda req, *a, **k: _FakeResp(200))
-    assert push._blob_exists("me/app", "sha256:aa", "TKN") is True
+    assert push._blob_exists("me/app", "sha256:aa", "TKN", _BASE) is True
 
 
 def test_blob_exists_false_on_404_no_retry(monkeypatch):
@@ -71,7 +75,7 @@ def test_blob_exists_false_on_404_no_retry(monkeypatch):
         raise _http_error(req.full_url, 404, "Not Found")
 
     _patch_opener(monkeypatch, fake)
-    assert push._blob_exists("me/app", "sha256:aa", "TKN") is False
+    assert push._blob_exists("me/app", "sha256:aa", "TKN", _BASE) is False
     assert len(calls) == 1
 
 
@@ -86,7 +90,7 @@ def test_blob_exists_retries_transient(monkeypatch):
         return _FakeResp(200)
 
     _patch_opener(monkeypatch, fake)
-    assert push._blob_exists("me/app", "sha256:aa", "TKN") is True
+    assert push._blob_exists("me/app", "sha256:aa", "TKN", _BASE) is True
     assert len(calls) == 3
 
 
@@ -100,9 +104,25 @@ def test_blob_exists_auth_error_propagates(monkeypatch):
 
     _patch_opener(monkeypatch, fake)
     with pytest.raises(urllib.error.HTTPError) as exc:
-        push._blob_exists("me/app", "sha256:aa", "TKN")
+        push._blob_exists("me/app", "sha256:aa", "TKN", _BASE)
     assert exc.value.code == 401
     assert len(calls) == 1
+
+
+def test_blob_exists_uses_insecure_opener(monkeypatch):
+    # The insecure flag must reach transport.opener so --allow-insecure pushes
+    # over the unverified/HTTP opener, mirroring the install path.
+    seen = {}
+
+    def fake_opener(insecure=False):
+        seen["insecure"] = insecure
+        return _FakeOpener(lambda req, *a, **k: _FakeResp(200))
+
+    monkeypatch.setattr(push, "opener", fake_opener)
+    assert push._blob_exists(
+        "me/app", "sha256:aa", "TKN", "http://reg.example", insecure=True
+    ) is True
+    assert seen["insecure"] is True
 
 
 # ----- _put_manifest ------------------------------------------------------
@@ -119,7 +139,7 @@ def test_put_manifest_retries_then_returns_digest(monkeypatch):
     _patch_opener(monkeypatch, fake)
     digest = push._put_manifest(
         "me/app", "latest", b"{}",
-        "application/vnd.oci.image.manifest.v1+json", "TKN",
+        "application/vnd.oci.image.manifest.v1+json", "TKN", _BASE,
     )
     assert digest == "sha256:dd"
     assert len(calls) == 2
@@ -141,7 +161,7 @@ def test_upload_blob_bytes_retries_whole_session(monkeypatch):
         return _FakeResp(201)  # PUT
 
     _patch_opener(monkeypatch, fake)
-    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN")
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
     assert methods == ["POST", "POST", "PUT"]
 
 
@@ -154,6 +174,66 @@ def test_upload_blob_bytes_4xx_fails_fast(monkeypatch):
 
     _patch_opener(monkeypatch, fake)
     with pytest.raises(urllib.error.HTTPError) as exc:
-        push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN")
+        push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
     assert exc.value.code == 403
     assert calls == ["POST"]  # deterministic -> no retry
+
+
+# ----- push_image: --allow-insecure threading -----------------------------
+
+def test_push_image_threads_base_and_insecure(monkeypatch, tmp_path):
+    # push_image must resolve the scheme/base via get_auth_token(insecure=...)
+    # and thread that base + the insecure flag into every upload helper, so an
+    # HTTP-only (or bad-cert) registry is pushed to over the resolved transport.
+    cfg_bytes = b"CFG"
+    cfg_digest = "sha256:" + hashlib.sha256(cfg_bytes).hexdigest()
+    layer_digest = "sha256:" + "a" * 64
+    manifest = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"digest": cfg_digest},
+        "layers": [{"digest": layer_digest}],
+    }
+
+    blob = tmp_path / "layer"
+    blob.write_bytes(b"data")
+
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda ref, arch: (manifest, "me/app", {"k": "v"}))
+    monkeypatch.setattr(push, "canonical_json", lambda d: cfg_bytes)
+    monkeypatch.setattr(push, "layer_cache_path", lambda d: str(blob))
+    monkeypatch.setattr(push, "parse_image_ref",
+                        lambda ref: ("reg.example", "me/app", "latest"))
+
+    captured = {}
+
+    def fake_auth(repo, registry, actions="pull", insecure=False):
+        captured["auth_insecure"] = insecure
+        # HTTP-only registry resolved to an http base under --allow-insecure.
+        return "TKN", "http://reg.example"
+
+    monkeypatch.setattr(push, "get_auth_token", fake_auth)
+
+    def fake_blob_exists(repo, digest, token, base, insecure=False):
+        captured["blob_base"] = base
+        captured["blob_insecure"] = insecure
+        return True  # everything already present -> skip uploads
+
+    monkeypatch.setattr(push, "_blob_exists", fake_blob_exists)
+
+    def fake_put_manifest(repo, ref, body, media, token, base, insecure=False):
+        captured["manifest_base"] = base
+        captured["manifest_insecure"] = insecure
+        return "sha256:dd"
+
+    monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
+
+    result = push.push_image(
+        "reg.example/me/app:latest", "x86_64", insecure=True
+    )
+
+    assert captured["auth_insecure"] is True
+    assert captured["blob_base"] == "http://reg.example"
+    assert captured["blob_insecure"] is True
+    assert captured["manifest_base"] == "http://reg.example"
+    assert captured["manifest_insecure"] is True
+    assert result["manifest_digest"] == "sha256:dd"

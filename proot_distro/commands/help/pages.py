@@ -175,12 +175,19 @@ HELP_PAGES = {
              "riscv64, x86_64) or Docker platform strings "
              "(linux/arm64, linux/amd64, ...). Default: host "
              "architecture."),
+            ("--allow-insecure",
+             "Permit insecure transport to the target registry: a custom "
+             "registry served over plain HTTP, or an HTTPS registry whose "
+             "TLS certificate is untrusted, expired, self-signed, or for a "
+             "different hostname. Use only for trusted registries on a "
+             "network path you control."),
             ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [
             f"{PROGRAM_NAME} push myuser/myapp:1.0",
             f"{PROGRAM_NAME} push ghcr.io/myorg/myapp:1.0",
             f"{PROGRAM_NAME} push --architecture aarch64 myuser/myapp:1.0",
+            f"{PROGRAM_NAME} push --allow-insecure 192.168.1.10:5000/app:1.0",
         ],
         "footer": [
             {

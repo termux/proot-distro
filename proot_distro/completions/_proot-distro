@@ -263,6 +263,7 @@ _proot_distro() {
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '(-a --architecture)'{-a,--architecture}'[target CPU architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                        '--allow-insecure[allow pushing to an HTTP-only or untrusted-TLS registry]' \
                         '1:image reference'
                     ;;
 

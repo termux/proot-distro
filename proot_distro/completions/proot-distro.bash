@@ -271,7 +271,7 @@ _proot_distro() {
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "-a --architecture -q --quiet -h --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-a --architecture --allow-insecure -q --quiet -h --help" -- "${cur}"))
             fi
             ;;
 
