@@ -2,6 +2,7 @@
 # error classifier and download_file's handling of an https:// URL that is
 # actually served over plain HTTP (urlopen mocked; no network).
 
+import email.message
 import ssl
 
 import urllib.error
@@ -132,6 +133,55 @@ def test_download_file_cert_error_meaningful(tmp_path, monkeypatch):
     assert "--allow-insecure" in message
     assert "example.com" in message
     assert len(calls) == 1  # deterministic error -> no pointless retries
+
+
+# ----- download_file fail-fast on HTTP errors -----------------------------
+
+def test_download_file_404_fails_fast(tmp_path, monkeypatch):
+    # A 404 is deterministic: the URL is wrong and retrying cannot fix it, so
+    # the download must fail immediately (one request, no retry delays) with a
+    # meaningful HTTP error.
+    calls = []
+
+    def fake_urlopen(req, *a, **k):
+        calls.append(req.full_url)
+        raise urllib.error.HTTPError(
+            req.full_url, 404, "Not Found", email.message.Message(), None
+        )
+
+    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError) as exc:
+        download.download_file(
+            "https://example.com/rootfs.tar", str(dest),
+            max_retries=5, retry_delay=0,
+        )
+    message = str(exc.value)
+    assert "404" in message
+    assert "Not Found" in message
+    assert len(calls) == 1  # deterministic error -> no pointless retries
+
+
+def test_download_file_server_error_retries(tmp_path, monkeypatch):
+    # A 5xx is potentially transient, so it must still be retried up to the
+    # limit before failing (i.e. fail-fast applies to client errors only).
+    calls = []
+
+    def fake_urlopen(req, *a, **k):
+        calls.append(req.full_url)
+        raise urllib.error.HTTPError(
+            req.full_url, 503, "Service Unavailable",
+            email.message.Message(), None
+        )
+
+    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError):
+        download.download_file(
+            "https://example.com/rootfs.tar", str(dest),
+            max_retries=3, retry_delay=0,
+        )
+    assert len(calls) == 3  # exhausted every retry
 
 
 def test_download_file_insecure_passes_unverified_context(tmp_path, monkeypatch):

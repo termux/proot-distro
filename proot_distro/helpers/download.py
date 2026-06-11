@@ -169,9 +169,20 @@ def download_file(
             raise
         except (urllib.error.URLError, OSError) as exc:
             clear_bar()
-            # Some TLS failures are deterministic — retrying cannot fix them,
-            # so surface a meaningful error immediately instead of looping and
-            # then printing a raw SSL error.
+            # Some failures are deterministic — retrying cannot fix them, so
+            # surface a meaningful error immediately instead of looping with
+            # delays and then printing a raw error after exhausting every retry.
+            #
+            # An HTTP client error (4xx) means the URL or request is wrong: a
+            # 404 will not become a 200 on retry. 408 (Request Timeout) and 429
+            # (Too Many Requests) are the standard "retry later" codes, so those
+            # alone fall through to the retry loop.
+            if (isinstance(exc, urllib.error.HTTPError)
+                    and 400 <= exc.code < 500
+                    and exc.code not in (408, 429)):
+                raise RuntimeError(
+                    f"Cannot download {url}: HTTP {exc.code} {exc.reason}"
+                ) from exc
             if isinstance(exc, urllib.error.URLError):
                 host = urllib.parse.urlparse(url).netloc or url
                 # An untrusted/expired/self-signed certificate.
