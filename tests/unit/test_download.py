@@ -81,6 +81,78 @@ def test_insecure_ssl_context_skips_verification():
     assert ctx.verify_mode == ssl.CERT_NONE
 
 
+# ----- shared retry policy ------------------------------------------------
+
+def test_is_retryable_http_error():
+    # 5xx and plain network failures are transient -> retry.
+    assert download.is_retryable_http_error(
+        urllib.error.HTTPError("u", 503, "x", email.message.Message(), None)
+    )
+    assert download.is_retryable_http_error(urllib.error.URLError("reset"))
+    assert download.is_retryable_http_error(OSError("broken pipe"))
+    # 408/429 mean "retry later" -> retry.
+    assert download.is_retryable_http_error(
+        urllib.error.HTTPError("u", 429, "x", email.message.Message(), None)
+    )
+    # Other 4xx are deterministic -> do not retry.
+    for code in (400, 401, 403, 404, 410):
+        assert not download.is_retryable_http_error(
+            urllib.error.HTTPError("u", code, "x", email.message.Message(), None)
+        )
+    # TLS cert and plaintext-HTTP failures are deterministic -> do not retry.
+    assert not download.is_retryable_http_error(
+        urllib.error.URLError(_ssl_error("CERTIFICATE_VERIFY_FAILED"))
+    )
+    assert not download.is_retryable_http_error(
+        urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
+    )
+
+
+def test_retry_http_retries_then_succeeds(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    logged = []
+    monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise urllib.error.URLError("reset")
+        return "ok"
+
+    assert download.retry_http(op, what="Job", max_retries=5) == "ok"
+    assert attempts["n"] == 3
+    assert len([t for t in logged if "retrying" in t.lower()]) == 2
+
+
+def test_retry_http_fail_fast_on_deterministic(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        raise urllib.error.HTTPError(
+            "u", 404, "Not Found", email.message.Message(), None
+        )
+
+    with pytest.raises(urllib.error.HTTPError):
+        download.retry_http(op, what="Job", max_retries=5)
+    assert attempts["n"] == 1  # deterministic -> no retries
+
+
+def test_retry_http_reraises_after_exhaustion(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        raise urllib.error.URLError("reset")
+
+    with pytest.raises(urllib.error.URLError):
+        download.retry_http(op, what="Job", max_retries=3)
+    assert attempts["n"] == 3
+
+
 # ----- download_file plaintext detection ----------------------------------
 
 def test_download_file_plaintext_https_meaningful_error(tmp_path, monkeypatch):

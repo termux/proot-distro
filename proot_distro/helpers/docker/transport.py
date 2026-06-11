@@ -44,6 +44,7 @@ from proot_distro.helpers.download import (
     insecure_ssl_context,
     is_cert_verification_error,
     is_plaintext_http_tls_error,
+    retry_http,
 )
 
 
@@ -108,6 +109,20 @@ def opener(insecure: bool = False):
 def auth_opener():
     """Return the shared (certificate-verifying) opener that strips Auth."""
     return _verified_opener
+
+
+def _request_body(open_fn, req, what: str) -> bytes:
+    """Open *req* via *open_fn* and return the full response body.
+
+    Transient network failures are retried (same policy as the URL
+    downloader). HTTP errors — including the expected 401 that carries the
+    Bearer challenge — and deterministic TLS failures are not retried; they
+    propagate to the caller, which knows how to handle them.
+    """
+    def _attempt():
+        with open_fn(req) as resp:
+            return resp.read()
+    return retry_http(_attempt, what=what)
 
 
 def registry_base_url(registry: str, insecure: bool = False) -> str:
@@ -268,8 +283,9 @@ def get_auth_token(
         req = urllib.request.Request(url, headers=_ua())
         if basic_auth:
             req.add_header("Authorization", basic_auth)
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read())
+        data = json.loads(
+            _request_body(urllib.request.urlopen, req, f"Authenticating {repo}")
+        )
         token = data.get("token") or data.get("access_token", "")
         return token, REGISTRY_URL
 
@@ -283,8 +299,7 @@ def get_auth_token(
         base = f"{scheme}://{registry}"
         probe_req = urllib.request.Request(f"{base}/v2/", headers=_ua())
         try:
-            with op.open(probe_req) as resp:
-                resp.read()
+            _request_body(op.open, probe_req, f"Probing {base}/v2/")
             return "", base  # registry is wide open; no token required
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
@@ -309,8 +324,9 @@ def get_auth_token(
             )
             if basic_auth:
                 token_req.add_header("Authorization", basic_auth)
-            with op.open(token_req) as resp:
-                data = json.loads(resp.read())
+            data = json.loads(
+                _request_body(op.open, token_req, "Requesting auth token")
+            )
             token = data.get("token") or data.get("access_token", "")
             return token, base
         except urllib.error.URLError as exc:

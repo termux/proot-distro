@@ -13,7 +13,15 @@ import urllib.request
 
 import pytest
 
+from proot_distro.helpers import download
 from proot_distro.helpers.docker import transport
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    # Registry requests now share download.retry_http; neutralise its sleep so
+    # tests exercising transient (retryable) failures don't actually wait.
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
 
 
 # ----- bearer challenge parsing -------------------------------------------
@@ -259,6 +267,25 @@ def test_get_auth_token_http_only_via_active_probe(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         transport.get_auth_token("x/y", registry="reg.example")
     assert "--allow-insecure" in str(exc.value)
+
+
+def test_get_auth_token_retries_transient_probe(monkeypatch):
+    # A transient network failure on the /v2/ probe is retried (same policy as
+    # the URL downloader) and then succeeds — registry pulls now retry too.
+    calls = []
+
+    def fake_open(req, *a, **k):
+        calls.append(req.full_url)
+        if len(calls) < 3:
+            raise urllib.error.URLError("connection reset")
+        return _FakeResp({})
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    tok, base = transport.get_auth_token("x/y", registry="reg.example")
+    assert tok == ""
+    assert base == "https://reg.example"
+    assert len(calls) == 3  # two transient failures, then success
 
 
 def test_get_auth_token_unreachable_reraises_urlerror(monkeypatch):

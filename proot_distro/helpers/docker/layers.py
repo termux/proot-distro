@@ -30,6 +30,7 @@ import urllib.request
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
+from proot_distro.helpers.download import retry_http
 from proot_distro.helpers.docker.cache import layer_cache_path
 from proot_distro.helpers.docker.transport import (
     opener, _ua,
@@ -65,30 +66,36 @@ def download_blob(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    hasher = hashlib.sha256()
 
-    try:
-        with atomic_replace(dest) as tmp:
-            with opener(insecure).open(req) as resp, open(tmp, "wb") as fh:
-                total = int(resp.headers.get("Content-Length", 0))
-                downloaded = 0
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    hasher.update(chunk)
-                    downloaded += len(chunk)
-                    draw_bytes_bar(downloaded, total, noun="downloaded")
-            actual_hex = hasher.hexdigest()
-            if actual_hex != expected_hex.lower():
-                raise RuntimeError(
-                    f"Layer integrity check failed for digest '{digest}': "
-                    f"expected {expected_hex}, got {actual_hex}."
-                )
-    finally:
-        clear_bar()
-    return dest
+    def _attempt():
+        # Fresh hasher per attempt: a retry re-downloads the whole blob, so
+        # state from a failed partial download must not carry over.
+        hasher = hashlib.sha256()
+        try:
+            with atomic_replace(dest) as tmp:
+                with opener(insecure).open(req) as resp, open(tmp, "wb") as fh:
+                    total = int(resp.headers.get("Content-Length", 0))
+                    downloaded = 0
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        hasher.update(chunk)
+                        downloaded += len(chunk)
+                        draw_bytes_bar(downloaded, total, noun="downloaded")
+                actual_hex = hasher.hexdigest()
+                if actual_hex != expected_hex.lower():
+                    raise RuntimeError(
+                        f"Layer integrity check failed for digest '{digest}': "
+                        f"expected {expected_hex}, got {actual_hex}."
+                    )
+        finally:
+            clear_bar()
+        return dest
+
+    short_id = digest.split(":")[-1][:12]
+    return retry_http(_attempt, what=f"Downloading layer {short_id}")
 
 
 def apply_layer(layer_path: str, rootfs_dir: str) -> None:

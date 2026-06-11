@@ -37,6 +37,7 @@ import urllib.request
 
 from proot_distro.message import log_info, log_error
 from proot_distro.progress import fmt_size
+from proot_distro.helpers.download import retry_http
 from proot_distro.helpers.docker.cache import (
     all_layers_cached,
     layer_cache_path,
@@ -83,9 +84,12 @@ def _get_manifest(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with opener(insecure).open(req) as resp:
-        body = resp.read()
-        ct = resp.headers.get("Content-Type", "")
+
+    def _attempt():
+        with opener(insecure).open(req) as resp:
+            return resp.read(), resp.headers.get("Content-Type", "")
+
+    body, ct = retry_http(_attempt, what=f"Fetching manifest {ref}")
     data = json.loads(body)
     # Prefer the Content-Type header; fall back to the mediaType field.
     data["_ct"] = ct.split(";")[0].strip() or data.get("mediaType", "")
@@ -170,8 +174,12 @@ def _fetch_config_blob(
         if token:
             headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(url, headers=headers)
-        with opener(insecure).open(req) as resp:
-            return json.loads(resp.read())
+
+        def _attempt():
+            with opener(insecure).open(req) as resp:
+                return resp.read()
+
+        return json.loads(retry_http(_attempt, what="Fetching image config"))
     except Exception:
         return {}
 

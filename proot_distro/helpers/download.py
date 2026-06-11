@@ -43,6 +43,8 @@ __all__ = (
     "insecure_ssl_context",
     "is_cert_verification_error",
     "is_plaintext_http_tls_error",
+    "is_retryable_http_error",
+    "retry_http",
     "sha256_file",
 )
 
@@ -118,6 +120,51 @@ def is_plaintext_http_tls_error(exc: urllib.error.URLError) -> bool:
     return (getattr(reason, "reason", None) or "") in _PLAINTEXT_HTTP_TLS_REASONS
 
 
+def is_retryable_http_error(exc: BaseException) -> bool:
+    """Return True if a failed HTTP request is worth retrying.
+
+    Deterministic failures are not retried — they cannot succeed on a repeat
+    request: an HTTP client error (4xx, except 408 Request Timeout and 429 Too
+    Many Requests, which mean "retry later"), a TLS certificate verification
+    failure, or a plaintext-HTTP reply to an https:// URL. Everything else —
+    5xx server errors, connection resets, timeouts, DNS failures — is treated
+    as transient and retried.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return not (400 <= exc.code < 500 and exc.code not in (408, 429))
+    if isinstance(exc, urllib.error.URLError):
+        if is_cert_verification_error(exc) or is_plaintext_http_tls_error(exc):
+            return False
+    return True
+
+
+def retry_http(operation, *, what: str, max_retries: int = 5,
+               retry_delay: int = 5):
+    """Run *operation* (a zero-arg callable performing one HTTP request),
+    retrying transient failures with a delay and a logged notice.
+
+    This is the single retry policy shared by the plain URL downloader and the
+    Docker/OCI registry transport, so both behave identically. A deterministic
+    failure (see is_retryable_http_error) is re-raised immediately — without
+    retrying or logging — so the caller can translate it into a meaningful
+    message. The original exception is likewise re-raised once every attempt is
+    spent. *what* is a short label for the retry log line.
+    """
+    for attempt in range(max_retries):
+        try:
+            return operation()
+        except KeyboardInterrupt:
+            raise
+        except (urllib.error.URLError, OSError) as exc:
+            if not is_retryable_http_error(exc) or attempt >= max_retries - 1:
+                raise
+            log_info(
+                f"{what}: attempt {attempt + 1}/{max_retries} failed "
+                f"({exc}); retrying in {retry_delay}s..."
+            )
+            time.sleep(retry_delay)
+
+
 def sha256_file(path: str) -> str:
     """Compute and return the SHA-256 hex digest of *path*, with a progress bar."""
     h = hashlib.sha256()
@@ -147,62 +194,54 @@ def download_file(
         url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
     )
     context = insecure_ssl_context() if insecure else None
-    for attempt in range(max_retries):
-        try:
-            with atomic_replace(dest) as tmp:
-                with urllib.request.urlopen(req, context=context) as resp, \
-                        open(tmp, "wb") as fh:
-                    total = int(resp.headers.get("Content-Length", 0))
-                    downloaded = 0
-                    while True:
-                        chunk = resp.read(65536)
-                        if not chunk:
-                            break
-                        fh.write(chunk)
-                        downloaded += len(chunk)
-                        draw_bytes_bar(downloaded, total, noun="downloaded")
-            clear_bar()
-            log_info(f"Finished downloading ({fmt_size(downloaded)}).")
-            return
-        except KeyboardInterrupt:
-            clear_bar()
-            raise
-        except (urllib.error.URLError, OSError) as exc:
-            clear_bar()
-            # Some failures are deterministic — retrying cannot fix them, so
-            # surface a meaningful error immediately instead of looping with
-            # delays and then printing a raw error after exhausting every retry.
-            #
-            # An HTTP client error (4xx) means the URL or request is wrong: a
-            # 404 will not become a 200 on retry. 408 (Request Timeout) and 429
-            # (Too Many Requests) are the standard "retry later" codes, so those
-            # alone fall through to the retry loop.
+    host = urllib.parse.urlparse(url).netloc or url
+
+    def _attempt():
+        with atomic_replace(dest) as tmp:
+            with urllib.request.urlopen(req, context=context) as resp, \
+                    open(tmp, "wb") as fh:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    draw_bytes_bar(downloaded, total, noun="downloaded")
+        clear_bar()
+        log_info(f"Finished downloading ({fmt_size(downloaded)}).")
+
+    try:
+        retry_http(_attempt, what=f"Downloading {url}",
+                   max_retries=max_retries, retry_delay=retry_delay)
+    except KeyboardInterrupt:
+        clear_bar()
+        raise
+    except (urllib.error.URLError, OSError) as exc:
+        clear_bar()
+        # retry_http re-raises deterministic failures (and the last transient
+        # one once retries are spent); translate them into a meaningful error
+        # instead of leaking a raw SSL/HTTP error to the user.
+        if isinstance(exc, urllib.error.URLError):
+            # An untrusted/expired/self-signed certificate.
+            if not insecure and is_cert_verification_error(exc):
+                raise RuntimeError(certificate_error_msg(host)) from exc
+            # A plaintext-HTTP reply to an https:// URL.
+            if is_plaintext_http_tls_error(exc):
+                raise RuntimeError(
+                    f"The URL '{url}' uses HTTPS, but the server at "
+                    f"'{host}' responded over plain HTTP (no TLS). If you "
+                    f"trust this source, retry with the same URL using the "
+                    f"'http://' scheme instead."
+                ) from exc
+            # An HTTP client error (4xx): the URL or request is wrong.
             if (isinstance(exc, urllib.error.HTTPError)
                     and 400 <= exc.code < 500
                     and exc.code not in (408, 429)):
                 raise RuntimeError(
                     f"Cannot download {url}: HTTP {exc.code} {exc.reason}"
                 ) from exc
-            if isinstance(exc, urllib.error.URLError):
-                host = urllib.parse.urlparse(url).netloc or url
-                # An untrusted/expired/self-signed certificate.
-                if not insecure and is_cert_verification_error(exc):
-                    raise RuntimeError(certificate_error_msg(host)) from exc
-                # A plaintext-HTTP reply to an https:// URL.
-                if is_plaintext_http_tls_error(exc):
-                    raise RuntimeError(
-                        f"The URL '{url}' uses HTTPS, but the server at "
-                        f"'{host}' responded over plain HTTP (no TLS). If you "
-                        f"trust this source, retry with the same URL using the "
-                        f"'http://' scheme instead."
-                    ) from exc
-            if attempt < max_retries - 1:
-                log_info(
-                    f"Download attempt {attempt + 1}/{max_retries} failed "
-                    f"({exc}); retrying in {retry_delay}s..."
-                )
-                time.sleep(retry_delay)
-                continue
-            msg()
-            log_error("Download failure, please check your network connection.")
-            raise RuntimeError(f"Cannot download {url}: {exc}") from exc
+        msg()
+        log_error("Download failure, please check your network connection.")
+        raise RuntimeError(f"Cannot download {url}: {exc}") from exc
