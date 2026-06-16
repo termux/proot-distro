@@ -137,3 +137,99 @@ def test_termux_branch_adds_proot_extensions(tmp_path, monkeypatch):
     assert "--link2symlink" in args
     assert "--kill-on-exit" in args
     assert "--change-id=0:0" in args
+
+
+def _termux_host_proot_args(tmp_path, monkeypatch, **over):
+    """build_proot_args under a faked Termux host with sentinel bind helpers.
+
+    storage/system bindings are stubbed to fixed sentinels so the dispatch
+    logic can be asserted independently of the test host's real /system,
+    /storage, etc. _add_android_data_binds is replaced by a recorder.
+    """
+    monkeypatch.setattr(proot_cmd, "IS_TERMUX", True)
+    monkeypatch.setattr(proot_cmd, "system_bindings", lambda: ["--bind=/system"])
+    monkeypatch.setattr(proot_cmd, "storage_bindings",
+                        lambda: ["--bind=/storage"])
+    android_calls = []
+    monkeypatch.setattr(proot_cmd, "_add_android_data_binds",
+                        lambda args: android_calls.append(True))
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    base = dict(
+        proot_bin="proot", rootfs=str(rootfs), login_wd="/",
+        login_uid=None, login_gid=None, login_home=None,
+        emu_args=[], need_emu=False, target_arch=HOST_ARCH,
+        hostname="localhost", kernel_release="6.0-test",
+        dist_type="termux", minimal=False, isolated=False,
+        no_link2symlink=False, no_sysvipc=False, no_kill_on_exit=False,
+        use_shared_home=False, shared_tmp=False, shared_x11=False,
+        custom_binds=[], redirect_ports=False, inner=["/bin/login"],
+    )
+    base.update(over)
+    args = proot_cmd.build_proot_args(**base)
+    return args, android_calls
+
+
+def test_termux_type_binds_only_system_dirs(tmp_path, monkeypatch):
+    # Termux-type, non-isolated: Android system dirs are bound, but the
+    # host's /data/data/com.termux, shared storage, and the Termux prefix
+    # bridge are not.
+    args, android_calls = _termux_host_proot_args(tmp_path, monkeypatch)
+    assert "--bind=/system" in args
+    assert "--bind=/storage" not in args
+    assert android_calls == []
+    assert not any(a.startswith(f"--bind={TERMUX_PREFIX}") for a in args)
+
+
+def test_termux_type_isolated_no_host_dirs(tmp_path, monkeypatch):
+    # Termux-type, isolated: no host directories at all.
+    args, android_calls = _termux_host_proot_args(
+        tmp_path, monkeypatch, isolated=True,
+    )
+    assert "--bind=/system" not in args
+    assert "--bind=/storage" not in args
+    assert android_calls == []
+
+
+def test_normal_type_binds_android_data_and_storage(tmp_path, monkeypatch):
+    # Normal-type, non-isolated: Android data dirs, shared storage, system
+    # dirs, and the Termux prefix bridge are all bound.
+    args, android_calls = _termux_host_proot_args(
+        tmp_path, monkeypatch, dist_type="normal",
+        login_uid="0", login_gid="0", login_home="/root",
+        inner=["/bin/sh", "-l"],
+    )
+    assert "--bind=/system" in args
+    assert "--bind=/storage" in args
+    assert android_calls == [True]
+    assert f"--bind={TERMUX_PREFIX}" in args
+
+
+def test_minimal_login_keeps_image_env(builders, capsys):
+    # Minimal mode no longer discards the image manifest's Env entries.
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_config": {"config": {"Env": ["FOO=frommanifest"]}},
+    })
+    with pytest.raises(SystemExit) as exc:
+        command_login(_login_args("box", minimal=True))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "FOO=frommanifest" in out
+
+
+def test_termux_type_login_applies_image_env(builders, capsys):
+    # Termux-type containers now apply the image manifest's Env entries.
+    builders.make_container("tbox", arch=HOST_ARCH, manifest={
+        "image_config": {"config": {"Env": ["FOO=frommanifest"]}},
+    })
+    login_bin = os.path.join(
+        container_rootfs("tbox") + TERMUX_PREFIX, "bin", "login"
+    )
+    os.makedirs(os.path.dirname(login_bin), exist_ok=True)
+    with open(login_bin, "w") as fh:
+        fh.write("#!/bin/sh\n")
+    with pytest.raises(SystemExit) as exc:
+        command_login(_login_args("tbox"))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "FOO=frommanifest" in out

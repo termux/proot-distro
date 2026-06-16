@@ -40,13 +40,24 @@ from proot_distro.constants import TERMUX_PREFIX
 _VALID_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+# Android system environment variables harvested from the launching
+# Termux process so the guest's ART/dalvik tooling can locate the
+# runtime. Inherited from the host only in the default mode (neither
+# isolated nor minimal); isolated and minimal sessions keep just the
+# image manifest's own values. Shared by both the normal-type and
+# termux-type env builders.
+ANDROID_HOST_ENV_VARS = (
+    "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
+    "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
+    "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+)
+
+
 # Vars the image Env must not override. Some are proot-distro-defined
 # values; others are host-inherited terminal vars that must remain
 # under the launcher's control regardless of image configuration.
 IMAGE_ENV_BLOCKED = frozenset({
-    "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
-    "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
-    "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+    *ANDROID_HOST_ENV_VARS,
     "MOZ_FAKE_NO_SANDBOX", "PULSE_SERVER",
     "TERM", "COLORTERM",
 })

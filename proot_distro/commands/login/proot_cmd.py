@@ -141,14 +141,30 @@ def _add_non_minimal_binds(
     if dist_type != "termux" and IS_TERMUX:
         _add_termux_dev_binds(args, rootfs)
 
-    if IS_TERMUX and not isolated:
-        _add_android_data_binds(args, rootfs, dist_type)
+    # Android data dirs (dalvik caches, Termux app dirs, Termux $HOME) and
+    # shared storage are bound only for normal-type containers in the
+    # default mode. A termux-type guest ships its own /data/data/com.termux
+    # and must never see the host's.
+    if IS_TERMUX and not isolated and dist_type != "termux":
+        _add_android_data_binds(args)
         args += storage_bindings()
 
-    if IS_TERMUX and (dist_type == "termux" or not isolated or need_emu):
+    # Android system directories (/apex, /system, /vendor, …). Bound for
+    # normal-type when not isolated, or when emulating (the QEMU loader
+    # needs them), and for termux-type only when not isolated. Fully
+    # isolated sessions of either type get no host directories.
+    if IS_TERMUX and (not isolated or need_emu):
         args += system_bindings()
         if dist_type != "termux":
             args.append(f"--bind={TERMUX_PREFIX}")
+
+    # A termux-type guest still needs its own cache dir to exist; create
+    # it inside the rootfs (never bound from the host).
+    if IS_TERMUX and dist_type == "termux" and not isolated:
+        os.makedirs(
+            os.path.join(rootfs, "data", "data", TERMUX_APP_PACKAGE, "cache"),
+            exist_ok=True,
+        )
 
     if use_shared_home:
         if dist_type == "termux":
@@ -186,8 +202,12 @@ def _add_termux_dev_binds(args, rootfs):
     args.append(f"--bind={tmp_dir}:/dev/shm")
 
 
-def _add_android_data_binds(args, rootfs, dist_type):
-    """Bind Android dalvik caches + Termux app cache + Termux home."""
+def _add_android_data_binds(args):
+    """Bind Android dalvik caches + Termux app dirs + Termux home.
+
+    Normal-type containers only: a termux-type guest must not see the
+    host's /data/data/com.termux, so this is never called for it.
+    """
     for data_dir in (
         "/data/app", "/data/dalvik-cache",
         "/data/misc/apexdata/com.android.art/dalvik-cache",
@@ -202,14 +222,8 @@ def _add_android_data_binds(args, rootfs, dist_type):
     if os.path.isdir(apps_dir):
         args.append(f"--bind={apps_dir}")
 
-    if dist_type != "termux":
-        args.append(f"--bind=/data/data/{TERMUX_APP_PACKAGE}/cache")
-        args.append(f"--bind={TERMUX_HOME}")
-    else:
-        os.makedirs(
-            os.path.join(rootfs, "data", "data", TERMUX_APP_PACKAGE, "cache"),
-            exist_ok=True,
-        )
+    args.append(f"--bind=/data/data/{TERMUX_APP_PACKAGE}/cache")
+    args.append(f"--bind={TERMUX_HOME}")
 
 
 def _add_custom_binds(args, custom_binds):
