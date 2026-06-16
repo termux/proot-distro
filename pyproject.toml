@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proot-distro"
-version = "5.2.0"
+version = "5.3.0"
 description = "PRoot-Distro is a lightweight rootless Linux container management utility built around proot."
 readme = "README.md"
 requires-python = ">=3.9"
