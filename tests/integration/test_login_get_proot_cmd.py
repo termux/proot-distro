@@ -170,13 +170,13 @@ def _termux_host_proot_args(tmp_path, monkeypatch, **over):
     return args, android_calls
 
 
-def test_termux_type_binds_only_system_dirs(tmp_path, monkeypatch):
-    # Termux-type, non-isolated: Android system dirs are bound, but the
-    # host's /data/data/com.termux, shared storage, and the Termux prefix
-    # bridge are not.
+def test_termux_type_binds_system_and_storage(tmp_path, monkeypatch):
+    # Termux-type, non-isolated: Android system dirs and shared storage
+    # are bound, but the host's /data/data/com.termux and the Termux
+    # prefix bridge are not.
     args, android_calls = _termux_host_proot_args(tmp_path, monkeypatch)
     assert "--bind=/system" in args
-    assert "--bind=/storage" not in args
+    assert "--bind=/storage" in args
     assert android_calls == []
     assert not any(a.startswith(f"--bind={TERMUX_PREFIX}") for a in args)
 

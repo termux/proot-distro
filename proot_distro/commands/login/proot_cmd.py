@@ -141,12 +141,15 @@ def _add_non_minimal_binds(
     if dist_type != "termux" and IS_TERMUX:
         _add_termux_dev_binds(args, rootfs)
 
-    # Android data dirs (dalvik caches, Termux app dirs, Termux $HOME) and
-    # shared storage are bound only for normal-type containers in the
-    # default mode. A termux-type guest ships its own /data/data/com.termux
-    # and must never see the host's.
-    if IS_TERMUX and not isolated and dist_type != "termux":
-        _add_android_data_binds(args)
+    if IS_TERMUX and not isolated:
+        # Android data dirs (dalvik caches, Termux app dirs, Termux $HOME)
+        # are bound only for normal-type containers. A termux-type guest
+        # ships its own /data/data/com.termux and must never see the
+        # host's.
+        if dist_type != "termux":
+            _add_android_data_binds(args)
+        # Shared storage (/storage, /sdcard) is bound for both distro
+        # types in the default mode.
         args += storage_bindings()
 
     # Android system directories (/apex, /system, /vendor, …). Bound for
