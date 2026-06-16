@@ -102,9 +102,15 @@ Distribution type is detected at login:
 (not dir — proot may materialise the bind-mount target during a
 concurrent session) ⇒ `termux`; else `normal`. `termux`: no
 `--link2symlink`, no `--change-id`; hardcoded HOME/PATH/PREFIX/TMPDIR;
-Android system bindings always on; Termux prefix not bound (guest has
-its own at the same path). **Cross-arch is refused** — host and guest
-share `TERMUX_PREFIX`, so host binaries would shadow the container's.
+image Env + Android host vars applied like `normal`; Android system
+bindings + shared storage + Dalvik/ART caches (`/data/app`,
+`/data/dalvik-cache`, `/data/misc/apexdata/com.android.art/dalvik-cache`)
+on when non-isolated (off when isolated/minimal); the host's Termux app
+dirs under `/data/data/com.termux` are **never** bound (the guest ships
+its own, so only its `cache` dir is created inside the rootfs); Termux
+prefix not bound (guest has its own at the same path). **Cross-arch is
+refused** — host and guest share `TERMUX_PREFIX`, so host binaries
+would shadow the container's.
 
 ## Commands and locks
 
@@ -207,13 +213,18 @@ PUT (no chunked, no cross-repo mount, no multi-arch index). 401/403 ⇒
 ## Login env (`commands/login/`)
 
 `child_env` is built explicitly and passed to `os.execvpe` — no
-`env -i` wrapper, host env is **not** propagated. `normal`-type,
-non-minimal precedence (later wins): PATH/MOZ_FAKE_NO_SANDBOX/
-PULSE_SERVER baseline → image `Env` (filtered by `IMAGE_ENV_BLOCKED`:
-Android vars, MOZ/PULSE, TERM/COLORTERM) → Android system vars (Termux
-+ non-isolated) → user `--env` → HOME/USER/TERM/COLORTERM. PATH is not
-blocked but `TERMUX_PREFIX/bin` is deduped + appended after image Env
-(non-isolated).
+`env -i` wrapper, host env is **not** propagated. `normal`-type
+precedence (later wins): PATH/MOZ_FAKE_NO_SANDBOX/PULSE_SERVER baseline
+(non-minimal only) → image `Env` (filtered by `IMAGE_ENV_BLOCKED`:
+Android vars, MOZ/PULSE, TERM/COLORTERM) → Android host vars
+(`ANDROID_HOST_ENV_VARS`, Termux + neither isolated nor minimal) →
+user `--env` → HOME/USER (non-minimal only) → TERM/COLORTERM. Image
+`Env` and `--env` apply in **every** mode (isolated and minimal
+included); only the Android host vars are gated on the default mode.
+On non-Termux hosts no host vars are inherited. PATH is not blocked but
+`TERMUX_PREFIX/bin` is deduped + appended after image Env (non-isolated,
+non-minimal). `termux`-type uses the same image-Env + Android-host-var
+logic on top of its hardcoded HOME/PATH/PREFIX/TMPDIR baseline.
 
 `inject_termux_profile()` writes `/etc/profile.d/termux-profile.sh` so
 `su - other` doesn't drop the proot-distro-set vars: POSIX case-guard
@@ -224,10 +235,11 @@ against the identifier regex `^[A-Za-z_][A-Za-z0-9_]*$`; anything that
 would otherwise corrupt the sourced script (spaces, `;`, quotes …) is
 dropped silently. Legacy `termux-prefix.sh` unlinked first.
 
-`minimal` clears almost everything: only `--env` + `TERM` (default
-`xterm-256color`) + inherited `COLORTERM`. `PROOT_L2S_DIR` pinned to
-`rootfs/.l2s` (created upfront) for `normal` on Termux so concurrent
-sessions agree. `LD_PRELOAD` stripped before exec.
+`minimal` clears almost everything: image `Env` + `--env` + `TERM`
+(default `xterm-256color`) + inherited `COLORTERM`; no baseline PATH,
+no MOZ/PULSE, no Android host vars, no HOME/USER. `PROOT_L2S_DIR`
+pinned to `rootfs/.l2s` (created upfront) for `normal` on Termux so
+concurrent sessions agree. `LD_PRELOAD` stripped before exec.
 
 ## Run / build
 
