@@ -103,12 +103,14 @@ Distribution type is detected at login:
 concurrent session) ⇒ `termux`; else `normal`. `termux`: no
 `--link2symlink`, no `--change-id`; hardcoded HOME/PATH/PREFIX/TMPDIR;
 image Env + Android host vars applied like `normal`; Android system
-bindings + shared storage on when non-isolated (off when
-isolated/minimal); the host's `/data/data/com.termux` is **never**
-bound (the guest ships its own, so only its `cache` dir is created
-inside the rootfs); Termux prefix not bound (guest has its own at the
-same path). **Cross-arch is refused** — host and guest share
-`TERMUX_PREFIX`, so host binaries would shadow the container's.
+bindings + shared storage + Dalvik/ART caches (`/data/app`,
+`/data/dalvik-cache`, `/data/misc/apexdata/com.android.art/dalvik-cache`)
+on when non-isolated (off when isolated/minimal); the host's Termux app
+dirs under `/data/data/com.termux` are **never** bound (the guest ships
+its own, so only its `cache` dir is created inside the rootfs); Termux
+prefix not bound (guest has its own at the same path). **Cross-arch is
+refused** — host and guest share `TERMUX_PREFIX`, so host binaries
+would shadow the container's.
 
 ## Commands and locks
 

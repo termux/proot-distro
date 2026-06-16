@@ -142,15 +142,15 @@ def _add_non_minimal_binds(
         _add_termux_dev_binds(args, rootfs)
 
     if IS_TERMUX and not isolated:
-        # Android data dirs (dalvik caches, Termux app dirs, Termux $HOME)
-        # are bound only for normal-type containers. A termux-type guest
-        # ships its own /data/data/com.termux and must never see the
-        # host's.
-        if dist_type != "termux":
-            _add_android_data_binds(args)
-        # Shared storage (/storage, /sdcard) is bound for both distro
-        # types in the default mode.
+        # Dalvik/ART caches and shared storage are host-domain Android
+        # paths bound for both distro types in the default mode.
+        _add_dalvik_cache_binds(args)
         args += storage_bindings()
+        # The Termux app's private dirs (apps, cache, $HOME) are bound
+        # only for normal-type containers. A termux-type guest ships its
+        # own /data/data/com.termux and must never see the host's.
+        if dist_type != "termux":
+            _add_termux_app_binds(args)
 
     # Android system directories (/apex, /system, /vendor, …). Bound for
     # normal-type when not isolated, or when emulating (the QEMU loader
@@ -205,11 +205,12 @@ def _add_termux_dev_binds(args, rootfs):
     args.append(f"--bind={tmp_dir}:/dev/shm")
 
 
-def _add_android_data_binds(args):
-    """Bind Android dalvik caches + Termux app dirs + Termux home.
+def _add_dalvik_cache_binds(args):
+    """Bind the host's Dalvik/ART caches (both distro types).
 
-    Normal-type containers only: a termux-type guest must not see the
-    host's /data/data/com.termux, so this is never called for it.
+    These are Android-system caches, not the Termux app's private data,
+    so both normal-type and termux-type guests get them. Each dir must
+    carry the world-execute bit to be traversable from the guest user.
     """
     for data_dir in (
         "/data/app", "/data/dalvik-cache",
@@ -221,6 +222,13 @@ def _add_android_data_binds(args):
         if mode in ("1", "5", "7"):
             args.append(f"--bind={data_dir}")
 
+
+def _add_termux_app_binds(args):
+    """Bind the Termux app's private dirs (apps, cache, $HOME).
+
+    Normal-type containers only: a termux-type guest must not see the
+    host's /data/data/com.termux, so this is never called for it.
+    """
     apps_dir = f"/data/data/{TERMUX_APP_PACKAGE}/files/apps"
     if os.path.isdir(apps_dir):
         args.append(f"--bind={apps_dir}")

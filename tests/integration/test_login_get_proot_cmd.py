@@ -144,15 +144,18 @@ def _termux_host_proot_args(tmp_path, monkeypatch, **over):
 
     storage/system bindings are stubbed to fixed sentinels so the dispatch
     logic can be asserted independently of the test host's real /system,
-    /storage, etc. _add_android_data_binds is replaced by a recorder.
+    /storage, etc. The dalvik-cache and Termux-app bind helpers are
+    replaced by recorders that append a label to the returned list.
     """
     monkeypatch.setattr(proot_cmd, "IS_TERMUX", True)
     monkeypatch.setattr(proot_cmd, "system_bindings", lambda: ["--bind=/system"])
     monkeypatch.setattr(proot_cmd, "storage_bindings",
                         lambda: ["--bind=/storage"])
-    android_calls = []
-    monkeypatch.setattr(proot_cmd, "_add_android_data_binds",
-                        lambda args: android_calls.append(True))
+    calls = []
+    monkeypatch.setattr(proot_cmd, "_add_dalvik_cache_binds",
+                        lambda args: calls.append("dalvik"))
+    monkeypatch.setattr(proot_cmd, "_add_termux_app_binds",
+                        lambda args: calls.append("termux_app"))
     rootfs = tmp_path / "rootfs"
     rootfs.mkdir()
     base = dict(
@@ -167,41 +170,41 @@ def _termux_host_proot_args(tmp_path, monkeypatch, **over):
     )
     base.update(over)
     args = proot_cmd.build_proot_args(**base)
-    return args, android_calls
+    return args, calls
 
 
-def test_termux_type_binds_system_and_storage(tmp_path, monkeypatch):
-    # Termux-type, non-isolated: Android system dirs and shared storage
-    # are bound, but the host's /data/data/com.termux and the Termux
-    # prefix bridge are not.
-    args, android_calls = _termux_host_proot_args(tmp_path, monkeypatch)
+def test_termux_type_binds_dalvik_storage_system(tmp_path, monkeypatch):
+    # Termux-type, non-isolated: dalvik caches, shared storage, and Android
+    # system dirs are bound, but the host's /data/data/com.termux app dirs
+    # and the Termux prefix bridge are not.
+    args, calls = _termux_host_proot_args(tmp_path, monkeypatch)
     assert "--bind=/system" in args
     assert "--bind=/storage" in args
-    assert android_calls == []
+    assert calls == ["dalvik"]
     assert not any(a.startswith(f"--bind={TERMUX_PREFIX}") for a in args)
 
 
 def test_termux_type_isolated_no_host_dirs(tmp_path, monkeypatch):
     # Termux-type, isolated: no host directories at all.
-    args, android_calls = _termux_host_proot_args(
+    args, calls = _termux_host_proot_args(
         tmp_path, monkeypatch, isolated=True,
     )
     assert "--bind=/system" not in args
     assert "--bind=/storage" not in args
-    assert android_calls == []
+    assert calls == []
 
 
 def test_normal_type_binds_android_data_and_storage(tmp_path, monkeypatch):
-    # Normal-type, non-isolated: Android data dirs, shared storage, system
-    # dirs, and the Termux prefix bridge are all bound.
-    args, android_calls = _termux_host_proot_args(
+    # Normal-type, non-isolated: dalvik caches, Termux app dirs, shared
+    # storage, system dirs, and the Termux prefix bridge are all bound.
+    args, calls = _termux_host_proot_args(
         tmp_path, monkeypatch, dist_type="normal",
         login_uid="0", login_gid="0", login_home="/root",
         inner=["/bin/sh", "-l"],
     )
     assert "--bind=/system" in args
     assert "--bind=/storage" in args
-    assert android_calls == [True]
+    assert calls == ["dalvik", "termux_app"]
     assert f"--bind={TERMUX_PREFIX}" in args
 
 
