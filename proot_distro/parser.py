@@ -131,6 +131,7 @@ def _add_login_or_run_common(p):
     p.add_argument("--hostname", metavar="STRING")
     p.add_argument("-w", "--work-dir", dest="work_dir", metavar="PATH")
     p.add_argument("-e", "--env", action="append", metavar="VAR=VALUE")
+    p.add_argument("-d", "--detach", action="store_true")
 
 
 def build_parser() -> _PdArgumentParser:

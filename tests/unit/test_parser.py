@@ -94,6 +94,25 @@ def test_ps_quiet_flag():
     assert unknown == []
 
 
+@pytest.mark.parametrize("cmd", ["login", "run"])
+def test_detach_flag_default_false(cmd):
+    p = parser.build_parser()
+    args, _ = p.parse_known_args([cmd, "box"])
+    assert args.detach is False
+
+
+@pytest.mark.parametrize("cmd,flag", [
+    ("login", "-d"), ("login", "--detach"),
+    ("run", "-d"), ("run", "--detach"),
+])
+def test_detach_flag_set(cmd, flag):
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args([cmd, "box", flag])
+    assert args.command == cmd
+    assert args.detach is True
+    assert unknown == []
+
+
 def test_build_multiple_tags_and_outputs():
     p = parser.build_parser()
     args, _ = p.parse_known_args(

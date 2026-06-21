@@ -173,6 +173,8 @@ complete -c proot-distro -n '__fish_seen_subcommand_from login' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
     -s e -l env        -r -d 'Set environment variable VAR=VALUE (repeatable)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
+    -s d -l detach        -d 'Start the session in the background'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
     -l get-proot-cmd      -d 'Print the proot command line and exit'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
     -s h -l help          -d 'Show help'
@@ -300,6 +302,8 @@ complete -c proot-distro -n '__fish_seen_subcommand_from run' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -s e -l env        -r -d 'Set environment variable VAR=VALUE (repeatable)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
+    -s d -l detach        -d 'Start the session in the background'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -l get-proot-cmd      -d 'Print the proot command line and exit'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -s h -l help          -d 'Show help'
@@ -410,6 +414,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from login' -l kernel             -
 complete -c pd -f -n '__fish_seen_subcommand_from login' -l hostname           -r -d 'Container hostname'
 complete -c pd -n   '__fish_seen_subcommand_from login' -s w -l work-dir       -r -d 'Working directory'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s e -l env           -r -d 'Environment variable'
+complete -c pd -f -n '__fish_seen_subcommand_from login' -s d -l detach           -d 'Start session in background'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -l get-proot-cmd         -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s h -l help             -d 'Show help'
 
@@ -465,6 +470,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from run' -l kernel             -r 
 complete -c pd -f -n '__fish_seen_subcommand_from run' -l hostname           -r -d 'Container hostname'
 complete -c pd -n   '__fish_seen_subcommand_from run' -s w -l work-dir       -r -d 'Working directory'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -s e -l env           -r -d 'Environment variable'
+complete -c pd -f -n '__fish_seen_subcommand_from run' -s d -l detach           -d 'Start session in background'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -l get-proot-cmd         -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -s h -l help             -d 'Show help'
 

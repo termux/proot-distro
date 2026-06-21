@@ -496,6 +496,11 @@ HELP_PAGES = {
             ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
+            ("-d, --detach",
+             "Start the session in the background and return immediately. "
+             "Standard input and output are redirected to /dev/null. "
+             f"The session is listed by '{PROGRAM_NAME} ps' and can be "
+             "stopped with 'kill PID'."),
             ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
@@ -729,6 +734,11 @@ HELP_PAGES = {
             ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
+            ("-d, --detach",
+             "Start the session in the background and return immediately. "
+             "Standard input and output are redirected to /dev/null. "
+             f"The session is listed by '{PROGRAM_NAME} ps' and can be "
+             "stopped with 'kill PID'."),
             ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
@@ -736,6 +746,7 @@ HELP_PAGES = {
         ],
         "examples": [
             f"{PROGRAM_NAME} run nextcloud --redirect-ports",
+            f"{PROGRAM_NAME} run nextcloud --detach",
             f"{PROGRAM_NAME} run ubuntu --isolated -- /bin/echo hi",
         ],
         "footer": [

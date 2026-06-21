@@ -51,7 +51,7 @@ from proot_distro.constants import SESSIONS_DIR
 
 
 def register_session(*, container, kind, command_argv, user,
-                     isolated=False, minimal=False):
+                     isolated=False, minimal=False, detach=False):
     """Record the about-to-start session and return its locked fd, or None.
 
     Must be called from the process that immediately exec's into proot,
@@ -81,6 +81,7 @@ def register_session(*, container, kind, command_argv, user,
         "start_time": time.time(),
         "isolated": bool(isolated),
         "minimal": bool(minimal),
+        "detach": bool(detach),
     }
 
     try:

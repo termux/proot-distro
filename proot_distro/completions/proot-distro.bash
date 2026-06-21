@@ -114,7 +114,7 @@ _proot_distro() {
             if [[ "${cur}" == -* ]]; then
                 local opts="-u --user -P --redirect-ports --shared-home --shared-tmp --shared-x11
                     -b --bind --emulator --kernel --hostname -w --work-dir
-                    -e --env --get-proot-cmd -h --help"
+                    -e --env -d --detach --get-proot-cmd -h --help"
                 _proot_distro_is_termux && \
                     opts+=" --isolated --minimal --no-link2symlink --no-sysvipc --no-kill-on-exit"
                 COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
@@ -225,7 +225,7 @@ _proot_distro() {
             if [[ "${cur}" == -* ]]; then
                 local opts="-u --user -P --redirect-ports --shared-home --shared-tmp --shared-x11
                     -b --bind --emulator --kernel --hostname -w --work-dir
-                    -e --env --get-proot-cmd -h --help"
+                    -e --env -d --detach --get-proot-cmd -h --help"
                 _proot_distro_is_termux && \
                     opts+=" --isolated --minimal --no-link2symlink --no-sysvipc --no-kill-on-exit"
                 COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))

@@ -44,9 +44,9 @@ Top-level utilities (each owns a focused concern):
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock).
 - `session.py` — active-session registry for `ps`: `register_session`
-  (inheritable flock survives `execvpe`, like the container lock),
-  `active_sessions` (reads `SESSIONS_DIR`, prunes dead via a shared
-  flock probe).
+  (inheritable flock survives `execvpe`, like the container lock; records
+  a `detach` flag among the per-session metadata), `active_sessions`
+  (reads `SESSIONS_DIR`, prunes dead via a shared flock probe).
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `_PdArgumentParser` (per-command help on error).
@@ -59,7 +59,7 @@ Top-level utilities (each owns a focused concern):
 Commands (`commands/`): `backup`, `build`, `clear_cache`, `copy`,
 `install` (+`install_local`), `list`, `ps`, `push`, `remove`, `rename`,
 `reset`, `restore`, `run`, `sync`; subpackages `help/{pages,render}`
-and `login/{bindings,env,migrate,passwd,proot_cmd,quoting}`.
+and `login/{bindings,detach,env,migrate,passwd,proot_cmd,quoting}`.
 
 Helpers (`helpers/`): `build_cache`, `dockerfile`, `download`,
 `layer_diff`, `oci_writer`, `rootfs`, `tar_extract`; subpackages
@@ -172,7 +172,12 @@ Non-blocking `flock(2)`. Conflict ⇒ exit immediately, reporting the
 holder's PID + command. Re-entrancy via `_held_exclusive` — `reset`
 acquires the lock then calls `install` for the same name; install's
 acquire detects the path and skips. Login/run pass `inheritable=True`
-to clear `O_CLOEXEC` so the fd survives `os.execvpe`. Multiple locks
+to clear `O_CLOEXEC` so the fd survives `os.execvpe`. `disown()` marks a
+lock so `release()` closes the fd **without** `LOCK_UN` — used by
+`--detach`, where a forked descendant (the daemon) inherits the same
+open file description and must keep the lock held after the foreground
+process exits its `with` block (flock releases on `LOCK_UN` of any
+duplicate, or once all duplicates close). Multiple locks
 acquired in sorted-path order via `ExitStack`. `BuildLock` covers only
 the output `(image_ref, arch)`; concurrent builds with different tags
 can still race on shared caches, safe because every writer uses
@@ -254,6 +259,18 @@ concurrent sessions agree. `LD_PRELOAD` stripped before exec.
 `manifest.json`, builds `inner` per Docker semantics, delegates to
 `command_login` via `args._run_inner`. `--work-dir` overrides
 `WorkingDir`; default is `/` (not user home).
+
+`-d`/`--detach` (login + run, via `_add_login_or_run_common`)
+backgrounds the session: after all setup, `_command_login_inner`
+delegates the final exec to `commands/login/detach.spawn_detached`
+instead of `register_session` + `execvpe`. It is a double-fork daemon
+(`setsid`, std fds → `/dev/null`); `register_session` runs in the
+grandchild so `getpid()` already equals the future proot PID, and a
+pipe relays that PID back so the foreground can print it. The grandchild
+inherits the foreground's container-lock fd, so the foreground calls
+`lock.disown()` (skip `LOCK_UN`) to leave the lock held by the daemon.
+`--get-proot-cmd` short-circuits before the detach branch. The session
+shows in `ps` with TYPE marked `login*`/`run*`; stop it with `kill PID`.
 
 `command_build()` parses the Dockerfile, runs `BuildEngine`, writes
 the manifest cache (Variant A — small JSON; layer blobs already in

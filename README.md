@@ -560,6 +560,7 @@ proot-distro login ubuntu --get-proot-cmd
 | `--hostname STRING` | Customize the hostname inside the container. Default: `localhost`. |
 | `-w`, `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
 | `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env` and the baseline defaults. |
+| `-d`, `--detach` | Start the session in the background and return to the prompt immediately. The session is daemonized (double-fork + `setsid`, detached from the controlling terminal) and its stdin/stdout/stderr are redirected to `/dev/null`, so output is discarded — redirect inside your own command if you need logs. A detached `login` with no `-- COMMAND` exits at once (the shell reads EOF). Track it with [`proot-distro ps`](#ps--list-active-sessions) and stop it with `kill PID`. |
 | `--get-proot-cmd` | Print the fully assembled `env` + `proot` command line (escaped, with line continuations) and exit without running. |
 
 **Options available only on Termux (Android):**
@@ -679,8 +680,11 @@ When `--work-dir` is not given, `run` uses the image's `WorkingDir`
 
 `run` accepts the same options as `login` (`--user`, `--bind`,
 `--isolated`, `--minimal`, `--env`, `--shared-tmp`, `--shared-x11`,
-`--emulator`, `--get-proot-cmd`, etc.). See
-`proot-distro login --help`.
+`--emulator`, `--detach`, `--get-proot-cmd`, etc.). See
+`proot-distro login --help`. `-d`/`--detach` is especially useful here
+for server images: it backgrounds the session and returns immediately;
+list it with [`proot-distro ps`](#ps--list-active-sessions) and stop it
+with `kill PID` (or `proot-distro ps -q | xargs -r kill`).
 
 **Examples:**
 
@@ -690,6 +694,10 @@ proot-distro run hello-world
 
 # Run with port redirection (so 80 → 2080)
 proot-distro run nextcloud --redirect-ports
+
+# Start a server in the background, then check on it
+proot-distro run nextcloud --detach
+proot-distro ps
 
 # Pass arguments to the entrypoint (overrides image Cmd)
 proot-distro run ubuntu -- /bin/echo hi
@@ -730,10 +738,14 @@ is shown on its own line:
 ```
 PID     CONTAINER  TYPE   USER  UPTIME  COMMAND
 12345   ubuntu     login  root  3m12s   /bin/bash -l
-12388   debian     run    root  0m44s   nginx -g 'daemon off;'
+12388   debian     run*   root  0m44s   nginx -g 'daemon off;'
+
+* detached session
 ```
 
 The PID is the session's `proot` process and can be passed to `kill`.
+Sessions started with [`-d`/`--detach`](#login--start-a-shell-inside-a-container)
+are marked with a `*` after their `TYPE` (e.g. `run*`).
 
 Tracking is robust: a session is considered active only while its
 process is alive. Each session holds an inherited `flock` on its

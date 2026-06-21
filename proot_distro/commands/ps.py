@@ -58,11 +58,12 @@ def command_ps(args) -> None:
         return
 
     now = time.time()
+    any_detached = any(s.get("detach") for s in sessions)
     rows = [
         (
             str(sess.get("pid", "?")),
             str(sess.get("container", "?")),
-            str(sess.get("kind", "?")),
+            str(sess.get("kind", "?")) + ("*" if sess.get("detach") else ""),
             str(sess.get("user", "?")),
             _fmt_uptime(now - sess.get("start_time", now)),
             _fmt_command(sess.get("command")),
@@ -98,6 +99,9 @@ def command_ps(args) -> None:
         ]
         msg(pad.join(cells))
 
+    if any_detached:
+        msg()
+        msg(f"{C['YELLOW']}* detached session{C['RST']}")
     msg()
 
 

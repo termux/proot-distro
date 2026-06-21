@@ -16,7 +16,7 @@ def _session_path(pid):
 
 
 def _make_live(pid, container, kind="run", command=None, user="root",
-               start_time=1.0):
+               start_time=1.0, detach=False):
     """Create a session file and hold its exclusive lock via a live fd."""
     os.makedirs(constants.SESSIONS_DIR, exist_ok=True)
     fd = open(_session_path(pid), "w")
@@ -24,7 +24,7 @@ def _make_live(pid, container, kind="run", command=None, user="root",
         {
             "pid": pid, "container": container, "kind": kind,
             "command": command or ["sh"], "user": user,
-            "start_time": start_time,
+            "start_time": start_time, "detach": detach,
         },
         fd,
     )
@@ -61,6 +61,30 @@ def test_register_then_listed_then_pruned_on_close():
 
     assert session.active_sessions() == []
     assert not os.path.exists(_session_path(os.getpid()))
+
+
+def test_register_records_detach_flag():
+    fd = session.register_session(
+        container="ubuntu", kind="run", command_argv=["sleep", "1"],
+        user="root", detach=True,
+    )
+    assert fd is not None
+    try:
+        rec = session.active_sessions()[0]
+        assert rec["detach"] is True
+    finally:
+        fd.close()
+
+
+def test_register_detach_defaults_false():
+    fd = session.register_session(
+        container="ubuntu", kind="login", command_argv=["sh"], user="root",
+    )
+    assert fd is not None
+    try:
+        assert session.active_sessions()[0]["detach"] is False
+    finally:
+        fd.close()
 
 
 def test_register_is_inheritable():
@@ -202,3 +226,26 @@ def test_command_ps_table_contains_fields(capsys):
 def test_command_ps_table_empty(capsys):
     command_ps(SimpleNamespace(quiet=False))
     assert "No active sessions" in capsys.readouterr().err
+
+
+def test_command_ps_marks_detached(capsys):
+    fd = _make_live(525252, "ubuntu", kind="run", detach=True)
+    try:
+        command_ps(SimpleNamespace(quiet=False))
+        err = capsys.readouterr().err
+        assert "run*" in err
+        assert "detached session" in err
+    finally:
+        fd.close()
+
+
+def test_command_ps_no_marker_when_attached(capsys):
+    fd = _make_live(626262, "ubuntu", kind="login", detach=False)
+    try:
+        command_ps(SimpleNamespace(quiet=False))
+        err = capsys.readouterr().err
+        assert "login" in err
+        assert "login*" not in err
+        assert "detached session" not in err
+    finally:
+        fd.close()
