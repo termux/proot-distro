@@ -57,9 +57,10 @@ Top-level utilities (each owns a focused concern):
   reject, proot probe, parse, dispatch.
 
 Commands (`commands/`): `backup`, `build`, `clear_cache`, `copy`,
-`install` (+`install_local`), `list`, `ps`, `push`, `remove`, `rename`,
-`reset`, `restore`, `run`, `sync`; subpackages `help/{pages,render}`
-and `login/{bindings,detach,env,migrate,passwd,proot_cmd,quoting}`.
+`install` (+`install_local`), `kill`, `list`, `ps`, `push`, `remove`,
+`rename`, `reset`, `restore`, `run`, `sync`; subpackages
+`help/{pages,render}` and
+`login/{bindings,detach,env,migrate,passwd,proot_cmd,quoting}`.
 
 Helpers (`helpers/`): `build_cache`, `dockerfile`, `download`,
 `layer_diff`, `oci_writer`, `rootfs`, `tar_extract`; subpackages
@@ -129,6 +130,7 @@ would shadow the container's.
 | `run` | — | container shared (fd inherited by proot) |
 | `list` | `li`, `ls` | none |
 | `ps` | — | none (reads session registry, prunes dead entries) |
+| `kill` | — | none (reads session registry, signals PIDs) |
 | `backup` | `bak`, `bkp` | container shared |
 | `restore` | — | container exclusive, lazy per first TarInfo |
 | `clear-cache` | `clear`, `cl` | none |
@@ -148,8 +150,9 @@ numeric uid, or `user:group`.
    "Aborted by user").
 2. Root warn (non-fatal); nested-proot reject (reads
    `/proc/<pid>/status`, follows one TracerPid hop).
-3. proot probe; on Termux + TTY, offers `pkg install`. **`build` and
-   `push` are exempt**; `build` runs its own gate via
+3. proot probe; on Termux + TTY, offers `pkg install`. **`build`,
+   `push`, and `kill` are exempt** (`kill` only signals running
+   sessions); `build` runs its own gate via
    `build_engine.needs_proot()` (True only with a RUN-family).
 4. Per-command `-h`/`--help`/`--usage` intercepted **before** argparse
    so missing positionals never produce errors instead of help. Unknown
@@ -270,7 +273,22 @@ pipe relays that PID back so the foreground can print it. The grandchild
 inherits the foreground's container-lock fd, so the foreground calls
 `lock.disown()` (skip `LOCK_UN`) to leave the lock held by the daemon.
 `--get-proot-cmd` short-circuits before the detach branch. The session
-shows in `ps` with TYPE marked `login*`/`run*`; stop it with `kill PID`.
+shows in `ps` with TYPE marked `login*`/`run*`; stop it with
+`proot-distro kill`.
+
+`command_kill()` (`commands/kill.py`) stops sessions by signalling the
+**whole guest process tree**, not just the root proot — `proot`'s
+`--kill-on-exit` cleanup runs only on a graceful exit (so `kill -9`
+orphans the guest) and is absent off-Termux entirely. Target is a PID, a
+container name (all its sessions), or `--all`, always resolved against
+`active_sessions()` so only tracked proot sessions can be hit. It reads
+`/proc/<pid>/status` `PPid:` into a `pid→ppid` map (`_read_pid_ppid`),
+walks the transitive closure under each root (`_collect_tree`, pure +
+cycle-safe), and `os.kill`s every member (never self/pid 0/pid 1) in two
+sweeps. Default signal is `SIGTERM`; `-s/--signal` takes a name or
+number. PID-reuse safety belt: a root is walked only when
+`/proc/<root>/comm` reads `proot`. No lock taken; pure-Python (no
+`pkill`/`pgrep`).
 
 `command_build()` parses the Dockerfile, runs `BuildEngine`, writes
 the manifest cache (Variant A — small JSON; layer blobs already in

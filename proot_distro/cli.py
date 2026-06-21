@@ -56,6 +56,7 @@ from proot_distro.commands.run import command_run
 from proot_distro.commands.build import command_build
 from proot_distro.commands.push import command_push
 from proot_distro.commands.ps import command_ps
+from proot_distro.commands.kill import command_kill
 
 
 _COMMAND_HANDLERS = {
@@ -74,6 +75,7 @@ _COMMAND_HANDLERS = {
     "build":       command_build,
     "push":        command_push,
     "ps":          command_ps,
+    "kill":        command_kill,
     "help":        command_help,
 }
 
@@ -123,9 +125,10 @@ def _ensure_proot_available(first_canonical: str) -> None:
     `push` only reads from the local manifest/layer cache and uploads
     to a registry. `build` runs its own check after parsing the
     Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
-    present.
+    present. `kill` is exempt too: it only signals already-running
+    sessions and never invokes proot.
     """
-    if first_canonical in ("build", "push"):
+    if first_canonical in ("build", "push", "kill"):
         return
     if shutil.which("proot") is not None:
         return

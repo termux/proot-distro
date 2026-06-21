@@ -581,6 +581,30 @@ HELP_PAGES = {
         ]
     },
 
+    "kill": {
+        "usage": "kill [OPTIONS] (PID | CONTAINER | --all)",
+        "summary": (
+            f"Terminate {CANONICAL_PROGRAM_NAME} sessions by sending a given "
+            "signal to their process tree. The scope of affected sessions "
+            "determined by target type. Use PID to kill individual container "
+            "session or a container name if need to stop all processes "
+            "created within given container."
+            "\n\n"
+            "Default signal is TERM."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-s, --signal [SIGNAL]",
+             "Signal to send instead of the default SIGTERM. Accepts a "
+             "name (SIGTERM, KILL, HUP) or a number (15, 9, 1)."),
+            ("--all", "Target all sessions system-wide."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} kill 12345",
+            f"{PROGRAM_NAME} kill --signal KILL nextcloud",
+        ],
+    },
+
     "remove": {
         "usage": "remove [OPTIONS] CONTAINER",
         "aliases": ("rm",),
@@ -814,6 +838,7 @@ TOP_COMMANDS = [
     ("login", "Start interactive shell inside a container."),
     ("run", "Run container entrypoint in server or distroless images."),
     ("ps", "List active container sessions."),
+    ("kill", "Stop active container sessions."),
     ("remove", "Delete a container.", "Destroys data!"),
     ("rename", "Rename a container."),
     ("reset", "Reinstall a container from scratch.", "Destroys data!"),

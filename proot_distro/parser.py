@@ -161,6 +161,7 @@ def build_parser() -> _PdArgumentParser:
     _push(sub)
     _run(sub)
     _ps(sub)
+    _kill(sub)
 
     return parser
 
@@ -355,4 +356,13 @@ def _ps(sub):
     p = sub.add_parser("ps", add_help=False)
     p._pd_command = "ps"
     p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+
+
+def _kill(sub):
+    p = sub.add_parser("kill", add_help=False)
+    p._pd_command = "kill"
+    p.add_argument("target", nargs="?", default=None, metavar="PID|CONTAINER")
+    p.add_argument("-s", "--signal", metavar="SIGNAL")
+    p.add_argument("--all", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
