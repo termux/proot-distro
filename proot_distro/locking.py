@@ -132,6 +132,7 @@ class _FlockBase:
         self._inheritable = inheritable
         self._fd = None
         self._reentrant = False
+        self._disowned = False
         # Subclasses populate these before acquire() is called.
         self._lock_path: str = ""
         self._label: str = "resource"
@@ -192,17 +193,37 @@ class _FlockBase:
             _held_exclusive.add(self._lock_path)
         return True
 
+    def disown(self) -> None:
+        """Keep the lock held after this process drops its handle.
+
+        For detached sessions the lock fd is made inheritable and a
+        forked descendant (which exec's into proot) holds the same open
+        file description. flock(2) releases a lock on an explicit
+        LOCK_UN of *any* duplicate fd, or once *all* duplicates are
+        closed — so this process must close its fd WITHOUT issuing
+        LOCK_UN. Marking the lock disowned makes release() skip the
+        unlock; closing our fd alone then leaves the descendant's copy
+        holding the lock for the whole session.
+        """
+        self._disowned = True
+
     def release(self) -> None:
-        """Release the lock. No-op when re-entrant or not yet acquired."""
+        """Release the lock. No-op when re-entrant or not yet acquired.
+
+        When disowned, the fd is closed but LOCK_UN is skipped so a
+        forked descendant sharing the open file description keeps the
+        lock held (see disown()).
+        """
         if self._reentrant:
             return
         if self._exclusive:
             _held_exclusive.discard(self._lock_path)
         if self._fd is not None:
-            try:
-                fcntl.flock(self._fd.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
+            if not self._disowned:
+                try:
+                    fcntl.flock(self._fd.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
             try:
                 self._fd.close()
             except OSError:

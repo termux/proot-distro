@@ -28,6 +28,8 @@ exporting it as a standalone OCI tarball.
    * [`login`](#login--start-a-shell-inside-a-container)
    * [`run`](#run--run-the-image-defined-entrypoint)
    * [`list`](#list--list-installed-containers)
+   * [`ps`](#ps--list-active-sessions)
+   * [`kill`](#kill--stop-active-sessions)
    * [`remove`](#remove--delete-a-container)
    * [`rename`](#rename--rename-a-container)
    * [`reset`](#reset--reinstall-a-container-from-scratch)
@@ -559,6 +561,7 @@ proot-distro login ubuntu --get-proot-cmd
 | `--hostname STRING` | Customize the hostname inside the container. Default: `localhost`. |
 | `-w`, `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
 | `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env` and the baseline defaults. |
+| `-d`, `--detach` | Start the session in the background and return to the prompt immediately. The session is daemonized (double-fork + `setsid`, detached from the controlling terminal) and its stdin/stdout/stderr are redirected to `/dev/null`, so output is discarded — redirect inside your own command if you need logs. A detached `login` with no `-- COMMAND` exits at once (the shell reads EOF). Track it with [`proot-distro ps`](#ps--list-active-sessions) and stop it with [`proot-distro kill`](#kill--stop-active-sessions). |
 | `--get-proot-cmd` | Print the fully assembled `env` + `proot` command line (escaped, with line continuations) and exit without running. |
 
 **Options available only on Termux (Android):**
@@ -678,8 +681,12 @@ When `--work-dir` is not given, `run` uses the image's `WorkingDir`
 
 `run` accepts the same options as `login` (`--user`, `--bind`,
 `--isolated`, `--minimal`, `--env`, `--shared-tmp`, `--shared-x11`,
-`--emulator`, `--get-proot-cmd`, etc.). See
-`proot-distro login --help`.
+`--emulator`, `--detach`, `--get-proot-cmd`, etc.). See
+`proot-distro login --help`. `-d`/`--detach` is especially useful here
+for server images: it backgrounds the session and returns immediately;
+list it with [`proot-distro ps`](#ps--list-active-sessions) and stop it
+with [`proot-distro kill`](#kill--stop-active-sessions) (which also tears
+down the server's child processes, unlike a bare `kill PID`).
 
 **Examples:**
 
@@ -689,6 +696,10 @@ proot-distro run hello-world
 
 # Run with port redirection (so 80 → 2080)
 proot-distro run nextcloud --redirect-ports
+
+# Start a server in the background, then check on it
+proot-distro run nextcloud --detach
+proot-distro ps
 
 # Pass arguments to the entrypoint (overrides image Cmd)
 proot-distro run ubuntu -- /bin/echo hi
@@ -713,6 +724,80 @@ printed.
 | Option | Description |
 |---|---|
 | `-q`, `--quiet` | Print only container names, one per line (different from the global `--quiet`). |
+
+---
+
+### `ps` — List active sessions
+
+```
+proot-distro ps
+```
+
+List every active container session — each running `login` and `run`
+spawns one. A single container may have several sessions at once; each
+is shown on its own line:
+
+```
+PID     CONTAINER  TYPE   USER  UPTIME  COMMAND
+12345   ubuntu     login  root  3m12s   /bin/bash -l
+12388   debian     run*   root  0m44s   nginx -g 'daemon off;'
+
+* detached session
+```
+
+The PID is the session's `proot` process. To stop a session reliably,
+pass that PID (or the container name) to
+[`proot-distro kill`](#kill--stop-active-sessions), which tears down the
+whole guest process tree rather than just the `proot` parent.
+Sessions started with [`-d`/`--detach`](#login--start-a-shell-inside-a-container)
+are marked with a `*` after their `TYPE` (e.g. `run*`).
+
+Tracking is robust: a session is considered active only while its
+process is alive. Each session holds an inherited `flock` on its
+registry file (under `sessions/`), which the kernel releases
+automatically when the process exits — even on a crash or `kill -9` —
+so stale entries are never displayed and are cleaned up on the next
+`ps`. It does not rely on `os.kill(pid, 0)`, which a recycled PID could
+fool.
+
+| Option | Description |
+|---|---|
+| `-q`, `--quiet` | Print only the PID of each active session, one per line. Handy for scripting (e.g. `proot-distro ps -q \| xargs -r kill`). |
+
+---
+
+### `kill` — Stop active sessions
+
+```
+proot-distro kill [OPTIONS] (PID | CONTAINER | --all)
+```
+
+Stop one or more active sessions by terminating their **entire process
+tree**. The target is a PID from [`proot-distro ps`](#ps--list-active-sessions),
+a container name (stops every session of that container), or `--all`
+(stops every active session):
+
+```
+# Stop one session by PID
+proot-distro kill 12345
+
+# Stop every session of a container
+proot-distro kill nextcloud
+
+# Force kill everything
+proot-distro kill --signal KILL --all
+```
+
+By default `SIGTERM` is sent to the whole tree at once. Use `--signal`
+to deliver a different signal (for example `KILL` for immediate shut down).
+A bare number is always treated as a PID; only sessions tracked by
+`proot-distro ps` can be targeted, so `kill` can never touch unrelated
+host processes.
+
+| Option | Description |
+|---|---|
+| `-s`, `--signal` | Signal to send instead of the default `SIGTERM`. Accepts a name (`SIGTERM`, `KILL`, `HUP`) or a number (`15`, `9`, `1`). |
+| `--all` | Stop every active session. |
 
 ---
 
@@ -1129,6 +1214,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
 | `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
+| `sessions/<pid>.json` | Active-session registry entry for `ps`; holds an inherited `flock` for the session lifetime and is pruned when the session ends |
 | `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
 | `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags) |
 | `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |

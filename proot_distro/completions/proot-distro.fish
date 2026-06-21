@@ -61,7 +61,7 @@ end
 # ---------------------------------------------------------------------------
 function __proot_distro_no_subcommand
     not __fish_seen_subcommand_from \
-        install remove rename reset login list backup restore \
+        install remove rename reset login list ps kill backup restore \
         clear-cache copy sync run build push help
 end
 
@@ -74,6 +74,8 @@ complete -c proot-distro -f -n __proot_distro_no_subcommand -a rename      -d 'R
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a login       -d 'Open a shell inside a container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a list        -d 'List installed containers'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a ps          -d 'List active container sessions'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a kill        -d 'Stop active container sessions'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a backup      -d 'Backup a container to a tar archive'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a restore     -d 'Restore a container from a tar archive'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a clear-cache -d 'Clear the download cache'
@@ -172,6 +174,8 @@ complete -c proot-distro -n '__fish_seen_subcommand_from login' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
     -s e -l env        -r -d 'Set environment variable VAR=VALUE (repeatable)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
+    -s d -l detach        -d 'Start the session in the background'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
     -l get-proot-cmd      -d 'Print the proot command line and exit'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
     -s h -l help          -d 'Show help'
@@ -182,6 +186,27 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
     -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
+    -s h -l help       -d 'Show help'
+
+# ---------------------------------------------------------------------------
+# ps
+# ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from ps' \
+    -s q -l quiet      -d 'Print only PIDs, one per line'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from ps' \
+    -s h -l help       -d 'Show help'
+
+# ---------------------------------------------------------------------------
+# kill
+# ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from kill' \
+    -a '(__proot_distro_containers)' -d 'Container'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from kill' \
+    -s s -l signal     -r -d 'Signal to send instead of SIGTERM' \
+    -a 'TERM KILL HUP INT QUIT USR1 USR2'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from kill' \
+    -l all             -d 'Stop every active session'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from kill' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -291,6 +316,8 @@ complete -c proot-distro -n '__fish_seen_subcommand_from run' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -s e -l env        -r -d 'Set environment variable VAR=VALUE (repeatable)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
+    -s d -l detach        -d 'Start the session in the background'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -l get-proot-cmd      -d 'Print the proot command line and exit'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from run' \
     -s h -l help          -d 'Show help'
@@ -342,7 +369,7 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
 # help
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list backup restore clear-cache copy sync run build push' \
+    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push' \
     -d 'Topic'
 
 # ---------------------------------------------------------------------------
@@ -354,6 +381,8 @@ complete -c pd -f -n __proot_distro_no_subcommand -a rename      -d 'Rename a co
 complete -c pd -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
 complete -c pd -f -n __proot_distro_no_subcommand -a login       -d 'Open a shell inside a container'
 complete -c pd -f -n __proot_distro_no_subcommand -a list        -d 'List installed containers'
+complete -c pd -f -n __proot_distro_no_subcommand -a ps          -d 'List active container sessions'
+complete -c pd -f -n __proot_distro_no_subcommand -a kill        -d 'Stop active container sessions'
 complete -c pd -f -n __proot_distro_no_subcommand -a backup      -d 'Backup a container to a tar archive'
 complete -c pd -f -n __proot_distro_no_subcommand -a restore     -d 'Restore a container from a tar archive'
 complete -c pd -f -n __proot_distro_no_subcommand -a clear-cache -d 'Clear the download cache'
@@ -400,11 +429,20 @@ complete -c pd -f -n '__fish_seen_subcommand_from login' -l kernel             -
 complete -c pd -f -n '__fish_seen_subcommand_from login' -l hostname           -r -d 'Container hostname'
 complete -c pd -n   '__fish_seen_subcommand_from login' -s w -l work-dir       -r -d 'Working directory'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s e -l env           -r -d 'Environment variable'
+complete -c pd -f -n '__fish_seen_subcommand_from login' -s d -l detach           -d 'Start session in background'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -l get-proot-cmd         -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s h -l help             -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s q -l quiet -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s h -l help  -d 'Show help'
+
+complete -c pd -f -n '__fish_seen_subcommand_from ps' -s q -l quiet -d 'Print only PIDs, one per line'
+complete -c pd -f -n '__fish_seen_subcommand_from ps' -s h -l help  -d 'Show help'
+
+complete -c pd -f -n '__fish_seen_subcommand_from kill' -a '(__proot_distro_containers)' -d 'Container'
+complete -c pd -f -n '__fish_seen_subcommand_from kill' -s s -l signal -r -d 'Signal to send instead of SIGTERM' -a 'TERM KILL HUP INT QUIT USR1 USR2'
+complete -c pd -f -n '__fish_seen_subcommand_from kill' -l all          -d 'Stop every active session'
+complete -c pd -f -n '__fish_seen_subcommand_from kill' -s h -l help    -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -a '(__proot_distro_containers)' -d 'Container'
 complete -c pd -n   '__fish_seen_subcommand_from backup' -s o -l output    -r -d 'Output archive file'
@@ -452,6 +490,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from run' -l kernel             -r 
 complete -c pd -f -n '__fish_seen_subcommand_from run' -l hostname           -r -d 'Container hostname'
 complete -c pd -n   '__fish_seen_subcommand_from run' -s w -l work-dir       -r -d 'Working directory'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -s e -l env           -r -d 'Environment variable'
+complete -c pd -f -n '__fish_seen_subcommand_from run' -s d -l detach           -d 'Start session in background'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -l get-proot-cmd         -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from run' -s h -l help             -d 'Show help'
 
@@ -474,4 +513,4 @@ complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet           
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help            -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list backup restore clear-cache copy sync run build push' -d 'Topic'
+    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push' -d 'Topic'

@@ -496,6 +496,11 @@ HELP_PAGES = {
             ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
+            ("-d, --detach",
+             "Start the session in the background and return immediately. "
+             "Standard input and output are redirected to /dev/null. "
+             f"The session is listed by '{PROGRAM_NAME} ps' and can be "
+             "stopped with 'kill PID'."),
             ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
@@ -559,6 +564,44 @@ HELP_PAGES = {
                     "instruction set."
                 ),
             },
+        ],
+    },
+
+    "ps": {
+        "usage": "ps [OPTIONS]",
+        "summary": (
+            "List active container sessions. Every running 'login' and "
+            "'run' session is shown with its PID, container, session "
+            "type, login user, uptime and the command being executed."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-q, --quiet",
+             "Print only the PID of each active session, one per line. "),
+        ]
+    },
+
+    "kill": {
+        "usage": "kill [OPTIONS] (PID | CONTAINER | --all)",
+        "summary": (
+            f"Terminate {CANONICAL_PROGRAM_NAME} sessions by sending a given "
+            "signal to their process tree. The scope of affected sessions "
+            "determined by target type. Use PID to kill individual container "
+            "session or a container name if need to stop all processes "
+            "created within given container."
+            "\n\n"
+            "Default signal is TERM."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-s, --signal [SIGNAL]",
+             "Signal to send instead of the default SIGTERM. Accepts a "
+             "name (SIGTERM, KILL, HUP) or a number (15, 9, 1)."),
+            ("--all", "Target all sessions system-wide."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} kill 12345",
+            f"{PROGRAM_NAME} kill --signal KILL nextcloud",
         ],
     },
 
@@ -715,6 +758,11 @@ HELP_PAGES = {
             ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
              "times."),
+            ("-d, --detach",
+             "Start the session in the background and return immediately. "
+             "Standard input and output are redirected to /dev/null. "
+             f"The session is listed by '{PROGRAM_NAME} ps' and can be "
+             "stopped with 'kill PID'."),
             ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
@@ -722,6 +770,7 @@ HELP_PAGES = {
         ],
         "examples": [
             f"{PROGRAM_NAME} run nextcloud --redirect-ports",
+            f"{PROGRAM_NAME} run nextcloud --detach",
             f"{PROGRAM_NAME} run ubuntu --isolated -- /bin/echo hi",
         ],
         "footer": [
@@ -788,6 +837,8 @@ TOP_COMMANDS = [
     ("list", "List created containers."),
     ("login", "Start interactive shell inside a container."),
     ("run", "Run container entrypoint in server or distroless images."),
+    ("ps", "List active container sessions."),
+    ("kill", "Stop active container sessions."),
     ("remove", "Delete a container.", "Destroys data!"),
     ("rename", "Rename a container."),
     ("reset", "Reinstall a container from scratch.", "Destroys data!"),

@@ -30,8 +30,9 @@ only when prompted — `pkg install -y -q proot`.
 Top-level utilities (each owns a focused concern):
 
 - `constants.py` — `IS_TERMUX`, `TERMUX_PREFIX/HOME/APP_PACKAGE`,
-  `RUNTIME_DIR`, `BASE_CACHE_DIR`, `CONTAINERS_DIR`, `LAYER_CACHE_DIR`,
-  `MANIFEST_CACHE_DIR`, `DEFAULT_PATH_ENV`, `DEFAULT_FAKE_KERNEL_*`.
+  `RUNTIME_DIR`, `BASE_CACHE_DIR`, `CONTAINERS_DIR`, `SESSIONS_DIR`,
+  `LAYER_CACHE_DIR`, `MANIFEST_CACHE_DIR`, `DEFAULT_PATH_ENV`,
+  `DEFAULT_FAKE_KERNEL_*`.
 - `message.py` — color dict `C`, `msg`, `log_info/error`, `warn`,
   `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`.
 - `progress.py` — `fmt_size`, `ByteCounter`, `draw_bytes_bar`,
@@ -42,6 +43,10 @@ Top-level utilities (each owns a focused concern):
   on `BaseException` (Ctrl-C never leaves half-written sentinels).
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock).
+- `session.py` — active-session registry for `ps`: `register_session`
+  (inheritable flock survives `execvpe`, like the container lock; records
+  a `detach` flag among the per-session metadata), `active_sessions`
+  (reads `SESSIONS_DIR`, prunes dead via a shared flock probe).
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `_PdArgumentParser` (per-command help on error).
@@ -52,9 +57,10 @@ Top-level utilities (each owns a focused concern):
   reject, proot probe, parse, dispatch.
 
 Commands (`commands/`): `backup`, `build`, `clear_cache`, `copy`,
-`install` (+`install_local`), `list`, `push`, `remove`, `rename`,
-`reset`, `restore`, `run`, `sync`; subpackages `help/{pages,render}`
-and `login/{bindings,env,migrate,passwd,proot_cmd,quoting}`.
+`install` (+`install_local`), `kill`, `list`, `ps`, `push`, `remove`,
+`rename`, `reset`, `restore`, `run`, `sync`; subpackages
+`help/{pages,render}` and
+`login/{bindings,detach,env,migrate,passwd,proot_cmd,quoting}`.
 
 Helpers (`helpers/`): `build_cache`, `dockerfile`, `download`,
 `layer_diff`, `oci_writer`, `rootfs`, `tar_extract`; subpackages
@@ -69,6 +75,7 @@ push,refs,transport}`.
 | `RUNTIME_DIR` | `$TERMUX_PREFIX/var/lib/proot-distro` | `$XDG_DATA_HOME/proot-distro` |
 | `BASE_CACHE_DIR` | `$RUNTIME_DIR/cache` | `$XDG_CACHE_HOME/proot-distro` |
 | `CONTAINERS_DIR` | `$RUNTIME_DIR/containers` | same |
+| `SESSIONS_DIR` | `$RUNTIME_DIR/sessions` | same |
 | `LEGACY_ROOTFS_DIR` | `$RUNTIME_DIR/installed-rootfs` (migration only) | same |
 | `LAYER_CACHE_DIR` | `$BASE_CACHE_DIR/oci_layers` | same |
 | `MANIFEST_CACHE_DIR` | `$BASE_CACHE_DIR/oci_manifests` | same |
@@ -122,6 +129,8 @@ would shadow the container's.
 | `login` | `sh` | container shared (fd inherited by proot) |
 | `run` | — | container shared (fd inherited by proot) |
 | `list` | `li`, `ls` | none |
+| `ps` | — | none (reads session registry, prunes dead entries) |
+| `kill` | — | none (reads session registry, signals PIDs) |
 | `backup` | `bak`, `bkp` | container shared |
 | `restore` | — | container exclusive, lazy per first TarInfo |
 | `clear-cache` | `clear`, `cl` | none |
@@ -141,8 +150,9 @@ numeric uid, or `user:group`.
    "Aborted by user").
 2. Root warn (non-fatal); nested-proot reject (reads
    `/proc/<pid>/status`, follows one TracerPid hop).
-3. proot probe; on Termux + TTY, offers `pkg install`. **`build` and
-   `push` are exempt**; `build` runs its own gate via
+3. proot probe; on Termux + TTY, offers `pkg install`. **`build`,
+   `push`, and `kill` are exempt** (`kill` only signals running
+   sessions); `build` runs its own gate via
    `build_engine.needs_proot()` (True only with a RUN-family).
 4. Per-command `-h`/`--help`/`--usage` intercepted **before** argparse
    so missing positionals never produce errors instead of help. Unknown
@@ -165,7 +175,12 @@ Non-blocking `flock(2)`. Conflict ⇒ exit immediately, reporting the
 holder's PID + command. Re-entrancy via `_held_exclusive` — `reset`
 acquires the lock then calls `install` for the same name; install's
 acquire detects the path and skips. Login/run pass `inheritable=True`
-to clear `O_CLOEXEC` so the fd survives `os.execvpe`. Multiple locks
+to clear `O_CLOEXEC` so the fd survives `os.execvpe`. `disown()` marks a
+lock so `release()` closes the fd **without** `LOCK_UN` — used by
+`--detach`, where a forked descendant (the daemon) inherits the same
+open file description and must keep the lock held after the foreground
+process exits its `with` block (flock releases on `LOCK_UN` of any
+duplicate, or once all duplicates close). Multiple locks
 acquired in sorted-path order via `ExitStack`. `BuildLock` covers only
 the output `(image_ref, arch)`; concurrent builds with different tags
 can still race on shared caches, safe because every writer uses
@@ -247,6 +262,33 @@ concurrent sessions agree. `LD_PRELOAD` stripped before exec.
 `manifest.json`, builds `inner` per Docker semantics, delegates to
 `command_login` via `args._run_inner`. `--work-dir` overrides
 `WorkingDir`; default is `/` (not user home).
+
+`-d`/`--detach` (login + run, via `_add_login_or_run_common`)
+backgrounds the session: after all setup, `_command_login_inner`
+delegates the final exec to `commands/login/detach.spawn_detached`
+instead of `register_session` + `execvpe`. It is a double-fork daemon
+(`setsid`, std fds → `/dev/null`); `register_session` runs in the
+grandchild so `getpid()` already equals the future proot PID, and a
+pipe relays that PID back so the foreground can print it. The grandchild
+inherits the foreground's container-lock fd, so the foreground calls
+`lock.disown()` (skip `LOCK_UN`) to leave the lock held by the daemon.
+`--get-proot-cmd` short-circuits before the detach branch. The session
+shows in `ps` with TYPE marked `login*`/`run*`; stop it with
+`proot-distro kill`.
+
+`command_kill()` (`commands/kill.py`) stops sessions by signalling the
+**whole guest process tree**, not just the root proot — `proot`'s
+`--kill-on-exit` cleanup runs only on a graceful exit (so `kill -9`
+orphans the guest) and is absent off-Termux entirely. Target is a PID, a
+container name (all its sessions), or `--all`, always resolved against
+`active_sessions()` so only tracked proot sessions can be hit. It reads
+`/proc/<pid>/status` `PPid:` into a `pid→ppid` map (`_read_pid_ppid`),
+walks the transitive closure under each root (`_collect_tree`, pure +
+cycle-safe), and `os.kill`s every member (never self/pid 0/pid 1) in two
+sweeps. Default signal is `SIGTERM`; `-s/--signal` takes a name or
+number. PID-reuse safety belt: a root is walked only when
+`/proc/<root>/comm` reads `proot`. No lock taken; pure-Python (no
+`pkill`/`pgrep`).
 
 `command_build()` parses the Dockerfile, runs `BuildEngine`, writes
 the manifest cache (Variant A — small JSON; layer blobs already in

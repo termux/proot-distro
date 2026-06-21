@@ -64,6 +64,8 @@ _proot_distro() {
                 'reset:reinstall a container from its original image'
                 'login:open a shell inside a container'
                 'list:list installed containers'
+                'ps:list active container sessions'
+                'kill:stop active container sessions'
                 'backup:backup a container to a tar archive'
                 'restore:restore a container from a tar archive'
                 'clear-cache:clear the download cache'
@@ -136,6 +138,7 @@ _proot_distro() {
                         '--hostname[hostname visible inside the container]:string'
                         '(-w --work-dir)'{-w,--work-dir}'[initial working directory]:path:_directories'
                         '*'{-e,--env}'[set environment variable]:VAR=VALUE'
+                        '(-d --detach)'{-d,--detach}'[start session in background]'
                         '--get-proot-cmd[print the proot command line and exit]'
                         '1:container:_proot_distro_containers'
                         '*:inner command:_command_names -e'
@@ -155,6 +158,22 @@ _proot_distro() {
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]'
+                    ;;
+
+                # -----------------------------------------------------------
+                ps)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-q --quiet)'{-q,--quiet}'[print only PIDs, one per line]'
+                    ;;
+
+                # -----------------------------------------------------------
+                kill)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-s --signal)'{-s,--signal}'[signal to send instead of SIGTERM]:signal:(TERM KILL HUP INT QUIT USR1 USR2)' \
+                        '--all[stop every active session]' \
+                        '1:PID or container:_proot_distro_containers'
                     ;;
 
                 # -----------------------------------------------------------
@@ -225,6 +244,7 @@ _proot_distro() {
                         '--hostname[hostname visible inside the container]:string'
                         '(-w --work-dir)'{-w,--work-dir}'[initial working directory]:path:_directories'
                         '*'{-e,--env}'[set environment variable]:VAR=VALUE'
+                        '(-d --detach)'{-d,--detach}'[start session in background]'
                         '--get-proot-cmd[print the proot command line and exit]'
                         '1:container:_proot_distro_containers'
                         '*:arguments'
@@ -271,7 +291,7 @@ _proot_distro() {
                 help)
                     local -a topics
                     topics=(
-                        install remove rename reset login list
+                        install remove rename reset login list ps kill
                         backup restore clear-cache copy sync run
                         build push
                     )

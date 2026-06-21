@@ -55,6 +55,8 @@ from proot_distro.commands.sync import command_sync
 from proot_distro.commands.run import command_run
 from proot_distro.commands.build import command_build
 from proot_distro.commands.push import command_push
+from proot_distro.commands.ps import command_ps
+from proot_distro.commands.kill import command_kill
 
 
 _COMMAND_HANDLERS = {
@@ -72,6 +74,8 @@ _COMMAND_HANDLERS = {
     "run":         command_run,
     "build":       command_build,
     "push":        command_push,
+    "ps":          command_ps,
+    "kill":        command_kill,
     "help":        command_help,
 }
 
@@ -121,9 +125,10 @@ def _ensure_proot_available(first_canonical: str) -> None:
     `push` only reads from the local manifest/layer cache and uploads
     to a registry. `build` runs its own check after parsing the
     Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
-    present.
+    present. `kill` is exempt too: it only signals already-running
+    sessions and never invokes proot.
     """
-    if first_canonical in ("build", "push"):
+    if first_canonical in ("build", "push", "kill"):
         return
     if shutil.which("proot") is not None:
         return
@@ -302,10 +307,10 @@ def main() -> None:
 
     # Enable quiet mode globally before dispatch so helpers
     # (helpers/docker, helpers/download, etc.) silence their info
-    # lines and progress bars too. `list --quiet` has different
-    # semantics (print container names only) and does not use log_info(),
-    # so the global flag is harmless for it.
-    if canonical != "list" and getattr(args, "quiet", False):
+    # lines and progress bars too. `list` and `ps` have different
+    # --quiet semantics (print names / PIDs only) and do not use
+    # log_info(), so the global flag is left off for them.
+    if canonical not in ("list", "ps") and getattr(args, "quiet", False):
         set_quiet(True)
 
     handler = _COMMAND_HANDLERS.get(canonical)

@@ -71,6 +71,7 @@ def test_each_subcommand_parses():
         (["rename", "a", "b"], "rename"),
         (["reset", "box"], "reset"),
         (["list"], "list"),
+        (["ps"], "ps"),
         (["backup", "box"], "backup"),
         (["restore", "f.tar"], "restore"),
         (["clear-cache"], "clear-cache"),
@@ -80,9 +81,68 @@ def test_each_subcommand_parses():
         (["push", "me/app:1"], "push"),
         (["run", "box"], "run"),
         (["login", "box"], "login"),
+        (["kill", "box"], "kill"),
     ]:
         args, _ = p.parse_known_args(argv)
         assert args.command == cmd
+
+
+def test_ps_quiet_flag():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["ps", "-q"])
+    assert args.command == "ps"
+    assert args.quiet is True
+    assert unknown == []
+
+
+@pytest.mark.parametrize("cmd", ["login", "run"])
+def test_detach_flag_default_false(cmd):
+    p = parser.build_parser()
+    args, _ = p.parse_known_args([cmd, "box"])
+    assert args.detach is False
+
+
+@pytest.mark.parametrize("cmd,flag", [
+    ("login", "-d"), ("login", "--detach"),
+    ("run", "-d"), ("run", "--detach"),
+])
+def test_detach_flag_set(cmd, flag):
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args([cmd, "box", flag])
+    assert args.command == cmd
+    assert args.detach is True
+    assert unknown == []
+
+
+def test_kill_pid_target():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["kill", "12345"])
+    assert args.command == "kill"
+    assert args.target == "12345"
+    assert args.all is False
+    assert args.signal is None
+    assert unknown == []
+
+
+def test_kill_container_target():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["kill", "ubuntu"])
+    assert args.target == "ubuntu"
+
+
+def test_kill_all_flag():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["kill", "--all"])
+    assert args.target is None
+    assert args.all is True
+
+
+@pytest.mark.parametrize("flag", ["-s", "--signal"])
+def test_kill_signal_flag(flag):
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["kill", flag, "TERM", "box"])
+    assert args.signal == "TERM"
+    assert args.target == "box"
 
 
 def test_build_multiple_tags_and_outputs():

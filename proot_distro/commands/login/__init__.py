@@ -43,7 +43,7 @@ from proot_distro.constants import (
     DEFAULT_FAKE_KERNEL_RELEASE,
     PROGRAM_NAME,
 )
-from proot_distro.message import msg, crit_error
+from proot_distro.message import C, msg, crit_error
 from proot_distro.arch import (
     detect_installed_arch,
     get_device_cpu_arch,
@@ -51,6 +51,7 @@ from proot_distro.arch import (
 )
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.locking import ContainerLock
+from proot_distro.session import register_session
 from proot_distro.names import require_valid_name
 from proot_distro.paths import container_dir, container_rootfs
 
@@ -58,6 +59,7 @@ from proot_distro.commands.login.env import (
     ANDROID_HOST_ENV_VARS, IMAGE_ENV_BLOCKED,
     inject_termux_profile, read_manifest_env,
 )
+from proot_distro.commands.login.detach import spawn_detached
 from proot_distro.commands.login.migrate import migrate_legacy_rootfs
 from proot_distro.commands.login.passwd import (
     find_passwd_by_uid,
@@ -82,8 +84,8 @@ def command_login(args) -> None:
     # proot. On any error exit __exit__ releases it.
     with ContainerLock(
         container_name, exclusive=False, command="login", inheritable=True
-    ):
-        _command_login_inner(container_name, args)
+    ) as lock:
+        _command_login_inner(container_name, args, lock)
 
 
 def _detect_dist_type(rootfs: str) -> str:
@@ -305,7 +307,7 @@ def _check_shell_available(rootfs, container_path, login_shell, container_name):
     sys.exit(1)
 
 
-def _command_login_inner(container_name: str, args) -> None:
+def _command_login_inner(container_name: str, args, lock) -> None:
     migrate_legacy_rootfs(container_name)
 
     rootfs = container_rootfs(container_name)
@@ -336,6 +338,7 @@ def _command_login_inner(container_name: str, args) -> None:
     extra_env = getattr(args, "env", []) or []
     login_cmd = getattr(args, "login_cmd", []) or []
     run_inner = getattr(args, "_run_inner", None)
+    detach = getattr(args, "detach", False)
 
     if dist_type == "termux":
         if not login_wd:
@@ -472,6 +475,51 @@ def _command_login_inner(container_name: str, args) -> None:
         parts.extend(dq(a) for a in proot_args)
         print(" \\\n  ".join(parts))
         sys.exit(0)
+
+    # Session metadata shared by the foreground and detached paths.
+    reg = dict(
+        container=container_name,
+        kind="run" if run_inner is not None else "login",
+        command_argv=inner,
+        user=login_user,
+        isolated=isolated,
+        minimal=minimal,
+    )
+
+    if detach:
+        # Background the session: a double-fork daemon registers itself
+        # and exec's proot, while this process reports the PID and
+        # returns. The daemon inherits the container lock fd, so disown
+        # it here — otherwise the with-block's release() would LOCK_UN
+        # the shared lock out from under the running daemon.
+        pid = spawn_detached(
+            proot_bin, proot_args, child_env,
+            register_kwargs=dict(reg, detach=True),
+        )
+        if pid is None:
+            crit_error(f"failed to start detached session for container "
+                       f"'{container_name}'.")
+            sys.exit(1)
+        lock.disown()
+        msg()
+        msg(f"{C['CYAN']}Started detached session for container "
+            f"'{container_name}':{C['RST']}")
+        msg()
+        msg(f"{C['CYAN']}PID:     {C['GREEN']}{pid}{C['RST']}")
+        msg(f"{C['CYAN']}Command: {C['GREEN']}{shlex.join(inner)}{C['RST']}")
+        msg()
+        msg(f"{C['CYAN']}List sessions:  "
+            f"{C['GREEN']}{PROGRAM_NAME} ps{C['RST']}")
+        msg(f"{C['CYAN']}Stop session:   "
+            f"{C['GREEN']}kill {pid}{C['RST']}")
+        msg()
+        return
+
+    # Record this session for `ps`. Best-effort; the returned fd holds an
+    # inheritable flock that proot keeps open for the whole session, so
+    # the entry is reaped automatically when the session ends. Keep the
+    # reference alive until execvpe() so the fd is not closed early.
+    _session_fd = register_session(**reg)  # noqa: F841 (kept alive until exec)
 
     os.execvpe(proot_bin, proot_args, child_env)
 
