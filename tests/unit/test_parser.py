@@ -71,6 +71,7 @@ def test_each_subcommand_parses():
         (["rename", "a", "b"], "rename"),
         (["reset", "box"], "reset"),
         (["list"], "list"),
+        (["ps"], "ps"),
         (["backup", "box"], "backup"),
         (["restore", "f.tar"], "restore"),
         (["clear-cache"], "clear-cache"),
@@ -83,6 +84,14 @@ def test_each_subcommand_parses():
     ]:
         args, _ = p.parse_known_args(argv)
         assert args.command == cmd
+
+
+def test_ps_quiet_flag():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["ps", "-q"])
+    assert args.command == "ps"
+    assert args.quiet is True
+    assert unknown == []
 
 
 def test_build_multiple_tags_and_outputs():

@@ -51,6 +51,7 @@ from proot_distro.arch import (
 )
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.locking import ContainerLock
+from proot_distro.session import register_session
 from proot_distro.names import require_valid_name
 from proot_distro.paths import container_dir, container_rootfs
 
@@ -472,6 +473,19 @@ def _command_login_inner(container_name: str, args) -> None:
         parts.extend(dq(a) for a in proot_args)
         print(" \\\n  ".join(parts))
         sys.exit(0)
+
+    # Record this session for `ps`. Best-effort; the returned fd holds an
+    # inheritable flock that proot keeps open for the whole session, so
+    # the entry is reaped automatically when the session ends. Keep the
+    # reference alive until execvpe() so the fd is not closed early.
+    _session_fd = register_session(  # noqa: F841 (kept alive until exec)
+        container=container_name,
+        kind="run" if run_inner is not None else "login",
+        command_argv=inner,
+        user=login_user,
+        isolated=isolated,
+        minimal=minimal,
+    )
 
     os.execvpe(proot_bin, proot_args, child_env)
 

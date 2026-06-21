@@ -30,8 +30,9 @@ only when prompted — `pkg install -y -q proot`.
 Top-level utilities (each owns a focused concern):
 
 - `constants.py` — `IS_TERMUX`, `TERMUX_PREFIX/HOME/APP_PACKAGE`,
-  `RUNTIME_DIR`, `BASE_CACHE_DIR`, `CONTAINERS_DIR`, `LAYER_CACHE_DIR`,
-  `MANIFEST_CACHE_DIR`, `DEFAULT_PATH_ENV`, `DEFAULT_FAKE_KERNEL_*`.
+  `RUNTIME_DIR`, `BASE_CACHE_DIR`, `CONTAINERS_DIR`, `SESSIONS_DIR`,
+  `LAYER_CACHE_DIR`, `MANIFEST_CACHE_DIR`, `DEFAULT_PATH_ENV`,
+  `DEFAULT_FAKE_KERNEL_*`.
 - `message.py` — color dict `C`, `msg`, `log_info/error`, `warn`,
   `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`.
 - `progress.py` — `fmt_size`, `ByteCounter`, `draw_bytes_bar`,
@@ -42,6 +43,10 @@ Top-level utilities (each owns a focused concern):
   on `BaseException` (Ctrl-C never leaves half-written sentinels).
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock).
+- `session.py` — active-session registry for `ps`: `register_session`
+  (inheritable flock survives `execvpe`, like the container lock),
+  `active_sessions` (reads `SESSIONS_DIR`, prunes dead via a shared
+  flock probe).
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `_PdArgumentParser` (per-command help on error).
@@ -52,7 +57,7 @@ Top-level utilities (each owns a focused concern):
   reject, proot probe, parse, dispatch.
 
 Commands (`commands/`): `backup`, `build`, `clear_cache`, `copy`,
-`install` (+`install_local`), `list`, `push`, `remove`, `rename`,
+`install` (+`install_local`), `list`, `ps`, `push`, `remove`, `rename`,
 `reset`, `restore`, `run`, `sync`; subpackages `help/{pages,render}`
 and `login/{bindings,env,migrate,passwd,proot_cmd,quoting}`.
 
@@ -69,6 +74,7 @@ push,refs,transport}`.
 | `RUNTIME_DIR` | `$TERMUX_PREFIX/var/lib/proot-distro` | `$XDG_DATA_HOME/proot-distro` |
 | `BASE_CACHE_DIR` | `$RUNTIME_DIR/cache` | `$XDG_CACHE_HOME/proot-distro` |
 | `CONTAINERS_DIR` | `$RUNTIME_DIR/containers` | same |
+| `SESSIONS_DIR` | `$RUNTIME_DIR/sessions` | same |
 | `LEGACY_ROOTFS_DIR` | `$RUNTIME_DIR/installed-rootfs` (migration only) | same |
 | `LAYER_CACHE_DIR` | `$BASE_CACHE_DIR/oci_layers` | same |
 | `MANIFEST_CACHE_DIR` | `$BASE_CACHE_DIR/oci_manifests` | same |
@@ -122,6 +128,7 @@ would shadow the container's.
 | `login` | `sh` | container shared (fd inherited by proot) |
 | `run` | — | container shared (fd inherited by proot) |
 | `list` | `li`, `ls` | none |
+| `ps` | — | none (reads session registry, prunes dead entries) |
 | `backup` | `bak`, `bkp` | container shared |
 | `restore` | — | container exclusive, lazy per first TarInfo |
 | `clear-cache` | `clear`, `cl` | none |

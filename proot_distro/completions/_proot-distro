@@ -64,6 +64,7 @@ _proot_distro() {
                 'reset:reinstall a container from its original image'
                 'login:open a shell inside a container'
                 'list:list installed containers'
+                'ps:list active container sessions'
                 'backup:backup a container to a tar archive'
                 'restore:restore a container from a tar archive'
                 'clear-cache:clear the download cache'
@@ -155,6 +156,13 @@ _proot_distro() {
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]'
+                    ;;
+
+                # -----------------------------------------------------------
+                ps)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-q --quiet)'{-q,--quiet}'[print only PIDs, one per line]'
                     ;;
 
                 # -----------------------------------------------------------
@@ -271,7 +279,7 @@ _proot_distro() {
                 help)
                     local -a topics
                     topics=(
-                        install remove rename reset login list
+                        install remove rename reset login list ps
                         backup restore clear-cache copy sync run
                         build push
                     )

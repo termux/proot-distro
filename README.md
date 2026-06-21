@@ -28,6 +28,7 @@ exporting it as a standalone OCI tarball.
    * [`login`](#login--start-a-shell-inside-a-container)
    * [`run`](#run--run-the-image-defined-entrypoint)
    * [`list`](#list--list-installed-containers)
+   * [`ps`](#ps--list-active-sessions)
    * [`remove`](#remove--delete-a-container)
    * [`rename`](#rename--rename-a-container)
    * [`reset`](#reset--reinstall-a-container-from-scratch)
@@ -716,6 +717,38 @@ printed.
 
 ---
 
+### `ps` — List active sessions
+
+```
+proot-distro ps
+```
+
+List every active container session — each running `login` and `run`
+spawns one. A single container may have several sessions at once; each
+is shown on its own line:
+
+```
+PID     CONTAINER  TYPE   USER  UPTIME  COMMAND
+12345   ubuntu     login  root  3m12s   /bin/bash -l
+12388   debian     run    root  0m44s   nginx -g 'daemon off;'
+```
+
+The PID is the session's `proot` process and can be passed to `kill`.
+
+Tracking is robust: a session is considered active only while its
+process is alive. Each session holds an inherited `flock` on its
+registry file (under `sessions/`), which the kernel releases
+automatically when the process exits — even on a crash or `kill -9` —
+so stale entries are never displayed and are cleaned up on the next
+`ps`. It does not rely on `os.kill(pid, 0)`, which a recycled PID could
+fool.
+
+| Option | Description |
+|---|---|
+| `-q`, `--quiet` | Print only the PID of each active session, one per line. Handy for scripting (e.g. `proot-distro ps -q \| xargs -r kill`). |
+
+---
+
 ### `remove` — Delete a container
 
 ```
@@ -1129,6 +1162,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
 | `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
+| `sessions/<pid>.json` | Active-session registry entry for `ps`; holds an inherited `flock` for the session lifetime and is pruned when the session ends |
 | `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
 | `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags) |
 | `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |

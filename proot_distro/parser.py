@@ -159,6 +159,7 @@ def build_parser() -> _PdArgumentParser:
     _build(sub)
     _push(sub)
     _run(sub)
+    _ps(sub)
 
     return parser
 
@@ -346,4 +347,11 @@ def _run(sub):
     p.add_argument("container_name", nargs="?", default=None)
     _add_login_or_run_common(p)
     p.add_argument("--get-proot-cmd", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+
+
+def _ps(sub):
+    p = sub.add_parser("ps", add_help=False)
+    p._pd_command = "ps"
+    p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-h", "--help", action="store_true")

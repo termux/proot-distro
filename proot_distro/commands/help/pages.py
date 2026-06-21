@@ -562,6 +562,20 @@ HELP_PAGES = {
         ],
     },
 
+    "ps": {
+        "usage": "ps [OPTIONS]",
+        "summary": (
+            "List active container sessions. Every running 'login' and "
+            "'run' session is shown with its PID, container, session "
+            "type, login user, uptime and the command being executed."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-q, --quiet",
+             "Print only the PID of each active session, one per line. "),
+        ]
+    },
+
     "remove": {
         "usage": "remove [OPTIONS] CONTAINER",
         "aliases": ("rm",),
@@ -788,6 +802,7 @@ TOP_COMMANDS = [
     ("list", "List created containers."),
     ("login", "Start interactive shell inside a container."),
     ("run", "Run container entrypoint in server or distroless images."),
+    ("ps", "List active container sessions."),
     ("remove", "Delete a container.", "Destroys data!"),
     ("rename", "Rename a container."),
     ("reset", "Reinstall a container from scratch.", "Destroys data!"),

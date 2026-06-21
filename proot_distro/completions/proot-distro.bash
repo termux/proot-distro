@@ -36,7 +36,7 @@ _proot_distro() {
     local cur prev words cword
     _init_completion || return
 
-    local -r _all_commands="install remove rename reset login list backup restore
+    local -r _all_commands="install remove rename reset login list ps backup restore
         clear-cache copy sync run build push help"
 
     # Complete the subcommand itself
@@ -125,6 +125,11 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         list)
+            COMPREPLY=($(compgen -W "-q --quiet -h --help" -- "${cur}"))
+            ;;
+
+        # -----------------------------------------------------------------------
+        ps)
             COMPREPLY=($(compgen -W "-q --quiet -h --help" -- "${cur}"))
             ;;
 
@@ -277,7 +282,7 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         help)
-            local topics="install remove rename reset login list backup restore clear-cache copy sync run build push"
+            local topics="install remove rename reset login list ps backup restore clear-cache copy sync run build push"
             COMPREPLY=($(compgen -W "${topics}" -- "${cur}"))
             ;;
 

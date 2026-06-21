@@ -61,7 +61,7 @@ end
 # ---------------------------------------------------------------------------
 function __proot_distro_no_subcommand
     not __fish_seen_subcommand_from \
-        install remove rename reset login list backup restore \
+        install remove rename reset login list ps backup restore \
         clear-cache copy sync run build push help
 end
 
@@ -74,6 +74,7 @@ complete -c proot-distro -f -n __proot_distro_no_subcommand -a rename      -d 'R
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a login       -d 'Open a shell inside a container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a list        -d 'List installed containers'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a ps          -d 'List active container sessions'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a backup      -d 'Backup a container to a tar archive'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a restore     -d 'Restore a container from a tar archive'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a clear-cache -d 'Clear the download cache'
@@ -182,6 +183,14 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
     -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
+    -s h -l help       -d 'Show help'
+
+# ---------------------------------------------------------------------------
+# ps
+# ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from ps' \
+    -s q -l quiet      -d 'Print only PIDs, one per line'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from ps' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -342,7 +351,7 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
 # help
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list backup restore clear-cache copy sync run build push' \
+    -a 'install remove rename reset login list ps backup restore clear-cache copy sync run build push' \
     -d 'Topic'
 
 # ---------------------------------------------------------------------------
@@ -354,6 +363,7 @@ complete -c pd -f -n __proot_distro_no_subcommand -a rename      -d 'Rename a co
 complete -c pd -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
 complete -c pd -f -n __proot_distro_no_subcommand -a login       -d 'Open a shell inside a container'
 complete -c pd -f -n __proot_distro_no_subcommand -a list        -d 'List installed containers'
+complete -c pd -f -n __proot_distro_no_subcommand -a ps          -d 'List active container sessions'
 complete -c pd -f -n __proot_distro_no_subcommand -a backup      -d 'Backup a container to a tar archive'
 complete -c pd -f -n __proot_distro_no_subcommand -a restore     -d 'Restore a container from a tar archive'
 complete -c pd -f -n __proot_distro_no_subcommand -a clear-cache -d 'Clear the download cache'
@@ -405,6 +415,9 @@ complete -c pd -f -n '__fish_seen_subcommand_from login' -s h -l help           
 
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s q -l quiet -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s h -l help  -d 'Show help'
+
+complete -c pd -f -n '__fish_seen_subcommand_from ps' -s q -l quiet -d 'Print only PIDs, one per line'
+complete -c pd -f -n '__fish_seen_subcommand_from ps' -s h -l help  -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -a '(__proot_distro_containers)' -d 'Container'
 complete -c pd -n   '__fish_seen_subcommand_from backup' -s o -l output    -r -d 'Output archive file'
@@ -474,4 +487,4 @@ complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet           
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help            -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list backup restore clear-cache copy sync run build push' -d 'Topic'
+    -a 'install remove rename reset login list ps backup restore clear-cache copy sync run build push' -d 'Topic'

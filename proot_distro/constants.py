@@ -88,6 +88,9 @@ else:
 # New container storage layout: containers/<name>/manifest.json + rootfs/
 CONTAINERS_DIR = os.path.join(RUNTIME_DIR, "containers")
 
+# Active proot session registry (one JSON file per live session).
+SESSIONS_DIR = os.path.join(RUNTIME_DIR, "sessions")
+
 # Legacy rootfs path — used only for migrating old installations.
 LEGACY_ROOTFS_DIR = os.path.join(RUNTIME_DIR, "installed-rootfs")
 
