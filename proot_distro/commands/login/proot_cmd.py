@@ -187,7 +187,6 @@ def _add_termux_dev_binds(args, rootfs):
     """Bind device files and fake /proc/sys substitutes used by Termux."""
     args += [
         "--bind=/dev/urandom:/dev/random",
-        "--bind=/proc/self/fd:/dev/fd",
     ]
     for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
         if os.path.exists(f"/proc/self/fd/{i}"):
