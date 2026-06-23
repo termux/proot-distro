@@ -185,12 +185,11 @@ def _add_non_minimal_binds(
 
 def _add_termux_dev_binds(args, rootfs):
     """Bind device files and fake /proc/sys substitutes used by Termux."""
-    args += [
-        "--bind=/dev/urandom:/dev/random",
-        "--bind=/proc/self/fd:/dev/fd",
-    ]
+    args.append("--bind=/dev/urandom:/dev/random")
+    if not os.path.lexists("/dev/fd"):
+        args.append("--bind=/proc/self/fd:/dev/fd")
     for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
-        if os.path.exists(f"/proc/self/fd/{i}"):
+        if not os.path.lexists(f"/dev/{name}") and os.path.exists(f"/proc/self/fd/{i}"):
             args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
     sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
     args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")

@@ -174,12 +174,11 @@ def _exec_proot(engine, stage, command, stdin_input):
     proot_args += ["--bind=/dev", "--bind=/proc", "--bind=/sys"]
 
     if IS_TERMUX:
-        proot_args += [
-            "--bind=/dev/urandom:/dev/random",
-            "--bind=/proc/self/fd:/dev/fd",
-        ]
+        proot_args.append("--bind=/dev/urandom:/dev/random")
+        if not os.path.lexists("/dev/fd"):
+            proot_args.append("--bind=/proc/self/fd:/dev/fd")
         for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
-            if os.path.exists(f"/proc/self/fd/{i}"):
+            if not os.path.lexists(f"/dev/{name}") and os.path.exists(f"/proc/self/fd/{i}"):
                 proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
         setup_fake_sysdata(rootfs)
         sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
