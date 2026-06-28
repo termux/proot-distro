@@ -52,6 +52,16 @@ jobs:
 
       - name: User tests
         run: |
+          echo "=== Alpine Linux (3.24.1) - BEGIN"
+          ./proot-distro.py install -n alpine-3.24.1 alpine:3.24.1
+          ./proot-distro.py login alpine-3.24.1 -- cat /etc/os-release
+          ./proot-distro.py login alpine-3.24.1 -- apk update
+          ./proot-distro.py rename alpine-3.24.1 alpine-3.24.1-renamed
+          ./proot-distro.py backup -o /tmp/alpine.tar.gz alpine-3.24.1-renamed
+          ./proot-distro.py restore /tmp/alpine.tar.gz
+          ./proot-distro.py rm alpine-3.24.1-renamed
+          echo "=== Alpine Linux (3.24.1) - FINISH"
+
           echo "=== Debian (trixie) - BEGIN"
           ./proot-distro.py install -n debian-trixie debian:trixie
           ./proot-distro.py login debian-trixie -- cat /etc/os-release
@@ -61,3 +71,13 @@ jobs:
           ./proot-distro.py restore /tmp/debian.tar.gz
           ./proot-distro.py rm debian-trixie-renamed
           echo "=== Debian (trixie) - FINISH"
+
+          echo "=== Ubuntu (24.04) - BEGIN"
+          ./proot-distro.py install -n ubuntu-24.04 ubuntu:24.04
+          ./proot-distro.py login ubuntu-24.04 -- cat /etc/os-release
+          ./proot-distro.py login ubuntu-24.04 -- apt update
+          ./proot-distro.py rename ubuntu-24.04 ubuntu-24.04-renamed
+          ./proot-distro.py backup -o /tmp/ubuntu.tar.gz ubuntu-24.04-renamed
+          ./proot-distro.py restore /tmp/ubuntu.tar.gz
+          ./proot-distro.py rm ubuntu-24.04-renamed
+          echo "=== Ubuntu (24.04) - FINISH"
