@@ -34,11 +34,10 @@ jobs:
 
       - name: Install package with test extra
         run: |
+          sudo apt update && sudo apt install -yq proot
           python -m pip install --upgrade pip
           pip install -e '.[test]'
 
-      # The offline suite needs neither proot nor network access; the opt-in
-      # live tests stay skipped because RUN_LIVE_TESTS is unset.
       - name: Unit tests
         run: python -m pytest tests/unit
 
@@ -47,3 +46,6 @@ jobs:
 
       - name: Security tests
         run: python -m pytest tests/security
+
+      - name: Live tests
+        run: RUN_LIVE_TESTS=1 python -m pytest -q tests/live
