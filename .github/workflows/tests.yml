@@ -51,6 +51,7 @@ jobs:
         run: RUN_LIVE_TESTS=1 python -m pytest -q tests/live
 
       - name: User tests
+        if: github.event_name != 'pull_request'
         run: |
           echo "=== Alpine Linux (3.24.1) - BEGIN"
           ./proot-distro.py install -n alpine-3.24.1 alpine:3.24.1
