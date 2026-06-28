@@ -54,10 +54,10 @@ jobs:
         run: |
           echo "=== Debian (trixie) - BEGIN"
           ./proot-distro.py install -n debian-trixie debian:trixie
-          ./proot-distro login debian-trixie -- cat /etc/os-release
-          ./proot-distro login debian-trixie -- apt update
-          ./proot-distro rename debian-trixie debian-trixie-renamed
-          ./proot-distro backup -o /tmp/debian.tar.gz debian-trixie-renamed
-          ./proot-distro restore /tmp/debian.tar.gz
-          ./proot-distro rm debian-trixie-renamed
+          ./proot-distro.py login debian-trixie -- cat /etc/os-release
+          ./proot-distro.py login debian-trixie -- apt update
+          ./proot-distro.py rename debian-trixie debian-trixie-renamed
+          ./proot-distro.py backup -o /tmp/debian.tar.gz debian-trixie-renamed
+          ./proot-distro.py restore /tmp/debian.tar.gz
+          ./proot-distro.py rm debian-trixie-renamed
           echo "=== Debian (trixie) - FINISH"
