@@ -49,3 +49,15 @@ jobs:
 
       - name: Live tests
         run: RUN_LIVE_TESTS=1 python -m pytest -q tests/live
+
+      - name: User tests
+        run: |
+          echo "=== Debian (trixie) - BEGIN"
+          ./proot-distro.py install -n debian-trixie debian:trixie
+          ./proot-distro login debian-trixie -- cat /etc/os-release
+          ./proot-distro login debian-trixie -- apt update
+          ./proot-distro rename debian-trixie debian-trixie-renamed
+          ./proot-distro backup -o /tmp/debian.tar.gz debian-trixie-renamed
+          ./proot-distro restore /tmp/debian.tar.gz
+          ./proot-distro rm debian-trixie-renamed
+          echo "=== Debian (trixie) - FINISH"
