@@ -63,13 +63,13 @@ jobs:
 
           cleanup() {
             set +e
-            "${PD[@]}" kill --all
+            "${PD[@]}" kill --all >/dev/null 2>&1
             for name in \
               alpine-work alpine-restored alpine-built \
               debian-work debian-restored \
               ubuntu-work ubuntu-restored
             do
-              "${PD[@]}" rm -q "${name}"
+              "${PD[@]}" rm -q "${name}" >/dev/null 2>&1
             done
             rm -rf "${WORKDIR}"
           }
@@ -141,7 +141,7 @@ jobs:
 
           pd login alpine-work --detach -- sh -c 'while :; do sleep 1; done'
           sleep 2
-          assert_contains "$(pd ps)" "alpine-work"
+          assert_contains "$(pd ps 2>&1)" "alpine-work"
           test -n "$(pd ps -q)"
           pd kill alpine-work
           sleep 1
