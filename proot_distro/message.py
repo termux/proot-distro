@@ -172,11 +172,21 @@ def msg(*args):
 
     Suppressed when the TTY is currently being used by another program
     (pinentry, curses) — see tty_safe_for_writes for the rationale.
+
+    The `\\r\\033[K` progress-line eraser is only emitted when stderr is
+    a TTY: progress bars are drawn exclusively on a TTY, so off a TTY
+    there is no partial line to clear and the escape would only inject
+    control characters into a redirected log.
     """
     if not tty_safe_for_writes():
         return
-    sys.stderr.write("\r\033[K")
-    sys.stderr.flush()
+    try:
+        is_tty = sys.stderr.isatty()
+    except (AttributeError, OSError, ValueError):
+        is_tty = False
+    if is_tty:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
     print(*args, file=sys.stderr)
 
 
