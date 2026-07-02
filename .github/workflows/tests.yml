@@ -52,33 +52,168 @@ jobs:
 
       - name: User tests
         if: github.event_name != 'pull_request'
+        shell: bash
         run: |
-          echo "=== Alpine Linux (3.24.1) - BEGIN"
-          ./proot-distro.py install -n alpine-3.24.1 alpine:3.24.1
-          ./proot-distro.py login alpine-3.24.1 -- cat /etc/os-release
-          ./proot-distro.py login alpine-3.24.1 -- apk update
-          ./proot-distro.py rename alpine-3.24.1 alpine-3.24.1-renamed
-          ./proot-distro.py backup -o /tmp/alpine.tar.gz alpine-3.24.1-renamed
-          ./proot-distro.py restore /tmp/alpine.tar.gz
-          ./proot-distro.py rm alpine-3.24.1-renamed
-          echo "=== Alpine Linux (3.24.1) - FINISH"
+          set -Eeuo pipefail
 
-          echo "=== Debian (trixie) - BEGIN"
-          ./proot-distro.py install -n debian-trixie debian:trixie
-          ./proot-distro.py login debian-trixie -- cat /etc/os-release
-          ./proot-distro.py login debian-trixie -- apt update
-          ./proot-distro.py rename debian-trixie debian-trixie-renamed
-          ./proot-distro.py backup -o /tmp/debian.tar.gz debian-trixie-renamed
-          ./proot-distro.py restore /tmp/debian.tar.gz
-          ./proot-distro.py rm debian-trixie-renamed
-          echo "=== Debian (trixie) - FINISH"
+          PD=(./proot-distro.py)
+          WORKDIR="$(mktemp -d)"
+          export XDG_DATA_HOME="${WORKDIR}/data"
+          export XDG_CACHE_HOME="${WORKDIR}/cache"
 
-          echo "=== Ubuntu (24.04) - BEGIN"
-          ./proot-distro.py install -n ubuntu-24.04 ubuntu:24.04
-          ./proot-distro.py login ubuntu-24.04 -- cat /etc/os-release
-          ./proot-distro.py login ubuntu-24.04 -- apt update
-          ./proot-distro.py rename ubuntu-24.04 ubuntu-24.04-renamed
-          ./proot-distro.py backup -o /tmp/ubuntu.tar.gz ubuntu-24.04-renamed
-          ./proot-distro.py restore /tmp/ubuntu.tar.gz
-          ./proot-distro.py rm ubuntu-24.04-renamed
-          echo "=== Ubuntu (24.04) - FINISH"
+          cleanup() {
+            set +e
+            "${PD[@]}" kill --all
+            for name in \
+              alpine-work alpine-restored alpine-built \
+              debian-work debian-restored \
+              ubuntu-work ubuntu-restored
+            do
+              "${PD[@]}" rm -q "${name}"
+            done
+            rm -rf "${WORKDIR}"
+          }
+          trap cleanup EXIT
+
+          pd() {
+            "${PD[@]}" "$@"
+          }
+
+          assert_contains() {
+            local haystack="$1"
+            local needle="$2"
+            if [[ "${haystack}" != *"${needle}"* ]]; then
+              echo "Expected output to contain: ${needle}" >&2
+              echo "Actual output:" >&2
+              printf '%s\n' "${haystack}" >&2
+              return 1
+            fi
+          }
+
+          assert_file_contains() {
+            local file="$1"
+            local needle="$2"
+            grep -Fq "${needle}" "${file}"
+          }
+
+          assert_container_listed() {
+            local name="$1"
+            pd list -q | grep -Fx "${name}"
+          }
+
+          echo "::group::Alpine Linux (3.24.1)"
+          pd install -n alpine-work alpine:3.24.1
+          assert_container_listed alpine-work
+          assert_contains "$(pd login alpine-work -- cat /etc/os-release)" "ID=alpine"
+          pd login alpine-work -- apk update
+          pd login alpine-work -- apk add --no-cache ca-certificates curl
+          assert_contains "$(pd login alpine-work -- curl --version)" "curl"
+
+          mkdir -p "${WORKDIR}/host-src/subdir"
+          printf 'from-host\n' > "${WORKDIR}/host-src/subdir/message.txt"
+          ln -s subdir/message.txt "${WORKDIR}/host-src/message-link"
+          pd sync --checksum --delete "${WORKDIR}/host-src" alpine-work:/opt/fixture
+          assert_contains "$(pd login alpine-work -- cat /opt/fixture/subdir/message.txt)" "from-host"
+          assert_contains "$(pd login alpine-work -- readlink /opt/fixture/message-link)" "subdir/message.txt"
+
+          printf 'replacement\n' > "${WORKDIR}/host-src/subdir/message.txt"
+          mkdir -p "${WORKDIR}/host-src/extra"
+          printf 'keep\n' > "${WORKDIR}/host-src/extra/keep.txt"
+          pd login alpine-work -- sh -c 'mkdir -p /opt/fixture/stale && echo stale > /opt/fixture/stale/remove-me'
+          pd sync --checksum --delete "${WORKDIR}/host-src" alpine-work:/opt/fixture
+          assert_contains "$(pd login alpine-work -- cat /opt/fixture/subdir/message.txt)" "replacement"
+          if pd login alpine-work -- test -e /opt/fixture/stale/remove-me; then
+            echo "sync --delete left stale data in the container" >&2
+            exit 1
+          fi
+
+          pd copy alpine-work:/opt/fixture/subdir/message.txt "${WORKDIR}/copied-from-alpine.txt"
+          assert_file_contains "${WORKDIR}/copied-from-alpine.txt" "replacement"
+          pd login alpine-work -- sh -c 'mkdir -p /tmp/move-src && echo moved > /tmp/move-src/file.txt'
+          pd copy --move alpine-work:/tmp/move-src/file.txt alpine-work:/tmp/moved-file.txt
+          assert_contains "$(pd login alpine-work -- cat /tmp/moved-file.txt)" "moved"
+          if pd login alpine-work -- test -e /tmp/move-src/file.txt; then
+            echo "copy --move left the source file behind" >&2
+            exit 1
+          fi
+
+          assert_contains "$(pd login alpine-work --env PD_USER_TEST=ok --work-dir /opt/fixture --bind "${WORKDIR}:/host-fixture" -- sh -c 'printf "%s:%s:%s" "$PD_USER_TEST" "$PWD" "$(cat /host-fixture/copied-from-alpine.txt)"')" "ok:/opt/fixture:replacement"
+
+          pd login alpine-work --detach -- sh -c 'while :; do sleep 1; done'
+          sleep 2
+          assert_contains "$(pd ps)" "alpine-work"
+          test -n "$(pd ps -q)"
+          pd kill alpine-work
+          sleep 1
+          if [[ -n "$(pd ps -q)" ]]; then
+            echo "detached session was still active after kill" >&2
+            pd ps
+            exit 1
+          fi
+
+          cat > "${WORKDIR}/host-src/Dockerfile" <<'EOF'
+          FROM alpine:3.24.1
+          COPY subdir/message.txt /usr/local/share/message.txt
+          ENV BUILT_BY=proot-distro-user-tests
+          WORKDIR /usr/local/share
+          CMD ["/bin/sh", "-c", "printf '%s:%s:%s\n' \"$BUILT_BY\" \"$PWD\" \"$(cat message.txt)\""]
+          EOF
+          pd build -t user-tests/alpine-built:1 --install-as alpine-built "${WORKDIR}/host-src"
+          assert_contains "$(pd run alpine-built)" "proot-distro-user-tests:/usr/local/share:replacement"
+
+          pd rename alpine-work alpine-restored
+          pd backup -o "${WORKDIR}/alpine-restored.tar.gz" alpine-restored
+          pd rm alpine-restored
+          pd restore "${WORKDIR}/alpine-restored.tar.gz"
+          assert_container_listed alpine-restored
+          assert_contains "$(pd login alpine-restored -- cat /opt/fixture/subdir/message.txt)" "replacement"
+          pd reset alpine-restored
+          assert_contains "$(pd login alpine-restored -- cat /etc/os-release)" "ID=alpine"
+          if pd login alpine-restored -- test -e /opt/fixture/subdir/message.txt; then
+            echo "reset did not clear container-local data" >&2
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Debian (trixie)"
+          pd install -n debian-work debian:trixie
+          assert_container_listed debian-work
+          assert_contains "$(pd login debian-work -- cat /etc/os-release)" "ID=debian"
+          pd login debian-work -- apt update
+          pd login debian-work -- sh -c 'apt install -y --no-install-recommends ca-certificates file && rm -rf /var/lib/apt/lists/*'
+          assert_contains "$(pd login debian-work -- file /bin/sh)" "symbolic link"
+          pd login debian-work -- sh -c 'mkdir -p /srv/app && printf debian-data > /srv/app/data.txt'
+          pd copy -r debian-work:/srv/app "${WORKDIR}/debian-app"
+          assert_file_contains "${WORKDIR}/debian-app/data.txt" "debian-data"
+          pd rename debian-work debian-restored
+          pd backup -o "${WORKDIR}/debian-restored.tar.xz" debian-restored
+          pd rm debian-restored
+          pd restore "${WORKDIR}/debian-restored.tar.xz"
+          assert_contains "$(pd login debian-restored -- cat /srv/app/data.txt)" "debian-data"
+          echo "::endgroup::"
+
+          echo "::group::Ubuntu (24.04)"
+          pd install -n ubuntu-work ubuntu:24.04
+          assert_container_listed ubuntu-work
+          assert_contains "$(pd login ubuntu-work -- cat /etc/os-release)" "ID=ubuntu"
+          pd login ubuntu-work -- apt update
+          pd login ubuntu-work -- sh -c 'apt install -y --no-install-recommends adduser && rm -rf /var/lib/apt/lists/*'
+          pd login ubuntu-work -- sh -c 'useradd -m -s /bin/sh ciuser && echo user-data > /home/ciuser/data.txt && chown ciuser:ciuser /home/ciuser/data.txt'
+          assert_contains "$(pd login ubuntu-work --user ciuser -- sh -c 'printf "%s:%s:%s" "$USER" "$HOME" "$(cat ~/data.txt)"')" "ciuser:/home/ciuser:user-data"
+          pd login ubuntu-work -- sh -c 'mkdir -p /var/tmp/sync-src && echo before > /var/tmp/sync-src/value.txt'
+          pd sync ubuntu-work:/var/tmp/sync-src "${WORKDIR}/ubuntu-sync"
+          assert_file_contains "${WORKDIR}/ubuntu-sync/value.txt" "before"
+          pd rename ubuntu-work ubuntu-restored
+          pd backup -o "${WORKDIR}/ubuntu-restored.tar.gz" ubuntu-restored
+          pd rm ubuntu-restored
+          pd restore "${WORKDIR}/ubuntu-restored.tar.gz"
+          assert_contains "$(pd login ubuntu-restored --user ciuser -- cat /home/ciuser/data.txt)" "user-data"
+          echo "::endgroup::"
+
+          echo "::group::Cleanup and cache"
+          pd rm alpine-restored
+          pd rm alpine-built
+          pd rm debian-restored
+          pd rm ubuntu-restored
+          pd clear-cache
+          echo "::endgroup::"
