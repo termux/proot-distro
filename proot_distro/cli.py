@@ -174,10 +174,11 @@ def _ensure_proot_available(first_canonical: str) -> None:
     `push` only reads from the local manifest/layer cache and uploads
     to a registry. `build` runs its own check after parsing the
     Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
-    present. `kill` is exempt too: it only signals already-running
-    sessions and never invokes proot.
+    present. `kill` and `ps` are exempt too: they only inspect and
+    signal already-running sessions via the session registry and never
+    invoke proot.
     """
-    if first_canonical in ("build", "push", "kill"):
+    if first_canonical in ("build", "push", "kill", "ps"):
         return
     ensure_proot_installed()
 

@@ -151,8 +151,8 @@ numeric uid, or `user:group`.
 2. Root warn (non-fatal); nested-proot reject (reads
    `/proc/<pid>/status`, follows one TracerPid hop).
 3. proot probe; on Termux + TTY, offers `pkg install`. **`build`,
-   `push`, and `kill` are exempt** (`kill` only signals running
-   sessions); `build` runs its own gate via
+   `push`, `kill`, and `ps` are exempt** (`kill`/`ps` only signal or
+   read running sessions); `build` runs its own gate via
    `build_engine.needs_proot()` (True only with a RUN-family).
 4. Per-command `-h`/`--help`/`--usage` intercepted **before** argparse
    so missing positionals never produce errors instead of help. Unknown
