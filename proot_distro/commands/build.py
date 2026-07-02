@@ -50,6 +50,7 @@ from proot_distro.helpers.dockerfile import (
 from proot_distro.helpers.build_engine import (
     BuildEngine,
     BuildError,
+    needs_proot,
 )
 from proot_distro.helpers.oci_writer import (
     build_manifest_and_config,
@@ -133,6 +134,15 @@ def command_build(args):
     if not instructions:
         crit_error("no instructions in Dockerfile.")
         sys.exit(1)
+
+    # ----- proot gate -----
+    # `build` is exempt from the CLI's startup proot probe because a
+    # pure-metadata / COPY-only Dockerfile never needs proot. Now that
+    # the Dockerfile is parsed, refuse (and, on Termux, offer to install
+    # proot) only when a RUN-family instruction is actually present.
+    if needs_proot(instructions):
+        from proot_distro.cli import ensure_proot_installed
+        ensure_proot_installed()
 
     # ----- target architecture -----
     if override_arch:

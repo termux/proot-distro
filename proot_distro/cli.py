@@ -117,19 +117,14 @@ def _refuse_nested_proot() -> None:
         pass
 
 
-def _ensure_proot_available(first_canonical: str) -> None:
-    """Verify proot is on PATH; offer to install it on Termux.
+def ensure_proot_installed() -> None:
+    """Verify proot is on PATH; offer to install it on Termux (TTY only).
 
-    `build` and `push` are exempt from this startup probe: `build` may
-    run a Dockerfile with no RUN instructions in pure-Python mode, and
-    `push` only reads from the local manifest/layer cache and uploads
-    to a registry. `build` runs its own check after parsing the
-    Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
-    present. `kill` is exempt too: it only signals already-running
-    sessions and never invokes proot.
+    Exits the process when proot is unavailable and cannot be installed
+    (or the user declines the offer). Shared by the startup probe and by
+    `build`, which defers this check until it knows the Dockerfile
+    actually contains a RUN-family instruction.
     """
-    if first_canonical in ("build", "push", "kill"):
-        return
     if shutil.which("proot") is not None:
         return
 
@@ -169,6 +164,22 @@ def _ensure_proot_available(first_canonical: str) -> None:
         crit_error(f"failed to install proot: {exc}")
         msg()
         sys.exit(1)
+
+
+def _ensure_proot_available(first_canonical: str) -> None:
+    """Verify proot is on PATH; offer to install it on Termux.
+
+    `build` and `push` are exempt from this startup probe: `build` may
+    run a Dockerfile with no RUN instructions in pure-Python mode, and
+    `push` only reads from the local manifest/layer cache and uploads
+    to a registry. `build` runs its own check after parsing the
+    Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
+    present. `kill` is exempt too: it only signals already-running
+    sessions and never invokes proot.
+    """
+    if first_canonical in ("build", "push", "kill"):
+        return
+    ensure_proot_installed()
 
 
 def _dispatch_help(raw_args) -> bool:
