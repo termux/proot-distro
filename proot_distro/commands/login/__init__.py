@@ -32,7 +32,6 @@
 import json
 import os
 import shlex
-import shutil
 import sys
 
 from proot_distro.constants import (
@@ -48,6 +47,7 @@ from proot_distro.arch import (
     detect_installed_arch,
     get_device_cpu_arch,
     get_emulator_args,
+    get_proot_bin,
 )
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.locking import ContainerLock
@@ -422,7 +422,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
                    f"architecture-specific binaries.")
         sys.exit(1)
 
-    proot_bin = shutil.which("proot") or "proot"
+    proot_bin = get_proot_bin()
     proot_args = build_proot_args(
         proot_bin=proot_bin,
         rootfs=rootfs,

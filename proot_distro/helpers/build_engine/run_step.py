@@ -31,7 +31,6 @@
 import os
 import signal
 import subprocess
-import shutil
 
 from proot_distro.constants import (
     DEFAULT_PATH_ENV,
@@ -43,7 +42,7 @@ from proot_distro.constants import (
 )
 from proot_distro.message import log_info
 from proot_distro.arch import (
-    ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args,
+    ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
 )
 from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
 from proot_distro.helpers.build_cache import (
@@ -148,7 +147,7 @@ def _run_extra_inputs(engine):
 def _exec_proot(engine, stage, command, stdin_input):
     """Invoke proot against *stage*'s rootfs to execute *command*."""
     rootfs = stage.rootfs_dir
-    proot_bin = shutil.which("proot") or "proot"
+    proot_bin = get_proot_bin()
     proot_args = [proot_bin]
 
     emu_args = get_emulator_args(

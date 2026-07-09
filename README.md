@@ -120,6 +120,9 @@ On startup the tool verifies that `proot` is available. If it isn't:
   install it via `pkg install -y -q proot`.
 - Otherwise, an install hint is printed and the program exits.
 
+Set `PD_PROOT_BIN` to use a custom `proot` executable instead of the
+PATH lookup; see the environment variables table below.
+
 PRoot-Distro also refuses to run inside another `proot` (nested proot
 is not supported by `proot` itself) and prints a warning if launched
 as the `root` user.
@@ -1233,6 +1236,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `XDG_DATA_HOME` | On non-Termux hosts, base for `$XDG_DATA_HOME/proot-distro/`. Defaults to `~/.local/share`. |
 | `XDG_CACHE_HOME` | On non-Termux hosts, base for `$XDG_CACHE_HOME/proot-distro/`. Defaults to `~/.cache`. |
 | `PD_DOCKER_AUTH` | Credentials for pulling and pushing Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install`, `build` (`FROM` base-image pulls), and `push` (with `pull,push` scope). |
+| `PD_PROOT_BIN` | Absolute path to a custom `proot` executable, used in place of the PATH lookup for `login`, `run`, and `build` RUN steps. Must point at an existing, executable file or the command exits with an error. |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
 | `COLUMNS` | Fallback terminal width for `--help` rendering. |

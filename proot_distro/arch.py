@@ -186,6 +186,23 @@ _QEMU_PKGS = {
 }
 
 
+def get_proot_bin() -> str:
+    """Return the proot executable to invoke, honoring PD_PROOT_BIN.
+
+    A set override is validated like --emulator: it must point at an
+    existing, executable file, or the process exits with an error.
+    Unset falls back to the existing PATH lookup for "proot".
+    """
+    override = os.environ.get("PD_PROOT_BIN")
+    if override:
+        if not os.path.isfile(override) or not os.access(override, os.X_OK):
+            crit_error(f"PD_PROOT_BIN '{override}' is not found or not "
+                       f"executable.")
+            sys.exit(1)
+        return override
+    return shutil.which("proot") or "proot"
+
+
 def get_emulator_args(
     dist_arch: str, device_arch: str, emulator_override: str = ""
 ) -> list:

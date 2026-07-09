@@ -37,6 +37,7 @@ import sys
 
 from proot_distro.constants import IS_TERMUX, PROGRAM_NAME
 from proot_distro.message import C, msg, set_quiet, crit_error
+from proot_distro.arch import get_proot_bin
 from proot_distro.parser import (
     ALIAS_TO_CANONICAL, REQUIRED_ARGS, build_parser,
 )
@@ -125,6 +126,10 @@ def ensure_proot_installed() -> None:
     `build`, which defers this check until it knows the Dockerfile
     actually contains a RUN-family instruction.
     """
+    if os.environ.get("PD_PROOT_BIN"):
+        get_proot_bin()  # validates, crit_error()+exit(1) if bad
+        return
+
     if shutil.which("proot") is not None:
         return
 
