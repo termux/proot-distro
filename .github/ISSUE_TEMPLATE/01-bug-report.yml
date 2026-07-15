@@ -16,12 +16,17 @@ body:
     attributes:
       label: Problem description
       description: |
-        A clear and concise description of what the problem is. You may attach the logs, screenshots, screen video recording and whatever else that will help to understand the issue.
+        A clear and concise description of what the problem is. Issue must be backed by proof: log, screenshot, video recording and everything else that will help us to understand the situation.
+
+        > [!IMPORTANT]
+        > We may request extensive set of information that will help us to determine whether bug is real or happens because of user mistakes: unsupported Termux release, usage of virtual Android such as VMOS/F1VM/VPhoneGaGa/VPhoneApp, custom proot executable, weird Termux configurations, etc. We will close the ticket if you refuse to collaborate.
     validations:
       required: true
   - type: textarea
     attributes:
       label: What steps will reproduce the bug?
+      description: |
+        Give step-by-step instructions to reproduce issue with 100% success rate.
     validations:
       required: true
   - type: textarea
