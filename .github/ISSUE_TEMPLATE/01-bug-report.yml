@@ -30,7 +30,7 @@ body:
     attributes:
       label: Android OS version
       description: |
-        Android version number (e.g. 7.0). Newer Android OS could be restrictive than older version, but older versions have less features. All of that affects the proot work.
+        Android version number (e.g. 7.0). If you use proot-distro on a genuine Linux host, put here value 'PC', optionally with name of distribution.
     validations:
       required: true
   - type: input
