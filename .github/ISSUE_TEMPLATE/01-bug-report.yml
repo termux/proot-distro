@@ -8,8 +8,7 @@ body:
       value: |
         This is a bug tracker of the PRoot Distro - a helper script for PRoot to manage distribution installations. Please use it accordingly to selected ticket type.
 
-        > [!IMPORTANT]
-        > We may request extensive set of information that will help us to determine whether bug is real or happens because of user mistakes: unsupported Termux release, usage of virtual Android such as VMOS/F1VM/VPhoneGaGa/VPhoneApp, custom proot executable, weird Termux configurations, etc. We will close the ticket if you refuse to collaborate.
+        You acknowledge that false or incomplete information will make debugging impossible and you agree to collaborate with maintainers. We may request specific details or to run commands to get more information about the issue.
   - type: textarea
     attributes:
       label: Problem description
@@ -27,3 +26,45 @@ body:
   - type: textarea
     attributes:
       label: What is the expected behavior?
+  - type: input
+    attributes:
+      label: Android OS version
+      description: |
+        Android version number (e.g. 7.0). Newer Android OS could be restrictive than older version, but older versions have less features. All of that affects the proot work.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Kernel information (uname -a)
+      description: |
+        Put here a complete output of `uname -a`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: PRoot-Distro version
+      description: |
+        Put here information from `apt show proot-distro` or from `proot-distro help` version footer.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: PRoot version
+      description: |
+        Put here information from `apt show proot`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: PRoot executable SHA-256
+      description: |
+        Put here output of `sha256sum $(command -v proot)`. This will help us to understand whether you use authentic build of proot for Termux.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Termux application version
+      description: |
+        Full version information about Termux app. Tell whether this is Play Store build, F-Droid or something else. Put value 'PC' if you run proot-distro on a genuine Linux host and not on Termux.
+    validations:
+      required: true
