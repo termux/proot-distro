@@ -51,14 +51,7 @@ body:
     attributes:
       label: PRoot version
       description: |
-        Put here information from `apt show proot`.
-    validations:
-      required: true
-  - type: input
-    attributes:
-      label: PRoot executable SHA-256
-      description: |
-        Put here output of `sha256sum $(command -v proot)`. This will help us to understand whether you use authentic build of proot for Termux.
+        Put here information from `proot --version`.
     validations:
       required: true
   - type: input
