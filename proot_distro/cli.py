@@ -85,15 +85,6 @@ def _sigquit_to_keyboard_interrupt(_signum, _frame):
     raise KeyboardInterrupt()
 
 
-def _warn_if_root() -> None:
-    if os.getuid() == 0:
-        msg()
-        msg(f"{C['BRED']}Warning: {PROGRAM_NAME} should not be executed as "
-            f"root user. Do not send bug reports about messed up Termux "
-            f"environment, lost data and bricked devices.{C['RST']}")
-        msg()
-
-
 def _refuse_nested_proot() -> None:
     """Exit when we're running inside a proot — nested proot is unsupported."""
     try:
@@ -251,7 +242,6 @@ def main() -> None:
     # user" messaging that the Ctrl-C handlers already provide.
     signal.signal(signal.SIGQUIT, _sigquit_to_keyboard_interrupt)
 
-    _warn_if_root()
     _refuse_nested_proot()
 
     first_canonical = ""
