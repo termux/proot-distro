@@ -315,7 +315,7 @@ def _delete_images(targets: list, verbose: bool) -> None:
     if dependents:
         names = ", ".join(f"'{name}'" for name in dependents)
         log_info(f"Container(s) {names} were installed from this image and "
-                 f"keep working; only '{PROGRAM_NAME} reset' needs it back.")
+                 f"keep working.")
 
     if failed:
         log_error("Finished with errors. Some files probably were not "
