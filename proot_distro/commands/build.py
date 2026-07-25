@@ -57,7 +57,7 @@ from proot_distro.helpers.oci_writer import (
     store_in_cache,
     write_oci_archive,
 )
-from proot_distro.helpers.docker import ARCH_TO_DOCKER
+from proot_distro.helpers.docker import ARCH_TO_DOCKER, with_explicit_tag
 from proot_distro.names import is_valid_name, require_valid_name
 from proot_distro.progress import fmt_size
 
@@ -186,7 +186,7 @@ def command_build(args):
             )
             sys.exit(1)
 
-    tags = [_with_explicit_tag(t) for t in tags]
+    tags = [with_explicit_tag(t) for t in tags]
     primary_tag = tags[0]
 
     # ----- refuse to overwrite existing output files -----
@@ -330,12 +330,6 @@ def _derive_tag_from_path(build_dir, dockerfile):
     if not base or not is_valid_name(base):
         return ""
     return f"{base}:latest"
-
-
-def _with_explicit_tag(tag):
-    """Append ':latest' if `tag`'s last path component lacks a tag part."""
-    last = tag.split("/")[-1]
-    return tag if ":" in last else tag + ":latest"
 
 
 def _is_valid_tag(tag):

@@ -46,4 +46,4 @@ def test_live_proot_run_echo():
         )
     finally:
         if os.path.isdir(container_rootfs(name)):
-            command_remove(SimpleNamespace(container_name=name, verbose=False))
+            command_remove(SimpleNamespace(target=name, verbose=False))

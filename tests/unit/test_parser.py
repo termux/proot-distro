@@ -160,3 +160,59 @@ def test_termux_only_flags_absent_off_termux():
     _args, unknown = p.parse_known_args(["login", "box", "--isolated"])
     # --isolated is only registered on Termux, so off-Termux it is unknown.
     assert "--isolated" in unknown
+
+
+def test_remove_positional_and_image_flag():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["remove", "box"])
+    assert args.target == "box"
+    assert args.image is False
+    assert args.override_arch is None
+    assert unknown == []
+
+    args, unknown = p.parse_known_args(
+        ["remove", "--image", "ubuntu:24.04", "-a", "aarch64"]
+    )
+    assert args.target == "ubuntu:24.04"
+    assert args.image is True
+    assert args.override_arch == "aarch64"
+    assert unknown == []
+
+
+@pytest.mark.parametrize("flag", ["-i", "--image"])
+def test_remove_image_short_and_long_flag(flag):
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["rm", flag, "ubuntu:24.04"])
+    assert args.target == "ubuntu:24.04"
+    assert args.image is True
+    assert unknown == []
+
+
+@pytest.mark.parametrize("flag", ["-i", "--image"])
+def test_list_image_short_and_long_flag(flag):
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["list", flag, "-q"])
+    assert args.image is True
+    assert args.quiet is True
+    assert unknown == []
+
+
+def test_list_image_defaults_off():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["ls"])
+    assert args.image is False
+
+
+def test_required_args_for_switches_on_image_flag():
+    from types import SimpleNamespace
+    plain = parser.required_args_for("remove", SimpleNamespace(image=False))
+    assert [a for a, _ in plain] == ["target"]
+    assert "container name" in plain[0][1]
+
+    imaged = parser.required_args_for("remove", SimpleNamespace(image=True))
+    assert [a for a, _ in imaged] == ["target"]
+    assert "image reference" in imaged[0][1]
+
+    # Every other command falls through to the static table.
+    assert parser.required_args_for("install", SimpleNamespace()) == \
+        parser.REQUIRED_ARGS["install"]

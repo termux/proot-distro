@@ -33,6 +33,15 @@ function __proot_distro_containers
 end
 
 # ---------------------------------------------------------------------------
+# Helper: cached OCI images, as `remove --image` accepts them
+# ---------------------------------------------------------------------------
+# The manifest cache is keyed by a hash, so the references are read back
+# through the program itself rather than derived from file names.
+function __proot_distro_images
+    proot-distro list --image --quiet 2>/dev/null
+end
+
+# ---------------------------------------------------------------------------
 # Termux/Android detection — mirrors _detect_termux() in constants.py.
 # Returns 0 (true) when at least two of three independent indicators match.
 # ---------------------------------------------------------------------------
@@ -69,11 +78,11 @@ end
 # Subcommands
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a install     -d 'Install a container from a Docker image or local archive'
-complete -c proot-distro -f -n __proot_distro_no_subcommand -a remove      -d 'Remove an installed container'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a remove      -d 'Remove a container or a cached image'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a rename      -d 'Rename a container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a login       -d 'Open a shell inside a container'
-complete -c proot-distro -f -n __proot_distro_no_subcommand -a list        -d 'List installed containers'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a list        -d 'List containers or cached images'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a ps          -d 'List active container sessions'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a kill        -d 'Stop active container sessions'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a backup      -d 'Backup a container to a tar archive'
@@ -107,8 +116,17 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
 # ---------------------------------------------------------------------------
 # remove
 # ---------------------------------------------------------------------------
-complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
+complete -c proot-distro -f \
+    -n '__fish_seen_subcommand_from remove; and not __fish_contains_opt -s i image' \
     -a '(__proot_distro_containers)' -d 'Container'
+complete -c proot-distro -f \
+    -n '__fish_seen_subcommand_from remove; and __fish_contains_opt -s i image' \
+    -a '(__proot_distro_images)' -d 'Image'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
+    -s i -l image      -d 'Delete a cached OCI image instead of a container'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
+    -s a -l architecture -x -a 'aarch64 arm i686 riscv64 x86_64' \
+    -d 'Only delete this architecture variant'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
     -s v -l verbose    -d 'Print each removed file'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from remove' \
@@ -183,6 +201,8 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from login' \
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
+    -s i -l image      -d 'List cached OCI images instead of containers'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
     -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from list' \
@@ -376,11 +396,11 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from help' \
 # pd (same entry point, duplicate all completions)
 # ---------------------------------------------------------------------------
 complete -c pd -f -n __proot_distro_no_subcommand -a install     -d 'Install a container from a Docker image or local archive'
-complete -c pd -f -n __proot_distro_no_subcommand -a remove      -d 'Remove an installed container'
+complete -c pd -f -n __proot_distro_no_subcommand -a remove      -d 'Remove a container or a cached image'
 complete -c pd -f -n __proot_distro_no_subcommand -a rename      -d 'Rename a container'
 complete -c pd -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
 complete -c pd -f -n __proot_distro_no_subcommand -a login       -d 'Open a shell inside a container'
-complete -c pd -f -n __proot_distro_no_subcommand -a list        -d 'List installed containers'
+complete -c pd -f -n __proot_distro_no_subcommand -a list        -d 'List containers or cached images'
 complete -c pd -f -n __proot_distro_no_subcommand -a ps          -d 'List active container sessions'
 complete -c pd -f -n __proot_distro_no_subcommand -a kill        -d 'Stop active container sessions'
 complete -c pd -f -n __proot_distro_no_subcommand -a backup      -d 'Backup a container to a tar archive'
@@ -399,7 +419,10 @@ complete -c pd -f -n '__fish_seen_subcommand_from install' -s a -l architecture 
 complete -c pd -f -n '__fish_seen_subcommand_from install' -s q -l quiet           -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from install' -s h -l help             -d 'Show help'
 
-complete -c pd -f -n '__fish_seen_subcommand_from remove' -a '(__proot_distro_containers)' -d 'Container'
+complete -c pd -f -n '__fish_seen_subcommand_from remove; and not __fish_contains_opt -s i image' -a '(__proot_distro_containers)' -d 'Container'
+complete -c pd -f -n '__fish_seen_subcommand_from remove; and __fish_contains_opt -s i image' -a '(__proot_distro_images)' -d 'Image'
+complete -c pd -f -n '__fish_seen_subcommand_from remove' -s i -l image -d 'Delete a cached OCI image'
+complete -c pd -f -n '__fish_seen_subcommand_from remove' -s a -l architecture -x -a 'aarch64 arm i686 riscv64 x86_64' -d 'Only this architecture variant'
 complete -c pd -f -n '__fish_seen_subcommand_from remove' -s v -l verbose -d 'Print each removed file'
 complete -c pd -f -n '__fish_seen_subcommand_from remove' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from remove' -s h -l help    -d 'Show help'
@@ -433,6 +456,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from login' -s d -l detach         
 complete -c pd -f -n '__fish_seen_subcommand_from login' -l get-proot-cmd         -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s h -l help             -d 'Show help'
 
+complete -c pd -f -n '__fish_seen_subcommand_from list' -s i -l image -d 'List cached OCI images'
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s q -l quiet -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s h -l help  -d 'Show help'
 

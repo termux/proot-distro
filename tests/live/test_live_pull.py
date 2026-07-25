@@ -37,18 +37,18 @@ def test_live_pull_alpine():
         assert os.path.isfile(container_manifest(name))
     finally:
         if os.path.isdir(container_rootfs(name)):
-            command_remove(SimpleNamespace(container_name=name, verbose=False))
+            command_remove(SimpleNamespace(target=name, verbose=False))
 
 
 def test_live_pull_is_cached_second_time(capsys):
     name = "live-alpine-cache"
     try:
         _install("alpine:latest", name)
-        command_remove(SimpleNamespace(container_name=name, verbose=False))
+        command_remove(SimpleNamespace(target=name, verbose=False))
         capsys.readouterr()
         # Second install reuses the cached manifest + layers.
         _install("alpine:latest", name)
         assert os.path.isdir(container_rootfs(name))
     finally:
         if os.path.isdir(container_rootfs(name)):
-            command_remove(SimpleNamespace(container_name=name, verbose=False))
+            command_remove(SimpleNamespace(target=name, verbose=False))

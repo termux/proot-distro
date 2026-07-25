@@ -18,13 +18,13 @@ from proot_distro.paths import container_dir, container_rootfs
 
 def test_remove_deletes_container(builders):
     builders.make_container("box")
-    command_remove(SimpleNamespace(container_name="box", verbose=False))
+    command_remove(SimpleNamespace(target="box", verbose=False))
     assert not os.path.exists(container_dir("box"))
 
 
 def test_remove_missing_errors(capsys):
     with pytest.raises(SystemExit) as exc:
-        command_remove(SimpleNamespace(container_name="ghost", verbose=False))
+        command_remove(SimpleNamespace(target="ghost", verbose=False))
     assert exc.value.code == 1
     assert "is not installed" in capsys.readouterr().err
 
@@ -34,7 +34,7 @@ def test_remove_handles_chmod000_subtree(builders):
     locked = os.path.join(container_rootfs("box"), "locked")
     os.makedirs(locked)
     os.chmod(locked, 0o000)
-    command_remove(SimpleNamespace(container_name="box", verbose=False))
+    command_remove(SimpleNamespace(target="box", verbose=False))
     assert not os.path.exists(container_dir("box"))
 
 

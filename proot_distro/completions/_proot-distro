@@ -30,6 +30,17 @@ _proot_distro_containers() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: list cached OCI images
+# ---------------------------------------------------------------------------
+# The manifest cache is keyed by a hash, so the references are read back
+# through the program itself rather than derived from file names.
+_proot_distro_images() {
+    local -a images
+    images=(${(f)"$(proot-distro list --image --quiet 2>/dev/null)"})
+    _describe 'image' images
+}
+
+# ---------------------------------------------------------------------------
 # Termux/Android detection — mirrors _detect_termux() in constants.py.
 # Returns 0 (true) when at least two of three independent indicators match.
 # ---------------------------------------------------------------------------
@@ -59,11 +70,11 @@ _proot_distro() {
             local -a subcommands
             subcommands=(
                 'install:install a container from a Docker image or local archive'
-                'remove:remove an installed container'
+                'remove:remove a container or a cached image'
                 'rename:rename a container'
                 'reset:reinstall a container from its original image'
                 'login:open a shell inside a container'
-                'list:list installed containers'
+                'list:list containers or cached images'
                 'ps:list active container sessions'
                 'kill:stop active container sessions'
                 'backup:backup a container to a tar archive'
@@ -98,11 +109,22 @@ _proot_distro() {
 
                 # -----------------------------------------------------------
                 remove)
-                    _arguments \
-                        '(-h --help)'{-h,--help}'[show help]' \
-                        '(-v --verbose -q --quiet)'{-v,--verbose}'[print each removed file]' \
-                        '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
-                        '1:container:_proot_distro_containers'
+                    if (( ${words[(I)--image]} || ${words[(I)-i]} )); then
+                        _arguments \
+                            '(-h --help)'{-h,--help}'[show help]' \
+                            '(-i --image)'{-i,--image}'[delete a cached OCI image]' \
+                            '(-a --architecture)'{-a,--architecture}'[only this architecture]:arch:(aarch64 arm i686 riscv64 x86_64)' \
+                            '(-v --verbose -q --quiet)'{-v,--verbose}'[print each removed file]' \
+                            '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
+                            '1:image:_proot_distro_images'
+                    else
+                        _arguments \
+                            '(-h --help)'{-h,--help}'[show help]' \
+                            '(-i --image)'{-i,--image}'[delete a cached OCI image]' \
+                            '(-v --verbose -q --quiet)'{-v,--verbose}'[print each removed file]' \
+                            '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
+                            '1:container:_proot_distro_containers'
+                    fi
                     ;;
 
                 # -----------------------------------------------------------
@@ -157,6 +179,7 @@ _proot_distro() {
                 list)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
+                        '(-i --image)'{-i,--image}'[list cached OCI images instead of containers]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]'
                     ;;
 

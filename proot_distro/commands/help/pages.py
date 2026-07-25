@@ -413,10 +413,29 @@ HELP_PAGES = {
     "list": {
         "usage": "list [OPTIONS]",
         "aliases": ("li", "ls"),
-        "summary": "List all installed proot containers.",
+        "summary": "List installed proot containers or cached OCI images.",
         "options": [
             ("-h, --help", "Show this help."),
-            ("-q, --quiet", "Print only container names, one per line."),
+            ("-i, --image", "List cached OCI images instead of containers."),
+            ("-q, --quiet", "Print only names, one per line."),
+        ],
+        "footer": [
+            {
+                "title": "CACHED IMAGES",
+                "intro": (
+                    "Images are cached per architecture, so the same "
+                    "reference can be listed once per architecture it "
+                    "was pulled or built for."
+                    "\n\n"
+                    "A reference marked with '*' is incomplete: some of "
+                    "its layers are no longer in the cache, so "
+                    "installing it needs network access again."
+                    "\n\n"
+                    f"Delete a single image with '{PROGRAM_NAME} remove "
+                    f"--image REF' or the whole cache with "
+                    f"'{PROGRAM_NAME} clear-cache'."
+                ),
+            },
         ],
     },
 
@@ -606,18 +625,29 @@ HELP_PAGES = {
     },
 
     "remove": {
-        "usage": "remove [OPTIONS] CONTAINER",
+        "usage": "remove [OPTIONS] CONTAINER|IMAGE",
         "aliases": ("rm",),
         "summary": (
-            "Permanently delete the specified proot container. "
-            "No confirmation is requested, be careful."
+            "Permanently delete the specified proot container or "
+            "cached OCI image. No confirmation is requested, be careful."
         ),
         "options": [
             ("-h, --help", "Show this help."),
+            ("-i, --image",
+             "Delete a cached OCI image instead of a container. The "
+             "image selected by reference or id, both can be obtained by "
+             f"command '{PROGRAM_NAME} list --image'."),
+            ("-a, --architecture [ARCH]",
+             "Delete only image built for ARCH. Requires --image option."),
             ("-v, --verbose", "Log each deleted file."),
             ("-q, --quiet",
              "Suppress non-error output. Mutually exclusive "
              "with --verbose."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} remove ubuntu",
+            f"{PROGRAM_NAME} remove --image ubuntu:24.04",
+            f"{PROGRAM_NAME} rm -i -a aarch64 myapp:latest",
         ],
     },
 
@@ -834,12 +864,12 @@ HELP_PAGES = {
 TOP_COMMANDS = [
     ("help", "Show this help."),
     ("install", "Install distribution from OCI image or rootfs archive."),
-    ("list", "List created containers."),
+    ("list", "List created containers or cached images."),
     ("login", "Start interactive shell inside a container."),
     ("run", "Run container entrypoint in server or distroless images."),
     ("ps", "List active container sessions."),
     ("kill", "Stop active container sessions."),
-    ("remove", "Delete a container.", "Destroys data!"),
+    ("remove", "Delete a container or a cached image.", "Destroys data!"),
     ("rename", "Rename a container."),
     ("reset", "Reinstall a container from scratch.", "Destroys data!"),
     ("backup", "Save container as a TAR archive."),

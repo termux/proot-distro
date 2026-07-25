@@ -88,3 +88,59 @@ def test_all_layers_cached(builders):
     assert cache.all_layers_cached(
         [{"digest": "sha256:" + "0" * 64}]
     ) is False
+
+
+def test_manifest_cache_records_ref_and_arch():
+    import json
+    cache.save_manifest_cache("ubuntu:24.04", "x86_64", {"layers": []},
+                              "library/ubuntu", {})
+    with open(cache.manifest_cache_path("ubuntu:24.04", "x86_64")) as fh:
+        payload = json.load(fh)
+    assert payload["image_ref"] == "ubuntu:24.04"
+    assert payload["arch"] == "x86_64"
+
+
+def test_manifest_cache_path_ignores_ref_spelling():
+    a = cache.manifest_cache_path("ubuntu:24.04", "x86_64")
+    b = cache.manifest_cache_path("docker.io/library/ubuntu:24.04", "x86_64")
+    assert a == b
+
+
+def test_annotate_manifest_cache_backfills_only_when_missing():
+    import json
+    path = cache.save_manifest_cache("img:1", "x86_64", {"layers": []},
+                                     "library/img", {})
+    with open(path) as fh:
+        payload = json.load(fh)
+    del payload["image_ref"], payload["arch"]
+    with open(path, "w") as fh:
+        json.dump(payload, fh)
+
+    cache.annotate_manifest_cache("img:1", "x86_64")
+    with open(path) as fh:
+        assert json.load(fh)["image_ref"] == "img:1"
+
+    # A miss must not create anything.
+    cache.annotate_manifest_cache("never:pulled", "x86_64")
+    assert not os.path.exists(
+        cache.manifest_cache_path("never:pulled", "x86_64")
+    )
+
+
+def test_image_cache_entry_reads_back_a_record():
+    cache.save_manifest_cache("img:1", "x86_64", {"layers": []},
+                              "library/img", {})
+    record = cache.image_cache_entry("img:1", "x86_64")
+    assert record["image_ref"] == "img:1"
+    assert record["arch"] == "x86_64"
+    assert cache.image_cache_entry("img:1", "aarch64") is None
+
+
+def test_iter_cached_images_skips_unreadable_entries():
+    cache.save_manifest_cache("img:1", "x86_64", {"layers": []},
+                              "library/img", {})
+    with open(os.path.join(MANIFEST_CACHE_DIR, "garbage.json"), "w") as fh:
+        fh.write("{not json")
+    with open(os.path.join(MANIFEST_CACHE_DIR, "notjson.txt"), "w") as fh:
+        fh.write("ignored")
+    assert [r["image_ref"] for r in cache.iter_cached_images()] == ["img:1"]

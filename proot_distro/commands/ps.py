@@ -25,12 +25,11 @@
 # PID/CONTAINER/TYPE/USER/UPTIME/COMMAND table to stderr, mirroring the
 # style of command_list.
 
-import os
 import shlex
 import time
 
 from proot_distro.constants import PROGRAM_NAME
-from proot_distro.message import C, msg
+from proot_distro.message import C, msg, terminal_width
 from proot_distro.session import active_sessions
 
 # Fixed columns (everything except the trailing, space-filling COMMAND).
@@ -78,7 +77,7 @@ def command_ps(args) -> None:
         for i in range(len(_HEADERS) - 1)
     ]
     used = sum(widths) + _GAP * len(widths)
-    cmd_width = max(len(_HEADERS[-1]), _table_width() - used)
+    cmd_width = max(len(_HEADERS[-1]), terminal_width() - used)
 
     pad = " " * _GAP
     head = [_HEADERS[i].ljust(widths[i]) for i in range(len(widths))]
@@ -124,18 +123,6 @@ def _fmt_command(command) -> str:
         except (TypeError, ValueError):
             return " ".join(parts)
     return str(command or "")
-
-
-def _table_width() -> int:
-    """Actual terminal column count (stderr first), defaulting to 80."""
-    for fd in (2, 1):
-        try:
-            cols = os.get_terminal_size(fd).columns
-        except (OSError, ValueError):
-            continue
-        if cols > 0:
-            return cols
-    return 80
 
 
 __all__ = ("command_ps",)

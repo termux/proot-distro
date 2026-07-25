@@ -34,7 +34,8 @@ Top-level utilities (each owns a focused concern):
   `LAYER_CACHE_DIR`, `MANIFEST_CACHE_DIR`, `DEFAULT_PATH_ENV`,
   `DEFAULT_FAKE_KERNEL_*`.
 - `message.py` — color dict `C`, `msg`, `log_info/error`, `warn`,
-  `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`.
+  `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`,
+  `terminal_width` (column count for the `ps` / `list --image` tables).
 - `progress.py` — `fmt_size`, `ByteCounter`, `draw_bytes_bar`,
   `draw_count_bar`, `clear_bar`, `progress_active`.
 - `arch.py` — `get_device_cpu_arch`, `detect_installed_arch` (ELF
@@ -49,6 +50,8 @@ Top-level utilities (each owns a focused concern):
   (reads `SESSIONS_DIR`, prunes dead via a shared flock probe).
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
+  `required_args_for()` (refines the message when a positional changes
+  meaning — `remove --image` wants a reference, not a container),
   `_PdArgumentParser` (per-command help on error).
 - `paths.py` — `container_dir/_rootfs/_manifest`, `[name:]path` spec
   resolver, `container_locks_for_spec_pair`.
@@ -124,11 +127,11 @@ would shadow the container's.
 | Command | Aliases | Lock |
 |---|---|---|
 | `install` | `add`, `i`, `in`, `ins` | container exclusive |
-| `remove` | `rm` | container exclusive |
+| `remove` | `rm` | container exclusive; `--image` ⇒ `BuildLock` per removed `(ref, arch)` |
 | `rename`, `reset` | — | container exclusive |
 | `login` | `sh` | container shared (fd inherited by proot) |
 | `run` | — | container shared (fd inherited by proot) |
-| `list` | `li`, `ls` | none |
+| `list` | `li`, `ls` | none (`--image` reads the manifest cache) |
 | `ps` | — | none (reads session registry, prunes dead entries) |
 | `kill` | — | none (reads session registry, signals PIDs) |
 | `backup` | `bak`, `bkp` | container shared |
@@ -142,6 +145,19 @@ would shadow the container's.
 `install` accepts an image reference, a local path (must start with
 `/`, `./`, `../`, or `~`), or an `http(s)://` URL. `--user` takes name,
 numeric uid, or `user:group`.
+
+`-i`/`--image` switches `list` and `remove` from containers to **cached
+images** (manifest-cache entry + its layer blobs). `list --image`
+renders an IMAGE/ARCH/ID/SIZE/CREATED table that falls back to a
+stacked two-line form when `terminal_width()` can't hold the columns;
+`--quiet` prints one reference per line. `remove --image` resolves its
+positional as a reference (`:latest` implied, matching **every** cached
+arch unless `-a/--architecture` narrows), else an image-ID prefix (≥4
+chars, ambiguity refused) or cache key; it unlinks the manifest entry
+plus every layer blob no surviving entry references, reports reclaimed
+bytes, and names containers installed from that image (unaffected —
+only their `reset` needs it back). `-a` without `--image` is an error,
+not a silent no-op.
 
 ## CLI flow (`cli.main()`)
 
@@ -211,6 +227,20 @@ paths (layer cache, OCI blob layout) so a crafted reference like
 (Python `tarfile` lacks zstd). Whiteouts (`.wh..wh..opq` clears parent
 dir; `.wh.<name>` deletes sibling), hardlink linkname filtering, and
 member-name traversal protection live in `helpers/tar_extract.py`.
+
+Manifest-cache payload (`cache.py`): `{image_ref, arch, manifest, repo,
+image_config}`. The key is a hash, so the entry itself is the only
+record of which image it holds — `save_manifest_cache()` (the single
+writer; `oci_writer.store_in_cache` delegates to it) stores both, a
+cache hit in `pull_image` calls `annotate_manifest_cache()` to backfill
+entries written before those fields existed, and `iter_cached_images()`
+falls back to naming the rest from installed containers'
+`manifest.json` (same key derivation). Records expose `image_ref`,
+`arch`, `image_id` (config digest hex), on-disk `size`, `missing` layer
+count, `created`, `cached_at` — consumed by `list --image` /
+`remove --image`. `refs.py` owns the string forms: `canonical_ref()`
+(cache-key input), `with_explicit_tag()` (`:latest` default, shared by
+`build`/`push`/`remove`), `DOCKER_TO_ARCH`.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise

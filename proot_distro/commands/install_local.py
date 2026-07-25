@@ -39,7 +39,8 @@ from proot_distro.atomic import atomic_replace
 from proot_distro.message import log_info
 from proot_distro.progress import clear_bar, progress_active
 from proot_distro.helpers.docker import (
-    ARCH_TO_DOCKER, apply_layer, layer_cache_path, validate_digest,
+    ARCH_TO_DOCKER, DOCKER_TO_ARCH, apply_layer, layer_cache_path,
+    validate_digest,
 )
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
@@ -51,10 +52,6 @@ _ROOTFS_DIRS = frozenset({
     "media", "mnt", "opt", "proc", "root", "run", "sbin", "srv",
     "sys", "tmp", "usr", "var",
 })
-
-
-# Reverse of ARCH_TO_DOCKER: Docker architecture name → proot-distro arch.
-_DOCKER_TO_ARCH = {docker: pd for pd, (docker, _) in ARCH_TO_DOCKER.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +226,7 @@ def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
     image_config = _oci_read_json(tf, member_map, _oci_blob_path(config_digest))
 
     docker_arch = image_config.get("architecture", "")
-    actual_arch = _DOCKER_TO_ARCH.get(docker_arch, dist_arch)
+    actual_arch = DOCKER_TO_ARCH.get(docker_arch, dist_arch)
 
     layers = manifest.get("layers", [])
     if not layers:

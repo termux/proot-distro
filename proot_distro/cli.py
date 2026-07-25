@@ -39,7 +39,7 @@ from proot_distro.constants import IS_TERMUX, PROGRAM_NAME
 from proot_distro.message import C, msg, set_quiet, crit_error
 from proot_distro.arch import get_proot_bin
 from proot_distro.parser import (
-    ALIAS_TO_CANONICAL, REQUIRED_ARGS, build_parser,
+    ALIAS_TO_CANONICAL, build_parser, required_args_for,
 )
 from proot_distro.commands.help import command_help, HELP_COMMANDS
 from proot_distro.commands.install import command_install
@@ -312,7 +312,7 @@ def main() -> None:
         msg()
         sys.exit(1)
 
-    for arg_name, error_msg in REQUIRED_ARGS.get(canonical, []):
+    for arg_name, error_msg in required_args_for(canonical, args):
         if getattr(args, arg_name, None) is None:
             msg()
             crit_error(error_msg)

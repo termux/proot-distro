@@ -21,6 +21,24 @@ _proot_distro_get_containers() {
     fi
 }
 
+# Cached OCI images, as `remove --image` accepts them. The manifest cache
+# is keyed by a hash, so the references are read back through the program
+# itself rather than derived from file names.
+_proot_distro_get_images() {
+    proot-distro list --image --quiet 2>/dev/null
+}
+
+# Returns 0 (true) when any of the given words appears in the command line.
+_proot_distro_has_word() {
+    local w needle
+    for w in "${words[@]}"; do
+        for needle in "$@"; do
+            [[ "${w}" == "${needle}" ]] && return 0
+        done
+    done
+    return 1
+}
+
 # Returns 0 (true) when running on Termux/Android: at least two of three
 # independent indicators must match, mirroring _detect_termux() in constants.py.
 _proot_distro_is_termux() {
@@ -67,8 +85,15 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         remove)
+            case "${prev}" in
+                -a|--architecture)
+                    COMPREPLY=($(compgen -W "aarch64 arm i686 riscv64 x86_64" -- "${cur}"))
+                    return ;;
+            esac
             if [[ "${cur}" == -* ]]; then
-                COMPREPLY=($(compgen -W "--verbose --quiet --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "-i --image -a --architecture --verbose --quiet --help" -- "${cur}"))
+            elif _proot_distro_has_word "-i" "--image"; then
+                COMPREPLY=($(compgen -W "$(_proot_distro_get_images)" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "$(_proot_distro_get_containers)" -- "${cur}"))
             fi
@@ -125,7 +150,7 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         list)
-            COMPREPLY=($(compgen -W "-q --quiet -h --help" -- "${cur}"))
+            COMPREPLY=($(compgen -W "-i --image -q --quiet -h --help" -- "${cur}"))
             ;;
 
         # -----------------------------------------------------------------------

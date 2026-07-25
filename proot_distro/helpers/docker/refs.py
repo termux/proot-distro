@@ -33,6 +33,9 @@ ARCH_TO_DOCKER = {
     "riscv64": ("riscv64", ""),
 }
 
+# Reverse of ARCH_TO_DOCKER: Docker architecture name → proot-distro arch.
+DOCKER_TO_ARCH = {docker: pd for pd, (docker, _v) in ARCH_TO_DOCKER.items()}
+
 
 def parse_image_ref(image_ref: str) -> tuple:
     """Parse an image reference into (registry, repo, tag).
@@ -73,6 +76,32 @@ def parse_image_ref(image_ref: str) -> tuple:
         repo = name
 
     return registry, repo, tag
+
+
+def canonical_ref(image_ref: str) -> str:
+    """Return the fully-qualified '[registry/]repo:tag' form of *image_ref*.
+
+    'ubuntu'                         -> 'library/ubuntu:latest'
+    'docker.io/library/ubuntu:24.04' -> 'library/ubuntu:24.04'
+    'ghcr.io/foo/bar'                -> 'ghcr.io/foo/bar:latest'
+
+    Every spelling of one image collapses to a single string here, which
+    is what the manifest cache key is derived from — so the cache (and
+    everything that inventories it) treats them as the same image.
+    """
+    registry, repo, tag = parse_image_ref(image_ref)
+    return f"{registry}/{repo}:{tag}" if registry else f"{repo}:{tag}"
+
+
+def with_explicit_tag(image_ref: str) -> str:
+    """Append ':latest' when the reference's last component carries no tag.
+
+    Unlike canonical_ref() this preserves the reference as the user
+    spelled it (no 'library/' insertion), which is what commands echo
+    back and what the build/push lock key is computed from.
+    """
+    last = image_ref.split("/")[-1]
+    return image_ref if ":" in last else image_ref + ":latest"
 
 
 def derive_alias(image_ref: str) -> str:

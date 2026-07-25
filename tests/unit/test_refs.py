@@ -36,3 +36,34 @@ def test_arch_to_docker_table():
     assert refs.ARCH_TO_DOCKER["aarch64"] == ("arm64", "")
     assert refs.ARCH_TO_DOCKER["arm"] == ("arm", "v7")
     assert refs.ARCH_TO_DOCKER["x86_64"] == ("amd64", "")
+
+
+@pytest.mark.parametrize("ref,canonical", [
+    ("ubuntu", "library/ubuntu:latest"),
+    ("ubuntu:24.04", "library/ubuntu:24.04"),
+    ("docker.io/library/ubuntu:24.04", "library/ubuntu:24.04"),
+    ("myuser/img", "myuser/img:latest"),
+    ("ghcr.io/foo/bar", "ghcr.io/foo/bar:latest"),
+    ("localhost:5000/foo", "localhost:5000/foo:latest"),
+])
+def test_canonical_ref(ref, canonical):
+    assert refs.canonical_ref(ref) == canonical
+
+
+@pytest.mark.parametrize("ref,tagged", [
+    ("ubuntu", "ubuntu:latest"),
+    ("ubuntu:24.04", "ubuntu:24.04"),
+    ("ghcr.io/foo/bar", "ghcr.io/foo/bar:latest"),
+    # A port in the registry host is not a tag.
+    ("localhost:5000/foo", "localhost:5000/foo:latest"),
+])
+def test_with_explicit_tag(ref, tagged):
+    assert refs.with_explicit_tag(ref) == tagged
+
+
+def test_docker_to_arch_is_the_reverse_table():
+    assert refs.DOCKER_TO_ARCH["arm64"] == "aarch64"
+    assert refs.DOCKER_TO_ARCH["amd64"] == "x86_64"
+    assert refs.DOCKER_TO_ARCH["386"] == "i686"
+    for pd_arch, (docker, _variant) in refs.ARCH_TO_DOCKER.items():
+        assert refs.DOCKER_TO_ARCH[docker] == pd_arch

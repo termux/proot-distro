@@ -35,11 +35,17 @@
 
 from proot_distro.helpers.docker.refs import (
     ARCH_TO_DOCKER,
+    DOCKER_TO_ARCH,
+    canonical_ref,
     derive_alias,
     parse_image_ref,
+    with_explicit_tag,
 )
 from proot_distro.helpers.docker.cache import (
     all_layers_cached,
+    annotate_manifest_cache,
+    image_cache_entry,
+    iter_cached_images,
     layer_cache_path,
     load_manifest_cache,
     manifest_cache_path,
@@ -67,16 +73,21 @@ from proot_distro.helpers.docker.push import push_image
 __all__ = (
     "ARCH_TO_DOCKER",
     "AuthStrippingRedirectHandler",
+    "DOCKER_TO_ARCH",
     "all_layers_cached",
+    "annotate_manifest_cache",
     "apply_layer",
     "auth_denied_msg",
     "auth_note",
     "auth_opener",
+    "canonical_ref",
     "derive_alias",
     "download_blob",
     "env_basic_auth",
     "get_auth_token",
+    "image_cache_entry",
     "insecure_registry_msg",
+    "iter_cached_images",
     "layer_cache_path",
     "load_manifest_cache",
     "manifest_cache_path",
@@ -87,4 +98,5 @@ __all__ = (
     "registry_base_url",
     "save_manifest_cache",
     "validate_digest",
+    "with_explicit_tag",
 )

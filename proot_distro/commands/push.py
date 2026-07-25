@@ -36,6 +36,7 @@ from proot_distro.helpers.docker import (
     load_manifest_cache,
     parse_image_ref,
     push_image,
+    with_explicit_tag,
 )
 from proot_distro.progress import fmt_size
 from proot_distro.constants import PROGRAM_NAME
@@ -54,9 +55,7 @@ def command_push(args):
 
     # Append :latest the same way build does, so users can push using the
     # short form even when they tagged the build with the implicit tag.
-    last = image_ref.split("/")[-1]
-    if ":" not in last:
-        image_ref = image_ref + ":latest"
+    image_ref = with_explicit_tag(image_ref)
 
     if override_arch:
         target_arch = normalize_arch(override_arch)

@@ -148,6 +148,23 @@ def tty_safe_for_writes() -> bool:
     return bool(lflag & termios.ECHO) and bool(lflag & termios.ICANON)
 
 
+def terminal_width(default: int = 80) -> int:
+    """Return the terminal's column count, or *default* when unknown.
+
+    stderr is probed first because that is where the commands that lay
+    out columns (`ps`, `list --image`) render; stdout is the fallback
+    for the case where only it is still attached to the terminal.
+    """
+    for fd in (2, 1):
+        try:
+            cols = os.get_terminal_size(fd).columns
+        except (OSError, ValueError):
+            continue
+        if cols > 0:
+            return cols
+    return default
+
+
 _quiet = False
 
 

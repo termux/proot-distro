@@ -145,6 +145,9 @@ proot-distro login ubuntu -- /bin/uname -a
 # List all installed containers
 proot-distro list
 
+# List the OCI images sitting in the local cache
+proot-distro list --image
+
 # Build and install a custom image from a Dockerfile
 proot-distro build -t myapp:1.0 --install-as myapp ./mycontext
 
@@ -716,7 +719,7 @@ proot-distro run nextcloud --get-proot-cmd
 ### `list` — List installed containers
 
 ```
-proot-distro list
+proot-distro list [-i|--image]
 Aliases: li, ls
 ```
 
@@ -726,7 +729,50 @@ printed.
 
 | Option | Description |
 |---|---|
-| `-q`, `--quiet` | Print only container names, one per line (different from the global `--quiet`). |
+| `-i`, `--image` | List cached OCI images instead of containers. |
+| `-q`, `--quiet` | Print only container names — or image references with `--image` — one per line (different from the global `--quiet`). |
+
+#### Listing cached images
+
+`proot-distro list --image` inventories the local image cache: every
+image pulled by [`install`](#install--install-a-container) or produced
+by [`build`](#build--build-an-image-from-a-dockerfile), i.e. a manifest
+in `$BASE_CACHE_DIR/oci_manifests/` plus its layer blobs in
+`$BASE_CACHE_DIR/oci_layers/`.
+
+```
+IMAGE                 ARCH     ID            SIZE      CREATED
+ubuntu:24.04          aarch64  a1b2c3d4e5f6  28.9 MiB  2 days ago
+ghcr.io/foo/bar:1.0   x86_64   9f8e7d6c5b4a  120.4 MiB 3 weeks ago
+myapp:latest*         aarch64  0f1e2d3c4b5a  12.0 MiB  5 minutes ago
+
+* incomplete - some layers are missing from the cache
+```
+
+* `SIZE` is the disk space the image's layers currently occupy.
+  Layers shared with another image are counted for both.
+* `CREATED` comes from the image config, falling back to when the
+  image was cached — which is what locally built images show.
+* Images are cached **per architecture**, so the same reference can
+  appear once per architecture it was pulled or built for.
+* A `*` marks an incomplete image: some of its layers are gone from
+  the cache, so installing it needs network access again.
+* An image whose reference cannot be recovered — cached by a version
+  that did not record it, with no container left to identify it —
+  shows a `<none>` tag and can still be removed by its ID.
+
+On a terminal too narrow for the columns (a phone), each image is
+printed as a two-line block instead.
+
+Pipe-friendly form:
+
+```
+# One reference per line, for scripting
+proot-distro list --image --quiet
+
+# Drop every cached image
+proot-distro list --image -q | xargs -rn1 proot-distro remove --image
+```
 
 ---
 
@@ -808,6 +854,7 @@ host processes.
 
 ```
 proot-distro remove [OPTIONS] CONTAINER
+proot-distro remove -i|--image [OPTIONS] IMAGE
 Aliases: rm
 ```
 
@@ -817,8 +864,56 @@ files are fixed on the fly so the rootfs can always be cleared.
 
 | Option | Description |
 |---|---|
+| `-i`, `--image` | Delete a cached OCI image instead of a container. |
+| `-a`, `--architecture` | Only delete the variant built for this architecture. Requires `--image`. |
 | `-v`, `--verbose` | Log each deleted file. |
 | `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
+
+#### Removing a cached image
+
+With `--image`, the argument names an image from
+[`list --image`](#list--list-installed-containers) rather than a
+container. Accepted forms:
+
+* a reference — `ubuntu:24.04`, `ghcr.io/foo/bar:1.0`; a missing tag
+  defaults to `:latest`, exactly as `install` and `push` treat it;
+* an image ID, or any prefix of at least four characters of one — an
+  ambiguous prefix is refused with the candidates listed;
+* the cache key (the `oci_manifests/` file name).
+
+A reference matches **every architecture** cached under it, so the
+image is really gone afterwards. Pass `-a`/`--architecture` to delete
+just one variant.
+
+Removal deletes the manifest entry plus every layer blob no remaining
+cached image still references — layers shared with another image stay.
+The space freed is reported in human-readable units.
+
+Installed containers are **not** affected: their filesystem is an
+independent copy, so they keep working. Only
+[`reset`](#reset--reinstall-a-container-from-scratch) needs the image
+back, and will download it again; the command points this out when a
+container was installed from the image being removed.
+
+An image being written by a concurrent
+[`build`](#build--build-an-image-from-a-dockerfile) or uploaded by
+[`push`](#push--push-a-built-image-to-a-registry) cannot be removed —
+the same `BuildLock` guards all three, and the conflict is reported
+with the PID holding it.
+
+```
+# Every cached architecture of this reference
+proot-distro remove --image ubuntu:24.04
+
+# Only the aarch64 variant
+proot-distro remove --image --architecture aarch64 myapp:latest
+
+# By image ID prefix, logging each deleted file
+proot-distro remove --image 9f8e7d6c -v
+
+# Same thing with short flags and the command alias
+proot-distro rm -i 9f8e7d6c -v
+```
 
 ---
 
@@ -1097,6 +1192,11 @@ After `clear-cache`, the next `install` (or `reset`) of an image
 requires network access again, and layers must be re-downloaded and
 re-verified.
 
+To reclaim the space taken by a single image instead of the whole
+cache, use
+[`remove --image`](#remove--delete-a-container), which keeps the layers
+that other cached images still share.
+
 ---
 
 ## How PRoot-Distro works
@@ -1219,7 +1319,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
 | `sessions/<pid>.json` | Active-session registry entry for `ps`; holds an inherited `flock` for the session lifetime and is pruned when the session ends |
 | `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
-| `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags) |
+| `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags), each recording the image reference and architecture it was cached for — this is what `list --image` inventories |
 | `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |
 | `installed-rootfs/<name>/` | **Legacy** layout; auto-migrated by `login`. |
 

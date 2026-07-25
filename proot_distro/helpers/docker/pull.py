@@ -40,6 +40,7 @@ from proot_distro.progress import fmt_size
 from proot_distro.helpers.download import retry_http
 from proot_distro.helpers.docker.cache import (
     all_layers_cached,
+    annotate_manifest_cache,
     layer_cache_path,
     load_manifest_cache,
     save_manifest_cache,
@@ -212,6 +213,9 @@ def pull_image(
     registry = parse_image_ref(image_ref)[0]
 
     if manifest is not None:
+        # The hit proves which image this entry holds; record it when the
+        # entry is an old one that never stored its own reference.
+        annotate_manifest_cache(image_ref, arch)
         layers = manifest.get("layers", [])
         if all_layers_cached(layers):
             log_info(f"Image '{image_ref}' ({arch}) is cached.")
