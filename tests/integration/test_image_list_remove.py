@@ -280,7 +280,7 @@ def test_remove_image_reports_dependent_containers(builders, capsys):
     _remove_image("ubuntu:24.04")
 
     err = capsys.readouterr().err
-    assert "'ubuntu'" in err and "reset" in err
+    assert "'ubuntu'" in err and "keep working" in err
     # The container itself survives.
     assert os.path.isdir(container_rootfs("ubuntu"))
 
