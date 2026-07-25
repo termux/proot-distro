@@ -164,6 +164,79 @@ def active_sessions():
     return sessions
 
 
+def session_file(pid):
+    """Path of the registry file of the session rooted at *pid*.
+
+    register_session() names each file after the PID it exec's into, so
+    this is derivable without re-reading the directory.
+    """
+    return os.path.join(SESSIONS_DIR, f"{pid}.json")
+
+
+def session_is_live(pid):
+    """Return True while any process of session *pid* is still running.
+
+    Same flock probe active_sessions() uses, so a session counts as gone
+    exactly when `ps` would stop listing it. Cheap enough (one open +
+    one flock) to poll in a loop, unlike a /proc scan.
+    """
+    return _session_alive(session_file(pid))
+
+
+def session_holders(pid):
+    """Return the PIDs that still hold session *pid*'s registry file open.
+
+    register_session() clears O_CLOEXEC on that file's descriptor, so
+    proot and every guest process it spawns inherit it. Looking for the
+    inode in /proc therefore identifies the session's live members
+    directly, which beats the recorded root PID on two counts: it cannot
+    be fooled by PID reuse (a recycled PID does not hold the fd), and it
+    still finds the guests after the root proot has been SIGKILLed and
+    they were reparented to init — the case the recorded PID can no
+    longer reach at all.
+
+    Compares st_dev/st_ino rather than the readlink target because the
+    descriptor is opened on the temporary path before os.replace()
+    publishes it.
+
+    Best-effort: an empty set means /proc was unreadable (or nothing
+    holds the file), and the caller falls back to the recorded PID.
+    """
+    try:
+        st = os.stat(session_file(pid))
+    except OSError:
+        return set()
+    wanted = (st.st_dev, st.st_ino)
+
+    holders = set()
+    self_pid = os.getpid()
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return holders
+
+    for name in names:
+        if not name.isdigit():
+            continue
+        other = int(name)
+        if other == self_pid:
+            continue
+        fd_dir = f"/proc/{name}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue  # process exited, or its fds are not ours to read
+        for fd in fds:
+            try:
+                fst = os.stat(f"{fd_dir}/{fd}")
+            except OSError:
+                continue  # fd closed under us, or a dangling target
+            if (fst.st_dev, fst.st_ino) == wanted:
+                holders.add(other)
+                break
+    return holders
+
+
 def _session_alive(path):
     """Return True iff a process still holds the exclusive lock on *path*.
 
@@ -207,4 +280,5 @@ def _safe_unlink(path):
         pass
 
 
-__all__ = ("register_session", "active_sessions")
+__all__ = ("register_session", "active_sessions", "session_file",
+           "session_is_live", "session_holders")

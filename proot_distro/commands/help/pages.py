@@ -609,18 +609,35 @@ HELP_PAGES = {
             "session or a container name if need to stop all processes "
             "created within given container."
             "\n\n"
-            "Default signal is TERM."
+            "Default signal is TERM. The session is always torn down, "
+            "escalating if the guest outlives the signal it was sent."
         ),
         "options": [
             ("-h, --help", "Show this help."),
             ("-s, --signal [SIGNAL]",
-             "Signal to send instead of the default SIGTERM. Accepts a "
-             "name (SIGTERM, KILL, HUP) or a number (15, 9, 1)."),
+             "Signal to send to the guest processes instead of the "
+             "default SIGTERM. Accepts a name (SIGTERM, KILL, HUP) or a "
+             "number (15, 9, 1)."),
             ("--all", "Target all sessions system-wide."),
         ],
         "examples": [
             f"{PROGRAM_NAME} kill 12345",
             f"{PROGRAM_NAME} kill --signal KILL nextcloud",
+        ],
+        "footer": [
+            {
+                "title": "NOTES",
+                "intro": (
+                    "PRoot itself ignores every signal but QUIT, KILL "
+                    "and the job control ones, so TERM, INT or HUP "
+                    "reach the guest processes only. When they do not "
+                    "end the session, the container root is sent QUIT "
+                    "(which makes proot kill every traced process) and "
+                    "anything still left is sent KILL. Job control "
+                    "signals (STOP, CONT, TSTP) and USR1/USR2 are "
+                    "delivered as asked and never escalated."
+                ),
+            },
         ],
     },
 

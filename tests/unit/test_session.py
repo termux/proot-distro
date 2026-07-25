@@ -4,6 +4,8 @@
 import fcntl
 import json
 import os
+import subprocess
+import sys
 
 from types import SimpleNamespace
 
@@ -249,3 +251,63 @@ def test_command_ps_no_marker_when_attached(capsys):
         assert "detached session" not in err
     finally:
         fd.close()
+
+
+# ---------------------------------------------------------------------------
+# session_file / session_is_live / session_holders
+# ---------------------------------------------------------------------------
+
+def test_session_file_is_derived_from_the_pid():
+    assert session.session_file(4242) == _session_path(4242)
+
+
+def test_session_is_live_tracks_the_registry_lock():
+    fd = _make_live(5150, "box")
+    try:
+        assert session.session_is_live(5150) is True
+    finally:
+        fd.close()
+    # Lock released -> the session reads as gone, same as for `ps`.
+    assert session.session_is_live(5150) is False
+
+
+def test_session_is_live_false_for_unknown_pid():
+    assert session.session_is_live(2 ** 30) is False
+
+
+def test_session_holders_finds_processes_holding_the_inherited_fd():
+    # register_session() clears O_CLOEXEC precisely so proot and every
+    # guest inherit this descriptor; that is what lets `kill` find a
+    # session whose recorded root PID is already gone.
+    fd = session.register_session(
+        container="box", kind="login",
+        command_argv=["/bin/sh"], user="root",
+    )
+    assert fd is not None
+    pid = os.getpid()
+    # A child holding the inherited descriptor, as proot does across
+    # execvpe(); it idles until stdin closes.
+    child = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys; sys.stdout.write('R'); sys.stdout.flush(); "
+         "sys.stdin.read(1)"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        pass_fds=(fd.fileno(),),
+    )
+    try:
+        assert child.stdout.read(1) == b"R"  # exec'd, fd inherited
+        holders = session.session_holders(pid)
+        # The child inherited the descriptor; the scanning process itself
+        # is deliberately excluded.
+        assert child.pid in holders
+        assert pid not in holders
+    finally:
+        child.stdin.close()
+        child.stdout.close()
+        child.wait(timeout=10)
+        fd.close()
+        os.unlink(_session_path(pid))
+
+
+def test_session_holders_empty_for_unknown_session():
+    assert session.session_holders(2 ** 30) == set()

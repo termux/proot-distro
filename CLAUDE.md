@@ -47,7 +47,10 @@ Top-level utilities (each owns a focused concern):
 - `session.py` — active-session registry for `ps`: `register_session`
   (inheritable flock survives `execvpe`, like the container lock; records
   a `detach` flag among the per-session metadata), `active_sessions`
-  (reads `SESSIONS_DIR`, prunes dead via a shared flock probe).
+  (reads `SESSIONS_DIR`, prunes dead via a shared flock probe),
+  `session_file`/`session_is_live` (that probe for one PID) and
+  `session_holders` (scans `/proc/*/fd` for the registry file's inode —
+  the members `kill` walks from).
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes
@@ -307,18 +310,34 @@ shows in `ps` with TYPE marked `login*`/`run*`; stop it with
 `proot-distro kill`.
 
 `command_kill()` (`commands/kill.py`) stops sessions by signalling the
-**whole guest process tree**, not just the root proot — `proot`'s
-`--kill-on-exit` cleanup runs only on a graceful exit (so `kill -9`
-orphans the guest) and is absent off-Termux entirely. Target is a PID, a
-container name (all its sessions), or `--all`, always resolved against
-`active_sessions()` so only tracked proot sessions can be hit. It reads
-`/proc/<pid>/status` `PPid:` into a `pid→ppid` map (`_read_pid_ppid`),
-walks the transitive closure under each root (`_collect_tree`, pure +
-cycle-safe), and `os.kill`s every member (never self/pid 0/pid 1) in two
-sweeps. Default signal is `SIGTERM`; `-s/--signal` takes a name or
-number. PID-reuse safety belt: a root is walked only when
-`/proc/<root>/comm` reads `proot`. No lock taken; pure-Python (no
-`pkill`/`pgrep`).
+**whole guest process tree**, not just the root proot. Two proot facts
+drive the design: its event loop sets **`SIG_IGN` on every signal except
+`SIGQUIT`/`SIGILL`/`SIGABRT`/`SIGFPE`/`SIGSEGV` (→ `kill_all_tracees`),
+`SIGUSR1`/`SIGUSR2` and the job-control set**, so `SIGTERM`/`INT`/`HUP`
+aimed at the root are silent no-ops; and it sets no `PTRACE_O_EXITKILL`
+(`--kill-on-exit` fires only on a graceful exit, and never off-Termux),
+so `kill -9 <proot>` leaves the guest running under init.
+
+Target is a PID, a container name (all its sessions), or `--all`, always
+resolved against `active_sessions()` so only tracked sessions can be hit.
+Session membership comes from `session.session_holders()` — a `/proc`
+scan for the registry file's inode, which every guest inherits — so it
+survives a dead root and cannot be fooled by PID reuse; `_forest_roots()`
+keeps the topmost holders (this also catches double-forked guests whose
+ppid is 1), and `_collect_tree()` (pure + cycle-safe, over
+`_read_pid_ppid()`) expands each into its descendants. `_root_is_proot()`
+is only the fallback when the fd scan comes up empty, and matches
+`basename(PD_PROOT_BIN)` as well as `proot` (comm is 15 chars max).
+
+Teardown is staged: deliver the requested signal (default `SIGTERM`,
+`-s/--signal` takes a name or number) to the tree → poll
+`session_is_live()` for `_GRACE_SECONDS` → `SIGQUIT` the proot roots
+(`_escalate`, the one lever proot honors) → poll again → `SIGKILL` sweep
+over freshly re-derived roots. Signals that are not terminations
+(`STOP`/`CONT`/`TSTP`/`TTIN`/`TTOU`/`CHLD`/`URG`/`WINCH`/`USR1`/`USR2`)
+are delivered as asked and **never escalated**. `_report()` verifies
+against `/proc` and exits 1 if anything survived; `_is_alive()` counts
+zombies as dead. No lock taken; pure-Python (no `pkill`/`pgrep`).
 
 `command_build()` parses the Dockerfile, runs `BuildEngine`, writes
 the manifest cache (Variant A — small JSON; layer blobs already in
