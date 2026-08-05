@@ -511,7 +511,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         msg(f"{C['CYAN']}List sessions:  "
             f"{C['GREEN']}{PROGRAM_NAME} ps{C['RST']}")
         msg(f"{C['CYAN']}Stop session:   "
-            f"{C['GREEN']}kill {pid}{C['RST']}")
+            f"{C['GREEN']}{PROGRAM_NAME} kill {pid}{C['RST']}")
         msg()
         return
 
