@@ -89,15 +89,19 @@ def _refuse_nested_proot() -> None:
     """Exit when we're running inside a proot — nested proot is unsupported."""
     try:
         with open(f"/proc/{os.getpid()}/status") as fh:
+            print(f"proot-distro PID: {os.getpid()}")
             for line in fh:
+                print(f"proot-distro status: {line}")
                 if not line.startswith("TracerPid:"):
                     continue
                 tracer_pid = int(line.split()[1])
+                print(f"proot-distro status: tracer_pid == {tracer_pid}")
                 if tracer_pid == 0:
                     return
                 try:
                     with open(f"/proc/{tracer_pid}/status") as tfh:
                         for tline in tfh:
+                            print(f"tracer status: {tline}")
                             if tline.startswith("Name:") and "proot" in tline:
                                 crit_error(f"{PROGRAM_NAME} should not be "
                                            f"executed under PRoot.")
