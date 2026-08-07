@@ -87,6 +87,15 @@ def _sigquit_to_keyboard_interrupt(_signum, _frame):
 
 def _refuse_nested_proot() -> None:
     """Exit when we're running inside a proot — nested proot is unsupported."""
+    err_message = (
+        f"attempted to run {PROGRAM_NAME} in a proot session. "
+        "Please check your system configuration to ensure that this program "
+        "does not run under any other proot instance. Additionally check the "
+        f"target container to ensure it does not invoke {PROGRAM_NAME} on "
+        "a loop basis. With 100% confidence this is not a mistake. Do not "
+        "send bug reports!"
+    )
+
     try:
         with open(f"/proc/{os.getpid()}/status") as fh:
             for line in fh:
@@ -99,8 +108,7 @@ def _refuse_nested_proot() -> None:
                     with open(f"/proc/{tracer_pid}/status") as tfh:
                         for tline in tfh:
                             if tline.startswith("Name:") and "proot" in tline:
-                                crit_error(f"{PROGRAM_NAME} should not be "
-                                           f"executed under PRoot.")
+                                crit_error(err_message)
                                 sys.exit(1)
                 except OSError:
                     return
