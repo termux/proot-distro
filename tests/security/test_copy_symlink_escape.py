@@ -8,10 +8,12 @@
 # read any host file). Every path below must stay inside the rootfs.
 
 import os
+import stat
 from types import SimpleNamespace
 
 import pytest
 
+from proot_distro.commands import sync
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs, resolve_container_path
@@ -193,6 +195,56 @@ def test_sync_source_symlink_tree_not_followed_out(tmp_path, builders):
     assert os.path.islink(dest / "leak")
     assert not (dest / "secret.txt").exists()
     assert sorted(os.listdir(dest)) == ["leak"]
+
+
+def test_sync_delete_does_not_chmod_host_file_through_symlink(
+    tmp_path, builders
+):
+    """`--delete`'s chmod fallback must not act on symlink targets.
+
+    shutil.rmtree() failing with EPERM sends `sync` through a walk that
+    chmods every entry to force the removal through. os.chmod() follows
+    symlinks, so a link inside the removed subtree used to hand the
+    container a mode change on any host file.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+
+    victim = tmp_path / "victim"
+    victim.write_text("secret")
+    os.chmod(victim, 0o400)
+
+    # `extra` has no counterpart in the source, so --delete removes it;
+    # mode 0500 makes rmtree's first attempt fail with PermissionError.
+    dest = os.path.join(rootfs, "data")
+    extra = os.path.join(dest, "extra")
+    os.makedirs(extra)
+    os.symlink(str(victim), os.path.join(extra, "link"))
+    os.chmod(extra, 0o500)
+
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "keep.txt").write_text("k")
+    _sync(str(src), "box:/data", delete=True)
+
+    assert stat.S_IMODE(os.stat(victim).st_mode) == 0o400
+    assert victim.read_text() == "secret"
+    # The fallback still does its job: the unwritable subtree is gone.
+    assert not os.path.exists(extra)
+    assert os.path.exists(os.path.join(dest, "keep.txt"))
+
+
+def test_ensure_writable_skips_symlinks(tmp_path):
+    """_ensure_writable() must leave a symlink's target alone."""
+    victim = tmp_path / "victim"
+    victim.write_text("x")
+    os.chmod(victim, 0o400)
+    link = tmp_path / "link"
+    os.symlink(str(victim), link)
+
+    sync._ensure_writable(str(link))
+
+    assert stat.S_IMODE(os.stat(victim).st_mode) == 0o400
 
 
 # ----- resolver-level guarantees ------------------------------------------

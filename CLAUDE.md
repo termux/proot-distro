@@ -158,11 +158,15 @@ would shadow the container's.
 numeric uid, or `user:group`.
 
 `copy`/`sync` resolve both endpoints through `resolve_container_path()`,
-so container-side symlinks stay confined to the rootfs. `sync` adds one
-more guard below that root: `_sync_dir` **unlinks** a destination symlink
-where the source has a real directory (rsync's behaviour) instead of
-descending through it, which would otherwise scatter the whole subtree
-outside the container.
+so container-side symlinks stay confined to the rootfs. `sync` writes
+into a pre-existing destination tree and so needs two more guards below
+that root: `_sync_dir` **unlinks** a destination symlink where the source
+has a real directory (rsync's behaviour) instead of descending through
+it, which would otherwise scatter the whole subtree outside the
+container; and the permission fix-ups (`_ensure_writable`, the chmod
+fallback in `_rmtree_robust`) **skip symlinks**, since `os.chmod()` has
+no symlink-relative form on Linux and would apply the mode change to
+whatever a rootfs link points at.
 
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`

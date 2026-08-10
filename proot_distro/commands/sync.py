@@ -24,8 +24,8 @@
 # Symlinks are copied as-is; hard links become independent file copies;
 # special files (block/char/FIFO/socket) are silently skipped. A destination
 # entry that is a symlink where the source has a directory is replaced, never
-# descended into (it could point outside the container). Ownership
-# is never changed. Modes and timestamps are preserved. When the destination
+# descended into (it could point outside the container), and the permission
+# fix-ups never follow a symlink either. Ownership is never changed. Modes and timestamps are preserved. When the destination
 # lacks write permission the command attempts to chmod it; failing that it
 # exits with an error. With --delete, destination entries that have no
 # counterpart in the source are removed after the sync pass. Paths may be
@@ -99,6 +99,13 @@ def _ensure_writable(path: str) -> None:
     """Ensure path itself is writable. Exits on failure."""
     try:
         st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            # chmod() has no symlink-relative form on Linux, so this would
+            # act on whatever the link points at — possibly a host file, if
+            # the link came out of a container rootfs. A symlink's own mode
+            # is meaningless anyway, and the callers only ever replace or
+            # unlink it, which needs the parent writable, not the link.
+            return
         if not (st.st_mode & stat.S_IWUSR):
             os.chmod(path, st.st_mode | stat.S_IWUSR)
     except OSError as exc:
@@ -271,14 +278,21 @@ def _rmtree_robust(path: str) -> None:
     except PermissionError:
         for root, _dirs, files in os.walk(path, followlinks=False, topdown=False):
             try:
-                os.chmod(root, os.stat(root).st_mode | stat.S_IRWXU)
+                os.chmod(root, os.lstat(root).st_mode | stat.S_IRWXU)
             except OSError:
                 pass
             for fname in files:
                 try:
                     fpath = os.path.join(root, fname)
+                    st = os.lstat(fpath)
+                    # Never chmod a symlink: os.chmod() follows it, and a
+                    # link planted in a container rootfs would redirect the
+                    # mode change onto a host file. Unlinking it only needs
+                    # the parent directory writable, handled just above.
+                    if stat.S_ISLNK(st.st_mode):
+                        continue
                     os.chmod(fpath,
-                             os.stat(fpath).st_mode | stat.S_IRUSR | stat.S_IWUSR)
+                             st.st_mode | stat.S_IRUSR | stat.S_IWUSR)
                 except OSError:
                     pass
         try:
