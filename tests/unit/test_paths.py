@@ -56,6 +56,57 @@ def test_resolve_container_path_rejects_escape(builders, capsys, rel):
     assert "escapes the container directory" in capsys.readouterr().err
 
 
+def test_resolve_container_path_follows_symlink_inside(builders):
+    """A relative link inside the rootfs resolves to its real target."""
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.makedirs(os.path.join(rootfs, "real"))
+    os.symlink("real", os.path.join(rootfs, "alias"))
+    assert paths.resolve_container_path("box:/alias/f") == os.path.join(
+        rootfs, "real", "f"
+    )
+
+
+def test_resolve_container_path_reanchors_absolute_symlink(builders):
+    """An absolute link target is read against the rootfs, not the host."""
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.symlink("/usr/share/zoneinfo/UTC", os.path.join(rootfs, "localtime"))
+    assert paths.resolve_container_path("box:/localtime") == os.path.join(
+        rootfs, "usr", "share", "zoneinfo", "UTC"
+    )
+
+
+def test_resolve_container_path_clamps_dotdot_in_symlink(builders):
+    """`..` inside a link target stops at the rootfs instead of escaping."""
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.symlink("../" * 10 + "etc", os.path.join(rootfs, "up"))
+    assert paths.resolve_container_path("box:/up/passwd") == os.path.join(
+        rootfs, "etc", "passwd"
+    )
+
+
+def test_resolve_container_path_missing_components_kept(builders):
+    """A destination that does not exist yet resolves literally."""
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    assert paths.resolve_container_path("box:/new/dir/file") == os.path.join(
+        rootfs, "new", "dir", "file"
+    )
+
+
+def test_resolve_container_path_chained_symlinks(builders):
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.makedirs(os.path.join(rootfs, "c"))
+    os.symlink("b", os.path.join(rootfs, "a"))
+    os.symlink("/c", os.path.join(rootfs, "b"))
+    assert paths.resolve_container_path("box:/a/f") == os.path.join(
+        rootfs, "c", "f"
+    )
+
+
 def test_resolve_container_path_empty_name_rejected(capsys):
     with pytest.raises(SystemExit) as exc:
         paths.resolve_container_path(":/etc/passwd")

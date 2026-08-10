@@ -57,7 +57,15 @@ Top-level utilities (each owns a focused concern):
   meaning — `remove --image` wants a reference, not a container),
   `_PdArgumentParser` (per-command help on error).
 - `paths.py` — `container_dir/_rootfs/_manifest`, `[name:]path` spec
-  resolver, `container_locks_for_spec_pair`.
+  resolver, `container_locks_for_spec_pair`. The container side of a spec
+  is resolved with **chroot semantics** (`_resolve_within_root`): each
+  component is walked in turn, absolute symlink targets are re-anchored
+  at the rootfs, relative ones follow from the link's directory, and `..`
+  clamps at the rootfs (`_MAX_SYMLINK_HOPS` guards link cycles). A `..`
+  written in the spec itself is still rejected outright rather than
+  clamped. Lexical `normpath` alone is **not** sufficient: a guest-created
+  `escape -> /` would pass a `startswith(rootfs)` check and let
+  `copy`/`sync` read from or write to the host filesystem.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
@@ -148,6 +156,13 @@ would shadow the container's.
 `install` accepts an image reference, a local path (must start with
 `/`, `./`, `../`, or `~`), or an `http(s)://` URL. `--user` takes name,
 numeric uid, or `user:group`.
+
+`copy`/`sync` resolve both endpoints through `resolve_container_path()`,
+so container-side symlinks stay confined to the rootfs. `sync` adds one
+more guard below that root: `_sync_dir` **unlinks** a destination symlink
+where the source has a real directory (rsync's behaviour) instead of
+descending through it, which would otherwise scatter the whole subtree
+outside the container.
 
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`

@@ -26,7 +26,10 @@
 #       caller has to spell out the layout (containers/<name>/...).
 #
 #   container_from_spec / resolve_container_path
-#       Decode the `[container:]path` spec format.
+#       Decode the `[container:]path` spec format. The container side is
+#       resolved with chroot semantics (see _resolve_within_root) so a
+#       symlink planted in the rootfs cannot redirect the operation onto
+#       the host filesystem.
 #
 #   container_locks_for_spec_pair
 #       Build the ContainerLock list a copy/sync invocation needs:
@@ -62,12 +65,73 @@ def container_from_spec(spec: str):
     return spec.split(":", 1)[0] if ":" in spec else None
 
 
+# Upper bound on symlink hops taken while resolving one spec, mirroring
+# the kernel's ELOOP limit. Guards against link cycles (a -> b -> a).
+_MAX_SYMLINK_HOPS = 40
+
+
+def _resolve_within_root(root: str, rel_path: str, spec: str) -> str:
+    """Resolve *rel_path* under *root* the way the guest would see it.
+
+    Path components are consumed one at a time and every symlink met on
+    the way is expanded with *root* standing in for `/`: an absolute link
+    target restarts the walk at *root*, a relative one continues from the
+    directory holding the link, and `..` is clamped so it can never climb
+    above *root*. The returned path is therefore always inside *root* and
+    contains no symlink components.
+
+    Purely lexical normalisation is not enough here. `os.path.normpath`
+    collapses `..` without looking at the filesystem, so a symlink planted
+    inside the rootfs — `escape -> /`, which is perfectly ordinary as seen
+    from inside the container — would pass a `startswith(rootfs)` check
+    and then be followed by the copy, reading from or writing to the host
+    filesystem outside the container.
+    """
+    resolved = root
+    pending = rel_path.split("/")
+    hops = 0
+
+    while pending:
+        part = pending.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            # Clamped: at the root, `..` is the root (same as chroot).
+            if resolved != root:
+                resolved = os.path.dirname(resolved)
+            continue
+
+        candidate = os.path.join(resolved, part)
+        try:
+            target = os.readlink(candidate)
+        except OSError:
+            # Not a symlink, or does not exist yet (the destination of a
+            # copy usually does not) — take the component literally.
+            resolved = candidate
+            continue
+
+        hops += 1
+        if hops > _MAX_SYMLINK_HOPS:
+            crit_error(f"too many symbolic links while resolving '{spec}'.")
+            sys.exit(1)
+        if target.startswith("/"):
+            resolved = root
+        # Re-queue the link target so its own components (including any
+        # further symlinks) go through exactly the same treatment.
+        pending = target.split("/") + pending
+
+    return resolved
+
+
 def resolve_container_path(spec: str) -> str:
     """Resolve a `name:path` or plain host path to an absolute host path.
 
     For a `name:path` spec the result is forced to stay inside the
-    container's rootfs — an attempt to traverse out with `..` segments
-    is rejected with a fatal error. An empty name (`:path`) is also
+    container's rootfs. An attempt to traverse out with `..` segments
+    written in the spec itself is rejected with a fatal error; symlinks
+    stored in the rootfs are instead resolved against the rootfs as if it
+    were `/`, matching what the container sees and denying any escape
+    (see _resolve_within_root). An empty name (`:path`) is also
     rejected: without the check rootfs would degenerate to CONTAINERS_DIR
     itself and the spec would silently scribble into a stranger area
     of the runtime tree. For a plain path the spec is just expanded
@@ -84,11 +148,14 @@ def resolve_container_path(spec: str) -> str:
     if not os.path.isdir(rootfs):
         crit_error(f"container '{name}' does not exist.")
         sys.exit(1)
-    resolved = os.path.normpath(os.path.join(rootfs, rel_path.lstrip("/")))
-    if resolved != rootfs and not resolved.startswith(rootfs + os.sep):
+    rel_path = rel_path.lstrip("/")
+    # A `..` typed into the spec is a user mistake, not container content:
+    # report it instead of silently clamping it to the rootfs.
+    lexical = os.path.normpath(os.path.join(rootfs, rel_path))
+    if lexical != rootfs and not lexical.startswith(rootfs + os.sep):
         crit_error("destination path escapes the container directory.")
         sys.exit(1)
-    return resolved
+    return _resolve_within_root(rootfs, rel_path, spec)
 
 
 def container_locks_for_spec_pair(src_spec: str, dst_spec: str, command: str):

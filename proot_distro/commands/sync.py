@@ -22,7 +22,9 @@
 # by file size and modification time (or CRC32 checksum with --checksum).
 # Always recursive — both files and directories are accepted as source.
 # Symlinks are copied as-is; hard links become independent file copies;
-# special files (block/char/FIFO/socket) are silently skipped. Ownership
+# special files (block/char/FIFO/socket) are silently skipped. A destination
+# entry that is a symlink where the source has a directory is replaced, never
+# descended into (it could point outside the container). Ownership
 # is never changed. Modes and timestamps are preserved. When the destination
 # lacks write permission the command attempts to chmod it; failing that it
 # exits with an error. With --delete, destination entries that have no
@@ -109,6 +111,14 @@ def _sync_dir(dst_path: str, src_st: os.stat_result) -> bool:
 
     Returns True when the directory was newly created.
     """
+    if os.path.islink(dst_path):
+        # The source has a real directory here but the destination holds a
+        # symlink. Replace it (what rsync does) rather than descending
+        # through it: inside a container rootfs such a link may point at
+        # the host filesystem, and every file of this subtree would then
+        # be written outside the container.
+        _unlink_robust(dst_path)
+
     if os.path.isdir(dst_path):
         try:
             os.chmod(dst_path, stat.S_IMODE(src_st.st_mode))
