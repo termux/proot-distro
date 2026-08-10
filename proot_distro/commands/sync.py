@@ -39,7 +39,8 @@ from contextlib import ExitStack
 
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.paths import (
-    container_locks_for_spec_pair, resolve_container_path,
+    container_locks_for_spec_pair, pin_path, resolve_container_path,
+    warn_unpinned,
 )
 from proot_distro.progress import clear_bar, draw_count_bar
 
@@ -464,6 +465,30 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
             log_error(f"Cannot create destination '{dest_path}': {exc}")
             sys.exit(1)
 
+    warn_unpinned(src)
+    warn_unpinned(dest)
+
+    # Pin both roots for the whole transfer. `inside` is set for a
+    # directory sync because every path built below is a join under the
+    # root, so pinning the root itself covers its own name as well.
+    with ExitStack() as pins:
+        src_pin = pins.enter_context(
+            pin_path(src, src_path, inside=src_is_dir)
+        )
+        dest_pin = pins.enter_context(
+            pin_path(dest, dest_path, inside=src_is_dir)
+        )
+        _sync_tree(src, dest, src_pin.io, dest_pin.io, src_is_dir,
+                   verbose, use_checksum, delete)
+
+
+def _sync_tree(src, dest, src_path, dest_path, src_is_dir,
+               verbose, use_checksum, delete):
+    """Walk the source and mirror it onto the destination.
+
+    src_path/dest_path are the *pinned* forms of the two roots; `src`
+    and `dest` are the original specs, used for user-facing messages.
+    """
     entries, skipped_rels = _collect_entries(src_path)
     total = max(len(entries), 1)
     done = 0

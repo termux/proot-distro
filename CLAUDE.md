@@ -66,6 +66,17 @@ Top-level utilities (each owns a focused concern):
   clamped. Lexical `normpath` alone is **not** sufficient: a guest-created
   `escape -> /` would pass a `startswith(rootfs)` check and let
   `copy`/`sync` read from or write to the host filesystem.
+  `pin_path()` closes the TOCTOU that resolution alone cannot: it
+  re-walks the resolved components with `O_NOFOLLOW` from a rootfs fd,
+  so a component swapped to a symlink after the resolve fails with
+  ELOOP (abort), and holds the directory fd open, so the returned
+  `PinnedPath.io` (`/proc/self/fd/<n>[/<leaf>]`) names the validated
+  *inode* rather than a name a guest can re-point. `inside=True` walks
+  the final component too — for a root only written *underneath* — and
+  so also refuses a root that became a symlink. `str(pin)` stays the
+  real path for messages; `pin.io` is what goes to the filesystem, and
+  `shutil` accepts it unchanged. Without `/proc` it degrades to the
+  plain path and `warn_unpinned()` says so.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
@@ -167,6 +178,18 @@ container; and the permission fix-ups (`_ensure_writable`, the chmod
 fallback in `_rmtree_robust`) **skip symlinks**, since `os.chmod()` has
 no symlink-relative form on Linux and would apply the mode change to
 whatever a rootfs link points at.
+
+Both commands then run the transfer against `pin_path()` handles rather
+than the resolved strings (`sync` splits its walk into `_sync_tree()` so
+the pins can wrap it). `copy` replaces `shutil.copy2` with
+`_copy_file_nofollow()` for the single-file case, because copy2 opens
+the destination by name and would follow a symlink planted at the leaf,
+which the directory fd cannot cover; `move` needs no such handling since
+`rename(2)` replaces a destination symlink instead of following it.
+Pinning covers the two **endpoints**: deep entries created by
+`shutil.copytree` and by sync's per-entry walk are still addressed by
+name below the pinned root, so a guest that can write inside the
+destination tree mid-transfer keeps a narrower version of the race.
 
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`

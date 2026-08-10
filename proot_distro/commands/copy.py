@@ -25,13 +25,17 @@
 
 import os
 import shutil
+import stat
 import sys
 from contextlib import ExitStack
 
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.paths import (
     container_locks_for_spec_pair,
+    open_pinned_leaf,
+    pin_path,
     resolve_container_path,
+    warn_unpinned,
 )
 from proot_distro.progress import clear_bar
 
@@ -48,6 +52,35 @@ def command_copy(args) -> None:
         for lock in container_locks_for_spec_pair(src, dest, command="copy"):
             stack.enter_context(lock)
         _do_copy(src, dest, verbose, move_mode, recursive)
+
+
+def _copy_file_nofollow(src_io, dest_pin):
+    """Copy a single file, refusing to write through a symlinked leaf.
+
+    shutil.copy2() opens the destination by name and follows a symlink
+    sitting there. Between resolving the destination and this write, a
+    process inside the container can plant one; opening with O_NOFOLLOW
+    ourselves is what keeps the bytes inside the rootfs. Metadata is
+    then copied through /proc/self/fd so copy2's semantics (mode,
+    timestamps, xattrs) survive, with a plain fchmod/utime fallback for
+    hosts without /proc.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = open_pinned_leaf(dest_pin, flags)
+    try:
+        with open(src_io, "rb") as fin, open(fd, "wb", closefd=False) as fout:
+            shutil.copyfileobj(fin, fout)
+        try:
+            shutil.copystat(src_io, f"/proc/self/fd/{fd}")
+        except OSError:
+            src_st = os.stat(src_io)
+            try:
+                os.fchmod(fd, stat.S_IMODE(src_st.st_mode))
+                os.utime(fd, ns=(src_st.st_atime_ns, src_st.st_mtime_ns))
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
 
 
 def _do_copy(src, dest, verbose, move_mode, recursive):
@@ -68,10 +101,17 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
         crit_error(f"source path '{src_path}' is not readable.")
         sys.exit(1)
 
-    if os.path.isdir(src_path) and not recursive and not move_mode:
+    src_is_dir = os.path.isdir(src_path)
+    if src_is_dir and not recursive and not move_mode:
         crit_error(f"source path is a directory. Use option '--recursive' "
                    f"to copy directories.")
         sys.exit(1)
+
+    # A file copied onto an existing directory lands inside it, keeping
+    # its own name. shutil does this implicitly; spell it out so the
+    # destination names the file we are about to open with O_NOFOLLOW.
+    if not src_is_dir and os.path.isdir(dest_path):
+        dest_path = os.path.join(dest_path, os.path.basename(src_path))
 
     log_info(f"Source: '{src_path}'")
     log_info(f"Destination: '{dest_path}'")
@@ -85,36 +125,49 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
             log_error(f"Cannot create directory '{dest_dir}': {exc}")
             sys.exit(1)
 
-    def _verbose_copy2(src, dst, *, follow_symlinks=True):
-        log_info(f"Copying: '{src}' -> '{dst}'")
-        return shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
+    warn_unpinned(src)
+    warn_unpinned(dest)
 
+    def _verbose_copy2(s, d, *, follow_symlinks=True):
+        log_info(f"Copying: '{s}' -> '{d}'")
+        return shutil.copy2(s, d, follow_symlinks=follow_symlinks)
+
+    # Pin both endpoints for the duration of the transfer: from here on
+    # the filesystem is addressed through the pinned fds, so renaming a
+    # directory component to a symlink no longer redirects the copy.
     try:
-        if move_mode:
-            log_info("Moving files...")
-            if verbose:
-                if os.path.isdir(src_path):
-                    for root, _dirs, files in os.walk(src_path):
-                        for fname in files:
-                            fpath = os.path.join(root, fname)
-                            rel = os.path.relpath(fpath, src_path)
-                            log_info(
-                                f"Moving: '{fpath}' -> "
-                                f"'{os.path.join(dest_path, rel)}'"
-                            )
-                else:
-                    log_info(f"Moving: '{src_path}' -> '{dest_path}'")
-            shutil.move(src_path, dest_path)
-        else:
-            log_info("Copying files, this may take a while...")
-            copy_fn = _verbose_copy2 if verbose else shutil.copy2
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dest_path, symlinks=True,
-                                copy_function=copy_fn)
-            else:
+        with ExitStack() as pins:
+            src_pin = pins.enter_context(pin_path(src, src_path))
+            dest_pin = pins.enter_context(pin_path(dest, dest_path))
+            src_io, dest_io = src_pin.io, dest_pin.io
+
+            if move_mode:
+                log_info("Moving files...")
                 if verbose:
-                    log_info(f"Copying: '{src_path}' -> '{dest_path}'")
-                shutil.copy2(src_path, dest_path)
+                    if src_is_dir:
+                        for root, _dirs, files in os.walk(src_io):
+                            for fname in files:
+                                fpath = os.path.join(root, fname)
+                                rel = os.path.relpath(fpath, src_io)
+                                log_info(
+                                    f"Moving: '{os.path.join(src_path, rel)}'"
+                                    f" -> '{os.path.join(dest_path, rel)}'"
+                                )
+                    else:
+                        log_info(f"Moving: '{src_path}' -> '{dest_path}'")
+                # rename(2) replaces a symlink at the destination instead
+                # of following it, so move needs no O_NOFOLLOW handling.
+                shutil.move(src_io, dest_io)
+            else:
+                log_info("Copying files, this may take a while...")
+                if src_is_dir:
+                    copy_fn = _verbose_copy2 if verbose else shutil.copy2
+                    shutil.copytree(src_io, dest_io, symlinks=True,
+                                    copy_function=copy_fn)
+                else:
+                    if verbose:
+                        log_info(f"Copying: '{src_path}' -> '{dest_path}'")
+                    _copy_file_nofollow(src_io, dest_pin)
     except KeyboardInterrupt:
         clear_bar()
         log_error("Aborted by user.")
