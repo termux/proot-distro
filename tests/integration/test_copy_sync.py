@@ -2,6 +2,7 @@
 # and container `name:path` specs.
 
 import os
+import stat
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,45 @@ def test_copy_recursive_dir(tmp_path, builders):
     root = container_rootfs("box")
     assert open(os.path.join(root, "data", "a.txt")).read() == "a"
     assert open(os.path.join(root, "data", "sub", "b.txt")).read() == "b"
+
+
+def test_copy_recursive_preserves_symlinks_and_modes(tmp_path, builders):
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "b.txt").write_text("b")
+    os.chmod(src / "sub", 0o751)
+    os.chmod(src / "sub" / "b.txt", 0o640)
+    os.utime(src / "sub" / "b.txt", (1500000, 1500000))
+    os.symlink("sub/b.txt", src / "rel")
+    os.symlink("/etc/passwd", src / "abs")
+
+    _copy(str(src), "box:/data", recursive=True)
+
+    root = os.path.join(container_rootfs("box"), "data")
+    # Symlinks are recreated verbatim, never resolved or followed.
+    assert os.readlink(os.path.join(root, "rel")) == "sub/b.txt"
+    assert os.readlink(os.path.join(root, "abs")) == "/etc/passwd"
+    st_dir = os.stat(os.path.join(root, "sub"))
+    st_file = os.stat(os.path.join(root, "sub", "b.txt"))
+    assert stat.S_IMODE(st_dir.st_mode) == 0o751
+    assert stat.S_IMODE(st_file.st_mode) == 0o640
+    assert int(st_file.st_mtime) == 1500000
+
+
+def test_copy_recursive_skips_special_files(tmp_path, builders, capsys):
+    """A FIFO is skipped with a warning instead of aborting the copy."""
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "ok.txt").write_text("K")
+    os.mkfifo(src / "pipe")
+
+    _copy(str(src), "box:/data", recursive=True)
+
+    root = os.path.join(container_rootfs("box"), "data")
+    assert sorted(os.listdir(root)) == ["ok.txt"]
+    assert "skipping special file" in capsys.readouterr().err
 
 
 def test_copy_dir_without_recursive_errors(tmp_path, builders, capsys):

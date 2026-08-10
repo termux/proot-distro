@@ -68,15 +68,25 @@ Top-level utilities (each owns a focused concern):
   `copy`/`sync` read from or write to the host filesystem.
   `pin_path()` closes the TOCTOU that resolution alone cannot: it
   re-walks the resolved components with `O_NOFOLLOW` from a rootfs fd,
-  so a component swapped to a symlink after the resolve fails with
-  ELOOP (abort), and holds the directory fd open, so the returned
-  `PinnedPath.io` (`/proc/self/fd/<n>[/<leaf>]`) names the validated
-  *inode* rather than a name a guest can re-point. `inside=True` walks
-  the final component too — for a root only written *underneath* — and
-  so also refuses a root that became a symlink. `str(pin)` stays the
-  real path for messages; `pin.io` is what goes to the filesystem, and
-  `shutil` accepts it unchanged. Without `/proc` it degrades to the
-  plain path and `warn_unpinned()` says so.
+  so a component swapped to a symlink after the resolve fails (abort),
+  and holds the directory fd open, so `PinnedPath.dir_fd` names the
+  validated *inode* rather than a name a guest can re-point. Callers
+  use `(dir_fd, leaf)` for every filesystem call; `str(pin)` stays the
+  real path, for messages. `inside=True` walks the final component too
+  — for a root only worked *underneath* — and so also refuses a root
+  that became a symlink. Host specs are not walked component by
+  component but still yield a `(dir_fd, leaf)` pair, so callers need no
+  special case.
+- `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
+  `opendir_at`/`reopen`/`open_file_at` (always `O_NOFOLLOW`),
+  `listdir_at`/`lstat_at`/`exists_at`, `copy_file_at`/`copy_symlink_at`/
+  `copy_tree_at`, `rmtree_at`, and fd-based metadata (`copy_metadata`,
+  `set_times_at`, `make_writable`). Nothing here takes a path below the
+  root, so no component can be re-pointed mid-walk. `REFUSED` /
+  `is_refusal()` cover both errnos a refused descent can raise — Linux
+  reports `O_NOFOLLOW|O_DIRECTORY` on a symlink as **ENOTDIR**, not
+  ELOOP. Recursion closes each fd as it unwinds, so open fds scale with
+  tree *depth*, not size.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
@@ -169,27 +179,27 @@ would shadow the container's.
 numeric uid, or `user:group`.
 
 `copy`/`sync` resolve both endpoints through `resolve_container_path()`,
-so container-side symlinks stay confined to the rootfs. `sync` writes
-into a pre-existing destination tree and so needs two more guards below
-that root: `_sync_dir` **unlinks** a destination symlink where the source
-has a real directory (rsync's behaviour) instead of descending through
-it, which would otherwise scatter the whole subtree outside the
-container; and the permission fix-ups (`_ensure_writable`, the chmod
-fallback in `_rmtree_robust`) **skip symlinks**, since `os.chmod()` has
-no symlink-relative form on Linux and would apply the mode change to
-whatever a rootfs link points at.
+pin them with `pin_path()`, and then address the filesystem **only**
+through `dirfd` — no path below the roots is ever resolved by name, so
+a symlink planted mid-transfer cannot redirect anything. No `shutil`
+path API is left in either command: `copytree`/`copy2`/`move` gave way
+to `dirfd.copy_tree_at` / `copy_file_at` / `renameat` (`move` falls back
+to copy+`rmtree_at` on `EXDEV`), and sync's walk is three fd-carrying
+recursions — `_collect_rels` (count + rel set), `_mirror_at` (write),
+and `_collect_extras_at`/`_remove_extras_at` for `--delete`.
 
-Both commands then run the transfer against `pin_path()` handles rather
-than the resolved strings (`sync` splits its walk into `_sync_tree()` so
-the pins can wrap it). `copy` replaces `shutil.copy2` with
-`_copy_file_nofollow()` for the single-file case, because copy2 opens
-the destination by name and would follow a symlink planted at the leaf,
-which the directory fd cannot cover; `move` needs no such handling since
-`rename(2)` replaces a destination symlink instead of following it.
-Pinning covers the two **endpoints**: deep entries created by
-`shutil.copytree` and by sync's per-entry walk are still addressed by
-name below the pinned root, so a guest that can write inside the
-destination tree mid-transfer keeps a narrower version of the race.
+Two guards remain specific to `sync`, which writes into a pre-existing
+tree: `_sync_dir` **unlinks** a destination symlink where the source has
+a real directory (rsync's behaviour) rather than descending through it,
+and the permission fix-ups act on directory fds (`fchmod`) and skip
+symlinks, since `os.chmod()` has no symlink-relative form on Linux and
+would otherwise apply to whatever a planted link points at.
+
+Two deliberate behaviour changes came with the rewrite: `copy -r` now
+**skips** a device/FIFO/socket with a warning instead of aborting the
+whole transfer the way `copytree` did (matching `backup`/`sync`), and a
+source directory that cannot be read is still created at the
+destination, empty.
 
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`

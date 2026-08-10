@@ -22,45 +22,103 @@
 # by file size and modification time (or CRC32 checksum with --checksum).
 # Always recursive — both files and directories are accepted as source.
 # Symlinks are copied as-is; hard links become independent file copies;
-# special files (block/char/FIFO/socket) are silently skipped. A destination
-# entry that is a symlink where the source has a directory is replaced, never
-# descended into (it could point outside the container), and the permission
-# fix-ups never follow a symlink either. Ownership is never changed. Modes and timestamps are preserved. When the destination
+# special files (block/char/FIFO/socket) are silently skipped. Ownership is
+# never changed. Modes and timestamps are preserved. When the destination
 # lacks write permission the command attempts to chmod it; failing that it
 # exits with an error. With --delete, destination entries that have no
 # counterpart in the source are removed after the sync pass. Paths may be
 # plain host paths or container-prefixed ('ubuntu:/etc') references.
+#
+# Both roots are pinned (paths.pin_path) and every level below them is
+# reached with openat(2) through proot_distro.dirfd, so nothing here ever
+# resolves a path a container process could have re-pointed in the
+# meantime. Two consequences worth remembering when editing:
+#
+#   - A destination entry that is a symlink where the source has a
+#     directory is unlinked and replaced, never descended into. It may
+#     lead outside the container, and the whole subtree would follow it.
+#   - The permission fix-ups act on directory fds (fchmod) and skip
+#     symlinks, because chmod() has no symlink-relative form on Linux
+#     and would otherwise apply to whatever a planted link points at.
+#
+# The work is three passes over the tree: _collect_rels counts entries
+# and records the source's relative paths, _mirror_at writes, and (with
+# --delete) _collect_extras_at / _remove_extras_at prune. All three carry
+# directory fds down the recursion and close them as it unwinds, so the
+# number of open fds is the depth of the tree rather than its size.
 
 import os
-import shutil
 import stat
 import sys
+import zlib
 from contextlib import ExitStack
 
+from proot_distro import dirfd
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.paths import (
     container_locks_for_spec_pair, pin_path, resolve_container_path,
-    warn_unpinned,
 )
 from proot_distro.progress import clear_bar, draw_count_bar
 
-
-def _file_checksum(path: str) -> int:
-    """Return a CRC32 checksum of the file at path."""
-    import zlib
-    crc = 0
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            crc = zlib.crc32(chunk, crc)
-    return crc
+_TMP_SUFFIX = ".~pd_sync"
 
 
-def _needs_update(
-    src_path: str,
-    src_st: os.stat_result,
-    dst_path: str,
-    use_checksum: bool,
-) -> bool:
+class _Ctx:
+    """State threaded through the recursive passes."""
+
+    def __init__(self, src_root, dest_spec, dest_root, verbose, use_checksum):
+        self.src_root = src_root
+        self.dest_spec = dest_spec
+        self.dest_root = dest_root
+        self.verbose = verbose
+        self.use_checksum = use_checksum
+        self.total = 1
+        self.done = 0
+        self.src_rels = set()
+        self.skipped_rels = set()
+
+    def shown(self, rel):
+        """The destination path as the user typed it, for messages."""
+        return os.path.join(self.dest_spec, rel) if rel else self.dest_spec
+
+    def src_shown(self, rel):
+        """The source path, for messages about the reading side."""
+        return os.path.join(self.src_root, rel) if rel else self.src_root
+
+    def progress(self):
+        # Suppress the bar in verbose mode: per-file log lines already
+        # provide feedback and the bar would flicker between each line.
+        if not self.verbose:
+            draw_count_bar(self.done, self.total, unit="files")
+
+
+def _rel(rel, name):
+    return f"{rel}/{name}" if rel else name
+
+
+def _is_special(mode):
+    return (stat.S_ISBLK(mode) or stat.S_ISCHR(mode)
+            or stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode))
+
+
+# ---------------------------------------------------------------------------
+# Comparison
+# ---------------------------------------------------------------------------
+
+def _checksum_at(dir_fd, name):
+    """CRC32 of the file *name* under dir_fd."""
+    fd = dirfd.open_file_at(dir_fd, name, os.O_RDONLY)
+    try:
+        crc = 0
+        with open(fd, "rb", closefd=False) as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                crc = zlib.crc32(chunk, crc)
+        return crc
+    finally:
+        os.close(fd)
+
+
+def _needs_update(src_fd, src_name, src_st, dst_fd, dst_name, use_checksum):
     """Return True when dst must be (re)written from src.
 
     Comparison logic for regular files only:
@@ -69,7 +127,7 @@ def _needs_update(
     - Without --checksum: compare integer modification times.
     """
     try:
-        dst_st = os.lstat(dst_path)
+        dst_st = dirfd.lstat_at(dst_fd, dst_name)
     except OSError:
         return True
     if stat.S_IFMT(src_st.st_mode) != stat.S_IFMT(dst_st.st_mode):
@@ -78,340 +136,354 @@ def _needs_update(
         return True
     if use_checksum:
         try:
-            return _file_checksum(src_path) != _file_checksum(dst_path)
+            return (_checksum_at(src_fd, src_name)
+                    != _checksum_at(dst_fd, dst_name))
         except OSError:
             return True
     return int(src_st.st_mtime) != int(dst_st.st_mtime)
 
 
-def _ensure_parent_writable(path: str) -> None:
-    """Ensure the parent directory of path is writable. Exits on failure."""
-    parent = os.path.dirname(path) or "."
+# ---------------------------------------------------------------------------
+# Writing single entries
+# ---------------------------------------------------------------------------
+
+def _unlink_robust(dst_fd, name, is_dir=False):
+    """Remove *name* under dst_fd, retrying with a chmod on EPERM."""
     try:
-        st = os.stat(parent)
-        if not (st.st_mode & stat.S_IWUSR):
-            os.chmod(parent, st.st_mode | stat.S_IWUSR | stat.S_IXUSR)
+        dirfd.rmtree_at(dst_fd, name) if is_dir else os.unlink(
+            name, dir_fd=dst_fd)
+    except PermissionError:
+        dirfd.make_writable(dst_fd)
+        try:
+            dirfd.rmtree_at(dst_fd, name, force=True) if is_dir else os.unlink(
+                name, dir_fd=dst_fd)
+        except OSError as exc:
+            log_error(f"Cannot delete '{name}': {exc}")
+            sys.exit(1)
     except OSError as exc:
-        log_error(f"Cannot make '{parent}' writable: {exc}")
+        log_error(f"Cannot delete '{name}': {exc}")
         sys.exit(1)
 
 
-def _ensure_writable(path: str) -> None:
-    """Ensure path itself is writable. Exits on failure."""
-    try:
-        st = os.lstat(path)
-        if stat.S_ISLNK(st.st_mode):
-            # chmod() has no symlink-relative form on Linux, so this would
-            # act on whatever the link points at — possibly a host file, if
-            # the link came out of a container rootfs. A symlink's own mode
-            # is meaningless anyway, and the callers only ever replace or
-            # unlink it, which needs the parent writable, not the link.
-            return
-        if not (st.st_mode & stat.S_IWUSR):
-            os.chmod(path, st.st_mode | stat.S_IWUSR)
-    except OSError as exc:
-        log_error(f"Cannot set write permission on '{path}': {exc}")
-        sys.exit(1)
-
-
-def _sync_dir(dst_path: str, src_st: os.stat_result) -> bool:
-    """Create dst_path as a directory if it does not exist.
+def _sync_dir(dst_fd, name, src_st):
+    """Ensure *name* exists under dst_fd as a directory.
 
     Returns True when the directory was newly created.
     """
-    if os.path.islink(dst_path):
-        # The source has a real directory here but the destination holds a
-        # symlink. Replace it (what rsync does) rather than descending
+    try:
+        dst_st = dirfd.lstat_at(dst_fd, name)
+    except OSError:
+        dst_st = None
+
+    if dst_st is not None and stat.S_ISLNK(dst_st.st_mode):
+        # The source has a real directory here but the destination holds
+        # a symlink. Replace it (what rsync does) rather than descending
         # through it: inside a container rootfs such a link may point at
         # the host filesystem, and every file of this subtree would then
         # be written outside the container.
-        _unlink_robust(dst_path)
+        _unlink_robust(dst_fd, name)
+        dst_st = None
 
-    if os.path.isdir(dst_path):
+    if dst_st is not None and stat.S_ISDIR(dst_st.st_mode):
         try:
-            os.chmod(dst_path, stat.S_IMODE(src_st.st_mode))
+            os.chmod(name, stat.S_IMODE(src_st.st_mode), dir_fd=dst_fd)
         except OSError:
             pass
         return False
 
     try:
-        os.makedirs(dst_path, exist_ok=True)
+        os.mkdir(name, stat.S_IMODE(src_st.st_mode), dir_fd=dst_fd)
     except PermissionError:
-        _ensure_parent_writable(dst_path)
+        dirfd.make_writable(dst_fd)
         try:
-            os.makedirs(dst_path, exist_ok=True)
+            os.mkdir(name, stat.S_IMODE(src_st.st_mode), dir_fd=dst_fd)
         except OSError as exc:
-            log_error(f"Cannot create directory '{dst_path}': {exc}")
+            log_error(f"Cannot create directory '{name}': {exc}")
             sys.exit(1)
     except OSError as exc:
-        log_error(f"Cannot create directory '{dst_path}': {exc}")
+        log_error(f"Cannot create directory '{name}': {exc}")
         sys.exit(1)
-
-    try:
-        os.chmod(dst_path, stat.S_IMODE(src_st.st_mode))
-    except OSError:
-        pass
     return True
 
 
-def _sync_symlink(src_path: str, dst_path: str) -> bool:
-    """Copy symlink src_path to dst_path as-is.
+def _sync_symlink(src_fd, src_name, dst_fd, dst_name, src_st=None):
+    """Copy a symlink as-is. Returns True when dst changed."""
+    target = os.readlink(src_name, dir_fd=src_fd)
 
-    Returns True when dst was created or updated.
-    """
-    target = os.readlink(src_path)
+    try:
+        dst_st = dirfd.lstat_at(dst_fd, dst_name)
+    except OSError:
+        dst_st = None
 
-    if os.path.lexists(dst_path):
-        if os.path.islink(dst_path) and os.readlink(dst_path) == target:
+    if dst_st is not None:
+        if (stat.S_ISLNK(dst_st.st_mode)
+                and os.readlink(dst_name, dir_fd=dst_fd) == target):
             return False
-        try:
-            os.unlink(dst_path)
-        except PermissionError:
-            _ensure_parent_writable(dst_path)
-            try:
-                os.unlink(dst_path)
-            except OSError as exc:
-                log_error(f"Cannot remove existing path '{dst_path}': {exc}")
-                sys.exit(1)
-        except OSError as exc:
-            log_error(f"Cannot remove existing path '{dst_path}': {exc}")
-            sys.exit(1)
+        _unlink_robust(dst_fd, dst_name, stat.S_ISDIR(dst_st.st_mode))
 
     try:
-        os.symlink(target, dst_path)
+        os.symlink(target, dst_name, dir_fd=dst_fd)
     except PermissionError:
-        _ensure_parent_writable(dst_path)
+        dirfd.make_writable(dst_fd)
         try:
-            os.symlink(target, dst_path)
+            os.symlink(target, dst_name, dir_fd=dst_fd)
         except OSError as exc:
-            log_error(f"Cannot create symlink '{dst_path}': {exc}")
+            log_error(f"Cannot create symlink '{dst_name}': {exc}")
             sys.exit(1)
     except OSError as exc:
-        log_error(f"Cannot create symlink '{dst_path}': {exc}")
+        log_error(f"Cannot create symlink '{dst_name}': {exc}")
         sys.exit(1)
 
+    if src_st is not None:
+        dirfd.set_times_at(dst_fd, dst_name, src_st)
     return True
 
 
-def _sync_file(src_path: str, src_st: os.stat_result, dst_path: str) -> None:
-    """Copy src_path to dst_path, preserving mode and mtime.
+def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
+    """Copy a regular file, preserving mode and mtime.
 
-    Writes to a sibling temp file then atomically renames so a partial
-    write never leaves dst_path in a corrupt state.
+    Writes a sibling temp file and renames it into place, so a partial
+    write never leaves the destination corrupt and an existing symlink at
+    the destination name is replaced rather than written through.
     """
-    tmp = dst_path + ".~pd_sync"
+    tmp = dst_name + _TMP_SUFFIX
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    mode = stat.S_IMODE(src_st.st_mode)
+
     try:
-        with open(src_path, "rb") as fin, open(tmp, "wb") as fout:
-            shutil.copyfileobj(fin, fout)
-    except PermissionError:
-        _ensure_parent_writable(dst_path)
-        if os.path.exists(dst_path):
-            _ensure_writable(dst_path)
+        sfd = dirfd.open_file_at(src_fd, src_name, os.O_RDONLY)
+    except OSError as exc:
+        log_error(f"Warning: cannot read '{src_name}': {exc}")
+        return
+
+    try:
         try:
-            with open(src_path, "rb") as fin, open(tmp, "wb") as fout:
-                shutil.copyfileobj(fin, fout)
-        except OSError as exc:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            log_error(f"Cannot write to '{dst_path}': {exc}")
-            sys.exit(1)
+            tfd = dirfd.open_file_at(dst_fd, tmp, flags, mode)
+        except PermissionError:
+            dirfd.make_writable(dst_fd)
+            tfd = dirfd.open_file_at(dst_fd, tmp, flags, mode)
+        try:
+            dirfd.copy_data(sfd, tfd)
+            dirfd.copy_metadata(sfd, tfd, src_st)
+        finally:
+            os.close(tfd)
+        os.replace(tmp, dst_name, src_dir_fd=dst_fd, dst_dir_fd=dst_fd)
     except OSError as exc:
         try:
-            os.unlink(tmp)
+            os.unlink(tmp, dir_fd=dst_fd)
         except OSError:
             pass
-        log_error(f"Cannot write to '{dst_path}': {exc}")
+        log_error(f"Cannot write to '{dst_name}': {exc}")
         sys.exit(1)
+    finally:
+        os.close(sfd)
 
-    try:
-        os.chmod(tmp, stat.S_IMODE(src_st.st_mode))
-    except OSError:
-        pass
-    try:
-        os.utime(tmp, (src_st.st_atime, src_st.st_mtime))
-    except OSError:
-        pass
 
+# ---------------------------------------------------------------------------
+# Pass 1 — count entries and record the source's relative paths
+# ---------------------------------------------------------------------------
+
+def _collect_rels(src_fd, rel, ctx):
+    """Record every entry under src_fd into ctx.src_rels.
+
+    Directories that cannot be opened are warned about once, here, and
+    added to ctx.skipped_rels so neither the mirror nor --delete touches
+    the matching destination subtree.
+    """
     try:
-        os.replace(tmp, dst_path)
-    except PermissionError:
-        _ensure_writable(dst_path)
-        try:
-            os.replace(tmp, dst_path)
-        except OSError as exc:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            log_error(f"Cannot replace '{dst_path}': {exc}")
-            sys.exit(1)
+        names = dirfd.listdir_at(src_fd)
     except OSError as exc:
+        if rel:
+            ctx.skipped_rels.add(rel)
+        log_error(f"Warning: directory '{ctx.src_shown(rel)}' is not "
+                  f"readable, skipping.")
+        return
+
+    subdirs = []
+    for name in names:
+        child = _rel(rel, name)
+        ctx.src_rels.add(child)
         try:
-            os.unlink(tmp)
+            st = dirfd.lstat_at(src_fd, name)
         except OSError:
-            pass
-        log_error(f"Cannot replace '{dst_path}': {exc}")
-        sys.exit(1)
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            subdirs.append(name)
 
-
-def _unlink_robust(path: str) -> None:
-    """Unlink a file or symlink, retrying with a chmod on PermissionError."""
-    try:
-        os.unlink(path)
-    except PermissionError:
-        _ensure_parent_writable(path)
+    for name in subdirs:
         try:
-            os.unlink(path)
-        except OSError as exc:
-            log_error(f"Cannot delete '{path}': {exc}")
-            sys.exit(1)
-    except OSError as exc:
-        log_error(f"Cannot delete '{path}': {exc}")
-        sys.exit(1)
-
-
-def _rmtree_robust(path: str) -> None:
-    """Remove a directory tree, retrying with chmod on PermissionError."""
-    try:
-        shutil.rmtree(path)
-    except PermissionError:
-        for root, _dirs, files in os.walk(path, followlinks=False, topdown=False):
-            try:
-                os.chmod(root, os.lstat(root).st_mode | stat.S_IRWXU)
-            except OSError:
-                pass
-            for fname in files:
-                try:
-                    fpath = os.path.join(root, fname)
-                    st = os.lstat(fpath)
-                    # Never chmod a symlink: os.chmod() follows it, and a
-                    # link planted in a container rootfs would redirect the
-                    # mode change onto a host file. Unlinking it only needs
-                    # the parent directory writable, handled just above.
-                    if stat.S_ISLNK(st.st_mode):
-                        continue
-                    os.chmod(fpath,
-                             st.st_mode | stat.S_IRUSR | stat.S_IWUSR)
-                except OSError:
-                    pass
+            sub = dirfd.opendir_at(src_fd, name)
+        except OSError:
+            child = _rel(rel, name)
+            ctx.skipped_rels.add(child)
+            log_error(f"Warning: directory '{ctx.src_shown(child)}' is not "
+                      f"readable, skipping.")
+            continue
         try:
-            shutil.rmtree(path)
-        except OSError as exc:
-            log_error(f"Cannot remove '{path}': {exc}")
-            sys.exit(1)
-    except OSError as exc:
-        log_error(f"Cannot remove '{path}': {exc}")
-        sys.exit(1)
+            _collect_rels(sub, _rel(rel, name), ctx)
+        finally:
+            os.close(sub)
 
 
-def _collect_extras(
-    dest_path: str,
-    src_rels: set,
-    skipped_src_rels: set = frozenset(),
-) -> list:
-    """Return (path, is_tree) for every destination entry absent from src_rels.
+# ---------------------------------------------------------------------------
+# Pass 2 — mirror the source onto the destination
+# ---------------------------------------------------------------------------
 
-    is_tree is True for real directories (to be removed recursively) and
-    False for plain files and symlinks. Extra directories are not descended
-    into — the whole subtree is captured as a single is_tree=True entry.
-    Entries whose relative path is in skipped_src_rels are left untouched
-    because the corresponding source directory was unreadable.
-    """
-    extras = []
-    for dirpath, dirnames, filenames in os.walk(
-        dest_path, followlinks=False, topdown=True
-    ):
-        rel_dir = os.path.relpath(dirpath, dest_path)
-        dirnames.sort()
-        i = 0
-        while i < len(dirnames):
-            d = dirnames[i]
-            full = os.path.join(dirpath, d)
-            rel_d = os.path.join(rel_dir, d) if rel_dir != "." else d
-            is_link = os.path.islink(full)
-            if rel_d in skipped_src_rels:
-                dirnames.pop(i)
-            elif rel_d not in src_rels:
-                extras.append((full, not is_link))
-                dirnames.pop(i)
-            elif is_link:
-                dirnames.pop(i)
-            else:
-                i += 1
-        for fname in sorted(filenames):
-            fpath = os.path.join(dirpath, fname)
-            rel_f = os.path.join(rel_dir, fname) if rel_dir != "." else fname
-            if rel_f not in src_rels:
-                extras.append((fpath, False))
-    return extras
-
-
-def _collect_entries(src: str) -> tuple[list, set]:
-    """Return (entries, skipped_rels).
-
-    entries: (abs_path, rel_path) pairs for every syncable entry under src.
-    rel_path is "" for the source root. Directories appear before their
-    contents. Symlinks-to-directories are single entries. Block/char/FIFO/
-    socket entries are excluded.
-
-    skipped_rels: relative paths of subdirectories that could not be
-    traversed (e.g. permission denied). A warning is emitted for each.
-    """
-    entries = []
-    skipped_rels = set()
-
+def _mirror_at(src_fd, dst_fd, rel, ctx):
+    """Mirror the directory open at src_fd into the one at dst_fd."""
     try:
-        src_st = os.lstat(src)
+        names = dirfd.listdir_at(src_fd)
     except OSError:
-        return entries, skipped_rels
+        return  # already reported by _collect_rels
 
-    m = src_st.st_mode
-    if stat.S_ISBLK(m) or stat.S_ISCHR(m) or stat.S_ISFIFO(m) or stat.S_ISSOCK(m):
-        return entries, skipped_rels
+    subdirs = []
+    for name in names:
+        child = _rel(rel, name)
+        try:
+            src_st = dirfd.lstat_at(src_fd, name)
+        except OSError as exc:
+            log_error(f"Warning: cannot stat "
+                      f"'{ctx.src_shown(child)}': {exc}")
+            ctx.done += 1
+            ctx.progress()
+            continue
 
-    if not stat.S_ISDIR(m):
-        entries.append((src, ""))
-        return entries, skipped_rels
+        mode = src_st.st_mode
 
-    def _on_error(exc: OSError) -> None:
-        if exc.filename:
-            rel = os.path.relpath(exc.filename, src)
-            if rel != ".":
-                skipped_rels.add(rel)
-                log_error(
-                    f"Warning: directory '{exc.filename}' is not readable, "
-                    f"skipping."
-                )
+        if _is_special(mode):
+            pass
+        elif stat.S_ISDIR(mode):
+            created = _sync_dir(dst_fd, name, src_st)
+            subdirs.append(name)
+            if ctx.verbose and created:
+                log_info(f"({ctx.done + 1}/{ctx.total}) New directory: "
+                         f"{ctx.shown(child)}")
+        elif stat.S_ISLNK(mode):
+            existed = dirfd.exists_at(dst_fd, name)
+            op = "Modified" if existed else "New"
+            if _sync_symlink(src_fd, name, dst_fd, name, src_st) and ctx.verbose:
+                log_info(f"({ctx.done + 1}/{ctx.total}) {op} symlink: "
+                         f"{ctx.shown(child)}")
+        elif stat.S_ISREG(mode):
+            if _needs_update(src_fd, name, src_st, dst_fd, name,
+                             ctx.use_checksum):
+                op = "Modified" if dirfd.exists_at(dst_fd, name) else "New"
+                _sync_file(src_fd, name, src_st, dst_fd, name)
+                if ctx.verbose:
+                    log_info(f"({ctx.done + 1}/{ctx.total}) {op} file: "
+                             f"{ctx.shown(child)}")
 
-    for dirpath, dirnames, filenames in os.walk(
-        src, followlinks=False, topdown=True, onerror=_on_error
-    ):
-        rel = os.path.relpath(dirpath, src)
+        ctx.done += 1
+        ctx.progress()
 
-        if rel != ".":
-            entries.append((dirpath, rel))
+    for name in subdirs:
+        child = _rel(rel, name)
+        try:
+            sub_src = dirfd.opendir_at(src_fd, name)
+        except OSError as exc:
+            # A refusal here means the entry turned into a symlink since
+            # it was listed; anything else was already reported by
+            # _collect_rels.
+            if dirfd.is_refusal(exc):
+                log_error(f"Warning: source '{ctx.src_shown(child)}' "
+                          f"changed to a symlink during the transfer, "
+                          f"skipping.")
+            continue
+        try:
+            try:
+                sub_dst = dirfd.opendir_at(dst_fd, name)
+            except OSError as exc:
+                if dirfd.is_refusal(exc):
+                    log_error(f"Warning: '{ctx.shown(child)}' changed to a "
+                              f"symlink during the transfer, skipping.")
+                else:
+                    log_error(f"Warning: cannot descend into "
+                              f"'{ctx.shown(child)}': {exc}")
+                continue
+            try:
+                _mirror_at(sub_src, sub_dst, child, ctx)
+            finally:
+                os.close(sub_dst)
+        finally:
+            os.close(sub_src)
 
-        dirnames.sort()
-        i = 0
-        while i < len(dirnames):
-            d = dirnames[i]
-            full = os.path.join(dirpath, d)
-            if os.path.islink(full):
-                link_rel = os.path.join(rel, d) if rel != "." else d
-                entries.append((full, link_rel))
-                dirnames.pop(i)
-            else:
-                i += 1
 
-        for fname in sorted(filenames):
-            fpath = os.path.join(dirpath, fname)
-            file_rel = os.path.join(rel, fname) if rel != "." else fname
-            entries.append((fpath, file_rel))
+# ---------------------------------------------------------------------------
+# Pass 3 — --delete
+# ---------------------------------------------------------------------------
 
-    return entries, skipped_rels
+def _collect_extras_at(dst_fd, rel, ctx, extras):
+    """Collect destination entries that have no counterpart in the source.
 
+    Extra directories are captured whole and not descended into; a
+    symlink is captured as a plain entry so it is unlinked rather than
+    walked. Subtrees whose source was unreadable are left alone.
+    """
+    try:
+        names = dirfd.listdir_at(dst_fd)
+    except OSError:
+        return
+
+    for name in names:
+        child = _rel(rel, name)
+        if child in ctx.skipped_rels:
+            continue
+        try:
+            st = dirfd.lstat_at(dst_fd, name)
+        except OSError:
+            continue
+        is_link = stat.S_ISLNK(st.st_mode)
+        is_dir = stat.S_ISDIR(st.st_mode)
+
+        if child not in ctx.src_rels:
+            extras.append((child, is_dir and not is_link))
+        elif is_dir and not is_link:
+            try:
+                sub = dirfd.opendir_at(dst_fd, name)
+            except OSError:
+                continue
+            try:
+                _collect_extras_at(sub, child, ctx, extras)
+            finally:
+                os.close(sub)
+
+
+def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
+    """Delete the entries named in *targets*, walking by fd."""
+    try:
+        names = dirfd.listdir_at(dst_fd)
+    except OSError:
+        return
+
+    for name in names:
+        child = _rel(rel, name)
+        if child in targets:
+            counter[0] += 1
+            if ctx.verbose:
+                log_info(f"({counter[0]}/{counter[1]}) Delete: "
+                         f"{os.path.join(ctx.dest_root, child)}")
+            _unlink_robust(dst_fd, name, targets[child])
+            continue
+        if child in ctx.skipped_rels:
+            continue
+        try:
+            st = dirfd.lstat_at(dst_fd, name)
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode):
+            try:
+                sub = dirfd.opendir_at(dst_fd, name)
+            except OSError:
+                continue
+            try:
+                _remove_extras_at(sub, child, targets, ctx, counter)
+            finally:
+                os.close(sub)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def command_sync(args) -> None:
     """Mirror *src* to *dest*, optionally deleting orphaned entries."""
@@ -454,119 +526,71 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     if src_is_dir:
         try:
             os.makedirs(dest_path, exist_ok=True)
-        except PermissionError:
-            _ensure_parent_writable(dest_path)
-            try:
-                os.makedirs(dest_path, exist_ok=True)
-            except OSError as exc:
-                log_error(f"Cannot create destination '{dest_path}': {exc}")
-                sys.exit(1)
         except OSError as exc:
             log_error(f"Cannot create destination '{dest_path}': {exc}")
             sys.exit(1)
 
-    warn_unpinned(src)
-    warn_unpinned(dest)
+    ctx = _Ctx(src_path, dest, dest_path, verbose, use_checksum)
 
-    # Pin both roots for the whole transfer. `inside` is set for a
-    # directory sync because every path built below is a join under the
-    # root, so pinning the root itself covers its own name as well.
+    # Pin both roots. inside=True for a directory sync: everything is
+    # written *underneath* the root, so the root's own name must be
+    # covered too — a root that became a symlink is refused, not
+    # followed. The pins are held for the whole transfer.
     with ExitStack() as pins:
-        src_pin = pins.enter_context(
-            pin_path(src, src_path, inside=src_is_dir)
-        )
-        dest_pin = pins.enter_context(
-            pin_path(dest, dest_path, inside=src_is_dir)
-        )
-        _sync_tree(src, dest, src_pin.io, dest_pin.io, src_is_dir,
-                   verbose, use_checksum, delete)
-
-
-def _sync_tree(src, dest, src_path, dest_path, src_is_dir,
-               verbose, use_checksum, delete):
-    """Walk the source and mirror it onto the destination.
-
-    src_path/dest_path are the *pinned* forms of the two roots; `src`
-    and `dest` are the original specs, used for user-facing messages.
-    """
-    entries, skipped_rels = _collect_entries(src_path)
-    total = max(len(entries), 1)
-    done = 0
-
-    def _show_progress() -> None:
-        # Suppress the bar in verbose mode: per-file log lines already
-        # provide feedback and the bar would flicker between each line.
-        if verbose:
-            return
-        draw_count_bar(done, total, unit="files")
-
-    try:
-        for abs_path, rel_path in entries:
-            try:
-                item_st = os.lstat(abs_path)
-            except OSError as exc:
-                log_error(f"Warning: cannot stat '{abs_path}': {exc}")
-                done += 1
-                _show_progress()
-                continue
-
-            m = item_st.st_mode
-
-            if (stat.S_ISBLK(m) or stat.S_ISCHR(m)
-                    or stat.S_ISFIFO(m) or stat.S_ISSOCK(m)):
-                done += 1
-                _show_progress()
-                continue
-
-            dst_item = (
-                os.path.join(dest_path, rel_path) if rel_path else dest_path
-            )
-
-            if stat.S_ISDIR(m):
-                created = _sync_dir(dst_item, item_st)
-                if verbose and created:
-                    log_info(f"({done + 1}/{total}) New directory: "
-                             f"{os.path.join(dest,rel_path)}")
-
-            elif stat.S_ISLNK(m):
-                op = "Modified" if os.path.lexists(dst_item) else "New"
-                changed = _sync_symlink(abs_path, dst_item)
-                if verbose and changed:
-                    log_info(f"({done + 1}/{total}) {op} symlink: "
-                             f"{os.path.join(dest,rel_path)}")
-
-            elif stat.S_ISREG(m):
-                if not os.access(abs_path, os.R_OK):
-                    log_error(f"Warning: file '{abs_path}' is not readable, "
-                              f"skipping.")
-                elif _needs_update(abs_path, item_st, dst_item, use_checksum):
-                    op = "Modified" if os.path.lexists(dst_item) else "New"
-                    _sync_file(abs_path, item_st, dst_item)
-                    if verbose:
-                        log_info(f"({done + 1}/{total}) {op} file: "
-                                 f"{os.path.join(dest,rel_path)}")
-
-            done += 1
-            _show_progress()
-
-    except KeyboardInterrupt:
-        log_error("Aborted by user.")
-        sys.exit(1)
+        src_pin = pins.enter_context(pin_path(src, src_path,
+                                              inside=src_is_dir))
+        dest_pin = pins.enter_context(pin_path(dest, dest_path,
+                                               inside=src_is_dir))
+        try:
+            if src_is_dir:
+                _sync_directory(src_pin, dest_pin, ctx, delete)
+            else:
+                _sync_single(src_pin, dest_pin, src_st, ctx)
+        except KeyboardInterrupt:
+            clear_bar()
+            log_error("Aborted by user.")
+            sys.exit(1)
 
     clear_bar()
-
-    # --delete pass: remove destination entries absent from the source.
-    # Only meaningful when source is a directory; silently skipped otherwise.
-    if delete and src_is_dir:
-        src_rels = {rel for _, rel in entries if rel}
-        extras = _collect_extras(dest_path, src_rels, skipped_rels)
-        del_total = len(extras)
-        for del_n, (path, is_tree) in enumerate(extras, start=1):
-            if verbose:
-                log_info(f"({del_n}/{del_total}) Delete: {path}")
-            if is_tree:
-                _rmtree_robust(path)
-            else:
-                _unlink_robust(path)
-
     log_info("Finished synchronizing.")
+
+
+def _sync_single(src_pin, dest_pin, src_st, ctx):
+    """Sync a source that is a single file or symlink."""
+    mode = src_st.st_mode
+    if _is_special(mode):
+        return
+    if stat.S_ISLNK(mode):
+        _sync_symlink(src_pin.dir_fd, src_pin.leaf,
+                      dest_pin.dir_fd, dest_pin.leaf, src_st)
+        return
+    if not stat.S_ISREG(mode):
+        return
+    if _needs_update(src_pin.dir_fd, src_pin.leaf, src_st,
+                     dest_pin.dir_fd, dest_pin.leaf, ctx.use_checksum):
+        _sync_file(src_pin.dir_fd, src_pin.leaf, src_st,
+                   dest_pin.dir_fd, dest_pin.leaf)
+
+
+def _sync_directory(src_pin, dest_pin, ctx, delete):
+    """Sync a directory source: count, mirror, then optionally prune."""
+    src_fd = dirfd.reopen(src_pin.dir_fd, src_pin.leaf)
+    try:
+        dst_fd = dirfd.reopen(dest_pin.dir_fd, dest_pin.leaf)
+        try:
+            _collect_rels(src_fd, "", ctx)
+            ctx.total = max(len(ctx.src_rels), 1)
+
+            _mirror_at(src_fd, dst_fd, "", ctx)
+            clear_bar()
+
+            if delete:
+                extras = []
+                _collect_extras_at(dst_fd, "", ctx, extras)
+                targets = dict(extras)
+                counter = [0, len(extras)]
+                _remove_extras_at(dst_fd, "", targets, ctx, counter)
+        finally:
+            os.close(dst_fd)
+    finally:
+        os.close(src_fd)

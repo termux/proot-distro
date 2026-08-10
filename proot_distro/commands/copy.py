@@ -23,19 +23,18 @@
 # an optional 'container:path' prefix. Recursive mode copies entire directory
 # trees preserving symlinks (like cp -a).
 
+import errno
 import os
-import shutil
 import stat
 import sys
 from contextlib import ExitStack
 
-from proot_distro.message import log_info, log_error, crit_error
+from proot_distro import dirfd
+from proot_distro.message import log_info, log_error, crit_error, warn
 from proot_distro.paths import (
     container_locks_for_spec_pair,
-    open_pinned_leaf,
     pin_path,
     resolve_container_path,
-    warn_unpinned,
 )
 from proot_distro.progress import clear_bar
 
@@ -54,33 +53,70 @@ def command_copy(args) -> None:
         _do_copy(src, dest, verbose, move_mode, recursive)
 
 
-def _copy_file_nofollow(src_io, dest_pin):
-    """Copy a single file, refusing to write through a symlinked leaf.
+def _opendir_pinned(pin):
+    """Open the directory a pin designates as a readable fd."""
+    return dirfd.reopen(pin.dir_fd, pin.leaf)
 
-    shutil.copy2() opens the destination by name and follows a symlink
-    sitting there. Between resolving the destination and this write, a
-    process inside the container can plant one; opening with O_NOFOLLOW
-    ourselves is what keeps the bytes inside the rootfs. Metadata is
-    then copied through /proc/self/fd so copy2's semantics (mode,
-    timestamps, xattrs) survive, with a plain fchmod/utime fallback for
-    hosts without /proc.
+
+def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
+    """Recreate the source directory under the destination, fd by fd.
+
+    Replaces shutil.copytree(symlinks=True). copytree walks by path, so
+    every directory it creates and descends into is addressed by name and
+    can be swapped for a symlink mid-transfer; carrying the fds down the
+    recursion removes that entirely.
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    fd = open_pinned_leaf(dest_pin, flags)
+    src_fd = _opendir_pinned(src_pin)
     try:
-        with open(src_io, "rb") as fin, open(fd, "wb", closefd=False) as fout:
-            shutil.copyfileobj(fin, fout)
+        src_st = os.fstat(src_fd)
+        # mkdirat refuses to create over anything that already exists,
+        # including a planted symlink, which is copytree's behaviour too.
         try:
-            shutil.copystat(src_io, f"/proc/self/fd/{fd}")
-        except OSError:
-            src_st = os.stat(src_io)
-            try:
-                os.fchmod(fd, stat.S_IMODE(src_st.st_mode))
-                os.utime(fd, ns=(src_st.st_atime_ns, src_st.st_mtime_ns))
-            except OSError:
-                pass
+            os.mkdir(dest_pin.leaf, stat.S_IMODE(src_st.st_mode),
+                     dir_fd=dest_pin.dir_fd)
+        except OSError as exc:
+            # The fd-relative call only knows the leaf; report the path.
+            raise OSError(exc.errno, exc.strerror, dest_display) from None
+        dst_fd = dirfd.opendir_at(dest_pin.dir_fd, dest_pin.leaf)
+        try:
+            def on_entry(rel):
+                if verbose:
+                    log_info(f"Copying: '{os.path.join(dest_display, rel)}'")
+
+            def on_skip(rel):
+                warn(f"skipping special file '{os.path.join(dest_display, rel)}'.")
+
+            dirfd.copy_tree_at(src_fd, dst_fd,
+                               on_entry=on_entry, on_skip=on_skip)
+            dirfd.copy_metadata(src_fd, dst_fd, src_st)
+        finally:
+            os.close(dst_fd)
     finally:
-        os.close(fd)
+        os.close(src_fd)
+
+
+def _move_pinned(src_pin, dest_pin, src_is_dir):
+    """Move via renameat, falling back to copy+remove across devices.
+
+    rename(2) replaces a symlink sitting at the destination rather than
+    following it, and both ends are named relative to a pinned fd, so the
+    fast path needs no further protection.
+    """
+    try:
+        os.rename(src_pin.leaf, dest_pin.leaf,
+                  src_dir_fd=src_pin.dir_fd, dst_dir_fd=dest_pin.dir_fd)
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+
+    if src_is_dir:
+        _copy_tree_pinned(src_pin, dest_pin, False, str(dest_pin))
+        dirfd.rmtree_at(src_pin.dir_fd, src_pin.leaf, force=True)
+    else:
+        dirfd.copy_file_at(src_pin.dir_fd, src_pin.leaf,
+                           dest_pin.dir_fd, dest_pin.leaf)
+        os.unlink(src_pin.leaf, dir_fd=src_pin.dir_fd)
 
 
 def _do_copy(src, dest, verbose, move_mode, recursive):
@@ -107,10 +143,10 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
                    f"to copy directories.")
         sys.exit(1)
 
-    # A file copied onto an existing directory lands inside it, keeping
-    # its own name. shutil does this implicitly; spell it out so the
-    # destination names the file we are about to open with O_NOFOLLOW.
-    if not src_is_dir and os.path.isdir(dest_path):
+    # A file copied onto an existing directory lands inside it, and so
+    # does a moved directory. shutil did this implicitly; spell it out so
+    # the destination names the entry we are about to create.
+    if (not src_is_dir or move_mode) and os.path.isdir(dest_path):
         dest_path = os.path.join(dest_path, os.path.basename(src_path))
 
     log_info(f"Source: '{src_path}'")
@@ -125,49 +161,28 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
             log_error(f"Cannot create directory '{dest_dir}': {exc}")
             sys.exit(1)
 
-    warn_unpinned(src)
-    warn_unpinned(dest)
-
-    def _verbose_copy2(s, d, *, follow_symlinks=True):
-        log_info(f"Copying: '{s}' -> '{d}'")
-        return shutil.copy2(s, d, follow_symlinks=follow_symlinks)
-
-    # Pin both endpoints for the duration of the transfer: from here on
-    # the filesystem is addressed through the pinned fds, so renaming a
-    # directory component to a symlink no longer redirects the copy.
+    # Pin both endpoints, then address the filesystem only through the
+    # pinned fds: neither the endpoints nor anything the walk creates
+    # below them can be redirected by a symlink appearing mid-transfer.
     try:
         with ExitStack() as pins:
             src_pin = pins.enter_context(pin_path(src, src_path))
             dest_pin = pins.enter_context(pin_path(dest, dest_path))
-            src_io, dest_io = src_pin.io, dest_pin.io
 
             if move_mode:
                 log_info("Moving files...")
                 if verbose:
-                    if src_is_dir:
-                        for root, _dirs, files in os.walk(src_io):
-                            for fname in files:
-                                fpath = os.path.join(root, fname)
-                                rel = os.path.relpath(fpath, src_io)
-                                log_info(
-                                    f"Moving: '{os.path.join(src_path, rel)}'"
-                                    f" -> '{os.path.join(dest_path, rel)}'"
-                                )
-                    else:
-                        log_info(f"Moving: '{src_path}' -> '{dest_path}'")
-                # rename(2) replaces a symlink at the destination instead
-                # of following it, so move needs no O_NOFOLLOW handling.
-                shutil.move(src_io, dest_io)
+                    log_info(f"Moving: '{src_path}' -> '{dest_path}'")
+                _move_pinned(src_pin, dest_pin, src_is_dir)
             else:
                 log_info("Copying files, this may take a while...")
                 if src_is_dir:
-                    copy_fn = _verbose_copy2 if verbose else shutil.copy2
-                    shutil.copytree(src_io, dest_io, symlinks=True,
-                                    copy_function=copy_fn)
+                    _copy_tree_pinned(src_pin, dest_pin, verbose, dest_path)
                 else:
                     if verbose:
                         log_info(f"Copying: '{src_path}' -> '{dest_path}'")
-                    _copy_file_nofollow(src_io, dest_pin)
+                    dirfd.copy_file_at(src_pin.dir_fd, src_pin.leaf,
+                                       dest_pin.dir_fd, dest_pin.leaf)
     except KeyboardInterrupt:
         clear_bar()
         log_error("Aborted by user.")

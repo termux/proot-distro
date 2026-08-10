@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.commands import sync
+from proot_distro import dirfd
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs, resolve_container_path
@@ -234,17 +234,26 @@ def test_sync_delete_does_not_chmod_host_file_through_symlink(
     assert os.path.exists(os.path.join(dest, "keep.txt"))
 
 
-def test_ensure_writable_skips_symlinks(tmp_path):
-    """_ensure_writable() must leave a symlink's target alone."""
+def test_rmtree_force_does_not_chmod_symlink_targets(tmp_path):
+    """The force path chmods directories it owns, never a link's target."""
     victim = tmp_path / "victim"
     victim.write_text("x")
     os.chmod(victim, 0o400)
-    link = tmp_path / "link"
-    os.symlink(str(victim), link)
 
-    sync._ensure_writable(str(link))
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    os.symlink(str(victim), tree / "sub" / "link")
+    os.chmod(tree / "sub", 0o500)
 
+    fd = dirfd.opendir(str(tmp_path))
+    try:
+        dirfd.rmtree_at(fd, "tree", force=True)
+    finally:
+        os.close(fd)
+
+    assert not tree.exists()
     assert stat.S_IMODE(os.stat(victim).st_mode) == 0o400
+    assert victim.read_text() == "x"
 
 
 # ----- resolver-level guarantees ------------------------------------------

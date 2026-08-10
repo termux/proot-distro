@@ -45,8 +45,9 @@ import os
 import sys
 from contextlib import contextmanager
 
+from proot_distro import dirfd
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.message import crit_error, warn
+from proot_distro.message import crit_error
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
 
@@ -166,52 +167,32 @@ def resolve_container_path(spec: str) -> str:
 
 # O_PATH opens a directory without needing read permission on it, which
 # matters for the execute-only directories `sync` deliberately tolerates.
-# It is Linux-only; fall back to a plain directory open elsewhere.
+# dirfd.reopen() turns such a pin into a readable fd when one is needed.
+# O_PATH is Linux-only; fall back to a plain directory open elsewhere.
 _O_DIR = (getattr(os, "O_PATH", 0) or os.O_RDONLY) | os.O_DIRECTORY
 
 
-def _proc_fd_usable() -> bool:
-    """True when /proc/self/fd/<n>/<name> can be used for path I/O."""
-    try:
-        return os.path.isdir("/proc/self/fd")
-    except OSError:
-        return False
-
-
 class PinnedPath:
-    """A resolved path plus the directory fd that pins it in place.
+    """A resolved path together with an fd pinning the directory it is in.
 
-    `str(pin)` is the real path, for messages. `pin.io` is the path to
-    hand to the filesystem: `/proc/self/fd/<n>[/<leaf>]` when pinning is
-    available, which keeps referring to the directory that was validated
-    even if its *name* is later swapped for a symlink. `pin.dir_fd` and
-    `pin.leaf` are for callers that want to open the final component
-    themselves with O_NOFOLLOW (see copy's single-file path).
+    `str(pin)` is the real path, for messages. `pin.dir_fd` and
+    `pin.leaf` are what every filesystem call should use: the fd refers
+    to a directory *inode* that an O_NOFOLLOW walk has just validated, so
+    renaming a directory cannot re-point it, and `leaf` is the single
+    remaining name, which callers open with O_NOFOLLOW themselves (see
+    dirfd.open_file_at). A pin taken with inside=True has an empty leaf
+    and its fd refers to the path itself.
     """
 
-    def __init__(self, path: str, dir_fd=None, leaf: str = "") -> None:
+    __slots__ = ("path", "dir_fd", "leaf")
+
+    def __init__(self, path: str, dir_fd: int, leaf: str = "") -> None:
         self.path = path
         self.dir_fd = dir_fd
         self.leaf = leaf
 
-    @property
-    def io(self) -> str:
-        if self.dir_fd is None:
-            return self.path
-        base = f"/proc/self/fd/{self.dir_fd}"
-        if self.leaf:
-            return os.path.join(base, self.leaf)
-        # /proc/self/fd/<n> is itself a symlink, so lstat() on it reports
-        # a link rather than the directory. A trailing separator forces
-        # resolution through it, which is what every caller means when
-        # the pin covers the directory itself.
-        return base + os.sep
-
     def __str__(self) -> str:
         return self.path
-
-    def __fspath__(self) -> str:
-        return self.io
 
 
 @contextmanager
@@ -223,51 +204,56 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False):
     container can swap a directory for a symlink in between, and the
     copy would follow it out to the host. Re-walking the components with
     O_NOFOLLOW closes that window twice over — it *detects* the swap (a
-    component that is now a symlink fails with ELOOP, and the command
-    aborts) and it *pins* what it validated, since the returned fd keeps
-    naming the same directory inode no matter what happens to the name.
+    component that is now a symlink fails, and the command aborts) and it
+    *pins* what it validated, since the returned fd keeps naming the same
+    directory inode no matter what happens to the name.
 
     By default the *parent* is pinned and the final component is carried
     as `leaf`, which is what a caller operating on the path itself needs
     (copy, move, and any O_NOFOLLOW open of the leaf). Pass inside=True
-    for a path the caller only ever writes *underneath* — sync's source
+    for a path the caller only ever works *underneath* — sync's source
     and destination roots — to walk the final component too and pin that
     directory itself. inside=True therefore also *refuses* a root that
-    has become a symlink, which the default cannot do: writes would go
-    straight through it.
+    has become a symlink, which the default cannot do: everything written
+    below it would go straight through.
 
-    Host paths (specs with no container prefix) are outside the threat
-    model and are yielded unpinned, as is everything when /proc is not
-    available — the pinned form is built from /proc/self/fd.
+    A host path (no container prefix) is not walked component by
+    component — the host filesystem is not the threat — but its parent is
+    still opened, so callers get the same (dir_fd, leaf) pair either way.
     """
     name = container_from_spec(spec)
-    if name is None or not _proc_fd_usable():
-        yield PinnedPath(resolved)
-        return
-
-    rootfs = os.path.normpath(container_rootfs(name))
-    rel = os.path.relpath(resolved, rootfs)
-    parts = [] if rel == os.curdir else rel.split(os.sep)
-    leaf = "" if inside else (parts.pop() if parts else "")
-
     fd = None
     try:
         try:
-            fd = os.open(rootfs, _O_DIR)
-            for part in parts:
-                nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
-                os.close(fd)
-                fd = nxt
+            if name is None:
+                base = resolved if inside else (
+                    os.path.dirname(resolved) or os.sep
+                )
+                leaf = "" if inside else os.path.basename(resolved)
+                fd = os.open(base, _O_DIR)
+            else:
+                rootfs = os.path.normpath(container_rootfs(name))
+                rel = os.path.relpath(resolved, rootfs)
+                parts = [] if rel == os.curdir else rel.split(os.sep)
+                leaf = "" if inside else (parts.pop() if parts else "")
+                fd = os.open(rootfs, _O_DIR)
+                for part in parts:
+                    nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
+                    os.close(fd)
+                    fd = nxt
         except OSError as exc:
             if fd is not None:
                 os.close(fd)
                 fd = None
-            # ELOOP means a component became a symlink between the
-            # resolve and now — exactly the race this guards against.
-            crit_error(
-                f"path '{spec}' changed while it was being resolved "
-                f"({exc.strerror}); refusing to continue."
-            )
+            if dirfd.is_refusal(exc):
+                # A component is a symlink now and was not at resolve
+                # time — exactly the race this guards against.
+                crit_error(
+                    f"path '{spec}' changed while it was being resolved "
+                    f"({exc.strerror}); refusing to continue."
+                )
+            else:
+                crit_error(f"cannot open '{spec}': {exc.strerror}.")
             sys.exit(1)
         yield PinnedPath(resolved, fd, leaf)
     finally:
@@ -276,27 +262,6 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False):
                 os.close(fd)
             except OSError:
                 pass
-
-
-def open_pinned_leaf(pin: PinnedPath, flags: int, mode: int = 0o644) -> int:
-    """Open the path *pin* designates, refusing a symlink at the leaf.
-
-    The pinned fd protects every component above the final one. The
-    final component still has to be opened by name, so O_NOFOLLOW is the
-    only thing standing between a symlink planted there and a write to
-    whatever it points at. Unpinned paths (host side, or no /proc) are
-    opened directly, still with O_NOFOLLOW.
-    """
-    if pin.dir_fd is None or not pin.leaf:
-        return os.open(pin.path, flags | os.O_NOFOLLOW, mode)
-    return os.open(pin.leaf, flags | os.O_NOFOLLOW, mode, dir_fd=pin.dir_fd)
-
-
-def warn_unpinned(spec: str) -> None:
-    """Warn once that a container path could not be pinned."""
-    if container_from_spec(spec) and not _proc_fd_usable():
-        warn(f"/proc is not available: cannot protect '{spec}' against a "
-             f"symlink swapped in by a concurrent container process.")
 
 
 def container_locks_for_spec_pair(src_spec: str, dst_spec: str, command: str):
