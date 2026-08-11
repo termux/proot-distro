@@ -143,6 +143,21 @@ def _resolve_within_root(root: str, rel_path: str, spec: str) -> str:
     return resolved
 
 
+def _walk_spec(rootfs: str, rel_path: str, spec: str, deref_leaf: bool) -> str:
+    """Resolve *rel_path* under *rootfs*, optionally keeping the last name.
+
+    With deref_leaf=False only the parents are walked, for an operation
+    that acts on the final component itself rather than on what it names.
+    `.` and `..` name no entry of their own, so there is nothing to keep
+    and the full walk collapses them as usual.
+    """
+    if not deref_leaf:
+        head, _, tail = rel_path.rstrip("/").rpartition("/")
+        if tail and tail not in (os.curdir, os.pardir):
+            return os.path.join(_resolve_within_root(rootfs, head, spec), tail)
+    return _resolve_within_root(rootfs, rel_path, spec)
+
+
 def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
     """Resolve a `name:path` or plain host path to an absolute host path.
 
@@ -182,44 +197,83 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
     if lexical != rootfs and not lexical.startswith(rootfs + os.sep):
         crit_error("destination path escapes the container directory.")
         sys.exit(1)
-    if not deref_leaf:
-        head, _, tail = rel_path.rstrip("/").rpartition("/")
-        # `.` and `..` name no entry of their own, so there is nothing to
-        # keep: let the full walk collapse them as it always does.
-        if tail and tail not in (os.curdir, os.pardir):
-            return os.path.join(_resolve_within_root(rootfs, head, spec), tail)
-    return _resolve_within_root(rootfs, rel_path, spec)
+    return _walk_spec(rootfs, rel_path, spec, deref_leaf)
+
+
+def _overlap_path(spec: str, path: str) -> str:
+    """The form of *path* to weigh an overlap against.
+
+    Only the parent chain is resolved, and only for a host spec. A
+    container path comes back from the chroot walk with no symlink
+    component left, and realpath() would re-resolve one with *host*
+    semantics, undoing the very thing that walk is for. A host path is not
+    walked at all, so a link among its parents can still fold one end of a
+    transfer into the other, and nothing else will notice.
+
+    The final component is left alone on purpose. Dereferencing it would
+    refuse `copy --move link link/inner`, while a link standing where a
+    directory endpoint belongs is already turned away downstream — by
+    pin_path's O_NOFOLLOW walk for sync, by mkdirat's EEXIST for copy.
+    """
+    if container_from_spec(spec) is not None:
+        return path
+    parent = os.path.dirname(path) or os.sep
+    return os.path.join(os.path.realpath(parent), os.path.basename(path))
 
 
 def refuse_src_dest_overlap(src_spec: str, src_path: str,
-                            dest_spec: str, dest_path: str) -> None:
-    """Exit when the destination is the source, or lies inside it.
+                            dest_spec: str, dest_path: str, *,
+                            deref_leaf: bool = True,
+                            pruning: bool = False) -> None:
+    """Exit when the two ends of a transfer overlap.
 
     Both paths are already resolved, so this weighs what the transfer will
     really touch rather than what was typed. That matters: a symlink the
     guest planted in the rootfs (`backup -> /data`) is enough to make
     `copy -r box:/data box:/backup` a directory copied into itself, which
     recursed until the interpreter's stack gave out and left a partial tree
-    behind. Source onto itself is refused for the reason cp refuses it too —
-    the destination is opened with O_TRUNC while the source is still being
-    read, so the content is lost.
+    behind. See _overlap_path for the host side of the same trick.
+
+    Source onto itself is refused for the reason cp refuses it too — the
+    destination is opened with O_TRUNC while the source is still being
+    read, so a 12-byte file came out empty. The stat follows a final
+    symlink only when the operation itself would, so `copy f link` is
+    refused and `copy --move f link` renames, matching cp and mv; a
+    hardlinked pair is caught either way, as both of those catch it.
+
+    With pruning=True (`sync --delete`) the reverse containment is refused
+    as well. Entries of the destination that the source does not contain
+    are removed, and a source *inside* the destination is exactly such an
+    entry: `sync --delete box:/a/b box:/a` deleted box:/a/b itself.
     """
-    same = src_path == dest_path
+    src_cmp = _overlap_path(src_spec, src_path)
+    dest_cmp = _overlap_path(dest_spec, dest_path)
+    stat_at = os.stat if deref_leaf else os.lstat
+
+    same = src_cmp == dest_cmp
     if not same:
         try:
-            same = os.path.samestat(os.lstat(src_path), os.lstat(dest_path))
+            same = os.path.samestat(stat_at(src_path), stat_at(dest_path))
         except OSError:
             same = False            # one of them does not exist yet: fine
     if same:
         crit_error(f"'{src_spec}' and '{dest_spec}' are the same file.")
         sys.exit(1)
-    if dest_path.startswith(src_path.rstrip(os.sep) + os.sep):
+
+    if dest_cmp.startswith(src_cmp.rstrip(os.sep) + os.sep):
         crit_error(f"cannot copy '{src_spec}' into itself: "
                    f"'{dest_spec}' is inside it.")
         sys.exit(1)
 
+    if pruning and src_cmp.startswith(dest_cmp.rstrip(os.sep) + os.sep):
+        crit_error(f"cannot sync '{src_spec}' into '{dest_spec}' with "
+                   f"'--delete': the source is inside the destination and "
+                   f"would be deleted as an orphan.")
+        sys.exit(1)
 
-def resolve_container_child(spec: str, resolved: str, child: str) -> str:
+
+def resolve_container_child(spec: str, resolved: str, child: str, *,
+                            deref_leaf: bool = True) -> str:
     """Resolve *child* under the already-resolved container path *resolved*.
 
     `copy` and `sync` extend a destination directory with the source's
@@ -230,6 +284,12 @@ def resolve_container_child(spec: str, resolved: str, child: str) -> str:
     unresolved link at the leaf, which the O_NOFOLLOW open then refuses —
     failing an operation that succeeds when spelled `box:/dir/f`.
 
+    deref_leaf carries the same meaning as in resolve_container_path, and
+    for the same reason: `copy --move f box:/dir` renames onto `box:/dir/f`
+    and must replace a link planted there rather than follow it. Resolving
+    the appended name unconditionally let the guest redirect the move
+    somewhere else in its rootfs and keep the link.
+
     A host destination is joined as-is; host paths are not walked.
     """
     joined = os.path.join(resolved, child)
@@ -237,7 +297,8 @@ def resolve_container_child(spec: str, resolved: str, child: str) -> str:
     if name is None:
         return joined
     rootfs = os.path.normpath(container_rootfs(name))
-    return _resolve_within_root(rootfs, os.path.relpath(joined, rootfs), spec)
+    return _walk_spec(rootfs, os.path.relpath(joined, rootfs), spec,
+                      deref_leaf)
 
 
 # O_PATH opens a directory without needing read permission on it, which
@@ -271,7 +332,7 @@ class PinnedPath:
 
 
 class _Refused(OSError):
-    """A component of the walk is a symlink now, and was not at resolve time."""
+    """A walk component is a symlink now, and was not at resolve time."""
 
 
 def _is_link_at(fd: int, part: str) -> bool:

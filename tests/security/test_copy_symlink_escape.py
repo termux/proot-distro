@@ -503,3 +503,111 @@ def test_resolver_rejects_symlink_loop(builders, capsys):
         resolve_container_path("box:/a")
     assert exc.value.code == 1
     assert "too many symbolic links" in capsys.readouterr().err
+
+
+def test_copy_refuses_a_host_link_folding_the_destination_into_the_source(
+    tmp_path, builders, capsys
+):
+    """Only container paths arrive symlink-free; host ones are not walked.
+
+    So the fold this guard exists for was still reachable through a host
+    link, and still recursed to the interpreter's limit leaving hundreds of
+    stray directories behind.
+    """
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("x")
+    os.symlink(str(src), tmp_path / "link")
+
+    with pytest.raises(SystemExit) as exc:
+        _copy(str(src), str(tmp_path / "link" / "inner"), recursive=True)
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(src)) == ["sub"]
+
+
+def test_sync_refuses_a_host_link_folding_the_destination_into_the_source(
+    tmp_path, builders, capsys
+):
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("x")
+    os.symlink(str(src), tmp_path / "link")
+
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), str(tmp_path / "link" / "inner"))
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(src)) == ["sub"]
+
+
+def test_copy_out_of_a_container_cannot_be_folded_back_into_it(
+    tmp_path, builders, capsys
+):
+    """A host link pointing *into* the rootfs folds a copy-out back in.
+
+    The source being fully resolved buys nothing when the destination is a
+    host path that never gets walked.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    data = os.path.join(rootfs, "data")
+    os.makedirs(os.path.join(data, "sub"))
+    with open(os.path.join(data, "sub", "f.txt"), "w") as fh:
+        fh.write("x")
+    os.symlink(data, tmp_path / "backdoor")
+
+    with pytest.raises(SystemExit) as exc:
+        _copy("box:/data", str(tmp_path / "backdoor" / "inner"),
+              recursive=True)
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(data)) == ["sub"]
+
+
+def test_move_onto_a_dir_replaces_a_planted_link_at_the_appended_name(
+    tmp_path, builders
+):
+    """`copy --move f box:/dir` renames onto box:/dir/f, link or not.
+
+    The appended base name went through the full chroot walk, so a guest
+    that planted box:/dir/f as a symlink redirected the move elsewhere in
+    its rootfs and kept the link. mv replaces what is there.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.makedirs(os.path.join(rootfs, "dir"))
+    with open(os.path.join(rootfs, "victim"), "w") as fh:
+        fh.write("UNTOUCHED")
+    os.symlink("/victim", os.path.join(rootfs, "dir", "f"))
+
+    payload = tmp_path / "f"
+    payload.write_text("NEW")
+    _copy(str(payload), "box:/dir", move=True)
+
+    landed = os.path.join(rootfs, "dir", "f")
+    assert not os.path.islink(landed)
+    assert open(landed).read() == "NEW"
+    assert open(os.path.join(rootfs, "victim")).read() == "UNTOUCHED"
+
+
+def test_guest_filenames_cannot_emit_terminal_escapes(tmp_path, builders,
+                                                      capsys):
+    """Names in a rootfs are the guest's; -v and the skip warning print them."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = os.path.join(rootfs, "src")
+    os.makedirs(src)
+    with open(os.path.join(src, "a\x1b[31mRED\x1b[0m"), "w") as fh:
+        fh.write("x")
+    os.mkfifo(os.path.join(src, "b\x1b[5mBLINK\x1b[0m"))
+
+    _copy("box:/src", str(tmp_path / "out"), recursive=True, verbose=True)
+
+    err = capsys.readouterr().err
+    assert "\x1b[31m" not in err
+    assert "\x1b[5m" not in err
+    assert "a\\e[31mRED\\e[0m" in err
+    assert "b\\e[5mBLINK\\e[0m" in err

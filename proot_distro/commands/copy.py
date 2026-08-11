@@ -30,7 +30,9 @@ import sys
 from contextlib import ExitStack
 
 from proot_distro import dirfd
-from proot_distro.message import log_info, log_error, crit_error, warn
+from proot_distro.message import (
+    log_info, log_error, crit_error, quote_path, warn,
+)
 from proot_distro.paths import (
     container_from_spec,
     container_locks_for_spec_pair,
@@ -83,12 +85,17 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
             raise OSError(exc.errno, exc.strerror, dest_display) from None
         dst_fd = dirfd.opendir_at(dest_pin.dir_fd, dest_pin.leaf)
         try:
+            # Entry names come from the tree being copied, so they are
+            # quoted: a rootfs name may carry ESC (see message.quote_path).
+            def shown(rel):
+                return quote_path(os.path.join(dest_display, rel))
+
             def on_entry(rel):
                 if verbose:
-                    log_info(f"Copying: '{os.path.join(dest_display, rel)}'")
+                    log_info(f"Copying: '{shown(rel)}'")
 
             def on_skip(rel):
-                warn(f"skipping special file '{os.path.join(dest_display, rel)}'.")
+                warn(f"skipping special file '{shown(rel)}'.")
 
             dirfd.copy_tree_at(src_fd, dst_fd,
                                on_entry=on_entry, on_skip=on_skip)
@@ -157,12 +164,12 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     if not move_mode and container_from_spec(src) is None:
         src_path = os.path.realpath(src_path)
 
-    if not os.path.exists(src_path):
+    # A move renames the entry, so a dangling symlink is a perfectly good
+    # source — mv moves the link. os.path.exists() follows it and would
+    # call the path missing.
+    if not (os.path.lexists(src_path) if move_mode
+            else os.path.exists(src_path)):
         crit_error(f"cannot copy '{src}' because the path does not exist.")
-        sys.exit(1)
-
-    if not os.access(src_path, os.R_OK):
-        crit_error(f"source path '{src_path}' is not readable.")
         sys.exit(1)
 
     # A device, FIFO or socket named as the source endpoint. Refused here
@@ -179,6 +186,14 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
         crit_error(f"cannot copy '{src}': not a regular file or directory.")
         sys.exit(1)
 
+    # A symlink only reaches here in move mode, where nothing reads the
+    # source: rename(2) moves the link and the EXDEV fallback recreates it
+    # from readlink(2). Testing the target's permissions would reject a
+    # dangling link, and an unreadable one for no reason.
+    if not stat.S_ISLNK(src_mode) and not os.access(src_path, os.R_OK):
+        crit_error(f"source path '{quote_path(src_path)}' is not readable.")
+        sys.exit(1)
+
     src_is_dir = os.path.isdir(src_path)
     if src_is_dir and not recursive and not move_mode:
         crit_error(f"source path is a directory. Use option '--recursive' "
@@ -192,18 +207,20 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     # component inside the container like any other, and may be a symlink.
     if (not src_is_dir or move_mode) and os.path.isdir(dest_path):
         dest_path = resolve_container_child(dest, dest_path,
-                                            os.path.basename(src_path))
+                                            os.path.basename(src_path),
+                                            deref_leaf=not move_mode)
 
     # Both ends are final now, which is the earliest point a planted symlink
     # can no longer hide that they overlap.
-    refuse_src_dest_overlap(src, src_path, dest, dest_path)
+    refuse_src_dest_overlap(src, src_path, dest, dest_path,
+                            deref_leaf=not move_mode)
 
-    log_info(f"Source: '{src_path}'")
-    log_info(f"Destination: '{dest_path}'")
+    log_info(f"Source: '{quote_path(src_path)}'")
+    log_info(f"Destination: '{quote_path(dest_path)}'")
 
     dest_dir = os.path.dirname(dest_path)
     if not os.path.isdir(dest_dir):
-        log_info(f"Creating directory '{dest_dir}'...")
+        log_info(f"Creating directory '{quote_path(dest_dir)}'...")
 
     # Pin both endpoints, then address the filesystem only through the
     # pinned fds: neither the endpoints nor anything the walk creates
@@ -220,7 +237,8 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
             if move_mode:
                 log_info("Moving files...")
                 if verbose:
-                    log_info(f"Moving: '{src_path}' -> '{dest_path}'")
+                    log_info(f"Moving: '{quote_path(src_path)}' -> "
+                             f"'{quote_path(dest_path)}'")
                 _move_pinned(src_pin, dest_pin)
             else:
                 log_info("Copying files, this may take a while...")
@@ -228,7 +246,8 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
                     _copy_tree_pinned(src_pin, dest_pin, verbose, dest_path)
                 else:
                     if verbose:
-                        log_info(f"Copying: '{src_path}' -> '{dest_path}'")
+                        log_info(f"Copying: '{quote_path(src_path)}' -> "
+                                 f"'{quote_path(dest_path)}'")
                     dirfd.copy_file_at(src_pin.dir_fd, src_pin.leaf,
                                        dest_pin.dir_fd, dest_pin.leaf)
     except KeyboardInterrupt:
@@ -236,7 +255,9 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
         log_error("Aborted by user.")
         sys.exit(1)
     except OSError as exc:
-        log_error(f"Error: {exc}")
+        # The strings carry the name the call failed on, straight from the
+        # tree being copied.
+        log_error(f"Error: {quote_path(str(exc))}")
         sys.exit(1)
 
     log_info("Finished copying files.")

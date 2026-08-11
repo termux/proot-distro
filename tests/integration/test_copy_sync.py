@@ -481,3 +481,154 @@ def test_copy_recursive_into_a_subdirectory_of_itself_is_refused(
     assert exc.value.code == 1
     assert "into itself" in capsys.readouterr().err
     assert sorted(os.listdir(src)) == ["sub"]
+
+
+def test_copy_onto_a_symlink_to_the_source_is_refused(tmp_path, builders,
+                                                     capsys):
+    """cp calls `cp f link` the same file when link points at f.
+
+    The message matters, not just the exit status: comparing the two ends
+    without following the destination link let this get as far as the
+    O_NOFOLLOW open and fail with a bare ELOOP, which is the right outcome
+    reached by accident and reported as something else entirely.
+    """
+    builders.make_container("box")
+    target = tmp_path / "f"
+    target.write_text("data")
+    os.symlink("f", tmp_path / "link")
+
+    with pytest.raises(SystemExit) as exc:
+        _copy(str(target), str(tmp_path / "link"))
+    assert exc.value.code == 1
+    assert "are the same file" in capsys.readouterr().err
+    assert target.read_text() == "data"
+    assert os.path.islink(tmp_path / "link")
+
+
+def test_move_onto_a_symlink_to_the_source_renames(tmp_path, builders):
+    """mv does allow it: rename(2) replaces the link with the file."""
+    builders.make_container("box")
+    target = tmp_path / "f"
+    target.write_text("data")
+    link = tmp_path / "link"
+    os.symlink("f", link)
+
+    _copy(str(target), str(link), move=True)
+
+    assert not os.path.lexists(target)
+    assert not os.path.islink(link)
+    assert link.read_text() == "data"
+
+
+def test_move_of_a_dangling_symlink_moves_the_link(tmp_path, builders):
+    """os.path.exists() follows the link and called the source missing.
+
+    mv moves a dangling link without complaint, and after --move stopped
+    dereferencing the leaf this became the ordinary case.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.symlink("/nonexistent", tmp_path / "dangling")
+
+    _copy(str(tmp_path / "dangling"), "box:/moved", move=True)
+
+    landed = os.path.join(rootfs, "moved")
+    assert os.path.islink(landed)
+    assert os.readlink(landed) == "/nonexistent"
+    assert not os.path.lexists(tmp_path / "dangling")
+
+
+def test_move_of_a_dangling_container_symlink_moves_the_link(tmp_path,
+                                                            builders):
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.symlink("/nowhere", os.path.join(rootfs, "dangling"))
+
+    dest = tmp_path / "out"
+    _copy("box:/dangling", str(dest), move=True)
+
+    assert os.path.islink(dest)
+    assert os.readlink(dest) == "/nowhere"
+    assert not os.path.lexists(os.path.join(rootfs, "dangling"))
+
+
+def test_sync_delete_refuses_a_source_inside_the_destination(tmp_path,
+                                                            builders,
+                                                            capsys):
+    """`sync --delete box:/a/b box:/a` pruned box:/a/b -- its own source."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = os.path.join(rootfs, "a", "b", "sub")
+    os.makedirs(src)
+    with open(os.path.join(src, "f.txt"), "w") as fh:
+        fh.write("keep")
+    with open(os.path.join(rootfs, "a", "other"), "w") as fh:
+        fh.write("sibling")
+
+    with pytest.raises(SystemExit) as exc:
+        _sync("box:/a/b", "box:/a", delete=True)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "--delete" in err and "inside the destination" in err
+    assert os.path.isdir(os.path.join(rootfs, "a", "b"))
+    assert open(os.path.join(src, "f.txt")).read() == "keep"
+
+
+def test_sync_allows_a_source_inside_the_destination_without_delete(
+    tmp_path, builders
+):
+    """Nothing is pruned without --delete, so this is merely unusual."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = os.path.join(rootfs, "a", "b")
+    os.makedirs(src)
+    with open(os.path.join(src, "f.txt"), "w") as fh:
+        fh.write("v")
+
+    _sync("box:/a/b", "box:/a")
+
+    assert os.path.isdir(src)
+    assert open(os.path.join(rootfs, "a", "f.txt")).read() == "v"
+
+
+def test_sync_delete_still_prunes_an_unrelated_destination(tmp_path, builders):
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(dst)
+    for name in ("orphan", "keep"):
+        with open(os.path.join(dst, name), "w") as fh:
+            fh.write("k")
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep").write_text("k")
+    _sync(str(src), "box:/dst", delete=True)
+
+    assert sorted(os.listdir(dst)) == ["keep"]
+
+
+def test_copy_to_a_symlinked_host_parent_still_works(tmp_path, builders):
+    """The /sdcard case: a symlinked parent is an ordinary destination."""
+    builders.make_container("box")
+    real = tmp_path / "real"
+    real.mkdir()
+    os.symlink(str(real), tmp_path / "sdcard")
+    payload = tmp_path / "p.txt"
+    payload.write_text("P")
+
+    _copy(str(payload), str(tmp_path / "sdcard" / "out.txt"))
+
+    assert (real / "out.txt").read_text() == "P"
+
+
+def test_copy_to_a_sibling_with_a_shared_prefix_is_not_a_fold(tmp_path,
+                                                              builders):
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("x")
+
+    _copy(str(src), str(tmp_path / "tree2"), recursive=True)
+
+    assert (tmp_path / "tree2" / "sub" / "f.txt").read_text() == "x"

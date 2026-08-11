@@ -24,11 +24,13 @@
 # Symlinks within the tree are copied as-is, while one named as the source
 # itself is followed (`sync /sdcard box:/x`, as `copy` does); hard links
 # become independent file copies; special files (block/char/FIFO/socket) are
-# silently skipped. Ownership is never changed. Modes and timestamps are preserved. When the destination
-# lacks write permission the command attempts to chmod it; failing that it
-# exits with an error. With --delete, destination entries that have no
-# counterpart in the source are removed after the sync pass. Paths may be
-# plain host paths or container-prefixed ('ubuntu:/etc') references.
+# silently skipped. Ownership is never changed. Modes and timestamps are
+# preserved. When the destination lacks write permission the command
+# attempts to chmod it; failing that it exits with an error. With --delete,
+# destination entries that have no counterpart in the source are removed
+# after the sync pass, and a source sitting *inside* the destination is
+# refused rather than pruned as one of them. Paths may be plain host paths
+# or container-prefixed ('ubuntu:/etc') references.
 #
 # Both roots are pinned (paths.pin_path) and every level below them is
 # reached with openat(2) through proot_distro.dirfd, so nothing here ever
@@ -55,7 +57,9 @@ import zlib
 from contextlib import ExitStack
 
 from proot_distro import dirfd
-from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.message import (
+    log_info, log_error, crit_error, quote_path,
+)
 from proot_distro.paths import (
     container_from_spec, container_locks_for_spec_pair, pin_path,
     refuse_src_dest_overlap, resolve_container_child, resolve_container_path,
@@ -79,13 +83,18 @@ class _Ctx:
         self.src_rels = set()
         self.skipped_rels = set()
 
+    # Both of these are for messages only, and *rel* comes from the tree
+    # being walked, so both quote it: a name inside a container rootfs is
+    # the guest's to choose and may carry ESC (see message.quote_path).
     def shown(self, rel):
         """The destination path as the user typed it, for messages."""
-        return os.path.join(self.dest_spec, rel) if rel else self.dest_spec
+        return quote_path(
+            os.path.join(self.dest_spec, rel) if rel else self.dest_spec)
 
     def src_shown(self, rel):
         """The source path, for messages about the reading side."""
-        return os.path.join(self.src_root, rel) if rel else self.src_root
+        return quote_path(
+            os.path.join(self.src_root, rel) if rel else self.src_root)
 
     def progress(self):
         # Suppress the bar in verbose mode: per-file log lines already
@@ -160,10 +169,12 @@ def _unlink_robust(dst_fd, name, is_dir=False):
             dirfd.rmtree_at(dst_fd, name, force=True) if is_dir else os.unlink(
                 name, dir_fd=dst_fd)
         except OSError as exc:
-            log_error(f"Cannot delete '{name}': {exc}")
+            log_error(f"Cannot delete '{quote_path(name)}': "
+                      f"{quote_path(str(exc))}")
             sys.exit(1)
     except OSError as exc:
-        log_error(f"Cannot delete '{name}': {exc}")
+        log_error(f"Cannot delete '{quote_path(name)}': "
+                  f"{quote_path(str(exc))}")
         sys.exit(1)
 
 
@@ -202,10 +213,12 @@ def _sync_dir(dst_fd, name, src_st):
         try:
             os.mkdir(name, 0o700, dir_fd=dst_fd)
         except OSError as exc:
-            log_error(f"Cannot create directory '{name}': {exc}")
+            log_error(f"Cannot create directory '{quote_path(name)}': "
+                      f"{quote_path(str(exc))}")
             sys.exit(1)
     except OSError as exc:
-        log_error(f"Cannot create directory '{name}': {exc}")
+        log_error(f"Cannot create directory '{quote_path(name)}': "
+                  f"{quote_path(str(exc))}")
         sys.exit(1)
     return True
 
@@ -247,10 +260,12 @@ def _sync_symlink(src_fd, src_name, dst_fd, dst_name, src_st=None):
         try:
             os.symlink(target, dst_name, dir_fd=dst_fd)
         except OSError as exc:
-            log_error(f"Cannot create symlink '{dst_name}': {exc}")
+            log_error(f"Cannot create symlink '{quote_path(dst_name)}': "
+                      f"{quote_path(str(exc))}")
             sys.exit(1)
     except OSError as exc:
-        log_error(f"Cannot create symlink '{dst_name}': {exc}")
+        log_error(f"Cannot create symlink '{quote_path(dst_name)}': "
+                  f"{quote_path(str(exc))}")
         sys.exit(1)
 
     if src_st is not None:
@@ -272,7 +287,8 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
     try:
         sfd, _ = dirfd.open_regular_at(src_fd, src_name, os.O_RDONLY)
     except OSError as exc:
-        log_error(f"Warning: cannot read '{src_name}': {exc}")
+        log_error(f"Warning: cannot read '{quote_path(src_name)}': "
+                  f"{quote_path(str(exc))}")
         return
 
     try:
@@ -292,7 +308,8 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
             os.unlink(tmp, dir_fd=dst_fd)
         except OSError:
             pass
-        log_error(f"Cannot write to '{dst_name}': {exc}")
+        log_error(f"Cannot write to '{quote_path(dst_name)}': "
+                  f"{quote_path(str(exc))}")
         sys.exit(1)
     finally:
         os.close(sfd)
@@ -362,7 +379,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
             src_st = dirfd.lstat_at(src_fd, name)
         except OSError as exc:
             log_error(f"Warning: cannot stat "
-                      f"'{ctx.src_shown(child)}': {exc}")
+                      f"'{ctx.src_shown(child)}': {quote_path(str(exc))}")
             ctx.done += 1
             ctx.progress()
             continue
@@ -417,7 +434,8 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                               f"symlink during the transfer, skipping.")
                 else:
                     log_error(f"Warning: cannot descend into "
-                              f"'{ctx.shown(child)}': {exc}")
+                              f"'{ctx.shown(child)}': "
+                              f"{quote_path(str(exc))}")
                 continue
             try:
                 _mirror_at(sub_src, sub_dst, child, ctx)
@@ -481,7 +499,7 @@ def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
             counter[0] += 1
             if ctx.verbose:
                 log_info(f"({counter[0]}/{counter[1]}) Delete: "
-                         f"{os.path.join(ctx.dest_root, child)}")
+                         f"{quote_path(os.path.join(ctx.dest_root, child))}")
             _unlink_robust(dst_fd, name, targets[child])
             continue
         if child in ctx.skipped_rels:
@@ -555,11 +573,11 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
 
     # Both ends are final now, which is the earliest point a planted symlink
     # can no longer hide that they overlap.
-    refuse_src_dest_overlap(src, src_path, dest, dest_path)
+    refuse_src_dest_overlap(src, src_path, dest, dest_path, pruning=delete)
 
     log_info("Synchronizing files...")
-    log_info(f"Source: '{src_path}'")
-    log_info(f"Destination: '{dest_path}'")
+    log_info(f"Source: '{quote_path(src_path)}'")
+    log_info(f"Destination: '{quote_path(dest_path)}'")
 
     ctx = _Ctx(src_path, dest, dest_path, verbose, use_checksum)
 

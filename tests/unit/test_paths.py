@@ -218,6 +218,145 @@ def test_overlap_allows_a_destination_that_does_not_exist_yet(tmp_path):
                                   "out", str(tmp_path / "out"))
 
 
+def test_overlap_sees_through_a_host_symlink_parent(tmp_path, capsys):
+    """A host path is never walked, so a link among its parents can fold.
+
+    Only the container side arrives symlink-free; comparing host paths
+    literally left `copy -r <dir> <link>/inner` recursing to the
+    interpreter's limit with `link -> <dir>`.
+    """
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    link = tmp_path / "link"
+    os.symlink(str(src), link)
+
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("tree", str(src),
+                                      "link/inner", str(link / "inner"))
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+
+
+def test_overlap_sees_a_host_link_folding_into_a_container_source(
+    builders, tmp_path, capsys
+):
+    """The fold works the other way too: host destination, container source."""
+    builders.make_container("box")
+    data = os.path.join(paths.container_rootfs("box"), "data")
+    os.makedirs(data)
+    backdoor = tmp_path / "backdoor"
+    os.symlink(data, backdoor)
+
+    with pytest.raises(SystemExit):
+        paths.refuse_src_dest_overlap("box:/data", data,
+                                      "backdoor/in", str(backdoor / "in"))
+    assert "into itself" in capsys.readouterr().err
+
+
+def test_overlap_leaves_the_final_component_unresolved(tmp_path):
+    """Dereferencing the leaf would refuse a legitimate move of a link.
+
+    A link standing where a directory endpoint belongs is refused further
+    down instead -- by pin_path for sync, by mkdirat's EEXIST for copy.
+    """
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    link = tmp_path / "link"
+    os.symlink(str(tree), link)
+    paths.refuse_src_dest_overlap("link", str(link),
+                                  "link/inner", str(link / "inner"),
+                                  deref_leaf=False)
+
+
+def test_overlap_follows_the_leaf_only_when_the_operation_does(tmp_path,
+                                                               capsys):
+    """cp refuses `cp f link`; mv renames it. The check has to agree."""
+    target = tmp_path / "f"
+    target.write_text("data")
+    link = tmp_path / "link"
+    os.symlink("f", link)
+
+    with pytest.raises(SystemExit):        # copy: same file, as cp says
+        paths.refuse_src_dest_overlap("f", str(target), "link", str(link))
+    assert "same file" in capsys.readouterr().err
+
+    # move: rename(2) replaces the link, which is what mv does.
+    paths.refuse_src_dest_overlap("f", str(target), "link", str(link),
+                                  deref_leaf=False)
+
+
+def test_overlap_refuses_a_hardlinked_pair_in_either_mode(tmp_path, capsys):
+    src = tmp_path / "f"
+    src.write_text("x")
+    hard = tmp_path / "hard"
+    os.link(src, hard)
+    for deref in (True, False):
+        with pytest.raises(SystemExit):
+            paths.refuse_src_dest_overlap("f", str(src), "hard", str(hard),
+                                          deref_leaf=deref)
+        assert "same file" in capsys.readouterr().err
+
+
+def test_overlap_refuses_a_source_inside_a_pruned_destination(tmp_path,
+                                                             capsys):
+    """`sync --delete a/b a` deleted a/b: it is an orphan of itself."""
+    dest = tmp_path / "a"
+    src = dest / "b"
+    src.mkdir(parents=True)
+
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("a/b", str(src), "a", str(dest),
+                                      pruning=True)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "--delete" in err and "inside the destination" in err
+
+
+def test_overlap_allows_a_source_inside_the_destination_without_pruning(
+    tmp_path
+):
+    """Without --delete nothing is removed, so this is merely unusual."""
+    dest = tmp_path / "a"
+    src = dest / "b"
+    src.mkdir(parents=True)
+    paths.refuse_src_dest_overlap("a/b", str(src), "a", str(dest))
+
+
+# ----- resolve_container_child(deref_leaf=False) --------------------------
+
+def test_child_keeps_an_appended_leaf_symlink(builders):
+    """`copy --move f box:/dir` renames onto box:/dir/f and must replace it.
+
+    Resolving the appended name let a guest that planted box:/dir/f as a
+    link send the move somewhere else in its rootfs and keep the link.
+    """
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.mkdir(os.path.join(rootfs, "dir"))
+    os.symlink("/victim", os.path.join(rootfs, "dir", "f"))
+    resolved = os.path.join(rootfs, "dir")
+
+    assert paths.resolve_container_child("box:/dir", resolved, "f") == \
+        os.path.join(rootfs, "victim")
+    assert paths.resolve_container_child("box:/dir", resolved, "f",
+                                         deref_leaf=False) == \
+        os.path.join(rootfs, "dir", "f")
+
+
+def test_child_still_resolves_a_symlinked_parent_when_keeping_the_leaf(
+    builders
+):
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.mkdir(os.path.join(rootfs, "real"))
+    os.symlink("/real", os.path.join(rootfs, "dir"))
+    resolved = os.path.join(rootfs, "dir")
+
+    assert paths.resolve_container_child("box:/dir", resolved, "f",
+                                         deref_leaf=False) == \
+        os.path.join(rootfs, "real", "f")
+
+
 # ----- pin_path diagnostics ----------------------------------------------
 
 def test_pin_path_reports_a_plain_non_directory_as_such(builders, capsys):

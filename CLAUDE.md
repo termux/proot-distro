@@ -35,7 +35,13 @@ Top-level utilities (each owns a focused concern):
   `DEFAULT_FAKE_KERNEL_*`.
 - `message.py` — color dict `C`, `msg`, `log_info/error`, `warn`,
   `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`,
-  `terminal_width` (column count for the `ps` / `list --image` tables).
+  `terminal_width` (column count for the `ps` / `list --image` tables),
+  `quote_path` (C-style escapes for control characters). Names inside a
+  rootfs are the guest's to choose and `copy`/`sync` print them, so every
+  filesystem-derived name — and every `OSError` string, which carries
+  one — passes through `quote_path` before it reaches the terminal. Only
+  the untrusted text, never a whole message: the log helpers' own colour
+  codes are control characters by definition.
 - `progress.py` — `fmt_size`, `ByteCounter`, `draw_bytes_bar`,
   `draw_count_bar`, `clear_bar`, `progress_active`.
 - `arch.py` — `get_device_cpu_arch`, `detect_installed_arch` (ELF
@@ -87,10 +93,21 @@ Top-level utilities (each owns a focused concern):
   spec instead of being joined on literally.
   `deref_leaf=False` resolves only the *parents*, for an operation that
   acts on the last component itself — `copy --move`, where `rename(2)`
-  moves a link rather than its target. `refuse_src_dest_overlap()`
-  compares the two *resolved* paths, the earliest point at which a
-  planted link (`backup -> /data`) can no longer hide that the
-  destination sits inside the source, or is it.
+  moves a link rather than its target — and both functions take it, since
+  a name appended to a destination directory needs the same treatment as
+  one written in the spec. `refuse_src_dest_overlap()` compares the two
+  *resolved* paths, the earliest point at which a planted link
+  (`backup -> /data`) can no longer hide that the destination sits inside
+  the source, or is it. A host end gets its **parent chain** resolved for
+  that comparison (`_overlap_path`) — only container paths come back from
+  the chroot walk symlink-free, so otherwise a host link folds one end
+  into the other and nothing notices; running `realpath` over a container
+  path instead would re-resolve it with *host* semantics and undo the
+  walk. The final component is left alone, so a legitimate
+  `copy --move link link/inner` still works and a link standing where a
+  directory endpoint belongs is refused further down. The same-file test
+  follows a final link exactly when the operation would, so `copy f link`
+  is refused and `copy --move f link` renames, as cp and mv each do.
 - `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
   `opendir_at`/`reopen`/`open_file_at`/`open_regular_at` (always
   `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
@@ -238,6 +255,14 @@ Both commands refuse a destination that **is** the source (it would be
 truncated while still being read) or sits **inside** it (a directory
 copied into itself, which recursed until the interpreter's stack gave
 out) — see `refuse_src_dest_overlap()`, called once both ends are final.
+`sync --delete` additionally refuses the *reverse* containment: a source
+inside the destination has no counterpart in itself, so the prune pass
+deleted it (`sync --delete box:/a/b box:/a` removed `box:/a/b`).
+
+`copy --move` accepts a **dangling** symlink as its source, since
+`rename(2)` needs nothing to be there — `os.path.lexists` in move mode,
+and the readability probe is skipped for a link, whose target is never
+read.
 
 One guard remains specific to `sync`, which writes into a pre-existing
 tree: `_sync_dir` **unlinks** whatever non-directory the destination

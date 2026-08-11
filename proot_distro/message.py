@@ -227,3 +227,41 @@ def warn(text: str):
 def crit_error(text: str):
     """Emit an 'Error: text' line in red. Caller typically calls sys.exit(1)."""
     msg(f"{C['BRED']}Error: {C['RED']}{text}{C['RST']}")
+
+
+# Characters that get a readable escape rather than a numeric one.
+_QUOTE_MAP = {
+    "\\": "\\\\",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\x1b": "\\e",
+}
+
+
+def quote_path(text: str) -> str:
+    """Render *text* printable, C-style escapes for control characters.
+
+    Names inside a container rootfs are chosen by whoever controls the
+    guest, and `copy` and `sync` print them freely: `--verbose` logs every
+    entry, the skip warning names the file it passed over, and an OSError
+    carries the name it failed on. A name holding ESC repaints the
+    terminal, hides the lines around it, or hands the emulator whatever
+    sequence follows it, so nothing below 0x20 — nor DEL — is allowed
+    through literally. Backslash is escaped too, so an escape this produced
+    cannot be confused with those three characters spelled out in a name.
+
+    Only the untrusted text is passed through here, never a whole message:
+    the colour codes the log helpers wrap it in are control characters by
+    definition.
+    """
+    out = []
+    for ch in text:
+        escaped = _QUOTE_MAP.get(ch)
+        if escaped is not None:
+            out.append(escaped)
+        elif ch < " " or ch == "\x7f":
+            out.append(f"\\x{ord(ch):02x}")
+        else:
+            out.append(ch)
+    return "".join(out)
