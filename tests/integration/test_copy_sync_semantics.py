@@ -410,8 +410,221 @@ def test_copy_recursive_draws_progress_against_a_real_total(tmp_path,
     ticks = []
     monkeypatch.setattr(copy_mod, "draw_count_bar",
                         lambda done, total, **kw: ticks.append((done, total)))
+    # The counting walk is skipped when nothing would be drawn, which off
+    # a TTY is always; say a bar is wanted so the accounting is exercised.
+    monkeypatch.setattr(copy_mod, "progress_active", lambda: True)
     _copy(str(src), "box:/d", recursive=True)
 
     # Five files; the directory holding them is walked but not counted,
     # since copy_tree_at reports a directory only once it is finished.
     assert ticks[-1] == (5, 5)
+
+
+def test_copy_recursive_skips_the_counting_walk_with_no_bar_to_draw(
+    tmp_path, builders, monkeypatch
+):
+    """Counting is a whole extra walk of the source; do not pay for it."""
+    import proot_distro.commands.copy as copy_mod
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "f.txt").write_text("x")
+
+    counted = []
+    real = dirfd.count_tree_at
+    monkeypatch.setattr(dirfd, "count_tree_at",
+                        lambda fd: counted.append(True) or real(fd))
+    monkeypatch.setattr(copy_mod, "progress_active", lambda: True)
+
+    _copy(str(src), "box:/verbose", recursive=True, verbose=True)
+    assert not counted, "--verbose prints per entry, so no bar is drawn"
+
+    monkeypatch.setattr(copy_mod, "progress_active", lambda: False)
+    _copy(str(src), "box:/quiet", recursive=True)
+    assert not counted, "nothing is drawn off a TTY either"
+
+
+# ----- the accounting the two passes share ---------------------------------
+
+def test_one_bad_entry_is_counted_once(tmp_path, builders, monkeypatch,
+                                       capsys):
+    """Both passes meet the same tree, so both meet the same bad entry.
+
+    Counting it in each made one unreadable file report as "2 entries
+    could not be transferred"; note_failure is keyed on the relative path
+    and ignores a repeat.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "bad").write_text("b")
+    (src / "ok.txt").write_text("o")
+
+    real = dirfd.lstat_at
+
+    def flaky(fd, name):
+        if name == "bad":
+            raise OSError(errno.EIO, "Input/output error")
+        return real(fd, name)
+
+    monkeypatch.setattr(dirfd, "lstat_at", flaky)
+    monkeypatch.setattr(sync_mod.dirfd, "lstat_at", flaky)
+    code = _exit_code(lambda: _sync(str(src), "box:/d"))
+    monkeypatch.undo()
+
+    assert code == 1
+    assert "1 entry could not be transferred" in capsys.readouterr().err
+
+
+def test_sync_progress_total_keeps_up_with_a_growing_source(tmp_path,
+                                                            builders):
+    """The count outran the total it was measured against.
+
+    The total is fixed by the counting pass but the mirror pass counts
+    every entry it writes, so a source that gained files in between drove
+    the display to "(5/1)" and a bar wider than its twenty cells.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("a")
+
+    ticks = []
+    real_bar = sync_mod.draw_count_bar
+    sync_mod.draw_count_bar = lambda d, t, **kw: ticks.append((d, t))
+    real = sync_mod._mirror_entries
+    fired = []
+
+    def racing(src_fd, dst_fd, rel, ctx):
+        if not fired:
+            fired.append(True)
+            for i in range(4):
+                (src / f"late{i}.txt").write_text("x")
+        return real(src_fd, dst_fd, rel, ctx)
+
+    sync_mod._mirror_entries = racing
+    try:
+        _sync(str(src), "box:/d")
+    finally:
+        sync_mod._mirror_entries = real
+        sync_mod.draw_count_bar = real_bar
+
+    assert fired and ticks
+    assert not [t for t in ticks if t[0] > t[1]], ticks
+
+
+def test_sync_reports_a_level_only_the_mirror_pass_could_not_read(
+    tmp_path, builders, capsys
+):
+    """A subtree readable when counted and not when mirrored went quiet.
+
+    _mirror_entries treated every listing failure as "already reported by
+    _collect_rels", so one the counting pass never saw left the
+    destination stale, said nothing, and exited 0.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("new content")
+    dst = os.path.join(container_rootfs("box"), "d")
+    os.makedirs(os.path.join(dst, "sub"))
+    with open(os.path.join(dst, "sub", "f.txt"), "w") as fh:
+        fh.write("stale")
+
+    real = dirfd.listdir_at
+    seen = {"n": 0}
+
+    def flaky(fd):
+        names = real(fd)
+        if "f.txt" in names:
+            seen["n"] += 1
+            if seen["n"] == 2:      # pass 1 through, pass 2 fails
+                raise OSError(errno.EIO, "Input/output error")
+        return names
+
+    dirfd.listdir_at = flaky
+    sync_mod.dirfd.listdir_at = flaky
+    try:
+        code = _exit_code(lambda: _sync(str(src), "box:/d"))
+    finally:
+        dirfd.listdir_at = real
+        sync_mod.dirfd.listdir_at = real
+
+    assert code == 1
+    assert "cannot read directory" in capsys.readouterr().err
+    assert open(os.path.join(dst, "sub", "f.txt")).read() == "stale"
+
+
+def test_copy_names_a_failed_root_without_a_trailing_slash(tmp_path,
+                                                           builders, capsys):
+    """os.path.join(src, "") is "src/", which reads as a stray path."""
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "f.txt").write_text("f")
+
+    real = dirfd.listdir_at
+
+    def boom(fd):
+        raise OSError(errno.EIO, "Input/output error")
+
+    dirfd.listdir_at = boom
+    try:
+        code = _exit_code(lambda: _copy(str(src), "box:/d", recursive=True))
+    finally:
+        dirfd.listdir_at = real
+
+    assert code == 1
+    assert f"cannot copy '{src}'" in capsys.readouterr().err
+
+
+def test_sync_keeps_a_read_only_source_directory_working_twice(tmp_path,
+                                                               builders):
+    """The root's mode is applied last, and re-opened writable next run."""
+    builders.make_container("box")
+    src = tmp_path / "ro"
+    src.mkdir()
+    (src / "f.txt").write_text("data")
+    os.chmod(src, 0o555)
+    dst = os.path.join(container_rootfs("box"), "d")
+    try:
+        _sync(str(src), "box:/d")
+        assert stat.S_IMODE(os.stat(dst).st_mode) == 0o555
+
+        os.chmod(src, 0o755)
+        (src / "f.txt").write_text("data, revised and longer")
+        os.chmod(src, 0o555)
+
+        _sync(str(src), "box:/d")
+        assert stat.S_IMODE(os.stat(dst).st_mode) == 0o555
+        assert open(os.path.join(dst, "f.txt")).read() == \
+            "data, revised and longer"
+    finally:
+        os.chmod(src, 0o755)
+        with contextlib.suppress(OSError):
+            os.chmod(dst, 0o755)
+
+
+@pytest.mark.parametrize("shape", ["all-hole", "head-and-tail",
+                                   "buffer-boundary", "empty"])
+def test_sparse_shapes_round_trip_byte_for_byte(tmp_path, builders, shape):
+    """The zero-skipping path must never move or drop real content."""
+    builders.make_container("box")
+    src = tmp_path / shape
+    with open(src, "wb") as fh:
+        if shape == "all-hole":
+            fh.truncate(4096)
+        elif shape == "head-and-tail":
+            fh.write(b"HEAD")
+            fh.seek(9 * 1024 * 1024)
+            fh.write(b"TAIL")
+        elif shape == "buffer-boundary":
+            fh.truncate(256 * 1024)         # exactly one copy buffer
+            fh.seek(256 * 1024)
+            fh.write(b"Z")
+
+    _copy(str(src), f"box:/{shape}")
+
+    out = os.path.join(container_rootfs("box"), shape)
+    assert open(out, "rb").read() == open(src, "rb").read()
+    assert os.stat(out).st_size == os.stat(src).st_size

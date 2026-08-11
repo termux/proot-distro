@@ -288,6 +288,9 @@ append only for a file source and so died on the `mkdir`'s EEXIST.
 Both commands treat an entry they cannot read or write as **per-entry**:
 reported, stepped over, and counted, with the command exiting 1 at the
 end (`_Ctx.failures` for sync, `_copy_tree_pinned`'s return for copy).
+`note_failure()` is keyed on the relative path and **idempotent**, since
+both of sync's passes meet the same tree and counting one bad entry twice
+made a single unreadable file report as "2 entries".
 `copy -r` used to stop at the first locked directory and `sync` used to
 come back 0 after skipping one. `copy --move` reads that count before it
 removes anything — an EXDEV fallback whose copy half skipped a file must
@@ -384,6 +387,18 @@ silently did nothing.
 A device/FIFO/socket named as the **whole source** is refused by `sync`
 with a message, as `copy` already did — it used to return from
 `_sync_single` without a word and report "Finished synchronizing".
+
+Two counters have to stay honest. `_Ctx.saw()` is the single way a source
+entry is recorded, and it recomputes `total` from `src_rels`, because the
+mirror pass adds entries the counting pass never saw — a fixed total left
+the display reading "(5/1)" and drew a bar past its twenty cells (now
+also clamped in `draw_count_bar`, as `draw_bytes_bar` already was). And
+`_mirror_entries` no longer assumes a listing failure was "already
+reported by `_collect_rels`": one that pass never met left the
+destination stale, said nothing, and exited 0. `copy`'s counting walk
+(`count_tree_at`) is skipped entirely under `--verbose` or when
+`progress_active()` is False — it is a whole extra pass over the source,
+and there is no bar to put a denominator on.
 
 `sync` ends its transfer in `except OSError`, the net `copy` has always
 had: every call the three passes make is guarded where warn-and-skip is

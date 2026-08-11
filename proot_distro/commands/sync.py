@@ -111,10 +111,27 @@ class _Ctx:
         # destination on the strength of an enumeration that failed.
         self.root_unreadable = False
 
+    def saw(self, rel):
+        """Record a source entry, keeping the progress total in step.
+
+        The total is recomputed rather than incremented because the two
+        passes overlap: pass 1 fills src_rels and pass 2 adds whatever
+        appeared since, and a count that only ever grew ran past its own
+        total, printing "(5/1)" and a bar wider than its twenty cells.
+        """
+        self.src_rels.add(rel)
+        self.total = max(len(self.src_rels), 1)
+
     def note_failure(self, rel):
-        """Record an entry that was skipped, and why it matters later."""
-        self.skipped_rels.add(rel)
-        self.failures += 1
+        """Record an entry that was skipped, and why it matters later.
+
+        Idempotent: both passes touch the same tree, so a persistently
+        unreadable entry is met twice, and counting it twice made one bad
+        file report as "2 entries could not be transferred".
+        """
+        if rel not in self.skipped_rels:
+            self.skipped_rels.add(rel)
+            self.failures += 1
 
     # Both of these are for messages only, and *rel* comes from the tree
     # being walked, so both quote it: a name inside a container rootfs is
@@ -343,7 +360,7 @@ def _refresh_file_mode(src_st, dst_fd, dst_name):
         os.close(fd)
 
 
-def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, shown=None):
+def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, rel):
     """Copy a regular file, preserving mode and mtime.
 
     Returns True when the destination now matches the source, False when
@@ -363,7 +380,7 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, shown=None):
     one at will, since a *directory* standing under the temp name is not
     a leftover to be unlinked but an EISDIR.
     """
-    where = shown or quote_path(dst_name)
+    where = ctx.shown(rel)
     tmp = dirfd.temp_name(dst_name, _TMP_SUFFIX)
     mode = stat.S_IMODE(src_st.st_mode)
 
@@ -381,15 +398,15 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, shown=None):
     if dst_st is not None and stat.S_ISDIR(dst_st.st_mode):
         log_error(f"Warning: cannot replace directory '{where}' with a "
                   f"file, skipping.")
-        ctx.failures += 1
+        ctx.note_failure(rel)
         return False
 
     try:
         sfd, sfd_st = dirfd.open_regular_at(src_fd, src_name, os.O_RDONLY)
     except OSError as exc:
-        log_error(f"Warning: cannot read '{ctx.src_shown(src_name)}': "
+        log_error(f"Warning: cannot read '{ctx.src_shown(rel)}': "
                   f"{quote_path(str(exc))}")
-        ctx.failures += 1
+        ctx.note_failure(rel)
         return False
 
     try:
@@ -409,7 +426,7 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, shown=None):
             dirfd.unlink_quietly(dst_fd, tmp)
             log_error(f"Warning: cannot write to '{where}': "
                       f"{quote_path(str(exc))}")
-            ctx.failures += 1
+            ctx.note_failure(rel)
             return False
         except BaseException:
             # Ctrl-C above all: the temp file has to go whatever ends the
@@ -440,7 +457,7 @@ def _record_level(src_fd, rel, ctx):
             # which makes every destination entry look like an orphan. Say
             # so, and let _sync_directory decline to prune.
             ctx.root_unreadable = True
-            ctx.failures += 1
+            ctx.failures += 1       # no rel to key note_failure on
         log_error(f"Warning: directory '{ctx.src_shown(rel)}' is not "
                   f"readable, skipping.")
         return []
@@ -448,7 +465,7 @@ def _record_level(src_fd, rel, ctx):
     subdirs = []
     for name in names:
         child = _rel(rel, name)
-        ctx.src_rels.add(child)
+        ctx.saw(child)
         try:
             st = dirfd.lstat_at(src_fd, name)
         except OSError as exc:
@@ -528,13 +545,22 @@ def _mirror_entries(src_fd, dst_fd, rel, ctx):
     """
     try:
         names = dirfd.listdir_at(src_fd)
-    except OSError:
-        return []  # already reported by _collect_rels
+    except OSError as exc:
+        # Usually pass 1 met this too and has already said so, in which
+        # case note_failure is a no-op. When it did not -- the level was
+        # readable when it was counted and is not now -- the subtree is
+        # silently not mirrored, and saying nothing meant a stale
+        # destination and an exit status of 0.
+        if rel not in ctx.skipped_rels:
+            log_error(f"Warning: cannot read directory "
+                      f"'{ctx.src_shown(rel)}': {quote_path(str(exc))}")
+        ctx.note_failure(rel)
+        return []
 
     subdirs = []
     for name in names:
         child = _rel(rel, name)
-        ctx.src_rels.add(child)
+        ctx.saw(child)
         try:
             src_st = dirfd.lstat_at(src_fd, name)
         except OSError as exc:
@@ -579,10 +605,8 @@ def _mirror_entries(src_fd, dst_fd, rel, ctx):
             if _needs_update(src_fd, name, src_st, dst_fd, name,
                              ctx.use_checksum):
                 op = "Modified" if dirfd.exists_at(dst_fd, name) else "New"
-                if not _sync_file(src_fd, name, src_st, dst_fd, name, ctx,
-                                  ctx.shown(child)):
-                    ctx.skipped_rels.add(child)
-                elif ctx.verbose:
+                if _sync_file(src_fd, name, src_st, dst_fd, name, ctx,
+                              child) and ctx.verbose:
                     log_info(f"({ctx.done + 1}/{ctx.total}) {op} file: "
                              f"{ctx.shown(child)}")
             elif _refresh_file_mode(src_st, dst_fd, name) and ctx.verbose:
@@ -636,8 +660,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                     log_error(f"Warning: source '{ctx.src_shown(child)}' "
                               f"changed to a symlink during the transfer, "
                               f"skipping.")
-                    ctx.failures += 1
-                ctx.skipped_rels.add(child)
+                ctx.note_failure(child)
                 continue
             # Pushed before the destination is opened, so a failure there
             # leaves the source fd on the stack for close_frames.
@@ -908,6 +931,9 @@ def _sync_single(src_pin, dest_pin, src_st, ctx):
     mode = src_st.st_mode
     shown = ctx.shown("")
     if _is_special(mode) or not (stat.S_ISLNK(mode) or stat.S_ISREG(mode)):
+        log_error(f"Warning: source '{ctx.src_shown('')}' is no longer a "
+                  f"regular file or directory, skipping.")
+        ctx.note_failure("")
         return
     if stat.S_ISLNK(mode):
         _sync_symlink(src_pin.dir_fd, src_pin.leaf,
@@ -916,7 +942,7 @@ def _sync_single(src_pin, dest_pin, src_st, ctx):
     if _needs_update(src_pin.dir_fd, src_pin.leaf, src_st,
                      dest_pin.dir_fd, dest_pin.leaf, ctx.use_checksum):
         _sync_file(src_pin.dir_fd, src_pin.leaf, src_st,
-                   dest_pin.dir_fd, dest_pin.leaf, ctx, shown)
+                   dest_pin.dir_fd, dest_pin.leaf, ctx, "")
     else:
         _refresh_file_mode(src_st, dest_pin.dir_fd, dest_pin.leaf)
 
@@ -927,9 +953,7 @@ def _sync_directory(src_pin, dest_pin, ctx, delete):
     try:
         dst_fd = dirfd.reopen(dest_pin.dir_fd, dest_pin.leaf)
         try:
-            _collect_rels(src_fd, "", ctx)
-            ctx.total = max(len(ctx.src_rels), 1)
-
+            _collect_rels(src_fd, "", ctx)   # ctx.saw() sets ctx.total
             _mirror_at(src_fd, dst_fd, "", ctx)
             clear_bar()
 

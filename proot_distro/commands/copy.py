@@ -49,7 +49,9 @@ from proot_distro.paths import (
     resolve_container_child,
     resolve_container_path,
 )
-from proot_distro.progress import clear_bar, draw_count_bar
+from proot_distro.progress import (
+    clear_bar, draw_count_bar, progress_active,
+)
 
 
 def command_copy(args) -> None:
@@ -109,16 +111,22 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
             # `cp` reports the path it failed to access, and pointing at a
             # destination that was never written reads as the wrong fault.
             def src_shown(rel):
-                return quote_path(os.path.join(str(src_pin), rel))
+                return quote_path(os.path.join(str(src_pin), rel)
+                                  if rel else str(src_pin))
 
-            total = dirfd.count_tree_at(src_fd)
+            # The count is a whole extra walk of the source, so it is
+            # only paid for when a bar will actually be drawn: --verbose
+            # prints a line per entry instead, and off a TTY (or under
+            # --quiet) nothing is drawn at all.
+            total = (0 if verbose or not progress_active()
+                     else dirfd.count_tree_at(src_fd))
             done = [0]
 
             def on_entry(rel):
                 done[0] += 1
                 if verbose:
                     log_info(f"Copying: '{shown(rel)}'")
-                else:
+                elif total:
                     draw_count_bar(done[0], total, unit="entries")
 
             def on_skip(rel):
@@ -128,7 +136,8 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
             def on_error(rel, exc):
                 failures[0] += 1
                 done[0] += 1
-                clear_bar()
+                # No clear_bar() needed: message.msg() erases the partial
+                # progress line before every write.
                 log_error(f"Warning: cannot copy '{src_shown(rel)}': "
                           f"{quote_path(exc.strerror or str(exc))}")
 
