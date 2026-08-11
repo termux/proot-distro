@@ -139,11 +139,18 @@ Top-level utilities (each owns a focused concern):
   — appending the suffix outright made ENAMETOOLONG out of any entry
   within nine bytes of the limit.
   `copy_data()` takes the source's `stat` and, when `st_blocks` says the
-  file occupies less than its length, copies it **hole for hole**
-  (`_copy_sparse`: seek over a zero run, `ftruncate` at the end).
+  file occupies less than its length, copies it **hole for hole**.
   Materialising every zero turned a rootfs's sparse `/var/log/lastlog`
   — whose length follows the highest uid — into a copy that could fill
-  the device.
+  the device. The map comes from the filesystem (`_data_extents()`:
+  `SEEK_DATA`/`SEEK_HOLE`, `pread`/`pwrite` over the extents), since
+  reading cannot find a hole smaller than the copy buffer or unaligned
+  to it — four bytes at either end of a 9 MiB file made 16 blocks into
+  520. Extents are believed **only when they account for less than the
+  file's length**: a filesystem with no support answers "it is all
+  data", which is what a dense file looks like too, and both fall
+  through to `_copy_skipping_zeros()` — the buffer-granular scan, still
+  correct, just coarser.
   `copy_tree_at` takes an `on_error(rel, exc)` and **steps over** an entry
   it cannot copy instead of ending the transfer, which is `cp -r`'s
   behaviour; without the callback the exception still propagates.

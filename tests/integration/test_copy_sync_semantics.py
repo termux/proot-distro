@@ -628,3 +628,111 @@ def test_sparse_shapes_round_trip_byte_for_byte(tmp_path, builders, shape):
     out = os.path.join(container_rootfs("box"), shape)
     assert open(out, "rb").read() == open(src, "rb").read()
     assert os.stat(out).st_size == os.stat(src).st_size
+
+
+def _maps_holes(path):
+    """True when this filesystem will report *path*'s hole map."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        size = os.fstat(fd).st_size
+        extents = dirfd._data_extents(fd, size)
+        return extents is not None and sum(e - s for s, e in extents) < size
+    finally:
+        os.close(fd)
+
+
+def test_sparse_copy_matches_the_source_extent_for_extent(tmp_path,
+                                                          builders):
+    """Reading cannot find a hole the copy buffer is bigger than.
+
+    Zero-scanning could only leave a hole where a whole 256 KiB buffer
+    read back zero and was aligned to one, so four bytes at either end of
+    a 9 MiB file turned 16 blocks into 520. SEEK_DATA/SEEK_HOLE give the
+    map exactly; the scan stays as the fallback for a filesystem that
+    will not answer.
+    """
+    builders.make_container("box")
+    src = tmp_path / "head-and-tail"
+    with open(src, "wb") as fh:
+        fh.write(b"HEAD")
+        fh.seek(9 * 1024 * 1024)
+        fh.write(b"TAIL")
+    if not _maps_holes(src):
+        pytest.skip("filesystem does not report holes")
+
+    _copy(str(src), "box:/f")
+
+    out = os.path.join(container_rootfs("box"), "f")
+    assert open(out, "rb").read() == open(src, "rb").read()
+    assert os.stat(out).st_blocks == os.stat(src).st_blocks
+
+
+def test_sparse_copy_invents_no_holes_in_a_dense_file(tmp_path, builders):
+    """A file with no holes must come out with none."""
+    builders.make_container("box")
+    src = tmp_path / "dense"
+    src.write_bytes(os.urandom(1024 * 1024))
+
+    _copy(str(src), "box:/dense")
+
+    out = os.path.join(container_rootfs("box"), "dense")
+    assert open(out, "rb").read() == open(src, "rb").read()
+    assert os.stat(out).st_blocks >= os.stat(src).st_blocks
+
+
+def test_data_extents_restores_the_file_position(tmp_path):
+    """Probing seeks; a caller that falls back to reading starts at zero."""
+    src = tmp_path / "f"
+    with open(src, "wb") as fh:
+        fh.write(b"A" * 4096)
+        fh.seek(4096 + 8 * 1024 * 1024)
+        fh.write(b"B" * 4096)
+
+    fd = os.open(src, os.O_RDONLY)
+    try:
+        dirfd._data_extents(fd, os.fstat(fd).st_size)
+        assert os.lseek(fd, 0, os.SEEK_CUR) == 0
+    finally:
+        os.close(fd)
+
+
+def test_sparse_copy_falls_back_when_the_map_is_refused(tmp_path, builders,
+                                                        monkeypatch):
+    """Not every filesystem implements SEEK_HOLE; the copy must not care."""
+    builders.make_container("box")
+    src = tmp_path / "f"
+    with open(src, "wb") as fh:
+        fh.write(b"A" * 4096)
+        fh.truncate(16 * 1024 * 1024)
+
+    monkeypatch.setattr(dirfd, "_data_extents", lambda fd, size: None)
+    _copy(str(src), "box:/f")
+
+    out = os.path.join(container_rootfs("box"), "f")
+    st = os.stat(out)
+    assert open(out, "rb").read() == open(src, "rb").read()
+    assert st.st_size == 16 * 1024 * 1024
+    assert st.st_blocks * 512 < st.st_size    # still sparse, just coarsely
+
+
+def test_sparse_copy_distrusts_an_all_data_answer(tmp_path, builders,
+                                                  monkeypatch):
+    """The kernel's generic fallback says "it is all data" for any file.
+
+    That is indistinguishable from a file that really is dense, so an
+    answer accounting for the whole length is treated as no answer and
+    the zero scan runs instead — otherwise a filesystem without support
+    would silently lose the sparseness the scan used to preserve.
+    """
+    builders.make_container("box")
+    src = tmp_path / "f"
+    with open(src, "wb") as fh:
+        fh.truncate(8 * 1024 * 1024)
+
+    monkeypatch.setattr(dirfd, "_data_extents", lambda fd, size: [(0, size)])
+    _copy(str(src), "box:/f")
+
+    out = os.path.join(container_rootfs("box"), "f")
+    st = os.stat(out)
+    assert open(out, "rb").read() == open(src, "rb").read()
+    assert st.st_blocks * 512 < st.st_size

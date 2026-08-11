@@ -84,8 +84,12 @@ NAME_MAX = 255
 
 _BUFSIZE = 256 * 1024
 
-# Compared against, never written: see _copy_sparse.
+# Compared against, never written: see _copy_skipping_zeros.
 _ZERO_CHUNK = bytes(_BUFSIZE)
+
+# A file split into more data extents than this is not worth mapping one
+# lseek pair at a time; the zero scan covers it in one pass.
+_MAX_EXTENTS = 1 << 20
 
 
 def is_refusal(exc: OSError) -> bool:
@@ -346,49 +350,114 @@ def _looks_sparse(st) -> bool:
     return st.st_blocks * 512 < st.st_size
 
 
-def _copy_sparse(src_fd: int, dst_fd: int) -> None:
-    """Copy a file's contents, seeking over runs of zeros instead of writing.
-
-    A hole read back as zeros is written back as a hole, so the
-    destination takes the space the source actually occupied. Without
-    this a rootfs's /var/log/lastlog — sparse, and nominally enormous
-    because its length follows the highest uid on the system — was
-    materialised in full, which on a phone can be the difference between
-    a copy that fits and one that fills the device.
-    """
+def _write_all(fd: int, data, offset: int) -> None:
+    """pwrite *data* at *offset*, which may take more than one call."""
     written = 0
-    with open(src_fd, "rb", closefd=False) as fin, \
-            open(dst_fd, "wb", closefd=False) as fout:
-        while True:
-            chunk = fin.read(_BUFSIZE)
-            if not chunk:
+    while written < len(data):
+        written += os.pwrite(fd, data[written:], offset + written)
+
+
+def _data_extents(fd: int, size: int):
+    """Ask the filesystem where the file's data is. None when it will not say.
+
+    SEEK_DATA / SEEK_HOLE give the hole map exactly, which reading cannot:
+    a hole shorter than the copy buffer, or one not aligned to it, is
+    indistinguishable from written zeros once it has been read. Not every
+    filesystem implements them — some fail outright, and the generic
+    kernel fallback answers "it is all data" — so the result is checked
+    against the file's length by the caller before it is trusted.
+    """
+    if not hasattr(os, "SEEK_DATA") or not hasattr(os, "SEEK_HOLE"):
+        return None
+    extents = []
+    offset = 0
+    try:
+        while offset < size:
+            try:
+                start = os.lseek(fd, offset, os.SEEK_DATA)
+            except OSError as exc:
+                if exc.errno == errno.ENXIO:
+                    break       # no data at or after here: hole to the end
+                return None
+            if start >= size:
                 break
-            # A full-size chunk is compared whole (one memcmp, stopping at
-            # the first non-zero byte); a short tail is counted instead.
-            if len(chunk) == _BUFSIZE:
-                hole = chunk == _ZERO_CHUNK
-            else:
-                hole = chunk.count(b"\0") == len(chunk)
-            if hole:
-                fout.seek(len(chunk), os.SEEK_CUR)
-            else:
-                fout.write(chunk)
-            written += len(chunk)
-        fout.flush()
-    # Seeking past the last hole does not extend the file, so a source
-    # that ends in one needs the length set explicitly.
-    os.ftruncate(dst_fd, written)
+            end = os.lseek(fd, start, os.SEEK_HOLE)
+            if end <= start:
+                return None     # no progress; do not trust the answer
+            extents.append((start, min(end, size)))
+            offset = end
+            if len(extents) > _MAX_EXTENTS:
+                return None     # pathological fragmentation; just scan
+    except OSError:
+        return None
+    finally:
+        os.lseek(fd, 0, os.SEEK_SET)
+    return extents
+
+
+def _copy_extents(src_fd: int, dst_fd: int, extents, size: int) -> None:
+    """Copy the ranges holding data, leaving the rest of the file a hole."""
+    for start, end in extents:
+        pos = start
+        while pos < end:
+            chunk = os.pread(src_fd, min(_BUFSIZE, end - pos), pos)
+            if not chunk:
+                break           # truncated under us; stop at what is there
+            _write_all(dst_fd, chunk, pos)
+            pos += len(chunk)
+    # Nothing was written past the last extent, so a file ending in a hole
+    # needs its length set explicitly.
+    os.ftruncate(dst_fd, size)
+
+
+def _copy_skipping_zeros(src_fd: int, dst_fd: int) -> None:
+    """Copy a file, leaving a hole wherever a whole buffer reads back zero.
+
+    The fallback for a filesystem that will not report its hole map. It
+    can only find a hole as big as the copy buffer and aligned to it, so
+    the result is a file that is sparse but not identically so — the
+    content is exact either way, which is what matters.
+    """
+    pos = 0
+    while True:
+        chunk = os.pread(src_fd, _BUFSIZE, pos)
+        if not chunk:
+            break
+        # A full-size chunk is compared whole (one memcmp, stopping at the
+        # first non-zero byte); a short tail is counted instead.
+        if len(chunk) == _BUFSIZE:
+            hole = chunk == _ZERO_CHUNK
+        else:
+            hole = chunk.count(b"\0") == len(chunk)
+        if not hole:
+            _write_all(dst_fd, chunk, pos)
+        pos += len(chunk)
+    os.ftruncate(dst_fd, pos)
 
 
 def copy_data(src_fd: int, dst_fd: int, src_st=None) -> None:
     """Copy the contents of one open file to another.
 
-    Pass *src_st* to have a sparsely stored source copied hole for hole
-    (see _copy_sparse). Without it, or for a file that occupies the blocks
-    its length calls for, the data is streamed straight through.
+    Pass *src_st* to have a sparsely stored source copied hole for hole,
+    so the destination takes the space the source actually occupied.
+    Without this a rootfs's /var/log/lastlog — sparse, and nominally
+    enormous because its length follows the highest uid on the system —
+    was materialised in full, which on a phone can be the difference
+    between a copy that fits and one that fills the device.
+
+    The hole map is taken from the filesystem when it will give one, and
+    the extents are only believed when they account for less than the
+    file's length: a filesystem with no support answers "it is all data",
+    which is indistinguishable from a file that really is, and falling
+    through to _copy_skipping_zeros costs a read either way.
     """
     if src_st is not None and _looks_sparse(src_st):
-        _copy_sparse(src_fd, dst_fd)
+        size = src_st.st_size
+        extents = _data_extents(src_fd, size)
+        if extents is not None and sum(e - s for s, e in extents) < size:
+            _copy_extents(src_fd, dst_fd, extents, size)
+        else:
+            _copy_skipping_zeros(src_fd, dst_fd)
         return
     with open(src_fd, "rb", closefd=False) as fin, \
             open(dst_fd, "wb", closefd=False) as fout:
