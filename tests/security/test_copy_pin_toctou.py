@@ -428,8 +428,8 @@ def test_sync_swap_below_root_does_not_escape(
     real_sync_dir = sync_mod._sync_dir
     fired = []
 
-    def racing(dst_fd, name):
-        created = real_sync_dir(dst_fd, name)
+    def racing(dst_fd, name, shown):
+        created = real_sync_dir(dst_fd, name, shown)
         target = os.path.join(dest, "sub")
         if not fired and name == "sub" and os.path.isdir(target):
             fired.append(True)
@@ -439,10 +439,14 @@ def test_sync_swap_below_root_does_not_escape(
 
     monkeypatch.setattr(sync_mod, "_sync_dir", racing)
 
-    sync_mod.command_sync(SimpleNamespace(
-        source=str(src), destination="box:/data", verbose=False,
-        checksum=False, delete=False))
+    # A subtree that could not be descended into is a skipped entry, so
+    # the command reports the transfer incomplete rather than success.
+    with pytest.raises(SystemExit) as exc:
+        sync_mod.command_sync(SimpleNamespace(
+            source=str(src), destination="box:/data", verbose=False,
+            checksum=False, delete=False))
 
+    assert exc.value.code == 1
     assert fired
     assert sorted(os.listdir(outside)) == []
     assert "changed to a symlink during the transfer" in capsys.readouterr().err

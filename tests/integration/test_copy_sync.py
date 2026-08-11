@@ -753,8 +753,10 @@ def test_sync_reports_a_source_that_stops_being_a_symlink(tmp_path, builders,
         return st
 
     monkeypatch.setattr(dirfd, "lstat_at", lying_lstat)
-    _sync(str(src), "box:/dst")
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), "box:/dst")
 
+    assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "cannot copy symlink" in err and "entry" in err
     dst = os.path.join(container_rootfs("box"), "dst")
@@ -780,8 +782,12 @@ def test_sync_refuses_to_replace_a_directory_with_a_file(tmp_path, builders,
     with open(os.path.join(dst, "f", "keep"), "w") as fh:
         fh.write("kept")
 
-    _sync(str(src), "box:/dst")
+    # Skipped, not fatal: ok.txt is still transferred. The status reports
+    # the transfer incomplete, which is what rsync does for the same.
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), "box:/dst")
 
+    assert exc.value.code == 1
     assert "cannot replace directory" in capsys.readouterr().err
     assert open(os.path.join(dst, "f", "keep")).read() == "kept"
     assert open(os.path.join(dst, "ok.txt")).read() == "fine"
@@ -808,7 +814,8 @@ def test_sync_delete_leaves_a_directory_it_could_not_replace(tmp_path,
     with open(os.path.join(dst, "f", "keep"), "w") as fh:
         fh.write("kept")
 
-    _sync(str(src), "box:/dst", delete=True)
+    with pytest.raises(SystemExit):
+        _sync(str(src), "box:/dst", delete=True)
 
     assert open(os.path.join(dst, "f", "keep")).read() == "kept"
 

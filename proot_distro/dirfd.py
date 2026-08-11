@@ -84,6 +84,9 @@ NAME_MAX = 255
 
 _BUFSIZE = 256 * 1024
 
+# Compared against, never written: see _copy_sparse.
+_ZERO_CHUNK = bytes(_BUFSIZE)
+
 
 def is_refusal(exc: OSError) -> bool:
     """True when *exc* is openat() refusing to follow a symlink."""
@@ -332,8 +335,61 @@ def _make_readable_at(dir_fd: int, name: str, mode: int) -> None:
 # Copying
 # ---------------------------------------------------------------------------
 
-def copy_data(src_fd: int, dst_fd: int) -> None:
-    """Copy the contents of one open file to another."""
+def _looks_sparse(st) -> bool:
+    """True when *st* describes a file stored in fewer blocks than its size.
+
+    st_blocks counts 512-byte units whatever the filesystem's own block
+    size is. A compressing filesystem reports fewer blocks for a file with
+    no holes at all, which only costs the scan below — the copy is correct
+    either way.
+    """
+    return st.st_blocks * 512 < st.st_size
+
+
+def _copy_sparse(src_fd: int, dst_fd: int) -> None:
+    """Copy a file's contents, seeking over runs of zeros instead of writing.
+
+    A hole read back as zeros is written back as a hole, so the
+    destination takes the space the source actually occupied. Without
+    this a rootfs's /var/log/lastlog — sparse, and nominally enormous
+    because its length follows the highest uid on the system — was
+    materialised in full, which on a phone can be the difference between
+    a copy that fits and one that fills the device.
+    """
+    written = 0
+    with open(src_fd, "rb", closefd=False) as fin, \
+            open(dst_fd, "wb", closefd=False) as fout:
+        while True:
+            chunk = fin.read(_BUFSIZE)
+            if not chunk:
+                break
+            # A full-size chunk is compared whole (one memcmp, stopping at
+            # the first non-zero byte); a short tail is counted instead.
+            if len(chunk) == _BUFSIZE:
+                hole = chunk == _ZERO_CHUNK
+            else:
+                hole = chunk.count(b"\0") == len(chunk)
+            if hole:
+                fout.seek(len(chunk), os.SEEK_CUR)
+            else:
+                fout.write(chunk)
+            written += len(chunk)
+        fout.flush()
+    # Seeking past the last hole does not extend the file, so a source
+    # that ends in one needs the length set explicitly.
+    os.ftruncate(dst_fd, written)
+
+
+def copy_data(src_fd: int, dst_fd: int, src_st=None) -> None:
+    """Copy the contents of one open file to another.
+
+    Pass *src_st* to have a sparsely stored source copied hole for hole
+    (see _copy_sparse). Without it, or for a file that occupies the blocks
+    its length calls for, the data is streamed straight through.
+    """
+    if src_st is not None and _looks_sparse(src_st):
+        _copy_sparse(src_fd, dst_fd)
+        return
     with open(src_fd, "rb", closefd=False) as fin, \
             open(dst_fd, "wb", closefd=False) as fout:
         shutil.copyfileobj(fin, fout, _BUFSIZE)
@@ -385,7 +441,7 @@ def copy_file_at(src_dir_fd: int, src_name: str,
             dfd, _ = open_new_at(dst_dir_fd, name,
                                  stat.S_IMODE(src_st.st_mode))
             try:
-                copy_data(sfd, dfd)
+                copy_data(sfd, dfd, sfd_st)
                 copy_metadata(sfd, dfd, src_st)
             finally:
                 os.close(dfd)
@@ -431,8 +487,52 @@ def close_frames(stack) -> None:
                     pass
 
 
+def count_tree_at(dir_fd: int) -> int:
+    """Count the files, symlinks and special entries under dir_fd.
+
+    A cheap first pass so a copy can show progress against a total, the
+    way `sync` does. Directories are descended into but not counted:
+    copy_tree_at reports an entry once it has *written* one, which for a
+    directory is only true after its contents are in, so counting them
+    would leave the bar short of the end by the number of directories.
+    Anything unreadable counts as nothing and is left for the copy itself
+    to report — this is the denominator, not the work.
+    """
+    total = 0
+    # Frame layout: [fd, None, pending names, owned].
+    stack = [[dir_fd, None, None, False]]
+    try:
+        while stack:
+            frame = stack[-1]
+            fd, _, pending, owned = frame
+            if pending is None:
+                try:
+                    pending = frame[2] = listdir_at(fd)
+                except OSError:
+                    pending = frame[2] = []
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
+            name = pending.pop()
+            try:
+                if not stat.S_ISDIR(lstat_at(fd, name).st_mode):
+                    total += 1
+                    continue
+                sub = opendir_at(fd, name)
+            except OSError:
+                total += 1
+                continue
+            stack.append([sub, None, None, True])
+    except BaseException:
+        close_frames(stack)
+        raise
+    return total
+
+
 def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
-                 on_entry=None, on_skip=None) -> None:
+                 on_entry=None, on_skip=None, on_error=None) -> None:
     """Recursively copy the contents of one directory into another.
 
     Mirrors shutil.copytree(symlinks=True): symlinks are recreated as
@@ -442,6 +542,15 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
     same choice `backup` and `sync` already make.
 
     on_entry(rel_path) is called for each file and symlink written.
+
+    on_error(rel_path, exc) is called for an entry that could not be
+    copied, which is then stepped over: one unreadable file or directory
+    in a tree must not end the transfer, since the point of the command
+    is usually to save what *can* be saved. That is `cp -r`'s behaviour
+    (and rsync's, and this module's own `sync`), where letting the error
+    propagate stopped at the first locked directory and left everything
+    after it uncopied. A caller with no on_error still gets the exception,
+    so nothing silently swallows an error by default.
 
     The descent is an explicit stack rather than recursion. How deep a
     tree goes is the guest's to decide, and a thousand nested directories
@@ -461,7 +570,13 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
             frame = stack[-1]
             src_fd, dst_fd, cur, pending, dir_st, owned = frame
             if pending is None:
-                pending = frame[3] = listdir_at(src_fd)
+                try:
+                    pending = frame[3] = listdir_at(src_fd)
+                except OSError as exc:
+                    if on_error is None:
+                        raise
+                    on_error(cur, exc)
+                    pending = frame[3] = []
                 pending.reverse()       # pop() from the end, in name order
             if not pending:
                 stack.pop()
@@ -480,30 +595,43 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                 continue
 
             name = pending.pop()
-            src_st = lstat_at(src_fd, name)
-            mode = src_st.st_mode
             child = f"{cur}/{name}" if cur else name
+            depth = len(stack)
+            try:
+                src_st = lstat_at(src_fd, name)
+                mode = src_st.st_mode
 
-            if stat.S_ISLNK(mode):
-                copy_symlink_at(src_fd, name, dst_fd, name, src_st)
-                if on_entry:
-                    on_entry(child)
-            elif stat.S_ISDIR(mode):
-                # Created writable, sealed on the way back up: mkdir's
-                # mode is masked by the umask and so cannot preserve the
-                # source mode on its own.
-                os.mkdir(name, 0o700, dir_fd=dst_fd)
-                sub_src = opendir_at(src_fd, name)
-                # Pushed before the second open, so a failure there
-                # leaves the first fd on the stack for close_frames.
-                stack.append([sub_src, None, child, None, src_st, True])
-                stack[-1][1] = opendir_at(dst_fd, name)
-            elif stat.S_ISREG(mode):
-                copy_file_at(src_fd, name, dst_fd, name, src_st)
-                if on_entry:
-                    on_entry(child)
-            elif on_skip:
-                on_skip(child)
+                if stat.S_ISLNK(mode):
+                    copy_symlink_at(src_fd, name, dst_fd, name, src_st)
+                    if on_entry:
+                        on_entry(child)
+                elif stat.S_ISDIR(mode):
+                    # Created writable, sealed on the way back up: mkdir's
+                    # mode is masked by the umask and so cannot preserve
+                    # the source mode on its own.
+                    os.mkdir(name, 0o700, dir_fd=dst_fd)
+                    sub_src = opendir_at(src_fd, name)
+                    # Pushed before the second open, so a failure there
+                    # leaves the first fd on the stack for close_frames.
+                    stack.append([sub_src, None, child, None, src_st, True])
+                    stack[-1][1] = opendir_at(dst_fd, name)
+                elif stat.S_ISREG(mode):
+                    copy_file_at(src_fd, name, dst_fd, name, src_st)
+                    if on_entry:
+                        on_entry(child)
+                elif on_skip:
+                    on_skip(child)
+            except OSError as exc:
+                if on_error is None:
+                    raise
+                # A directory whose descent failed is half-pushed: drop the
+                # frame and close what it holds, so the walk resumes at
+                # the level this entry was found on. The directory itself
+                # stays where mkdir put it, empty — what cp -r leaves too.
+                if len(stack) > depth:
+                    close_frames(stack[depth:])
+                    del stack[depth:]
+                on_error(child, exc)
     except BaseException:
         close_frames(stack)
         raise

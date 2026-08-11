@@ -293,7 +293,13 @@ HELP_PAGES = {
                 "intro": (
                     "Directories '.' or '..' are only accepted as "
                     "source, not as destination. Glob patterns are "
-                    "not supported."
+                    "not supported. Copying onto an existing directory "
+                    "places the source inside it. Hard links become "
+                    "independent copies, so a tree that shares content "
+                    "between names grows on the way over. An entry that "
+                    "cannot be read is reported and stepped over; the "
+                    "exit status is non-zero when any were, and "
+                    "'--move' then leaves the source in place."
                 ),
             },
         ],
@@ -863,7 +869,7 @@ HELP_PAGES = {
             ("-d, --delete",
              "After syncing, remove destination files and "
              "directories that have no counterpart in the source. "
-             "Only effective when source is a directory."),
+             "Requires a directory as the source."),
             ("-v, --verbose", "Log each synced or deleted entry."),
             ("-q, --quiet",
              "Suppress non-error output. Mutually exclusive "
@@ -872,6 +878,22 @@ HELP_PAGES = {
         "examples": [
             f"{PROGRAM_NAME} sync ./dotfiles/ ubuntu:/root/",
             f"{PROGRAM_NAME} sync --delete ./app/ ubuntu:/opt/app/"
+        ],
+        "footer": [
+            {
+                "title": "NOTES",
+                "intro": (
+                    "Hard links become independent copies, so a tree "
+                    "that shares content between names grows on the "
+                    "way over. Special files (devices, FIFOs, sockets) "
+                    "are skipped, and ownership is never changed. "
+                    "An entry that cannot be read or written is "
+                    "reported and stepped over; the exit status is "
+                    "non-zero when any were. '--checksum' compares a "
+                    "CRC32, which detects changed content but is not "
+                    "an integrity check."
+                ),
+            },
         ],
     },
 }

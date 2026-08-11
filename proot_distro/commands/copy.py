@@ -21,7 +21,16 @@
 # Architecture: Copies or moves files between the host filesystem and paths
 # inside installed proot containers. Source/destination are specified with
 # an optional 'container:path' prefix. Recursive mode copies entire directory
-# trees preserving symlinks (like cp -a).
+# trees preserving symlinks (like cp -a); a destination that already exists
+# as a directory receives the source inside it, as cp and mv both do.
+#
+# Hard links become independent copies (nothing distinguishes one a guest
+# made to a host file from an ordinary entry — see dirfd.open_new_at), and
+# a sparsely stored file is written back sparsely. An entry that cannot be
+# read is reported and stepped over rather than ending the transfer, which
+# is `cp -r`'s behaviour; the command exits non-zero when any were, and
+# --move then leaves the source in place, since the copy it would be
+# deleting is incomplete.
 
 import errno
 import os
@@ -40,7 +49,7 @@ from proot_distro.paths import (
     resolve_container_child,
     resolve_container_path,
 )
-from proot_distro.progress import clear_bar
+from proot_distro.progress import clear_bar, draw_count_bar
 
 
 def command_copy(args) -> None:
@@ -68,8 +77,14 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
     Replaces shutil.copytree(symlinks=True). copytree walks by path, so
     every directory it creates and descends into is addressed by name and
     can be swapped for a symlink mid-transfer; carrying the fds down the
-    recursion removes that entirely.
+    walk removes that entirely.
+
+    Returns the number of entries that could not be copied. They are
+    reported one by one and stepped over rather than ending the transfer
+    (see dirfd.copy_tree_at), so the caller has to ask — `--move` in
+    particular must not remove a source whose copy came up short.
     """
+    failures = [0]
     src_fd = _opendir_pinned(src_pin)
     try:
         src_st = os.fstat(src_fd)
@@ -89,33 +104,60 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
             def shown(rel):
                 return quote_path(os.path.join(dest_display, rel))
 
+            # An entry that could not be copied is nearly always one that
+            # could not be *read*, so it is named on the source side —
+            # `cp` reports the path it failed to access, and pointing at a
+            # destination that was never written reads as the wrong fault.
+            def src_shown(rel):
+                return quote_path(os.path.join(str(src_pin), rel))
+
+            total = dirfd.count_tree_at(src_fd)
+            done = [0]
+
             def on_entry(rel):
+                done[0] += 1
                 if verbose:
                     log_info(f"Copying: '{shown(rel)}'")
+                else:
+                    draw_count_bar(done[0], total, unit="entries")
 
             def on_skip(rel):
+                done[0] += 1
                 warn(f"skipping special file '{shown(rel)}'.")
 
-            dirfd.copy_tree_at(src_fd, dst_fd,
-                               on_entry=on_entry, on_skip=on_skip)
+            def on_error(rel, exc):
+                failures[0] += 1
+                done[0] += 1
+                clear_bar()
+                log_error(f"Warning: cannot copy '{src_shown(rel)}': "
+                          f"{quote_path(exc.strerror or str(exc))}")
+
+            dirfd.copy_tree_at(src_fd, dst_fd, on_entry=on_entry,
+                               on_skip=on_skip, on_error=on_error)
             dirfd.copy_metadata(src_fd, dst_fd, src_st)
         finally:
+            clear_bar()
             os.close(dst_fd)
     finally:
         os.close(src_fd)
+    return failures[0]
 
 
-def _move_pinned(src_pin, dest_pin):
+def _move_pinned(src_pin, dest_pin, verbose=False):
     """Move via renameat, falling back to copy+remove across devices.
 
     rename(2) replaces a symlink sitting at the destination rather than
     following it, and both ends are named relative to a pinned fd, so the
     fast path needs no further protection.
+
+    Returns the number of entries the fallback could not copy. Nothing is
+    removed from the source when that is non-zero: a move whose copy half
+    skipped an unreadable file would otherwise delete the one copy of it.
     """
     try:
         os.rename(src_pin.leaf, dest_pin.leaf,
                   src_dir_fd=src_pin.dir_fd, dst_dir_fd=dest_pin.dir_fd)
-        return
+        return 0
     except OSError as exc:
         if exc.errno != errno.EXDEV:
             raise
@@ -141,12 +183,19 @@ def _move_pinned(src_pin, dest_pin):
                               dest_pin.dir_fd, dest_pin.leaf, src_st)
         os.unlink(src_pin.leaf, dir_fd=src_pin.dir_fd)
     elif stat.S_ISDIR(src_st.st_mode):
-        _copy_tree_pinned(src_pin, dest_pin, False, str(dest_pin))
+        failures = _copy_tree_pinned(src_pin, dest_pin, verbose,
+                                     str(dest_pin))
+        if failures:
+            # The copy half is incomplete, so the source is now the only
+            # place some of those entries exist. Keep it.
+            log_error("Source left in place: the copy did not complete.")
+            return failures
         dirfd.rmtree_at(src_pin.dir_fd, src_pin.leaf, force=True)
     else:
         dirfd.copy_file_at(src_pin.dir_fd, src_pin.leaf,
                            dest_pin.dir_fd, dest_pin.leaf)
         os.unlink(src_pin.leaf, dir_fd=src_pin.dir_fd)
+    return 0
 
 
 def _do_copy(src, dest, verbose, move_mode, recursive):
@@ -245,6 +294,7 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     # The destination's missing parents are made by that same walk
     # (create=True) — making them by path first would write through a
     # symlink planted after the resolve, before the pin could refuse.
+    failures = 0
     try:
         with ExitStack() as pins:
             src_pin = pins.enter_context(pin_path(src, src_path))
@@ -256,11 +306,12 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
                 if verbose:
                     log_info(f"Moving: '{quote_path(src_path)}' -> "
                              f"'{quote_path(dest_path)}'")
-                _move_pinned(src_pin, dest_pin)
+                failures = _move_pinned(src_pin, dest_pin, verbose)
             else:
                 log_info("Copying files, this may take a while...")
                 if src_is_dir:
-                    _copy_tree_pinned(src_pin, dest_pin, verbose, dest_path)
+                    failures = _copy_tree_pinned(src_pin, dest_pin, verbose,
+                                                 dest_path)
                 else:
                     if verbose:
                         log_info(f"Copying: '{quote_path(src_path)}' -> "
@@ -278,7 +329,16 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     except OSError as exc:
         # The strings carry the name the call failed on, straight from the
         # tree being copied.
+        clear_bar()
         log_error(f"Error: {quote_path(str(exc))}")
+        sys.exit(1)
+
+    if failures:
+        # Each was reported where it happened and stepped over, so that one
+        # unreadable entry did not cost the whole tree. The status still has
+        # to say the copy is incomplete, which is what `cp -r` does too.
+        plural = "entry" if failures == 1 else "entries"
+        log_error(f"Error: {failures} {plural} could not be copied.")
         sys.exit(1)
 
     log_info("Finished copying files.")

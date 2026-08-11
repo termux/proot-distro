@@ -120,7 +120,7 @@ Top-level utilities (each owns a focused concern):
 - `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
   `opendir_at`/`reopen`/`open_file_at`/`open_regular_at`/`open_new_at`
   (always `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
-  `copy_file_at`/`copy_symlink_at`/`copy_tree_at`,
+  `copy_file_at`/`copy_symlink_at`/`copy_tree_at`/`count_tree_at`,
   `rmtree_at`/`unlink_quietly`, `temp_name`, `close_frames`, and fd-based
   metadata (`copy_metadata`, `set_times_at`, `make_writable`).
   Nothing here takes a path below the root, so no component can be
@@ -138,6 +138,18 @@ Top-level utilities (each owns a focused concern):
   place, trimming the stem so `<name>.~pd_copy` fits inside `NAME_MAX`
   — appending the suffix outright made ENAMETOOLONG out of any entry
   within nine bytes of the limit.
+  `copy_data()` takes the source's `stat` and, when `st_blocks` says the
+  file occupies less than its length, copies it **hole for hole**
+  (`_copy_sparse`: seek over a zero run, `ftruncate` at the end).
+  Materialising every zero turned a rootfs's sparse `/var/log/lastlog`
+  — whose length follows the highest uid — into a copy that could fill
+  the device.
+  `copy_tree_at` takes an `on_error(rel, exc)` and **steps over** an entry
+  it cannot copy instead of ending the transfer, which is `cp -r`'s
+  behaviour; without the callback the exception still propagates.
+  `count_tree_at()` is the cheap pre-pass giving `copy -r` a denominator
+  for its progress bar; it counts non-directories, because a directory is
+  only "written" once its contents are in.
   Three guarantees need more than `O_NOFOLLOW`, because the obvious call
   looks fd-based but is not. **chmod**: Linux has no `AT_SYMLINK_NOFOLLOW`
   for `fchmodat(2)`, so naming an entry hands the mode change to whatever
@@ -273,6 +285,24 @@ as `cp` and `mv` both do: the source's base name is appended through
 `resolve_container_child()`. That covers `copy -r` too, which used to
 append only for a file source and so died on the `mkdir`'s EEXIST.
 
+Both commands treat an entry they cannot read or write as **per-entry**:
+reported, stepped over, and counted, with the command exiting 1 at the
+end (`_Ctx.failures` for sync, `_copy_tree_pinned`'s return for copy).
+`copy -r` used to stop at the first locked directory and `sync` used to
+come back 0 after skipping one. `copy --move` reads that count before it
+removes anything — an EXDEV fallback whose copy half skipped a file must
+not delete the only remaining copy of it.
+
+Directory **modes and timestamps** are preserved by both. sync's
+`_apply_dir_metadata` is `copy_metadata` on the descended fds (it used to
+set only the mode, so a synced tree was stamped with the moment of the
+sync), and `_sync_directory` applies the source root's metadata last of
+all — after the mirror *and* the prune, both of which bump the mtime, and
+because the mode may take the write bit off the directory. A regular file
+whose **mode alone** changed is fixed in place by `_refresh_file_mode()`
+without rewriting the content: `_needs_update` compares type, size and
+mtime, so a `chmod +x` was otherwise invisible for good.
+
 Destination directories are created **writable** (`0o700`) and given the
 source's mode only once their contents are in — `copy_tree_at` via
 `copy_metadata`, sync via `_apply_dir_mode`, both `fchmod` on the
@@ -330,14 +360,30 @@ temp file and exit).
 Every `_sync_file` failure is per-entry that way — a failed **write**
 included, which used to end the command outright and so let a container
 stop a transfer dead by planting a *directory* under the temp name
-(EISDIR, not a leftover to unlink). They are counted in `_Ctx.failures`
-and the command still exits 1, so the status says what it always did.
-Anything the mirror pass did not write goes into `_Ctx.skipped_rels`,
-which `--delete` treats as off limits: the name is in `src_rels`, so
-without it the prune walked into whatever the destination held there and
-emptied it — a source file that could not replace a destination directory
-took the directory's whole contents with it, and so did a source FIFO,
-which is never mirrored at all.
+(EISDIR, not a leftover to unlink). Its temp file is removed on
+`BaseException`, not just `OSError`, so Ctrl-C no longer leaves a
+`.~pd_sync` half-copy next to the real file.
+
+Three things decide what `--delete` may remove. Anything the mirror pass
+did not write goes into `_Ctx.skipped_rels`, which the prune treats as off
+limits: the name is in `src_rels`, so without it the prune walked into
+whatever the destination held there and emptied it — a source file that
+could not replace a destination directory took the directory's whole
+contents with it, and so did a source FIFO, which is never mirrored at
+all. `_mirror_entries` **also adds every name it sees** to `src_rels`,
+because the counting pass ran earlier and a live source moves on: an entry
+created in between was transferred and then pruned as an orphan of the
+first pass. And `_prune()` **declines entirely** when `ctx.root_unreadable`
+— a failed listing of the root leaves `src_rels` empty and `skipped_rels`
+cannot say "all of it", so every destination entry looked like an orphan
+and the pass emptied the lot (rsync disables `--delete` on an I/O error
+for the same reason). `--delete` also now **requires a directory source**;
+with a single file nothing is enumerated, so the flag was accepted and
+silently did nothing.
+
+A device/FIFO/socket named as the **whole source** is refused by `sync`
+with a message, as `copy` already did — it used to return from
+`_sync_single` without a word and report "Finished synchronizing".
 
 `sync` ends its transfer in `except OSError`, the net `copy` has always
 had: every call the three passes make is guarded where warn-and-skip is
