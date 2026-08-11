@@ -34,7 +34,6 @@ from proot_distro.message import (
     log_info, log_error, crit_error, quote_path, warn,
 )
 from proot_distro.paths import (
-    container_from_spec,
     container_locks_for_spec_pair,
     pin_path,
     refuse_src_dest_overlap,
@@ -126,6 +125,17 @@ def _move_pinned(src_pin, dest_pin):
     # recognised as one and recreated verbatim — never followed, and
     # never dereferenced, which is what rename(2) would have done too.
     src_st = dirfd.lstat_at(src_pin.dir_fd, src_pin.leaf)
+
+    # rename(2) replaced whatever the destination name held — a symlink
+    # included — without following it. Off the fast path that has to be done
+    # by hand: unlink the name, then create fresh. Writing into a name that
+    # is still there could go through a hardlink to a file outside the
+    # container, and os.symlink() would just refuse with EEXIST. A directory
+    # source is left to _copy_tree_pinned, whose mkdir declines to overwrite
+    # anything, as rename(2) declines a non-empty or non-directory target.
+    if not stat.S_ISDIR(src_st.st_mode):
+        dirfd.unlink_quietly(dest_pin.dir_fd, dest_pin.leaf)
+
     if stat.S_ISLNK(src_st.st_mode):
         dirfd.copy_symlink_at(src_pin.dir_fd, src_pin.leaf,
                               dest_pin.dir_fd, dest_pin.leaf, src_st)
@@ -153,16 +163,6 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     if dest_base in (".", ".."):
         crit_error("paths '.' and '..' are not allowed as copy destination.")
         sys.exit(1)
-
-    # A host source spelled as a symlink is copied by content, the way cp
-    # (and the shutil implementation this replaced) does. The container
-    # side gets this from resolve_container_path, which walks every
-    # component including the last; host paths are not walked at all, so
-    # the dereference happens here instead. Without it the O_NOFOLLOW
-    # open below refuses the source outright — `copy -r /sdcard box:/x`
-    # is an ordinary thing to ask for on Termux.
-    if not move_mode and container_from_spec(src) is None:
-        src_path = os.path.realpath(src_path)
 
     # A move renames the entry, so a dangling symlink is a perfectly good
     # source — mv moves the link. os.path.exists() follows it and would
@@ -194,7 +194,11 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
         crit_error(f"source path '{quote_path(src_path)}' is not readable.")
         sys.exit(1)
 
-    src_is_dir = os.path.isdir(src_path)
+    # The lstat, not os.path.isdir(): in move mode src_path's own final
+    # component is deliberately left unresolved, and isdir() would resolve
+    # a *container* link against the host filesystem. Both readings agree
+    # for a plain copy, where src_path holds no link by then.
+    src_is_dir = stat.S_ISDIR(src_mode)
     if src_is_dir and not recursive and not move_mode:
         crit_error(f"source path is a directory. Use option '--recursive' "
                    f"to copy directories.")
@@ -205,8 +209,18 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     # the destination names the entry we are about to create. The name is
     # appended through the resolver, not joined on: it is a path
     # component inside the container like any other, and may be a symlink.
-    if (not src_is_dir or move_mode) and os.path.isdir(dest_path):
-        dest_path = resolve_container_child(dest, dest_path,
+    #
+    # mv also moves inside the directory a destination *link* points at,
+    # leaving the link where it is, so the question is asked of the target
+    # while dest_path keeps the name rename(2) acts on. It has to be asked
+    # with container semantics: os.path.isdir() on the unresolved leaf
+    # resolves the guest's link against the *host* tree, which both invented
+    # directories the container never had (`/dir -> /tmp`, dangling inside,
+    # a directory outside) and destroyed links whose target only the
+    # container has (`current -> /opt/app/releases/v1` became a file).
+    dest_target = resolve_container_path(dest) if move_mode else dest_path
+    if (not src_is_dir or move_mode) and os.path.isdir(dest_target):
+        dest_path = resolve_container_child(dest, dest_target,
                                             os.path.basename(src_path),
                                             deref_leaf=not move_mode)
 
@@ -248,8 +262,12 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
                     if verbose:
                         log_info(f"Copying: '{quote_path(src_path)}' -> "
                                  f"'{quote_path(dest_path)}'")
+                    # replace=True: the destination is a name the user
+                    # chose and may already exist, so it is written as a
+                    # fresh inode and renamed over (see dirfd.copy_file_at).
                     dirfd.copy_file_at(src_pin.dir_fd, src_pin.leaf,
-                                       dest_pin.dir_fd, dest_pin.leaf)
+                                       dest_pin.dir_fd, dest_pin.leaf,
+                                       replace=True)
     except KeyboardInterrupt:
         clear_bar()
         log_error("Aborted by user.")

@@ -46,6 +46,12 @@
 #     provide. Regular-file endpoints are opened with open_regular_at(),
 #     which adds O_NONBLOCK so the open returns and then refuses every type
 #     but a regular file.
+#   - A hardlink is not a link at all as far as openat() is concerned: it is
+#     the file, under a second name, and nothing distinguishes one a guest
+#     made to a host file from an ordinary rootfs entry. Writing through a
+#     name can therefore always land outside the container, so every write
+#     creates a *new* inode instead — open_new_at() is O_EXCL, and a
+#     destination that may already exist is renamed into place.
 #
 # Directory fds are closed as each recursion unwinds, so the number open
 # at any moment is the depth of the tree, not its size.
@@ -67,6 +73,11 @@ _O_PATH_DIR = (getattr(os, "O_PATH", 0) or os.O_RDONLY) | os.O_DIRECTORY
 
 # openat() declining to follow a symlink reports one of these.
 REFUSED = frozenset((errno.ELOOP, errno.ENOTDIR))
+
+# Suffix for the sibling file a replacing copy writes before renaming it
+# into place. `sync` has its own (.~pd_sync) so a leftover says which pass
+# left it behind.
+TMP_SUFFIX = ".~pd_copy"
 
 _BUFSIZE = 256 * 1024
 
@@ -131,6 +142,37 @@ def open_regular_at(dir_fd: int, name: str, flags: int, mode: int = 0o644):
         os.close(fd)
         raise
     return fd, st
+
+
+def open_new_at(dir_fd: int, name: str, mode: int = 0o644):
+    """Create *name* under dir_fd as a brand-new file. Returns (fd, stat).
+
+    O_EXCL, so no entry already carrying the name is ever written *through*.
+    That is the one thing O_NOFOLLOW cannot give: a hardlink is
+    indistinguishable from an ordinary file, and a guest that links a host
+    file into its own rootfs under the name a transfer is about to write
+    leaves nothing to refuse — an O_TRUNC write lands on the host's inode
+    and rewrites it. Creating a fresh inode instead keeps every write inside
+    the directory the caller pinned.
+
+    A leftover from an interrupted run is unlinked and the create retried
+    once. Unlinking removes the *name*; whatever else the inode is linked
+    from keeps its content, which is exactly the point.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        return open_regular_at(dir_fd, name, flags, mode)
+    except FileExistsError:
+        os.unlink(name, dir_fd=dir_fd)
+        return open_regular_at(dir_fd, name, flags, mode)
+
+
+def unlink_quietly(dir_fd: int, name: str) -> None:
+    """Remove *name* under dir_fd, ignoring failure — for temp-file cleanup."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -271,26 +313,62 @@ def copy_data(src_fd: int, dst_fd: int) -> None:
 
 
 def copy_file_at(src_dir_fd: int, src_name: str,
-                 dst_dir_fd: int, dst_name: str, src_st=None) -> None:
+                 dst_dir_fd: int, dst_name: str, src_st=None, *,
+                 replace: bool = False) -> None:
     """Copy one regular file between two pinned directories.
 
     Both ends go through open_regular_at(), so neither a symlink nor a pipe
-    planted at either name is followed, written through, or waited on.
+    planted at either name is followed, written through, or waited on, and
+    the destination is always a new inode (see open_new_at) so neither is a
+    hardlink.
+
+    Pass replace=True when the destination may already exist — a copy onto
+    a named file. The content then goes to a sibling temp file that is
+    renamed into place, which also makes the write atomic: an interrupted
+    copy leaves the old file rather than a truncated one. The cost is that a
+    hardlinked destination loses its link, the unavoidable price of not
+    being able to tell a guest's planted link from a legitimate one.
+
+    A destination that is anything *but* a regular file is refused rather
+    than replaced. The rename could not have followed it either, so this is
+    for the message and for declining to win a race quietly: the resolve
+    already followed whatever link stood there, so one standing there now
+    was planted since, and a pipe or a device is not something a copy has
+    any business overwriting without saying so.
+
+    Without replace the create is plain O_EXCL, which is all copy_tree_at
+    needs: every directory it writes into was just made by mkdir, so
+    nothing can legitimately be there.
     """
     sfd, sfd_st = open_regular_at(src_dir_fd, src_name, os.O_RDONLY)
     try:
         if src_st is None:
             src_st = sfd_st
-        dfd, _ = open_regular_at(
-            dst_dir_fd, dst_name,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            stat.S_IMODE(src_st.st_mode),
-        )
+        if replace:
+            try:
+                dst_st = lstat_at(dst_dir_fd, dst_name)
+            except OSError:
+                dst_st = None
+            if dst_st is not None and not stat.S_ISREG(dst_st.st_mode):
+                raise OSError(errno.EEXIST,
+                              "destination exists and is not a regular file",
+                              dst_name)
+        name = dst_name + TMP_SUFFIX if replace else dst_name
         try:
-            copy_data(sfd, dfd)
-            copy_metadata(sfd, dfd, src_st)
-        finally:
-            os.close(dfd)
+            dfd, _ = open_new_at(dst_dir_fd, name,
+                                 stat.S_IMODE(src_st.st_mode))
+            try:
+                copy_data(sfd, dfd)
+                copy_metadata(sfd, dfd, src_st)
+            finally:
+                os.close(dfd)
+            if replace:
+                os.replace(name, dst_name,
+                           src_dir_fd=dst_dir_fd, dst_dir_fd=dst_dir_fd)
+        except BaseException:
+            if replace:
+                unlink_quietly(dst_dir_fd, name)
+            raise
     finally:
         os.close(sfd)
 

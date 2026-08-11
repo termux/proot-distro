@@ -192,6 +192,118 @@ def test_copy_tree_at_does_not_follow_symlinked_dirs(tmp_path):
     assert sorted(os.listdir(dst)) == ["link"]
 
 
+def test_open_new_at_replaces_a_name_rather_than_writing_into_it(tmp_path):
+    """A hardlink is invisible to O_NOFOLLOW: it *is* the file, twice named.
+
+    A guest that links a host file into its rootfs under the name a transfer
+    is about to write leaves nothing to refuse — an O_TRUNC write lands on
+    the host's inode. O_EXCL plus an unlink removes the *name* instead, so
+    the other link keeps its content.
+    """
+    victim = tmp_path / "victim"
+    victim.write_text("HOST DATA")
+    box = tmp_path / "box"
+    box.mkdir()
+    os.link(victim, box / "planted")
+
+    fd = _fd(box)
+    try:
+        nfd, _ = dirfd.open_new_at(fd, "planted", 0o644)
+        os.write(nfd, b"payload")
+        os.close(nfd)
+    finally:
+        os.close(fd)
+
+    assert victim.read_text() == "HOST DATA"
+    assert os.stat(victim).st_nlink == 1
+    assert (box / "planted").read_text() == "payload"
+
+
+def test_copy_file_at_never_writes_through_a_hardlink(tmp_path):
+    src = tmp_path / "payload"
+    src.write_text("payload")
+    victim = tmp_path / "victim"
+    victim.write_text("HOST DATA")
+    box = tmp_path / "box"
+    box.mkdir()
+    os.link(victim, box / "dest")
+
+    sfd, dfd = _fd(tmp_path), _fd(box)
+    try:
+        # Both modes: a tree copy creates, an endpoint copy replaces.
+        dirfd.copy_file_at(sfd, "payload", dfd, "dest")
+        assert victim.read_text() == "HOST DATA"
+        os.link(victim, box / "dest2")
+        dirfd.copy_file_at(sfd, "payload", dfd, "dest2", replace=True)
+    finally:
+        os.close(sfd)
+        os.close(dfd)
+
+    assert victim.read_text() == "HOST DATA"
+    assert (box / "dest").read_text() == "payload"
+    assert (box / "dest2").read_text() == "payload"
+
+
+@pytest.mark.parametrize("plant", ["symlink", "fifo", "dir"])
+def test_copy_file_at_replace_refuses_a_non_regular_destination(tmp_path,
+                                                                plant):
+    """Refused rather than replaced: nothing legitimate can be standing there.
+
+    A plain copy has already followed whatever link the destination named, so
+    one there now was planted since — and a pipe or a device is not something
+    to overwrite without saying so.
+    """
+    src = tmp_path / "payload"
+    src.write_text("payload")
+    box = tmp_path / "box"
+    box.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("HOST DATA")
+    if plant == "symlink":
+        os.symlink(str(outside), box / "dest")
+    elif plant == "fifo":
+        os.mkfifo(box / "dest")
+    else:
+        (box / "dest").mkdir()
+
+    sfd, dfd = _fd(tmp_path), _fd(box)
+    try:
+        with _deadline():
+            with pytest.raises(OSError):
+                dirfd.copy_file_at(sfd, "payload", dfd, "dest", replace=True)
+    finally:
+        os.close(sfd)
+        os.close(dfd)
+
+    assert outside.read_text() == "HOST DATA"
+    assert not (box / ("dest" + dirfd.TMP_SUFFIX)).exists()
+
+
+def test_copy_file_at_replace_leaves_the_old_file_on_failure(tmp_path,
+                                                             monkeypatch):
+    """The rename is the commit point, so a failed copy changes nothing."""
+    src = tmp_path / "payload"
+    src.write_text("payload")
+    box = tmp_path / "box"
+    box.mkdir()
+    (box / "dest").write_text("ORIGINAL")
+
+    def boom(*_a, **_kw):
+        raise OSError(errno.EIO, "disk on fire")
+
+    monkeypatch.setattr(dirfd, "copy_data", boom)
+    sfd, dfd = _fd(tmp_path), _fd(box)
+    try:
+        with pytest.raises(OSError):
+            dirfd.copy_file_at(sfd, "payload", dfd, "dest", replace=True)
+    finally:
+        os.close(sfd)
+        os.close(dfd)
+
+    assert (box / "dest").read_text() == "ORIGINAL"
+    assert sorted(os.listdir(box)) == ["dest"]      # no temp left behind
+
+
 def test_copy_tree_at_skips_special_files(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

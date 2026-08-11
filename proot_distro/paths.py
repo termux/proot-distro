@@ -29,7 +29,9 @@
 #       Decode the `[container:]path` spec format. The container side is
 #       resolved with chroot semantics (see _resolve_within_root) so a
 #       symlink planted in the rootfs cannot redirect the operation onto
-#       the host filesystem.
+#       the host filesystem; the host side goes through realpath (see
+#       _host_path) so both ends name the entry that will really be
+#       touched.
 #
 #   refuse_src_dest_overlap
 #       Reject a destination that is the source, or sits inside it, once
@@ -143,6 +145,29 @@ def _resolve_within_root(root: str, rel_path: str, spec: str) -> str:
     return resolved
 
 
+def _host_path(path: str, deref_leaf: bool) -> str:
+    """Resolve a host path's symlinks, keeping the final name when asked.
+
+    Host paths are not walked component by component the way container ones
+    are — the host filesystem is not what the chroot walk defends against —
+    but their links still decide what an operation touches, and two of those
+    decisions have to come out right.
+
+    An endpoint that *is* a link is acted on by what it points at, as cp and
+    rsync both do; `sync /sdcard box:/x` is the ordinary way to ask for it on
+    Termux. And every parent link has to be gone before two paths can be
+    weighed for overlap: `sync <dir> <link>/inner` with `link -> <dir>` is a
+    directory copied into itself, and only resolution shows it.
+
+    With deref_leaf=False just the parents are resolved, for `copy --move`,
+    which renames the final name rather than following it.
+    """
+    if deref_leaf:
+        return os.path.realpath(path)
+    parent = os.path.dirname(path) or os.sep
+    return os.path.join(os.path.realpath(parent), os.path.basename(path))
+
+
 def _walk_spec(rootfs: str, rel_path: str, spec: str, deref_leaf: bool) -> str:
     """Resolve *rel_path* under *rootfs*, optionally keeping the last name.
 
@@ -176,11 +201,14 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
     *itself* rather than on what it names — `copy --move`, which renames the
     entry, as mv does. Only the parents then get the chroot walk. Without
     it, moving a container symlink would resolve to the link's target and
-    move that instead, leaving the link behind and dangling; a host source
-    gets the same treatment by not being passed through realpath().
+    move that instead, leaving the link behind and dangling.
+
+    A host path is resolved to the same depth (see _host_path), so both
+    sides of a transfer name the entry that will really be touched — a
+    container path from the walk below, a host path from realpath().
     """
     if ":" not in spec:
-        return os.path.normpath(os.path.abspath(spec))
+        return _host_path(os.path.abspath(spec), deref_leaf)
 
     name, _, rel_path = spec.partition(":")
     if not is_valid_name(name):
@@ -200,25 +228,19 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
     return _walk_spec(rootfs, rel_path, spec, deref_leaf)
 
 
-def _overlap_path(spec: str, path: str) -> str:
+def _overlap_path(spec: str, path: str, deref_leaf: bool) -> str:
     """The form of *path* to weigh an overlap against.
 
-    Only the parent chain is resolved, and only for a host spec. A
-    container path comes back from the chroot walk with no symlink
-    component left, and realpath() would re-resolve one with *host*
-    semantics, undoing the very thing that walk is for. A host path is not
-    walked at all, so a link among its parents can still fold one end of a
-    transfer into the other, and nothing else will notice.
-
-    The final component is left alone on purpose. Dereferencing it would
-    refuse `copy --move link link/inner`, while a link standing where a
-    directory endpoint belongs is already turned away downstream — by
-    pin_path's O_NOFOLLOW walk for sync, by mkdirat's EEXIST for copy.
+    A container path is taken as it stands: the chroot walk left no symlink
+    component in it, and realpath() would re-resolve one with *host*
+    semantics, undoing the very thing that walk is for. A host path goes
+    through _host_path, which is where resolve_container_path() already sent
+    it — repeating it costs nothing (realpath of a resolved path is itself)
+    and keeps this guard sound for a caller that resolved less thoroughly.
     """
     if container_from_spec(spec) is not None:
         return path
-    parent = os.path.dirname(path) or os.sep
-    return os.path.join(os.path.realpath(parent), os.path.basename(path))
+    return _host_path(path, deref_leaf)
 
 
 def refuse_src_dest_overlap(src_spec: str, src_path: str,
@@ -232,7 +254,10 @@ def refuse_src_dest_overlap(src_spec: str, src_path: str,
     guest planted in the rootfs (`backup -> /data`) is enough to make
     `copy -r box:/data box:/backup` a directory copied into itself, which
     recursed until the interpreter's stack gave out and left a partial tree
-    behind. See _overlap_path for the host side of the same trick.
+    behind. A host link does the same from the other side, including one
+    standing *as* an endpoint: `sync <dir> <link>` with `link -> <dir>/sub`
+    recursed just as far, and with `--delete` and a link to the source's
+    parent the prune pass went on to delete the source itself.
 
     Source onto itself is refused for the reason cp refuses it too — the
     destination is opened with O_TRUNC while the source is still being
@@ -246,8 +271,8 @@ def refuse_src_dest_overlap(src_spec: str, src_path: str,
     are removed, and a source *inside* the destination is exactly such an
     entry: `sync --delete box:/a/b box:/a` deleted box:/a/b itself.
     """
-    src_cmp = _overlap_path(src_spec, src_path)
-    dest_cmp = _overlap_path(dest_spec, dest_path)
+    src_cmp = _overlap_path(src_spec, src_path, deref_leaf)
+    dest_cmp = _overlap_path(dest_spec, dest_path, deref_leaf)
     stat_at = os.stat if deref_leaf else os.lstat
 
     same = src_cmp == dest_cmp
@@ -290,12 +315,14 @@ def resolve_container_child(spec: str, resolved: str, child: str, *,
     the appended name unconditionally let the guest redirect the move
     somewhere else in its rootfs and keep the link.
 
-    A host destination is joined as-is; host paths are not walked.
+    A host destination gets the name joined on and the result resolved to
+    the same depth (see _host_path), so an appended link is followed exactly
+    where one written in the spec would be.
     """
     joined = os.path.join(resolved, child)
     name = container_from_spec(spec)
     if name is None:
-        return joined
+        return _host_path(joined, deref_leaf)
     rootfs = os.path.normpath(container_rootfs(name))
     return _walk_spec(rootfs, os.path.relpath(joined, rootfs), spec,
                       deref_leaf)

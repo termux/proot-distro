@@ -543,6 +543,119 @@ def test_sync_refuses_a_host_link_folding_the_destination_into_the_source(
     assert sorted(os.listdir(src)) == ["sub"]
 
 
+def test_sync_refuses_a_host_link_standing_as_the_destination(
+    tmp_path, builders, capsys
+):
+    """The endpoint itself was exempt from resolution, not just its parents.
+
+    sync's pin follows a host endpoint link — host paths get no O_NOFOLLOW
+    walk — so the destination really was inside the source, and comparing
+    the name never showed it. This recursed to the interpreter's limit and
+    left ~1000 stray directories inside the source.
+    """
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("x")
+    os.symlink(str(src / "sub"), tmp_path / "link")
+
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), str(tmp_path / "link"))
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(src / "sub")) == ["f.txt"]
+
+
+def test_sync_delete_refuses_a_destination_link_to_the_sources_parent(
+    tmp_path, builders, capsys
+):
+    """`--delete` through such a link pruned the source as an orphan of itself.
+
+    box:/a/b relative to box:/a has no counterpart in itself, so the prune
+    pass removed it — and every sibling the parent held besides.
+    """
+    builders.make_container("box")
+    parent = tmp_path / "parent"
+    src = parent / "a"
+    src.mkdir(parents=True)
+    (src / "f.txt").write_text("x")
+    (parent / "sibling.txt").write_text("keep")
+    os.symlink(str(parent), tmp_path / "link")
+
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), str(tmp_path / "link"), delete=True)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "--delete" in err and "inside the destination" in err
+    assert sorted(os.listdir(parent)) == ["a", "sibling.txt"]
+    assert (src / "f.txt").read_text() == "x"
+
+
+def test_copy_cannot_be_made_to_write_through_a_planted_hardlink(
+    tmp_path, builders
+):
+    """A hardlink is the one thing O_NOFOLLOW cannot see.
+
+    The rootfs and the Termux prefix share a filesystem and a uid, so a
+    guest can link any host file it can read into its own rootfs under a
+    name a later copy will write — no race needed, the trap simply waits.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    victim = tmp_path / "victim"
+    victim.write_text("HOST DATA")
+    os.link(victim, os.path.join(rootfs, "dest"))
+    payload = tmp_path / "payload"
+    payload.write_text("payload")
+
+    _copy(str(payload), "box:/dest")
+
+    assert victim.read_text() == "HOST DATA"
+    assert open(os.path.join(rootfs, "dest")).read() == "payload"
+
+
+def test_sync_cannot_be_made_to_write_through_a_planted_hardlink(
+    tmp_path, builders
+):
+    """Same trap, aimed at the temp name sync writes before renaming."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    victim = tmp_path / "victim"
+    victim.write_text("HOST DATA")
+    os.link(victim, os.path.join(rootfs, "dest.~pd_sync"))
+    payload = tmp_path / "payload"
+    payload.write_text("payload")
+
+    _sync(str(payload), "box:/dest")
+
+    assert victim.read_text() == "HOST DATA"
+    assert open(os.path.join(rootfs, "dest")).read() == "payload"
+    assert not os.path.exists(os.path.join(rootfs, "dest.~pd_sync"))
+
+
+def test_move_across_devices_cannot_write_through_a_planted_hardlink(
+    tmp_path, builders, monkeypatch
+):
+    """The EXDEV fallback copies by hand, so it needs the same protection."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    victim = tmp_path / "victim"
+    victim.write_text("HOST DATA")
+    os.link(victim, os.path.join(rootfs, "dest"))
+    payload = tmp_path / "payload"
+    payload.write_text("payload")
+
+    def no_rename(*_a, **_kw):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "rename", no_rename)
+    _copy(str(payload), "box:/dest", move=True)
+
+    assert victim.read_text() == "HOST DATA"
+    assert open(os.path.join(rootfs, "dest")).read() == "payload"
+    assert not payload.exists()
+
+
 def test_copy_out_of_a_container_cannot_be_folded_back_into_it(
     tmp_path, builders, capsys
 ):

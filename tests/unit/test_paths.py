@@ -32,6 +32,41 @@ def test_resolve_plain_path_is_abspath(tmp_path):
     assert os.path.isabs(resolved)
 
 
+def test_resolve_host_path_dereferences_its_own_leaf(tmp_path):
+    """A host endpoint names what it points at, as cp and rsync both do.
+
+    The container side gets this from the chroot walk; without the same
+    treatment here the two ends of a transfer are resolved to different
+    depths, and an overlap the destination link hides goes unnoticed.
+    """
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    os.symlink(str(target), link)
+    assert paths.resolve_container_path(str(link)) == str(target)
+
+
+def test_resolve_host_path_keeps_its_leaf_for_a_move(tmp_path):
+    """`copy --move` renames the final name, so it must survive resolution."""
+    target = tmp_path / "target"
+    target.write_text("x")
+    link = tmp_path / "link"
+    os.symlink(str(target), link)
+    kept = paths.resolve_container_path(str(link), deref_leaf=False)
+    assert kept == str(link)
+
+
+def test_resolve_host_path_resolves_parents_even_for_a_move(tmp_path):
+    """Only the last component is exempt; the chain above it is not."""
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    os.symlink(str(real), alias)
+    resolved = paths.resolve_container_path(str(alias / "leaf"),
+                                            deref_leaf=False)
+    assert resolved == str(real / "leaf")
+
+
 def test_resolve_container_path_inside_rootfs(builders):
     builders.make_container("box")
     resolved = paths.resolve_container_path("box:/etc/passwd")
@@ -320,6 +355,48 @@ def test_overlap_allows_a_source_inside_the_destination_without_pruning(
     src = dest / "b"
     src.mkdir(parents=True)
     paths.refuse_src_dest_overlap("a/b", str(src), "a", str(dest))
+
+
+def test_overlap_sees_a_host_link_standing_as_the_destination(tmp_path,
+                                                             capsys):
+    """The endpoint itself, not just its parents, folds one end into the other.
+
+    `sync <dir> <link>` with `link -> <dir>/sub` recursed to the
+    interpreter's limit: sync's pin follows a host endpoint link (host paths
+    are not walked with O_NOFOLLOW), so the destination really was inside
+    the source, and comparing the name hid it.
+    """
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    link = tmp_path / "link"
+    os.symlink(str(tree / "sub"), link)
+
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("tree", str(tree), "link", str(link))
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+
+
+def test_overlap_sees_a_destination_link_to_the_sources_parent(tmp_path,
+                                                              capsys):
+    """`sync --delete <src> <link>` with `link -> <src>/..` deleted <src>.
+
+    The source is an orphan of itself once the destination resolves to its
+    parent, so the prune pass removed it — along with everything else the
+    parent held that the source did not.
+    """
+    parent = tmp_path / "parent"
+    src = parent / "a"
+    src.mkdir(parents=True)
+    link = tmp_path / "link"
+    os.symlink(str(parent), link)
+
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("parent/a", str(src), "link", str(link),
+                                      pruning=True)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "--delete" in err and "inside the destination" in err
 
 
 # ----- resolve_container_child(deref_leaf=False) --------------------------

@@ -61,8 +61,8 @@ from proot_distro.message import (
     log_info, log_error, crit_error, quote_path,
 )
 from proot_distro.paths import (
-    container_from_spec, container_locks_for_spec_pair, pin_path,
-    refuse_src_dest_overlap, resolve_container_child, resolve_container_path,
+    container_locks_for_spec_pair, pin_path, refuse_src_dest_overlap,
+    resolve_container_child, resolve_container_path,
 )
 from proot_distro.progress import clear_bar, draw_count_bar
 
@@ -278,11 +278,30 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
 
     Writes a sibling temp file and renames it into place, so a partial
     write never leaves the destination corrupt and an existing symlink at
-    the destination name is replaced rather than written through.
+    the destination name is replaced rather than written through. The temp
+    file is created O_EXCL (dirfd.open_new_at), so a name already standing
+    there is removed rather than written into — it may be a hardlink to a
+    file outside the container, which nothing about the entry would show.
     """
     tmp = dst_name + _TMP_SUFFIX
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     mode = stat.S_IMODE(src_st.st_mode)
+
+    # A directory standing where the source has a regular file. rsync refuses
+    # this too (it takes --force to clear one out of the way), and renaming
+    # the temp file over it could not work regardless. Reported and skipped
+    # rather than fatal, so one entry in the way does not abandon the rest of
+    # the transfer, and named for what it is instead of surfacing as EISDIR
+    # on a temp file the user never asked about. _sync_dir does remove a
+    # *non*-directory in the other direction — a symlink there can lead out
+    # of the container, and a directory cannot.
+    try:
+        dst_st = dirfd.lstat_at(dst_fd, dst_name)
+    except OSError:
+        dst_st = None
+    if dst_st is not None and stat.S_ISDIR(dst_st.st_mode):
+        log_error(f"Warning: cannot replace directory "
+                  f"'{quote_path(dst_name)}' with a file, skipping.")
+        return
 
     try:
         sfd, _ = dirfd.open_regular_at(src_fd, src_name, os.O_RDONLY)
@@ -293,10 +312,10 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
 
     try:
         try:
-            tfd, _ = dirfd.open_regular_at(dst_fd, tmp, flags, mode)
+            tfd, _ = dirfd.open_new_at(dst_fd, tmp, mode)
         except PermissionError:
             dirfd.make_writable(dst_fd)
-            tfd, _ = dirfd.open_regular_at(dst_fd, tmp, flags, mode)
+            tfd, _ = dirfd.open_new_at(dst_fd, tmp, mode)
         try:
             dirfd.copy_data(sfd, tfd)
             dirfd.copy_metadata(sfd, tfd, src_st)
@@ -304,10 +323,7 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
             os.close(tfd)
         os.replace(tmp, dst_name, src_dir_fd=dst_fd, dst_dir_fd=dst_fd)
     except OSError as exc:
-        try:
-            os.unlink(tmp, dir_fd=dst_fd)
-        except OSError:
-            pass
+        dirfd.unlink_quietly(dst_fd, tmp)
         log_error(f"Cannot write to '{quote_path(dst_name)}': "
                   f"{quote_path(str(exc))}")
         sys.exit(1)
@@ -328,7 +344,7 @@ def _collect_rels(src_fd, rel, ctx):
     """
     try:
         names = dirfd.listdir_at(src_fd)
-    except OSError as exc:
+    except OSError:
         if rel:
             ctx.skipped_rels.add(rel)
         log_error(f"Warning: directory '{ctx.src_shown(rel)}' is not "
@@ -397,9 +413,19 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
         elif stat.S_ISLNK(mode):
             existed = dirfd.exists_at(dst_fd, name)
             op = "Modified" if existed else "New"
-            if _sync_symlink(src_fd, name, dst_fd, name, src_st) and ctx.verbose:
-                log_info(f"({ctx.done + 1}/{ctx.total}) {op} symlink: "
-                         f"{ctx.shown(child)}")
+            try:
+                changed = _sync_symlink(src_fd, name, dst_fd, name, src_st)
+            except OSError as exc:
+                # readlink(2) on something that is no longer a symlink: the
+                # entry was one when it was listed, so a guest is changing
+                # the source underneath us. Skipped with a warning, the way
+                # every other per-entry failure in this loop is.
+                log_error(f"Warning: cannot copy symlink "
+                          f"'{ctx.src_shown(child)}': {quote_path(str(exc))}")
+            else:
+                if changed and ctx.verbose:
+                    log_info(f"({ctx.done + 1}/{ctx.total}) {op} symlink: "
+                             f"{ctx.shown(child)}")
         elif stat.S_ISREG(mode):
             if _needs_update(src_fd, name, src_st, dst_fd, name,
                              ctx.use_checksum):
@@ -538,19 +564,18 @@ def command_sync(args) -> None:
 
 
 def _do_sync(src, dest, verbose, use_checksum, delete):
+    # Both endpoints come back with their own final component resolved —
+    # the container side by the chroot walk, the host side by realpath — so
+    # `sync /sdcard box:/x` transfers the directory `/sdcard` points at and
+    # a destination link is written where it leads, as rsync and cp both do.
+    # Links *within* the tree are preserved either way; only the endpoints
+    # are followed. That the destination is resolved here and not left to
+    # pin_path is what the overlap check below depends on: a host path is not
+    # walked component by component, so pin_path would have followed an
+    # endpoint link without ever being able to refuse one leading back into
+    # the source.
     src_path = resolve_container_path(src)
     dest_path = resolve_container_path(dest)
-
-    # A host source spelled as a symlink is followed, so that `sync /sdcard
-    # box:/x` transfers the directory it points at instead of recreating the
-    # link — `/sdcard` is a symlink on Termux, and this is the ordinary way
-    # to ask for it. The container side already gets that from
-    # resolve_container_path(), which walks every component including the
-    # last; host paths are not walked at all, so the dereference happens
-    # here, exactly as `copy` does it. Symlinks *within* the tree are
-    # preserved either way; only the endpoint is followed.
-    if container_from_spec(src) is None:
-        src_path = os.path.realpath(src_path)
 
     try:
         src_st = os.lstat(src_path)
@@ -602,6 +627,15 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
         except KeyboardInterrupt:
             clear_bar()
             log_error("Aborted by user.")
+            sys.exit(1)
+        except OSError as exc:
+            # The net `copy` has always had. Every call the passes make is
+            # guarded where a warn-and-skip is the right answer; what reaches
+            # here is a race nothing can carry on through, and it used to
+            # leave a traceback in place of a message. The strings carry the
+            # name the call failed on, straight from the tree being walked.
+            clear_bar()
+            log_error(f"Error: {quote_path(str(exc))}")
             sys.exit(1)
 
     clear_bar()

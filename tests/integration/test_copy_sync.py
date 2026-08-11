@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from proot_distro import dirfd
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs
@@ -632,3 +633,155 @@ def test_copy_to_a_sibling_with_a_shared_prefix_is_not_a_fold(tmp_path,
     _copy(str(src), str(tmp_path / "tree2"), recursive=True)
 
     assert (tmp_path / "tree2" / "sub" / "f.txt").read_text() == "x"
+
+
+def test_copy_writes_through_a_symlinked_host_destination(tmp_path, builders):
+    """cp writes what a destination link points at; a host end now does too.
+
+    The container end already did (the chroot walk resolves the last
+    component), so the two disagreed: the same copy succeeded for `box:/link`
+    and died with a bare ELOOP for a host path.
+    """
+    builders.make_container("box")
+    real = tmp_path / "real"
+    real.write_text("OLD")
+    link = tmp_path / "link"
+    os.symlink(str(real), link)
+    payload = tmp_path / "p.txt"
+    payload.write_text("NEW")
+
+    _copy(str(payload), str(link))
+
+    assert os.path.islink(link)
+    assert real.read_text() == "NEW"
+
+
+def test_move_into_a_symlinked_container_directory_keeps_the_link(tmp_path,
+                                                                 builders):
+    """mv moves into the directory a link names and leaves the link alone.
+
+    The test used os.path.isdir() on the unresolved leaf, which asks the
+    *host* whether the guest's link target is a directory. With a target only
+    the container has, the answer was no and the move replaced the link — so
+    an ordinary release symlink became a regular file and its directory was
+    emptied.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.makedirs(os.path.join(rootfs, "opt", "releases", "v1"))
+    os.symlink("/opt/releases/v1", os.path.join(rootfs, "opt", "current"))
+    with open(os.path.join(rootfs, "payload"), "w") as fh:
+        fh.write("P")
+
+    _copy("box:/payload", "box:/opt/current", move=True)
+
+    assert os.readlink(os.path.join(rootfs, "opt", "current")) == \
+        "/opt/releases/v1"
+    assert open(os.path.join(rootfs, "opt", "releases", "v1",
+                             "payload")).read() == "P"
+
+
+def test_move_replaces_a_link_dangling_inside_the_container(tmp_path,
+                                                           builders):
+    """The mirror image: a target the host has and the container does not.
+
+    `/dir -> /tmp` is dangling seen from inside, so mv replaces it — but the
+    host has a /tmp, so isdir() said yes and the move invented <rootfs>/tmp
+    and landed the file in there instead.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.symlink("/tmp", os.path.join(rootfs, "dir"))
+    with open(os.path.join(rootfs, "payload"), "w") as fh:
+        fh.write("P")
+
+    _copy("box:/payload", "box:/dir", move=True)
+
+    assert not os.path.islink(os.path.join(rootfs, "dir"))
+    assert open(os.path.join(rootfs, "dir")).read() == "P"
+    assert not os.path.exists(os.path.join(rootfs, "tmp"))
+
+
+def test_copy_replaces_an_existing_destination_file(tmp_path, builders):
+    """The write goes via a temp file now; the result must not change."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    with open(os.path.join(rootfs, "dest"), "w") as fh:
+        fh.write("OLD CONTENT, LONGER")
+    payload = tmp_path / "p.txt"
+    payload.write_text("NEW")
+    os.chmod(payload, 0o640)
+
+    _copy(str(payload), "box:/dest")
+
+    assert open(os.path.join(rootfs, "dest")).read() == "NEW"
+    assert stat.S_IMODE(os.stat(os.path.join(rootfs, "dest")).st_mode) == 0o640
+    assert not [n for n in os.listdir(rootfs) if n.endswith(dirfd.TMP_SUFFIX)]
+
+
+def test_sync_reports_a_source_that_stops_being_a_symlink(tmp_path, builders,
+                                                          capsys,
+                                                          monkeypatch):
+    """A source-side race is a skipped entry, not a traceback.
+
+    The source lock is shared, so a guest may be running while sync reads.
+    An entry listed as a symlink and swapped for a regular file makes
+    readlink(2) fail with EINVAL, which used to escape command_sync entirely.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "entry").write_text("plain file")
+    (src / "other").write_text("survives")
+
+    real_lstat = dirfd.lstat_at
+
+    class _Lying:
+        """Reports a regular file as a symlink, as a mid-walk swap would."""
+
+        def __init__(self, st):
+            self._st = st
+            self.st_mode = stat.S_IFLNK | 0o777
+
+        def __getattr__(self, name):
+            return getattr(self._st, name)
+
+    def lying_lstat(dir_fd, name):
+        st = real_lstat(dir_fd, name)
+        if name == "entry" and stat.S_ISREG(st.st_mode):
+            return _Lying(st)
+        return st
+
+    monkeypatch.setattr(dirfd, "lstat_at", lying_lstat)
+    _sync(str(src), "box:/dst")
+
+    err = capsys.readouterr().err
+    assert "cannot copy symlink" in err and "entry" in err
+    dst = os.path.join(container_rootfs("box"), "dst")
+    assert sorted(os.listdir(dst)) == ["other"]
+
+
+def test_sync_refuses_to_replace_a_directory_with_a_file(tmp_path, builders,
+                                                         capsys):
+    """rsync refuses this too, and one entry must not abandon the rest.
+
+    The rename over the directory failed with EISDIR and exited, naming the
+    temp file rather than the reason.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "f").write_text("plain")
+    (src / "ok.txt").write_text("fine")
+
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(os.path.join(dst, "f"))
+    with open(os.path.join(dst, "f", "keep"), "w") as fh:
+        fh.write("kept")
+
+    _sync(str(src), "box:/dst")
+
+    assert "cannot replace directory" in capsys.readouterr().err
+    assert open(os.path.join(dst, "f", "keep")).read() == "kept"
+    assert open(os.path.join(dst, "ok.txt")).read() == "fine"

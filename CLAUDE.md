@@ -95,30 +95,35 @@ Top-level utilities (each owns a focused concern):
   acts on the last component itself — `copy --move`, where `rename(2)`
   moves a link rather than its target — and both functions take it, since
   a name appended to a destination directory needs the same treatment as
-  one written in the spec. `refuse_src_dest_overlap()` compares the two
-  *resolved* paths, the earliest point at which a planted link
-  (`backup -> /data`) can no longer hide that the destination sits inside
-  the source, or is it. A host end gets its **parent chain** resolved for
-  that comparison (`_overlap_path`) — only container paths come back from
-  the chroot walk symlink-free, so otherwise a host link folds one end
-  into the other and nothing notices; running `realpath` over a container
-  path instead would re-resolve it with *host* semantics and undo the
-  walk. The final component is left alone, so a legitimate
-  `copy --move link link/inner` still works and a link standing where a
-  directory endpoint belongs is refused further down. The same-file test
-  follows a final link exactly when the operation would, so `copy f link`
-  is refused and `copy --move f link` renames, as cp and mv each do.
+  one written in the spec. A **host** spec is resolved to the same depth
+  by `_host_path()` — `realpath` when `deref_leaf`, its parent chain only
+  when not — so both ends of a transfer name the entry that will really be
+  touched. Host paths get no `O_NOFOLLOW` walk (the host filesystem is not
+  what the chroot walk defends against), so leaving their own final
+  component a name was what let `sync <dir> <link>` with `link -> <dir>/sub`
+  recurse to the interpreter's limit and `sync --delete` through a link to
+  the source's parent prune the source itself. Running `realpath` over a
+  *container* path instead would re-resolve it with host semantics and undo
+  the walk, so `_host_path` is never applied to one.
+  `refuse_src_dest_overlap()` compares the two *resolved* paths, the
+  earliest point at which a planted link (`backup -> /data`) can no longer
+  hide that the destination sits inside the source, or is it; it re-applies
+  `_host_path` itself (idempotent for a caller that already resolved) so the
+  guard stays sound on its own. The same-file test follows a final link
+  exactly when the operation would, so `copy f link` is refused and
+  `copy --move f link` renames, as cp and mv each do.
 - `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
-  `opendir_at`/`reopen`/`open_file_at`/`open_regular_at` (always
-  `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
-  `copy_file_at`/`copy_symlink_at`/`copy_tree_at`, `rmtree_at`, and
-  fd-based metadata (`copy_metadata`, `set_times_at`, `make_writable`).
+  `opendir_at`/`reopen`/`open_file_at`/`open_regular_at`/`open_new_at`
+  (always `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
+  `copy_file_at`/`copy_symlink_at`/`copy_tree_at`,
+  `rmtree_at`/`unlink_quietly`, and fd-based metadata (`copy_metadata`,
+  `set_times_at`, `make_writable`).
   Nothing here takes a path below the root, so no component can be
   re-pointed mid-walk. `REFUSED` / `is_refusal()` cover both errnos a
   refused descent can raise — Linux reports `O_NOFOLLOW|O_DIRECTORY` on a
   symlink as **ENOTDIR**, not ELOOP. Recursion closes each fd as it
   unwinds, so open fds scale with tree *depth*, not size.
-  Two guarantees need more than `O_NOFOLLOW`, because the obvious call
+  Three guarantees need more than `O_NOFOLLOW`, because the obvious call
   looks fd-based but is not. **chmod**: Linux has no `AT_SYMLINK_NOFOLLOW`
   for `fchmodat(2)`, so naming an entry hands the mode change to whatever
   a link planted since the `lstat` points at; every chmod goes through
@@ -129,6 +134,19 @@ Top-level utilities (each owns a focused concern):
   waits for a peer a hostile guest never supplies, so regular-file
   endpoints go through `open_regular_at()` — `O_NONBLOCK` plus an
   `fstat` that refuses every type but a regular file.
+  **Hardlinks**: a hardlink is not a link as far as `openat(2)` is
+  concerned — it *is* the file under a second name, and nothing tells one a
+  guest made to a host file (same filesystem, same uid, no race needed)
+  from an ordinary rootfs entry. Writing through a name can therefore always
+  land outside the container, so every write creates a **new inode**:
+  `open_new_at()` is `O_EXCL` and unlinks a leftover rather than adopting
+  it, and `copy_file_at(replace=True)` writes `<name>.~pd_copy`
+  (`TMP_SUFFIX`) and renames it into place — also making the write atomic,
+  at the cost of a hardlinked destination losing its link. `replace=True`
+  additionally **refuses** a destination that is not a regular file: the
+  resolve already followed any link that stood there, so one there now was
+  planted since. `copy_tree_at` needs no `replace` — every directory it
+  writes into was just made by `mkdir`.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
@@ -240,16 +258,28 @@ preserve a mode on its own (a `1777` source landed as `1755`), and a
 source directory that is not writable itself (`0555`) would otherwise
 reject its own contents mid-copy.
 
-A source given as a symlink is dereferenced so `cp`/rsync semantics hold
-— `copy -r /sdcard box:/x` and `sync /sdcard box:/x` are both ordinary on
-Termux, where `/sdcard` *is* a link. A host spec gets that from
-`os.path.realpath` in the command, the container side from
-`resolve_container_path()` walking its final component; links *within*
-the tree are still recreated as links, only the endpoint is followed.
-`copy --move` is exempt on both sides — `rename(2)` moves a link rather
-than its target and replaces one at the destination rather than writing
-through it, so both specs resolve with `deref_leaf=False` and the `EXDEV`
-fallback recreates the link verbatim.
+An **endpoint** given as a symlink is dereferenced, on either side, so
+`cp`/rsync semantics hold — `copy -r /sdcard box:/x` and `sync /sdcard
+box:/x` are both ordinary on Termux, where `/sdcard` *is* a link, and a
+destination link is written where it leads. Both sides get that from
+`resolve_container_path()`/`resolve_container_child()`: the container side
+from the chroot walk covering the final component, the host side from
+`_host_path`'s `realpath`. Links *within* the tree are still recreated as
+links, only the endpoints are followed. `copy --move` is exempt on both
+sides — `rename(2)` moves a link rather than its target and replaces one
+at the destination rather than writing through it, so both specs resolve
+with `deref_leaf=False` and the `EXDEV` fallback recreates the link
+verbatim (unlinking the destination name first, which is what `rename(2)`
+did for it on the fast path).
+
+Because move mode leaves that final component a name, nothing may ask
+`os.path.isdir()` about it: on a container spec that resolves the guest's
+link against the **host** tree. `copy` asks a separately resolved
+`dest_target` instead, so `--move` moves *into* the directory a container
+link names and leaves the link (as mv does) rather than inventing
+`<rootfs>/tmp` for `/dir -> /tmp` or flattening
+`current -> /opt/app/releases/v1` into a file. `src_is_dir` comes from the
+`lstat` for the same reason.
 
 Both commands refuse a destination that **is** the source (it would be
 truncated while still being read) or sits **inside** it (a directory
@@ -264,11 +294,21 @@ deleted it (`sync --delete box:/a/b box:/a` removed `box:/a/b`).
 and the readability probe is skipped for a link, whose target is never
 read.
 
-One guard remains specific to `sync`, which writes into a pre-existing
-tree: `_sync_dir` **unlinks** whatever non-directory the destination
-holds where the source has a real directory (rsync's behaviour) rather
-than descending through it — a symlink there may lead out of the
-container, and the whole subtree would follow it.
+Two guards remain specific to `sync`, which writes into a pre-existing
+tree. `_sync_dir` **unlinks** whatever non-directory the destination holds
+where the source has a real directory (rsync's behaviour) rather than
+descending through it — a symlink there may lead out of the container, and
+the whole subtree would follow it. In the other direction `_sync_file`
+**refuses** a directory standing where the source has a regular file, as
+rsync does without `--force`; per-entry and non-fatal, since one entry in
+the way must not abandon the transfer (it used to surface as `EISDIR` on a
+temp file and exit).
+
+`sync` ends its transfer in `except OSError`, the net `copy` has always
+had: every call the three passes make is guarded where warn-and-skip is
+right (including `_sync_symlink`'s `readlink`, which a source-side swap
+turns into `EINVAL`), and what reaches the top is a race that used to
+leave a traceback in place of a message.
 
 Two deliberate behaviour changes came with the rewrite: `copy -r` now
 **skips** a device/FIFO/socket with a warning instead of aborting the
