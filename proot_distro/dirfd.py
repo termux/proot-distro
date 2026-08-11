@@ -79,12 +79,39 @@ REFUSED = frozenset((errno.ELOOP, errno.ENOTDIR))
 # left it behind.
 TMP_SUFFIX = ".~pd_copy"
 
+# Longest single path component Linux accepts, in bytes.
+NAME_MAX = 255
+
 _BUFSIZE = 256 * 1024
 
 
 def is_refusal(exc: OSError) -> bool:
     """True when *exc* is openat() refusing to follow a symlink."""
     return exc.errno in REFUSED
+
+
+def temp_name(name: str, suffix: str) -> str:
+    """*name* with *suffix* appended, trimmed to fit in one component.
+
+    A name is already at the filesystem's limit as often as not — 255
+    bytes is a lot of characters but not an unreachable number for a
+    cache key, a mangled build artefact or an encrypted filename — and
+    appending nine more bytes to one turns the write into ENAMETOOLONG.
+    Trimming the stem instead keeps a temp file that fits next to any
+    entry the source can hold, whatever its name.
+
+    The trim is done on the encoded bytes, since NAME_MAX counts those,
+    and a multi-byte character cut in half comes back through
+    os.fsdecode() as surrogates that re-encode to exactly the bytes it
+    was cut to. Uniqueness costs nothing here: entries are written one
+    at a time, and the temp file is renamed into place before the next
+    one is opened.
+    """
+    room = NAME_MAX - len(os.fsencode(suffix))
+    encoded = os.fsencode(name)
+    if len(encoded) <= room:
+        return name + suffix
+    return os.fsdecode(encoded[:room]) + suffix
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +380,7 @@ def copy_file_at(src_dir_fd: int, src_name: str,
                 raise OSError(errno.EEXIST,
                               "destination exists and is not a regular file",
                               dst_name)
-        name = dst_name + TMP_SUFFIX if replace else dst_name
+        name = temp_name(dst_name, TMP_SUFFIX) if replace else dst_name
         try:
             dfd, _ = open_new_at(dst_dir_fd, name,
                                  stat.S_IMODE(src_st.st_mode))
@@ -382,6 +409,28 @@ def copy_symlink_at(src_dir_fd: int, src_name: str,
         set_times_at(dst_dir_fd, dst_name, src_st)
 
 
+def close_frames(stack) -> None:
+    """Close the fds an interrupted walk still holds, ignoring failures.
+
+    Every walk that carries directories on an explicit stack — here and in
+    `sync` — lays its frames out the same way: the first two slots are the
+    level's descriptors (the second None for a walk that needs only one),
+    and the last is an `owned` flag, True for a level the walk opened for
+    itself and False for the caller's fds, which stay open. A frame is
+    pushed before its second descriptor is filled in, so that slot may
+    still be None when an error lands between the two opens.
+    """
+    for frame in stack:
+        if not frame[-1]:
+            continue
+        for fd in (frame[1], frame[0]):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
 def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                  on_entry=None, on_skip=None) -> None:
     """Recursively copy the contents of one directory into another.
@@ -393,42 +442,71 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
     same choice `backup` and `sync` already make.
 
     on_entry(rel_path) is called for each file and symlink written.
-    """
-    for name in listdir_at(src_dir_fd):
-        src_st = lstat_at(src_dir_fd, name)
-        mode = src_st.st_mode
-        child = f"{rel}/{name}" if rel else name
 
-        if stat.S_ISLNK(mode):
-            copy_symlink_at(src_dir_fd, name, dst_dir_fd, name, src_st)
-            if on_entry:
-                on_entry(child)
-        elif stat.S_ISDIR(mode):
-            # Created writable, sealed afterwards. mkdir's mode is masked
-            # by the umask, so it cannot preserve the source mode on its
-            # own, and a source directory that is not writable itself
-            # (0555 and friends) would reject its own contents. copytree
-            # had the same two-step shape: makedirs() then copystat().
-            os.mkdir(name, 0o700, dir_fd=dst_dir_fd)
-            sub_src = opendir_at(src_dir_fd, name)
-            try:
-                sub_dst = opendir_at(dst_dir_fd, name)
-                try:
-                    copy_tree_at(sub_src, sub_dst, rel=child,
-                                 on_entry=on_entry, on_skip=on_skip)
-                    # After the contents: writing them bumps the mtime,
-                    # and the mode must not be applied any earlier.
-                    copy_metadata(sub_src, sub_dst, src_st)
-                finally:
-                    os.close(sub_dst)
-            finally:
-                os.close(sub_src)
-        elif stat.S_ISREG(mode):
-            copy_file_at(src_dir_fd, name, dst_dir_fd, name, src_st)
-            if on_entry:
-                on_entry(child)
-        elif on_skip:
-            on_skip(child)
+    The descent is an explicit stack rather than recursion. How deep a
+    tree goes is the guest's to decide, and a thousand nested directories
+    — which a container can create in a second — used to exhaust the
+    interpreter's own stack and end the command in a traceback, since
+    RecursionError is not an OSError and no caller's net caught it. One
+    frame per level holds that level's two fds and the entries it has
+    left, so the fds open at any moment are still the depth of the tree.
+    """
+    # Frame layout: [src_fd, dst_fd, rel, pending names, src_st, owned].
+    # src_st is the source directory's lstat, applied to the destination
+    # once that level's contents are in; the caller's frame carries None
+    # for it and owns its own fds (see close_frames).
+    stack = [[src_dir_fd, dst_dir_fd, rel, None, None, False]]
+    try:
+        while stack:
+            frame = stack[-1]
+            src_fd, dst_fd, cur, pending, dir_st, owned = frame
+            if pending is None:
+                pending = frame[3] = listdir_at(src_fd)
+                pending.reverse()       # pop() from the end, in name order
+            if not pending:
+                stack.pop()
+                if owned:
+                    try:
+                        # After the contents: writing them bumps the
+                        # mtime, and the mode must not be applied any
+                        # earlier — a source directory that is not
+                        # writable itself (0555 and friends) would
+                        # reject its own contents. copytree had the same
+                        # two-step shape: makedirs() then copystat().
+                        copy_metadata(src_fd, dst_fd, dir_st)
+                    finally:
+                        os.close(dst_fd)
+                        os.close(src_fd)
+                continue
+
+            name = pending.pop()
+            src_st = lstat_at(src_fd, name)
+            mode = src_st.st_mode
+            child = f"{cur}/{name}" if cur else name
+
+            if stat.S_ISLNK(mode):
+                copy_symlink_at(src_fd, name, dst_fd, name, src_st)
+                if on_entry:
+                    on_entry(child)
+            elif stat.S_ISDIR(mode):
+                # Created writable, sealed on the way back up: mkdir's
+                # mode is masked by the umask and so cannot preserve the
+                # source mode on its own.
+                os.mkdir(name, 0o700, dir_fd=dst_fd)
+                sub_src = opendir_at(src_fd, name)
+                # Pushed before the second open, so a failure there
+                # leaves the first fd on the stack for close_frames.
+                stack.append([sub_src, None, child, None, src_st, True])
+                stack[-1][1] = opendir_at(dst_fd, name)
+            elif stat.S_ISREG(mode):
+                copy_file_at(src_fd, name, dst_fd, name, src_st)
+                if on_entry:
+                    on_entry(child)
+            elif on_skip:
+                on_skip(child)
+    except BaseException:
+        close_frames(stack)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -451,12 +529,30 @@ def _unlink_at(dir_fd: int, name: str, is_dir: bool, force: bool) -> None:
             os.unlink(name, dir_fd=dir_fd)
 
 
+def _opendir_for_removal(dir_fd: int, name: str, st, force: bool) -> int:
+    """Open the directory *name* under dir_fd so its contents can go."""
+    try:
+        return opendir_at(dir_fd, name)
+    except PermissionError:
+        if not force:
+            raise
+        # Cannot descend: make the entry itself readable from here. Through
+        # a descriptor, not through its name — see _make_readable_at.
+        _make_readable_at(dir_fd, name,
+                          stat.S_IMODE(st.st_mode) | stat.S_IRWXU)
+        return opendir_at(dir_fd, name)
+
+
 def rmtree_at(dir_fd: int, name: str, *, force: bool = False) -> None:
-    """Remove *name* under dir_fd, recursing without following symlinks.
+    """Remove *name* under dir_fd, descending without following symlinks.
 
     A symlink is unlinked, never traversed, so this cannot reach outside
     the tree it was pointed at. With force=True an unwritable directory
     is chmod'ed and retried, which is what `sync --delete` needs.
+
+    The descent is an explicit stack for the reason copy_tree_at's is: the
+    tree is guest content, and one deeper than the interpreter's recursion
+    limit used to end `sync --delete` in a traceback rather than a message.
     """
     try:
         st = lstat_at(dir_fd, name)
@@ -467,21 +563,34 @@ def rmtree_at(dir_fd: int, name: str, *, force: bool = False) -> None:
         _unlink_at(dir_fd, name, False, force)
         return
 
+    # Frame layout: [fd, None, parent fd, own name, pending names, owned].
+    # Every frame here opened its own fd; the parent fd and name are what
+    # the level is removed by once it has been emptied.
+    stack = [[_opendir_for_removal(dir_fd, name, st, force), None,
+              dir_fd, name, None, True]]
     try:
-        fd = opendir_at(dir_fd, name)
-    except PermissionError:
-        if not force:
-            raise
-        # Cannot descend: make the entry itself readable from here. Through
-        # a descriptor, not through its name — see _make_readable_at.
-        _make_readable_at(dir_fd, name,
-                          stat.S_IMODE(st.st_mode) | stat.S_IRWXU)
-        fd = opendir_at(dir_fd, name)
+        while stack:
+            frame = stack[-1]
+            fd, _, parent_fd, entry, pending, _ = frame
+            if pending is None:
+                pending = frame[4] = listdir_at(fd)
+                pending.reverse()
+            if not pending:
+                stack.pop()
+                os.close(fd)
+                _unlink_at(parent_fd, entry, True, force)
+                continue
 
-    try:
-        for child in listdir_at(fd):
-            rmtree_at(fd, child, force=force)
-    finally:
-        os.close(fd)
-
-    _unlink_at(dir_fd, name, True, force)
+            child = pending.pop()
+            try:
+                child_st = lstat_at(fd, child)
+            except FileNotFoundError:
+                continue            # went away on its own; nothing to do
+            if not stat.S_ISDIR(child_st.st_mode):
+                _unlink_at(fd, child, False, force)
+                continue
+            sub = _opendir_for_removal(fd, child, child_st, force)
+            stack.append([sub, None, fd, child, None, True])
+    except BaseException:
+        close_frames(stack)
+        raise

@@ -428,8 +428,8 @@ def test_sync_swap_below_root_does_not_escape(
     real_sync_dir = sync_mod._sync_dir
     fired = []
 
-    def racing(dst_fd, name, src_st):
-        created = real_sync_dir(dst_fd, name, src_st)
+    def racing(dst_fd, name):
+        created = real_sync_dir(dst_fd, name)
         target = os.path.join(dest, "sub")
         if not fired and name == "sub" and os.path.isdir(target):
             fired.append(True)

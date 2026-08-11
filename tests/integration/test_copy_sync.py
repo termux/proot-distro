@@ -785,3 +785,178 @@ def test_sync_refuses_to_replace_a_directory_with_a_file(tmp_path, builders,
     assert "cannot replace directory" in capsys.readouterr().err
     assert open(os.path.join(dst, "f", "keep")).read() == "kept"
     assert open(os.path.join(dst, "ok.txt")).read() == "fine"
+
+
+def test_sync_delete_leaves_a_directory_it_could_not_replace(tmp_path,
+                                                             builders):
+    """A skipped entry must take its destination out of --delete's reach.
+
+    The name is in the source, so the prune pass counted the directory
+    standing in its place as "present" and walked into it — and nothing
+    inside had a counterpart in a source that holds a plain file there, so
+    every one of its children was deleted. The directory the mirror pass
+    deliberately refused to touch came out empty.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "f").write_text("plain")
+
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(os.path.join(dst, "f"))
+    with open(os.path.join(dst, "f", "keep"), "w") as fh:
+        fh.write("kept")
+
+    _sync(str(src), "box:/dst", delete=True)
+
+    assert open(os.path.join(dst, "f", "keep")).read() == "kept"
+
+
+def test_sync_delete_leaves_the_destination_of_a_source_special_file(
+    tmp_path, builders
+):
+    """A FIFO is never mirrored, so its destination is not ours to prune."""
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    os.mkfifo(str(src / "pipe"))
+
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(os.path.join(dst, "pipe"))
+    with open(os.path.join(dst, "pipe", "keep"), "w") as fh:
+        fh.write("kept")
+
+    _sync(str(src), "box:/dst", delete=True)
+
+    assert open(os.path.join(dst, "pipe", "keep")).read() == "kept"
+
+
+def test_sync_handles_a_name_too_long_for_the_temp_suffix(tmp_path, builders):
+    """`.~pd_sync` must not push a legal name past NAME_MAX.
+
+    The temp file inherited the entry's name plus nine bytes, so an entry
+    already near the 255-byte limit failed with ENAMETOOLONG — and that
+    failure ended the command, so every later entry went untransferred too.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    long_name = "n" * 250
+    (src / long_name).write_text("data")
+    (src / "zzz.txt").write_text("after")
+
+    _sync(str(src), "box:/dst")
+
+    dst = os.path.join(container_rootfs("box"), "dst")
+    assert open(os.path.join(dst, long_name)).read() == "data"
+    assert open(os.path.join(dst, "zzz.txt")).read() == "after"
+
+
+def test_copy_handles_a_name_too_long_for_the_temp_suffix(tmp_path, builders):
+    """`.~pd_copy` had the same nine bytes to spare, and the same problem."""
+    builders.make_container("box")
+    long_name = "m" * 250
+    src = tmp_path / long_name
+    src.write_text("data")
+
+    _copy(str(src), "box:/" + long_name)
+
+    assert open(os.path.join(container_rootfs("box"), long_name)).read() == \
+        "data"
+
+
+def test_sync_steps_over_an_entry_it_cannot_write(tmp_path, builders, capsys):
+    """One unwritable entry must not abandon the rest of the transfer.
+
+    A container can arrange this at will: a *directory* under the temp
+    name is not a leftover to be unlinked, it is EISDIR, and the write
+    used to end the command on the spot. It is now reported, counted and
+    stepped over — and the exit status still says the transfer was
+    incomplete, as it did when the first such entry was fatal.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("a")
+    (src / "b.txt").write_text("b")
+
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(dst)
+    os.mkdir(os.path.join(dst, "a.txt" + dirfd.TMP_SUFFIX.replace("copy",
+                                                                  "sync")))
+
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), "box:/dst")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot write to" in err.lower()
+    # The entry after the one in the way was still transferred.
+    assert open(os.path.join(dst, "b.txt")).read() == "b"
+
+
+def test_sync_leaves_the_old_content_when_a_write_is_blocked(tmp_path,
+                                                             builders):
+    """A blocked write must not take the destination down with it.
+
+    The content goes to a temp file and is renamed into place, so a write
+    that never gets that far leaves what was already there — and the rest
+    of the tree is still transferred around it.
+    """
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("brand new content")
+    (src / "b.txt").write_text("b")
+
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(dst)
+    with open(os.path.join(dst, "a.txt"), "w") as fh:
+        fh.write("old")
+    os.mkdir(os.path.join(dst, "a.txt.~pd_sync"))
+
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(src), "box:/dst", delete=True)
+
+    assert exc.value.code == 1
+    assert open(os.path.join(dst, "a.txt")).read() == "old"
+    assert open(os.path.join(dst, "b.txt")).read() == "b"
+
+
+def test_copy_recursive_into_an_existing_directory_lands_inside_it(tmp_path,
+                                                                   builders):
+    """`cp -r src destdir` puts src *in* destdir; so does `--move`.
+
+    Only a file destination was appended to, so a recursive directory copy
+    onto a directory that already existed died on the mkdir's EEXIST.
+    """
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "b.txt").write_text("b")
+
+    rootfs = container_rootfs("box")
+    os.makedirs(os.path.join(rootfs, "dst"))
+
+    _copy(str(src), "box:/dst", recursive=True)
+
+    assert open(os.path.join(rootfs, "dst", "tree", "sub",
+                             "b.txt")).read() == "b"
+
+
+def test_copy_recursive_to_a_new_destination_still_becomes_it(tmp_path,
+                                                              builders):
+    """A destination that does not exist is created *as* the source."""
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "a.txt").write_text("a")
+
+    _copy(str(src), "box:/dst", recursive=True)
+
+    assert open(os.path.join(container_rootfs("box"), "dst",
+                             "a.txt")).read() == "a"

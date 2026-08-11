@@ -81,7 +81,16 @@ class _Ctx:
         self.total = 1
         self.done = 0
         self.src_rels = set()
+        # Relative paths the mirror pass did not write. Two things follow
+        # from an entry being in here: --delete leaves the matching
+        # destination alone (it has no counterpart to compare against, and
+        # pruning it would delete data on the strength of a transfer that
+        # never happened), and the command reports the transfer incomplete.
         self.skipped_rels = set()
+        # Entries that failed on the writing side. Counted rather than
+        # fatal — one entry must not abandon the rest of the tree — but
+        # the command still exits non-zero, as it did when they were.
+        self.failures = 0
 
     # Both of these are for messages only, and *rel* comes from the tree
     # being walked, so both quote it: a name inside a container rootfs is
@@ -178,7 +187,7 @@ def _unlink_robust(dst_fd, name, is_dir=False):
         sys.exit(1)
 
 
-def _sync_dir(dst_fd, name, src_st):
+def _sync_dir(dst_fd, name):
     """Ensure *name* exists under dst_fd as a directory.
 
     Returns True when the directory was newly created.
@@ -273,8 +282,12 @@ def _sync_symlink(src_fd, src_name, dst_fd, dst_name, src_st=None):
     return True
 
 
-def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
+def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx):
     """Copy a regular file, preserving mode and mtime.
+
+    Returns True when the destination now matches the source, False when
+    the entry was left as it was — which is what tells --delete to keep
+    its hands off the destination.
 
     Writes a sibling temp file and renames it into place, so a partial
     write never leaves the destination corrupt and an existing symlink at
@@ -282,18 +295,23 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
     file is created O_EXCL (dirfd.open_new_at), so a name already standing
     there is removed rather than written into — it may be a hardlink to a
     file outside the container, which nothing about the entry would show.
+
+    Every failure here is per-entry: reported, counted, and stepped over.
+    A failed write used to end the whole command, so one unwritable file
+    left every later entry untransferred — and a container could arrange
+    one at will, since a *directory* standing under the temp name is not
+    a leftover to be unlinked but an EISDIR.
     """
-    tmp = dst_name + _TMP_SUFFIX
+    tmp = dirfd.temp_name(dst_name, _TMP_SUFFIX)
     mode = stat.S_IMODE(src_st.st_mode)
 
     # A directory standing where the source has a regular file. rsync refuses
     # this too (it takes --force to clear one out of the way), and renaming
-    # the temp file over it could not work regardless. Reported and skipped
-    # rather than fatal, so one entry in the way does not abandon the rest of
-    # the transfer, and named for what it is instead of surfacing as EISDIR
-    # on a temp file the user never asked about. _sync_dir does remove a
-    # *non*-directory in the other direction — a symlink there can lead out
-    # of the container, and a directory cannot.
+    # the temp file over it could not work regardless. Reported and skipped,
+    # and named for what it is instead of surfacing as EISDIR on a temp file
+    # the user never asked about. _sync_dir does remove a *non*-directory in
+    # the other direction — a symlink there can lead out of the container,
+    # and a directory cannot.
     try:
         dst_st = dirfd.lstat_at(dst_fd, dst_name)
     except OSError:
@@ -301,14 +319,14 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
     if dst_st is not None and stat.S_ISDIR(dst_st.st_mode):
         log_error(f"Warning: cannot replace directory "
                   f"'{quote_path(dst_name)}' with a file, skipping.")
-        return
+        return False
 
     try:
         sfd, _ = dirfd.open_regular_at(src_fd, src_name, os.O_RDONLY)
     except OSError as exc:
         log_error(f"Warning: cannot read '{quote_path(src_name)}': "
                   f"{quote_path(str(exc))}")
-        return
+        return False
 
     try:
         try:
@@ -324,24 +342,21 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
         os.replace(tmp, dst_name, src_dir_fd=dst_fd, dst_dir_fd=dst_fd)
     except OSError as exc:
         dirfd.unlink_quietly(dst_fd, tmp)
-        log_error(f"Cannot write to '{quote_path(dst_name)}': "
+        log_error(f"Warning: cannot write to '{quote_path(dst_name)}': "
                   f"{quote_path(str(exc))}")
-        sys.exit(1)
+        ctx.failures += 1
+        return False
     finally:
         os.close(sfd)
+    return True
 
 
 # ---------------------------------------------------------------------------
 # Pass 1 — count entries and record the source's relative paths
 # ---------------------------------------------------------------------------
 
-def _collect_rels(src_fd, rel, ctx):
-    """Record every entry under src_fd into ctx.src_rels.
-
-    Directories that cannot be opened are warned about once, here, and
-    added to ctx.skipped_rels so neither the mirror nor --delete touches
-    the matching destination subtree.
-    """
+def _record_level(src_fd, rel, ctx):
+    """Add one level's entries to ctx.src_rels; return its subdirectories."""
     try:
         names = dirfd.listdir_at(src_fd)
     except OSError:
@@ -349,7 +364,7 @@ def _collect_rels(src_fd, rel, ctx):
             ctx.skipped_rels.add(rel)
         log_error(f"Warning: directory '{ctx.src_shown(rel)}' is not "
                   f"readable, skipping.")
-        return
+        return []
 
     subdirs = []
     for name in names:
@@ -361,32 +376,71 @@ def _collect_rels(src_fd, rel, ctx):
             continue
         if stat.S_ISDIR(st.st_mode):
             subdirs.append(name)
+    return subdirs
 
-    for name in subdirs:
-        try:
-            sub = dirfd.opendir_at(src_fd, name)
-        except OSError:
-            child = _rel(rel, name)
-            ctx.skipped_rels.add(child)
-            log_error(f"Warning: directory '{ctx.src_shown(child)}' is not "
-                      f"readable, skipping.")
-            continue
-        try:
-            _collect_rels(sub, _rel(rel, name), ctx)
-        finally:
-            os.close(sub)
+
+def _collect_rels(src_fd, rel, ctx):
+    """Record every entry under src_fd into ctx.src_rels.
+
+    Directories that cannot be opened are warned about once, here, and
+    added to ctx.skipped_rels so neither the mirror nor --delete touches
+    the matching destination subtree.
+
+    Walked with an explicit stack, as all three passes are: how deep the
+    tree goes is not this command's decision, and recursing turned one
+    deeper than the interpreter's limit into a traceback (see
+    dirfd.copy_tree_at, where the same change is spelled out).
+    """
+    # Frame layout: [fd, None, rel, pending subdirectory names, owned] —
+    # the shape dirfd.close_frames expects.
+    stack = [[src_fd, None, rel, None, False]]
+    try:
+        while stack:
+            frame = stack[-1]
+            fd, _, cur, pending, owned = frame
+            if pending is None:
+                pending = frame[3] = _record_level(fd, cur, ctx)
+                pending.reverse()       # pop() from the end, in name order
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
+
+            name = pending.pop()
+            child = _rel(cur, name)
+            try:
+                sub = dirfd.opendir_at(fd, name)
+            except OSError:
+                ctx.skipped_rels.add(child)
+                log_error(f"Warning: directory '{ctx.src_shown(child)}' is "
+                          f"not readable, skipping.")
+                continue
+            stack.append([sub, None, child, None, True])
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
 
 
 # ---------------------------------------------------------------------------
 # Pass 2 — mirror the source onto the destination
 # ---------------------------------------------------------------------------
 
-def _mirror_at(src_fd, dst_fd, rel, ctx):
-    """Mirror the directory open at src_fd into the one at dst_fd."""
+def _mirror_entries(src_fd, dst_fd, rel, ctx):
+    """Write one level's non-directory entries; return its subdirectories.
+
+    An entry this cannot write is added to ctx.skipped_rels, which keeps
+    --delete off the destination that stands in its place. Without that,
+    a source entry the mirror stepped over still counted as "present in
+    the source", so the prune pass walked into whatever the destination
+    held under that name and emptied it: a source file that could not
+    replace a destination *directory* took the directory's whole contents
+    with it, and so did a source FIFO, which is never mirrored at all.
+    """
     try:
         names = dirfd.listdir_at(src_fd)
     except OSError:
-        return  # already reported by _collect_rels
+        return []  # already reported by _collect_rels
 
     subdirs = []
     for name in names:
@@ -396,6 +450,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
         except OSError as exc:
             log_error(f"Warning: cannot stat "
                       f"'{ctx.src_shown(child)}': {quote_path(str(exc))}")
+            ctx.skipped_rels.add(child)
             ctx.done += 1
             ctx.progress()
             continue
@@ -403,9 +458,11 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
         mode = src_st.st_mode
 
         if _is_special(mode):
-            pass
+            # Never mirrored, so the destination under this name is not
+            # this transfer's to judge.
+            ctx.skipped_rels.add(child)
         elif stat.S_ISDIR(mode):
-            created = _sync_dir(dst_fd, name, src_st)
+            created = _sync_dir(dst_fd, name)
             subdirs.append(name)
             if ctx.verbose and created:
                 log_info(f"({ctx.done + 1}/{ctx.total}) New directory: "
@@ -422,6 +479,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                 # every other per-entry failure in this loop is.
                 log_error(f"Warning: cannot copy symlink "
                           f"'{ctx.src_shown(child)}': {quote_path(str(exc))}")
+                ctx.skipped_rels.add(child)
             else:
                 if changed and ctx.verbose:
                     log_info(f"({ctx.done + 1}/{ctx.total}) {op} symlink: "
@@ -430,31 +488,67 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
             if _needs_update(src_fd, name, src_st, dst_fd, name,
                              ctx.use_checksum):
                 op = "Modified" if dirfd.exists_at(dst_fd, name) else "New"
-                _sync_file(src_fd, name, src_st, dst_fd, name)
-                if ctx.verbose:
+                if not _sync_file(src_fd, name, src_st, dst_fd, name, ctx):
+                    ctx.skipped_rels.add(child)
+                elif ctx.verbose:
                     log_info(f"({ctx.done + 1}/{ctx.total}) {op} file: "
                              f"{ctx.shown(child)}")
 
         ctx.done += 1
         ctx.progress()
 
-    for name in subdirs:
-        child = _rel(rel, name)
-        try:
-            sub_src = dirfd.opendir_at(src_fd, name)
-        except OSError as exc:
-            # A refusal here means the entry turned into a symlink since
-            # it was listed; anything else was already reported by
-            # _collect_rels.
-            if dirfd.is_refusal(exc):
-                log_error(f"Warning: source '{ctx.src_shown(child)}' "
-                          f"changed to a symlink during the transfer, "
-                          f"skipping.")
-            continue
-        try:
+    return subdirs
+
+
+def _mirror_at(src_fd, dst_fd, rel, ctx):
+    """Mirror the directory open at src_fd into the one at dst_fd."""
+    # Frame layout: [src_fd, dst_fd, rel, pending subdirectories, owned] —
+    # the shape dirfd.close_frames expects. Explicit rather than recursive
+    # for the reason given in dirfd.copy_tree_at.
+    stack = [[src_fd, dst_fd, rel, None, False]]
+    try:
+        while stack:
+            frame = stack[-1]
+            sfd, dfd, cur, pending, owned = frame
+            if pending is None:
+                pending = frame[3] = _mirror_entries(sfd, dfd, cur, ctx)
+                pending.reverse()       # pop() from the end, in name order
+            if not pending:
+                stack.pop()
+                if owned:
+                    try:
+                        # Only on the way back up: writing the contents
+                        # bumps the mtime, and a source directory that is
+                        # not writable itself must stay writable until
+                        # they are all in.
+                        _apply_dir_mode(sfd, dfd)
+                    finally:
+                        os.close(dfd)
+                        os.close(sfd)
+                continue
+
+            name = pending.pop()
+            child = _rel(cur, name)
             try:
-                sub_dst = dirfd.opendir_at(dst_fd, name)
+                sub_src = dirfd.opendir_at(sfd, name)
             except OSError as exc:
+                # A refusal here means the entry turned into a symlink since
+                # it was listed; anything else was already reported by
+                # _collect_rels.
+                if dirfd.is_refusal(exc):
+                    log_error(f"Warning: source '{ctx.src_shown(child)}' "
+                              f"changed to a symlink during the transfer, "
+                              f"skipping.")
+                ctx.skipped_rels.add(child)
+                continue
+            # Pushed before the destination is opened, so a failure there
+            # leaves the source fd on the stack for close_frames.
+            stack.append([sub_src, None, child, None, True])
+            try:
+                stack[-1][1] = dirfd.opendir_at(dfd, name)
+            except OSError as exc:
+                stack.pop()
+                os.close(sub_src)
                 if dirfd.is_refusal(exc):
                     log_error(f"Warning: '{ctx.shown(child)}' changed to a "
                               f"symlink during the transfer, skipping.")
@@ -462,87 +556,119 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                     log_error(f"Warning: cannot descend into "
                               f"'{ctx.shown(child)}': "
                               f"{quote_path(str(exc))}")
-                continue
-            try:
-                _mirror_at(sub_src, sub_dst, child, ctx)
-                _apply_dir_mode(sub_src, sub_dst)
-            finally:
-                os.close(sub_dst)
-        finally:
-            os.close(sub_src)
+                ctx.skipped_rels.add(child)
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
 
 
 # ---------------------------------------------------------------------------
 # Pass 3 — --delete
 # ---------------------------------------------------------------------------
 
+def _listing_at(dst_fd):
+    """One level's entry names, reversed so pop() takes them in order.
+
+    A level that cannot be read yields nothing: both prune passes step
+    over what they cannot see rather than guessing at it.
+    """
+    try:
+        names = dirfd.listdir_at(dst_fd)
+    except OSError:
+        return []
+    names.reverse()
+    return names
+
+
 def _collect_extras_at(dst_fd, rel, ctx, extras):
     """Collect destination entries that have no counterpart in the source.
 
     Extra directories are captured whole and not descended into; a
     symlink is captured as a plain entry so it is unlinked rather than
-    walked. Subtrees whose source was unreadable are left alone.
+    walked. Subtrees the mirror pass could not write are left alone
+    (ctx.skipped_rels).
+
+    The st_mode comes from lstat, so S_ISDIR is already false for a
+    symlink; nothing here can be talked into walking one.
     """
+    # Frame layout: [fd, None, rel, pending names, owned].
+    stack = [[dst_fd, None, rel, None, False]]
     try:
-        names = dirfd.listdir_at(dst_fd)
-    except OSError:
-        return
+        while stack:
+            frame = stack[-1]
+            fd, _, cur, pending, owned = frame
+            if pending is None:
+                pending = frame[3] = _listing_at(fd)
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
 
-    for name in names:
-        child = _rel(rel, name)
-        if child in ctx.skipped_rels:
-            continue
-        try:
-            st = dirfd.lstat_at(dst_fd, name)
-        except OSError:
-            continue
-        is_link = stat.S_ISLNK(st.st_mode)
-        is_dir = stat.S_ISDIR(st.st_mode)
-
-        if child not in ctx.src_rels:
-            extras.append((child, is_dir and not is_link))
-        elif is_dir and not is_link:
-            try:
-                sub = dirfd.opendir_at(dst_fd, name)
-            except OSError:
+            name = pending.pop()
+            child = _rel(cur, name)
+            if child in ctx.skipped_rels:
                 continue
             try:
-                _collect_extras_at(sub, child, ctx, extras)
-            finally:
-                os.close(sub)
+                st = dirfd.lstat_at(fd, name)
+            except OSError:
+                continue
+            is_dir = stat.S_ISDIR(st.st_mode)
+
+            if child not in ctx.src_rels:
+                extras.append((child, is_dir))
+            elif is_dir:
+                try:
+                    sub = dirfd.opendir_at(fd, name)
+                except OSError:
+                    continue
+                stack.append([sub, None, child, None, True])
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
 
 
 def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
     """Delete the entries named in *targets*, walking by fd."""
+    # Frame layout: [fd, None, rel, pending names, owned].
+    stack = [[dst_fd, None, rel, None, False]]
     try:
-        names = dirfd.listdir_at(dst_fd)
-    except OSError:
-        return
+        while stack:
+            frame = stack[-1]
+            fd, _, cur, pending, owned = frame
+            if pending is None:
+                pending = frame[3] = _listing_at(fd)
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
 
-    for name in names:
-        child = _rel(rel, name)
-        if child in targets:
-            counter[0] += 1
-            if ctx.verbose:
-                log_info(f"({counter[0]}/{counter[1]}) Delete: "
-                         f"{quote_path(os.path.join(ctx.dest_root, child))}")
-            _unlink_robust(dst_fd, name, targets[child])
-            continue
-        if child in ctx.skipped_rels:
-            continue
-        try:
-            st = dirfd.lstat_at(dst_fd, name)
-        except OSError:
-            continue
-        if stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode):
-            try:
-                sub = dirfd.opendir_at(dst_fd, name)
-            except OSError:
+            name = pending.pop()
+            child = _rel(cur, name)
+            if child in targets:
+                counter[0] += 1
+                if ctx.verbose:
+                    shown = quote_path(
+                        os.path.join(ctx.dest_root, child))
+                    log_info(f"({counter[0]}/{counter[1]}) Delete: {shown}")
+                _unlink_robust(fd, name, targets[child])
+                continue
+            if child in ctx.skipped_rels:
                 continue
             try:
-                _remove_extras_at(sub, child, targets, ctx, counter)
-            finally:
-                os.close(sub)
+                st = dirfd.lstat_at(fd, name)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                try:
+                    sub = dirfd.opendir_at(fd, name)
+                except OSError:
+                    continue
+                stack.append([sub, None, child, None, True])
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +739,13 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     # makes the destination root along that same walk; os.makedirs() on
     # the path would follow a symlink planted after the resolve and build
     # the tree outside the container before the pin could refuse.
+    #
+    # It is tied to src_is_dir because that is rsync's rule and not an
+    # oversight: a directory transfer creates its destination directory,
+    # a single file will not invent the parents it is addressed through
+    # (rsync wants --mkpath for that). `copy` does create them, which is
+    # a deliberate convenience of its own; the two commands differ here
+    # because the tools they follow do.
     with ExitStack() as pins:
         src_pin = pins.enter_context(pin_path(src, src_path,
                                               inside=src_is_dir))
@@ -639,6 +772,14 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
             sys.exit(1)
 
     clear_bar()
+    if ctx.failures:
+        # Each of these was reported where it happened and stepped over, so
+        # that one bad entry did not abandon the rest of the tree. The exit
+        # status still has to say the transfer was incomplete — it did when
+        # the first such entry ended the command outright.
+        plural = "entry" if ctx.failures == 1 else "entries"
+        log_error(f"Error: {ctx.failures} {plural} could not be written.")
+        sys.exit(1)
     log_info("Finished synchronizing.")
 
 
@@ -656,7 +797,7 @@ def _sync_single(src_pin, dest_pin, src_st, ctx):
     if _needs_update(src_pin.dir_fd, src_pin.leaf, src_st,
                      dest_pin.dir_fd, dest_pin.leaf, ctx.use_checksum):
         _sync_file(src_pin.dir_fd, src_pin.leaf, src_st,
-                   dest_pin.dir_fd, dest_pin.leaf)
+                   dest_pin.dir_fd, dest_pin.leaf, ctx)
 
 
 def _sync_directory(src_pin, dest_pin, ctx, delete):

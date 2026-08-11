@@ -231,16 +231,38 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
 def _overlap_path(spec: str, path: str, deref_leaf: bool) -> str:
     """The form of *path* to weigh an overlap against.
 
-    A container path is taken as it stands: the chroot walk left no symlink
-    component in it, and realpath() would re-resolve one with *host*
-    semantics, undoing the very thing that walk is for. A host path goes
-    through _host_path, which is where resolve_container_path() already sent
-    it — repeating it costs nothing (realpath of a resolved path is itself)
-    and keeps this guard sound for a caller that resolved less thoroughly.
+    Two paths can only be compared as strings once both are spelled the
+    same way, and the two sides arrive spelled differently. A host path is
+    fully resolved by _host_path, which is where resolve_container_path()
+    already sent it — repeating it costs nothing (realpath of a resolved
+    path is itself) and keeps this guard sound for a caller that resolved
+    less thoroughly.
+
+    A container path cannot simply be handed to realpath(): below the
+    rootfs the chroot walk has already resolved every component, and
+    re-resolving those with *host* semantics would undo the very thing that
+    walk is for. But the walk starts at a rootfs that was only ever
+    composed lexically (see container_rootfs), and a symlink *above* the
+    rootfs — a symlinked $HOME or ~/.local/share, ordinary enough — then
+    left the two sides incomparable: `copy -r box:/data <the same directory
+    named as a host path>` did not look like a directory copied into
+    itself, and recursed until it ran out of stack. So the prefix is
+    resolved and the walked remainder, which realpath must not touch,
+    joined back on.
     """
-    if container_from_spec(spec) is not None:
+    name = container_from_spec(spec)
+    if name is None:
+        return _host_path(path, deref_leaf)
+    rootfs = os.path.normpath(container_rootfs(name))
+    if path == rootfs:
+        return os.path.realpath(rootfs)
+    if not path.startswith(rootfs + os.sep):
+        # resolve_container_path() guarantees otherwise, so this is only
+        # reached by a caller that resolved the spec some other way. Leave
+        # such a path alone rather than splicing it onto the wrong root.
         return path
-    return _host_path(path, deref_leaf)
+    return os.path.join(os.path.realpath(rootfs),
+                        os.path.relpath(path, rootfs))
 
 
 def refuse_src_dest_overlap(src_spec: str, src_path: str,

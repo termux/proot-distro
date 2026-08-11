@@ -288,6 +288,36 @@ def test_overlap_sees_a_host_link_folding_into_a_container_source(
     assert "into itself" in capsys.readouterr().err
 
 
+def test_overlap_resolves_the_prefix_above_the_rootfs(
+    builders, tmp_path, monkeypatch, capsys
+):
+    """A symlink *above* the rootfs must not hide an overlap either.
+
+    The container side is deliberately never handed to realpath -- below
+    the rootfs the chroot walk has already resolved everything, and host
+    semantics would undo it. But the rootfs itself is only composed
+    lexically, so a symlinked $HOME or ~/.local/share left the two sides
+    spelled differently and nothing looked like it overlapped: naming one
+    container directory as a container path and a directory inside it as a
+    host path recursed until the stack gave out.
+    """
+    builders.make_container("box")
+    real_containers = os.path.realpath(paths.CONTAINERS_DIR)
+    aliased = tmp_path / "alias"
+    os.symlink(real_containers, aliased)
+    monkeypatch.setattr(paths, "CONTAINERS_DIR", str(aliased))
+
+    src = paths.resolve_container_path("box:/data")
+    assert str(aliased) in src              # the alias really is in play
+    os.makedirs(src, exist_ok=True)
+    inner = os.path.join(real_containers, "box", "rootfs", "data", "in")
+
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("box:/data", src, "inner", inner)
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+
+
 def test_overlap_leaves_the_final_component_unresolved(tmp_path):
     """Dereferencing the leaf would refuse a legitimate move of a link.
 

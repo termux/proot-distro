@@ -204,11 +204,14 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
                    f"to copy directories.")
         sys.exit(1)
 
-    # A file copied onto an existing directory lands inside it, and so
-    # does a moved directory. shutil did this implicitly; spell it out so
-    # the destination names the entry we are about to create. The name is
-    # appended through the resolver, not joined on: it is a path
-    # component inside the container like any other, and may be a symlink.
+    # Anything copied or moved onto an existing directory lands inside it,
+    # which is what cp and mv both do and what the mkdir below cannot: a
+    # recursive copy whose destination already existed died on EEXIST
+    # instead of creating <dest>/<source name>. shutil did the appending
+    # implicitly; spell it out so the destination names the entry we are
+    # about to create. The name is appended through the resolver, not
+    # joined on: it is a path component inside the container like any
+    # other, and may be a symlink.
     #
     # mv also moves inside the directory a destination *link* points at,
     # leaving the link where it is, so the question is asked of the target
@@ -219,7 +222,7 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     # a directory outside) and destroyed links whose target only the
     # container has (`current -> /opt/app/releases/v1` became a file).
     dest_target = resolve_container_path(dest) if move_mode else dest_path
-    if (not src_is_dir or move_mode) and os.path.isdir(dest_target):
+    if os.path.isdir(dest_target):
         dest_path = resolve_container_child(dest, dest_target,
                                             os.path.basename(src_path),
                                             deref_leaf=not move_mode)

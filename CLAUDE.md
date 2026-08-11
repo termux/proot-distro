@@ -111,18 +111,33 @@ Top-level utilities (each owns a focused concern):
   `_host_path` itself (idempotent for a caller that already resolved) so the
   guard stays sound on its own. The same-file test follows a final link
   exactly when the operation would, so `copy f link` is refused and
-  `copy --move f link` renames, as cp and mv each do.
+  `copy --move f link` renames, as cp and mv each do. Comparing the two as
+  strings needs them spelled alike, and `container_rootfs()` only composes
+  its prefix lexically, so `_overlap_path` **realpaths the rootfs prefix**
+  and joins the walked remainder (which realpath must not touch) back on:
+  a symlinked `$HOME` or `~/.local/share` otherwise left a container-spelled
+  source and a host-spelled destination inside it looking unrelated.
 - `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
   `opendir_at`/`reopen`/`open_file_at`/`open_regular_at`/`open_new_at`
   (always `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
   `copy_file_at`/`copy_symlink_at`/`copy_tree_at`,
-  `rmtree_at`/`unlink_quietly`, and fd-based metadata (`copy_metadata`,
-  `set_times_at`, `make_writable`).
+  `rmtree_at`/`unlink_quietly`, `temp_name`, `close_frames`, and fd-based
+  metadata (`copy_metadata`, `set_times_at`, `make_writable`).
   Nothing here takes a path below the root, so no component can be
   re-pointed mid-walk. `REFUSED` / `is_refusal()` cover both errnos a
   refused descent can raise — Linux reports `O_NOFOLLOW|O_DIRECTORY` on a
-  symlink as **ENOTDIR**, not ELOOP. Recursion closes each fd as it
-  unwinds, so open fds scale with tree *depth*, not size.
+  symlink as **ENOTDIR**, not ELOOP.
+  Every walk carries its open directories on an **explicit stack**, never
+  Python recursion: how deep a tree goes is the guest's choice, and one
+  past the interpreter's limit (~1000 levels, trivial to create) ended the
+  command in a `RecursionError` traceback — not an `OSError`, so no
+  caller's net caught it. Frames are laid out `[fd, second fd or None,
+  …, owned]` so one `close_frames()` unwinds any of them on the way out;
+  open fds still scale with tree *depth*, not size.
+  `temp_name()` builds the sibling name a replacing write renames into
+  place, trimming the stem so `<name>.~pd_copy` fits inside `NAME_MAX`
+  — appending the suffix outright made ENAMETOOLONG out of any entry
+  within nine bytes of the limit.
   Three guarantees need more than `O_NOFOLLOW`, because the obvious call
   looks fd-based but is not. **chmod**: Linux has no `AT_SYMLINK_NOFOLLOW`
   for `fchmodat(2)`, so naming an entry hands the mode change to whatever
@@ -245,10 +260,18 @@ a symlink planted mid-transfer cannot redirect anything. No `shutil`
 path API is left in either command: `copytree`/`copy2`/`move` gave way
 to `dirfd.copy_tree_at` / `copy_file_at` / `renameat` (`move` falls back
 to copy+`rmtree_at` on `EXDEV`), and sync's walk is three fd-carrying
-recursions — `_collect_rels` (count + rel set), `_mirror_at` (write),
-and `_collect_extras_at`/`_remove_extras_at` for `--delete`. Missing
-destination parents are made by the pinning walk itself
-(`pin_path(create=True)`), never by `os.makedirs()` beforehand.
+passes — `_collect_rels` (count + rel set), `_mirror_at` (write), and
+`_collect_extras_at`/`_remove_extras_at` for `--delete` — each an
+explicit stack, like `dirfd`'s own. Missing destination parents are made
+by the pinning walk itself (`pin_path(create=True)`), never by
+`os.makedirs()` beforehand — for `copy` always, for `sync` only when the
+source is a directory, which is rsync's rule (a single file does not
+invent the parents it is addressed through; rsync wants `--mkpath`).
+
+Anything copied or moved onto an **existing directory** lands inside it,
+as `cp` and `mv` both do: the source's base name is appended through
+`resolve_container_child()`. That covers `copy -r` too, which used to
+append only for a file source and so died on the `mkdir`'s EEXIST.
 
 Destination directories are created **writable** (`0o700`) and given the
 source's mode only once their contents are in — `copy_tree_at` via
@@ -303,6 +326,18 @@ the whole subtree would follow it. In the other direction `_sync_file`
 rsync does without `--force`; per-entry and non-fatal, since one entry in
 the way must not abandon the transfer (it used to surface as `EISDIR` on a
 temp file and exit).
+
+Every `_sync_file` failure is per-entry that way — a failed **write**
+included, which used to end the command outright and so let a container
+stop a transfer dead by planting a *directory* under the temp name
+(EISDIR, not a leftover to unlink). They are counted in `_Ctx.failures`
+and the command still exits 1, so the status says what it always did.
+Anything the mirror pass did not write goes into `_Ctx.skipped_rels`,
+which `--delete` treats as off limits: the name is in `src_rels`, so
+without it the prune walked into whatever the destination held there and
+emptied it — a source file that could not replace a destination directory
+took the directory's whole contents with it, and so did a source FIFO,
+which is never mirrored at all.
 
 `sync` ends its transfer in `except OSError`, the net `copy` has always
 had: every call the three passes make is guarded where warn-and-skip is
