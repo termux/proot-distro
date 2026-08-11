@@ -85,16 +85,33 @@ Top-level utilities (each owns a focused concern):
   the source's base name (`copy f box:/dir` ⇒ `box:/dir/f`), so the
   appended component gets the same chroot walk as one written in the
   spec instead of being joined on literally.
+  `deref_leaf=False` resolves only the *parents*, for an operation that
+  acts on the last component itself — `copy --move`, where `rename(2)`
+  moves a link rather than its target. `refuse_src_dest_overlap()`
+  compares the two *resolved* paths, the earliest point at which a
+  planted link (`backup -> /data`) can no longer hide that the
+  destination sits inside the source, or is it.
 - `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
-  `opendir_at`/`reopen`/`open_file_at` (always `O_NOFOLLOW`),
-  `listdir_at`/`lstat_at`/`exists_at`, `copy_file_at`/`copy_symlink_at`/
-  `copy_tree_at`, `rmtree_at`, and fd-based metadata (`copy_metadata`,
-  `set_times_at`, `make_writable`). Nothing here takes a path below the
-  root, so no component can be re-pointed mid-walk. `REFUSED` /
-  `is_refusal()` cover both errnos a refused descent can raise — Linux
-  reports `O_NOFOLLOW|O_DIRECTORY` on a symlink as **ENOTDIR**, not
-  ELOOP. Recursion closes each fd as it unwinds, so open fds scale with
-  tree *depth*, not size.
+  `opendir_at`/`reopen`/`open_file_at`/`open_regular_at` (always
+  `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
+  `copy_file_at`/`copy_symlink_at`/`copy_tree_at`, `rmtree_at`, and
+  fd-based metadata (`copy_metadata`, `set_times_at`, `make_writable`).
+  Nothing here takes a path below the root, so no component can be
+  re-pointed mid-walk. `REFUSED` / `is_refusal()` cover both errnos a
+  refused descent can raise — Linux reports `O_NOFOLLOW|O_DIRECTORY` on a
+  symlink as **ENOTDIR**, not ELOOP. Recursion closes each fd as it
+  unwinds, so open fds scale with tree *depth*, not size.
+  Two guarantees need more than `O_NOFOLLOW`, because the obvious call
+  looks fd-based but is not. **chmod**: Linux has no `AT_SYMLINK_NOFOLLOW`
+  for `fchmodat(2)`, so naming an entry hands the mode change to whatever
+  a link planted since the `lstat` points at; every chmod goes through
+  `_chmod_fd()` (`fchmod`, falling back to the fd's `/proc` alias, since
+  `fchmod` is **EBADF** on the `O_PATH` fds `pin_path` yields) and
+  `rmtree_at`'s force path pins with `_make_readable_at()` first.
+  **File type**: `O_NOFOLLOW` says nothing about a FIFO, and opening one
+  waits for a peer a hostile guest never supplies, so regular-file
+  endpoints go through `open_regular_at()` — `O_NONBLOCK` plus an
+  `fstat` that refuses every type but a regular file.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
@@ -206,24 +223,35 @@ preserve a mode on its own (a `1777` source landed as `1755`), and a
 source directory that is not writable itself (`0555`) would otherwise
 reject its own contents mid-copy.
 
-A host source given as a symlink is dereferenced (`os.path.realpath`) so
-`cp` semantics hold — `copy -r /sdcard box:/x` is ordinary on Termux —
-while the container side gets the same from `resolve_container_path()`
-walking its final component. `--move` is exempt: `rename(2)` moves the
-link itself, and the `EXDEV` fallback recreates it verbatim.
+A source given as a symlink is dereferenced so `cp`/rsync semantics hold
+— `copy -r /sdcard box:/x` and `sync /sdcard box:/x` are both ordinary on
+Termux, where `/sdcard` *is* a link. A host spec gets that from
+`os.path.realpath` in the command, the container side from
+`resolve_container_path()` walking its final component; links *within*
+the tree are still recreated as links, only the endpoint is followed.
+`copy --move` is exempt on both sides — `rename(2)` moves a link rather
+than its target and replaces one at the destination rather than writing
+through it, so both specs resolve with `deref_leaf=False` and the `EXDEV`
+fallback recreates the link verbatim.
 
-Two guards remain specific to `sync`, which writes into a pre-existing
-tree: `_sync_dir` **unlinks** a destination symlink where the source has
-a real directory (rsync's behaviour) rather than descending through it,
-and every permission fix-up acts on directory fds (`fchmod`) and skips
-symlinks, since `os.chmod()` has no symlink-relative form on Linux and
-would otherwise apply to whatever a planted link points at.
+Both commands refuse a destination that **is** the source (it would be
+truncated while still being read) or sits **inside** it (a directory
+copied into itself, which recursed until the interpreter's stack gave
+out) — see `refuse_src_dest_overlap()`, called once both ends are final.
+
+One guard remains specific to `sync`, which writes into a pre-existing
+tree: `_sync_dir` **unlinks** whatever non-directory the destination
+holds where the source has a real directory (rsync's behaviour) rather
+than descending through it — a symlink there may lead out of the
+container, and the whole subtree would follow it.
 
 Two deliberate behaviour changes came with the rewrite: `copy -r` now
 **skips** a device/FIFO/socket with a warning instead of aborting the
 whole transfer the way `copytree` did (matching `backup`/`sync`), and a
 source directory that cannot be read is still created at the
-destination, empty.
+destination, empty. Such a file *named as an endpoint* is a different
+matter and is refused outright, in `copy` for the message and in
+`open_regular_at()` against the pinned fd for the race.
 
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`

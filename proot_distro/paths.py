@@ -31,6 +31,11 @@
 #       symlink planted in the rootfs cannot redirect the operation onto
 #       the host filesystem.
 #
+#   refuse_src_dest_overlap
+#       Reject a destination that is the source, or sits inside it, once
+#       both have been resolved — the point at which a planted symlink can
+#       no longer hide the overlap.
+#
 #   pin_path
 #       Re-walk an already-resolved container path with O_NOFOLLOW and
 #       keep the directory fd open, so the I/O that follows cannot be
@@ -49,6 +54,7 @@
 #       same-container same-lock dedup and deterministic ordering.
 
 import os
+import stat
 import sys
 from contextlib import contextmanager
 
@@ -137,7 +143,7 @@ def _resolve_within_root(root: str, rel_path: str, spec: str) -> str:
     return resolved
 
 
-def resolve_container_path(spec: str) -> str:
+def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
     """Resolve a `name:path` or plain host path to an absolute host path.
 
     For a `name:path` spec the result is forced to stay inside the
@@ -150,6 +156,13 @@ def resolve_container_path(spec: str) -> str:
     itself and the spec would silently scribble into a stranger area
     of the runtime tree. For a plain path the spec is just expanded
     to its absolute form.
+
+    Pass deref_leaf=False for an operation that acts on the last component
+    *itself* rather than on what it names — `copy --move`, which renames the
+    entry, as mv does. Only the parents then get the chroot walk. Without
+    it, moving a container symlink would resolve to the link's target and
+    move that instead, leaving the link behind and dangling; a host source
+    gets the same treatment by not being passed through realpath().
     """
     if ":" not in spec:
         return os.path.normpath(os.path.abspath(spec))
@@ -169,7 +182,41 @@ def resolve_container_path(spec: str) -> str:
     if lexical != rootfs and not lexical.startswith(rootfs + os.sep):
         crit_error("destination path escapes the container directory.")
         sys.exit(1)
+    if not deref_leaf:
+        head, _, tail = rel_path.rstrip("/").rpartition("/")
+        # `.` and `..` name no entry of their own, so there is nothing to
+        # keep: let the full walk collapse them as it always does.
+        if tail and tail not in (os.curdir, os.pardir):
+            return os.path.join(_resolve_within_root(rootfs, head, spec), tail)
     return _resolve_within_root(rootfs, rel_path, spec)
+
+
+def refuse_src_dest_overlap(src_spec: str, src_path: str,
+                            dest_spec: str, dest_path: str) -> None:
+    """Exit when the destination is the source, or lies inside it.
+
+    Both paths are already resolved, so this weighs what the transfer will
+    really touch rather than what was typed. That matters: a symlink the
+    guest planted in the rootfs (`backup -> /data`) is enough to make
+    `copy -r box:/data box:/backup` a directory copied into itself, which
+    recursed until the interpreter's stack gave out and left a partial tree
+    behind. Source onto itself is refused for the reason cp refuses it too —
+    the destination is opened with O_TRUNC while the source is still being
+    read, so the content is lost.
+    """
+    same = src_path == dest_path
+    if not same:
+        try:
+            same = os.path.samestat(os.lstat(src_path), os.lstat(dest_path))
+        except OSError:
+            same = False            # one of them does not exist yet: fine
+    if same:
+        crit_error(f"'{src_spec}' and '{dest_spec}' are the same file.")
+        sys.exit(1)
+    if dest_path.startswith(src_path.rstrip(os.sep) + os.sep):
+        crit_error(f"cannot copy '{src_spec}' into itself: "
+                   f"'{dest_spec}' is inside it.")
+        sys.exit(1)
 
 
 def resolve_container_child(spec: str, resolved: str, child: str) -> str:
@@ -223,6 +270,18 @@ class PinnedPath:
         return self.path
 
 
+class _Refused(OSError):
+    """A component of the walk is a symlink now, and was not at resolve time."""
+
+
+def _is_link_at(fd: int, part: str) -> bool:
+    """True when *part* under *fd* is a symlink right now."""
+    try:
+        return stat.S_ISLNK(dirfd.lstat_at(fd, part).st_mode)
+    except OSError:
+        return False
+
+
 def _descend(fd: int, part: str, create: bool) -> int:
     """Open *part* under *fd*, close *fd*, and return the new fd.
 
@@ -231,6 +290,12 @@ def _descend(fd: int, part: str, create: bool) -> int:
     and the open that follows is O_NOFOLLOW, so a component created here
     is no more redirectable than one that was already present — which is
     the whole reason the parents are not made by path beforehand.
+
+    A refusal is raised as _Refused only once the component has been
+    confirmed to be a symlink. ENOTDIR covers two unrelated things — the
+    O_NOFOLLOW open declining a link, and a component that is simply not a
+    directory (`copy x box:/etc/passwd/y`, a plain mistake) — and reporting
+    the second as a race would send the user hunting for an attack.
     """
     try:
         nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
@@ -243,6 +308,10 @@ def _descend(fd: int, part: str, create: bool) -> int:
         except FileExistsError:
             pass                # lost a race with another writer; open it
         nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
+    except OSError as exc:
+        if dirfd.is_refusal(exc) and _is_link_at(fd, part):
+            raise _Refused(exc.errno, exc.strerror, part) from None
+        raise
     os.close(fd)
     return nxt
 
@@ -305,7 +374,7 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False,
             if fd is not None:
                 os.close(fd)
                 fd = None
-            if dirfd.is_refusal(exc):
+            if isinstance(exc, _Refused):
                 # A component is a symlink now and was not at resolve
                 # time — exactly the race this guards against.
                 crit_error(

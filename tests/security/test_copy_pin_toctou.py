@@ -146,8 +146,8 @@ def _racing_resolver(spec_prefix, on_resolve):
     """
     real = paths.resolve_container_path
 
-    def racing(spec):
-        resolved = real(spec)
+    def racing(spec, **kwargs):
+        resolved = real(spec, **kwargs)
         if spec.startswith(spec_prefix):
             on_resolve()
         return resolved

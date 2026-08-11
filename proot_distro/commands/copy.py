@@ -35,6 +35,7 @@ from proot_distro.paths import (
     container_from_spec,
     container_locks_for_spec_pair,
     pin_path,
+    refuse_src_dest_overlap,
     resolve_container_child,
     resolve_container_path,
 )
@@ -132,8 +133,13 @@ def _move_pinned(src_pin, dest_pin):
 
 
 def _do_copy(src, dest, verbose, move_mode, recursive):
-    src_path = resolve_container_path(src)
-    dest_path = resolve_container_path(dest)
+    # A move acts on the entries themselves, so neither final component is
+    # dereferenced: rename(2) moves a symlink rather than what it points at,
+    # and replaces one sitting at the destination rather than writing
+    # through it, which is what mv does. A plain copy keeps cp's semantics
+    # and follows both.
+    src_path = resolve_container_path(src, deref_leaf=not move_mode)
+    dest_path = resolve_container_path(dest, deref_leaf=not move_mode)
 
     # Reject '.' or '..' as destination component (but allow as source).
     dest_base = os.path.basename(dest_path)
@@ -147,8 +153,7 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     # component including the last; host paths are not walked at all, so
     # the dereference happens here instead. Without it the O_NOFOLLOW
     # open below refuses the source outright — `copy -r /sdcard box:/x`
-    # is an ordinary thing to ask for on Termux. A move is left alone:
-    # rename(2) moves the link itself, as mv does.
+    # is an ordinary thing to ask for on Termux.
     if not move_mode and container_from_spec(src) is None:
         src_path = os.path.realpath(src_path)
 
@@ -158,6 +163,20 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
 
     if not os.access(src_path, os.R_OK):
         crit_error(f"source path '{src_path}' is not readable.")
+        sys.exit(1)
+
+    # A device, FIFO or socket named as the source endpoint. Refused here
+    # for a clear message; dirfd.open_regular_at() refuses it again on the
+    # pinned fd, which is what covers one planted after this check, and
+    # keeps the open from blocking on a pipe with no writer.
+    try:
+        src_mode = os.lstat(src_path).st_mode
+    except OSError as exc:
+        crit_error(f"cannot copy '{src}': {exc.strerror}.")
+        sys.exit(1)
+    if not (stat.S_ISREG(src_mode) or stat.S_ISDIR(src_mode)
+            or stat.S_ISLNK(src_mode)):
+        crit_error(f"cannot copy '{src}': not a regular file or directory.")
         sys.exit(1)
 
     src_is_dir = os.path.isdir(src_path)
@@ -174,6 +193,10 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     if (not src_is_dir or move_mode) and os.path.isdir(dest_path):
         dest_path = resolve_container_child(dest, dest_path,
                                             os.path.basename(src_path))
+
+    # Both ends are final now, which is the earliest point a planted symlink
+    # can no longer hide that they overlap.
+    refuse_src_dest_overlap(src, src_path, dest, dest_path)
 
     log_info(f"Source: '{src_path}'")
     log_info(f"Destination: '{dest_path}'")

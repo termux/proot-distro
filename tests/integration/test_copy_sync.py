@@ -314,3 +314,170 @@ def test_sync_spec_traversal_rejected(tmp_path, builders, capsys):
         _sync(str(src), "box:../../etc")
     assert exc.value.code == 1
     assert "escapes the container directory" in capsys.readouterr().err
+
+
+def test_copy_move_container_symlink_moves_the_link(tmp_path, builders):
+    """A move acts on the entry, container side included.
+
+    resolve_container_path walks every component by default, so the leaf of
+    a container spec was dereferenced and the move landed on the link's
+    target: the real file left the container and the link stayed behind,
+    dangling. mv moves the link.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    with open(os.path.join(rootfs, "target"), "w") as fh:
+        fh.write("REAL")
+    os.symlink("target", os.path.join(rootfs, "link"))
+
+    dest = tmp_path / "moved"
+    _copy("box:/link", str(dest), move=True)
+
+    assert os.path.islink(dest)
+    assert os.readlink(dest) == "target"
+    assert not os.path.lexists(os.path.join(rootfs, "link"))
+    assert open(os.path.join(rootfs, "target")).read() == "REAL"
+
+
+def test_copy_move_replaces_a_symlink_at_the_destination(tmp_path, builders):
+    """rename(2) replaces a link rather than writing through it, as mv does."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    with open(os.path.join(rootfs, "victim"), "w") as fh:
+        fh.write("UNTOUCHED")
+    os.symlink("/victim", os.path.join(rootfs, "dest"))
+
+    payload = tmp_path / "p.txt"
+    payload.write_text("NEW")
+    _copy(str(payload), "box:/dest", move=True)
+
+    landed = os.path.join(rootfs, "dest")
+    assert not os.path.islink(landed)
+    assert open(landed).read() == "NEW"
+    assert open(os.path.join(rootfs, "victim")).read() == "UNTOUCHED"
+
+
+def test_copy_plain_still_writes_through_a_symlinked_destination(tmp_path,
+                                                                builders):
+    """Without --move the destination link is followed, the way cp does it."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    with open(os.path.join(rootfs, "real"), "w") as fh:
+        fh.write("OLD")
+    os.symlink("/real", os.path.join(rootfs, "dest"))
+
+    payload = tmp_path / "p.txt"
+    payload.write_text("NEW")
+    _copy(str(payload), "box:/dest")
+
+    assert os.path.islink(os.path.join(rootfs, "dest"))
+    assert open(os.path.join(rootfs, "real")).read() == "NEW"
+
+
+def test_sync_host_symlink_source_is_dereferenced(tmp_path, builders):
+    """`sync /sdcard box:/x` must transfer the tree, not recreate the link.
+
+    `/sdcard` is a symlink on Termux and `copy` has always followed such a
+    source; sync recreated it instead, so the same command produced a
+    directory from one and a symlink from the other.
+    """
+    builders.make_container("box")
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "sub" / "g.txt").write_text("G")
+    (tree / "top.txt").write_text("T")
+    link = tmp_path / "treelink"
+    os.symlink(str(tree), link)
+
+    _sync(str(link), "box:/dst")
+
+    dst = os.path.join(container_rootfs("box"), "dst")
+    assert stat.S_ISDIR(os.lstat(dst).st_mode)
+    assert open(os.path.join(dst, "top.txt")).read() == "T"
+    assert open(os.path.join(dst, "sub", "g.txt")).read() == "G"
+
+
+def test_sync_preserves_symlinks_inside_the_tree(tmp_path, builders):
+    """Only the endpoint is followed; links within the tree are copied."""
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "f.txt").write_text("F")
+    os.symlink("f.txt", src / "inner")
+
+    _sync(str(src), "box:/dst")
+
+    landed = os.path.join(container_rootfs("box"), "dst", "inner")
+    assert os.path.islink(landed)
+    assert os.readlink(landed) == "f.txt"
+
+
+def test_sync_replaces_a_destination_file_with_a_directory(tmp_path, builders):
+    """A file where the source has a directory used to abort the whole sync."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    dst = os.path.join(rootfs, "dst")
+    os.makedirs(dst)
+    with open(os.path.join(dst, "sub"), "w") as fh:
+        fh.write("blocker")
+
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "g.txt").write_text("G")
+    (src / "top.txt").write_text("T")
+
+    _sync(str(src), "box:/dst")
+
+    assert stat.S_ISDIR(os.lstat(os.path.join(dst, "sub")).st_mode)
+    assert open(os.path.join(dst, "sub", "g.txt")).read() == "G"
+    assert open(os.path.join(dst, "top.txt")).read() == "T"
+
+
+def test_sync_single_file_into_an_unwritable_dir_recovers(tmp_path, builders):
+    """The documented chmod recovery has to reach the pinned endpoint too.
+
+    make_writable() fchmod'ed the O_PATH fd pin_path hands out, which is
+    EBADF, so for a single-file sync the recovery silently did nothing and
+    the command failed with the permission error it was meant to clear.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    ro = os.path.join(rootfs, "ro")
+    os.makedirs(ro)
+    os.chmod(ro, 0o500)
+
+    payload = tmp_path / "f.txt"
+    payload.write_text("DATA")
+    try:
+        _sync(str(payload), "box:/ro/f.txt")
+        assert open(os.path.join(ro, "f.txt")).read() == "DATA"
+    finally:
+        os.chmod(ro, 0o700)
+
+
+def test_copy_onto_itself_is_refused(tmp_path, builders, capsys):
+    """The destination is opened with O_TRUNC while the source is read."""
+    builders.make_container("box")
+    host = tmp_path / "f.txt"
+    host.write_text("hello world")
+
+    with pytest.raises(SystemExit) as exc:
+        _copy(str(host), str(host))
+    assert exc.value.code == 1
+    assert "same file" in capsys.readouterr().err
+    assert host.read_text() == "hello world"
+
+
+def test_copy_recursive_into_a_subdirectory_of_itself_is_refused(
+    tmp_path, builders, capsys
+):
+    builders.make_container("box")
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("x")
+
+    with pytest.raises(SystemExit) as exc:
+        _copy(str(src), str(src / "inner"), recursive=True)
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(src)) == ["sub"]

@@ -21,9 +21,10 @@
 # Architecture: Synchronizes a source path to a destination path, comparing
 # by file size and modification time (or CRC32 checksum with --checksum).
 # Always recursive — both files and directories are accepted as source.
-# Symlinks are copied as-is; hard links become independent file copies;
-# special files (block/char/FIFO/socket) are silently skipped. Ownership is
-# never changed. Modes and timestamps are preserved. When the destination
+# Symlinks within the tree are copied as-is, while one named as the source
+# itself is followed (`sync /sdcard box:/x`, as `copy` does); hard links
+# become independent file copies; special files (block/char/FIFO/socket) are
+# silently skipped. Ownership is never changed. Modes and timestamps are preserved. When the destination
 # lacks write permission the command attempts to chmod it; failing that it
 # exits with an error. With --delete, destination entries that have no
 # counterpart in the source are removed after the sync pass. Paths may be
@@ -34,12 +35,12 @@
 # resolves a path a container process could have re-pointed in the
 # meantime. Two consequences worth remembering when editing:
 #
-#   - A destination entry that is a symlink where the source has a
-#     directory is unlinked and replaced, never descended into. It may
+#   - A destination entry that is not a directory where the source has one
+#     is unlinked and replaced, never descended into. A symlink there may
 #     lead outside the container, and the whole subtree would follow it.
-#   - The permission fix-ups act on directory fds (fchmod) and skip
-#     symlinks, because chmod() has no symlink-relative form on Linux
-#     and would otherwise apply to whatever a planted link points at.
+#   - The permission fix-ups go through dirfd.make_writable, which names a
+#     descriptor. chmod() has no symlink-relative form on Linux, so naming
+#     an entry would apply the mode to whatever a planted link points at.
 #
 # The work is three passes over the tree: _collect_rels counts entries
 # and records the source's relative paths, _mirror_at writes, and (with
@@ -56,8 +57,8 @@ from contextlib import ExitStack
 from proot_distro import dirfd
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.paths import (
-    container_locks_for_spec_pair, pin_path, resolve_container_child,
-    resolve_container_path,
+    container_from_spec, container_locks_for_spec_pair, pin_path,
+    refuse_src_dest_overlap, resolve_container_child, resolve_container_path,
 )
 from proot_distro.progress import clear_bar, draw_count_bar
 
@@ -108,7 +109,7 @@ def _is_special(mode):
 
 def _checksum_at(dir_fd, name):
     """CRC32 of the file *name* under dir_fd."""
-    fd = dirfd.open_file_at(dir_fd, name, os.O_RDONLY)
+    fd, _ = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
     try:
         crc = 0
         with open(fd, "rb", closefd=False) as fh:
@@ -176,16 +177,17 @@ def _sync_dir(dst_fd, name, src_st):
     except OSError:
         dst_st = None
 
-    if dst_st is not None and stat.S_ISLNK(dst_st.st_mode):
+    if dst_st is not None and not stat.S_ISDIR(dst_st.st_mode):
         # The source has a real directory here but the destination holds
-        # a symlink. Replace it (what rsync does) rather than descending
-        # through it: inside a container rootfs such a link may point at
-        # the host filesystem, and every file of this subtree would then
-        # be written outside the container.
+        # something else. Replace it (what rsync does) rather than failing
+        # or, in the symlink case, descending through it: inside a container
+        # rootfs such a link may point at the host filesystem, and every
+        # file of this subtree would then be written outside the container.
+        # A plain file used to abort the whole sync here on mkdir's EEXIST.
         _unlink_robust(dst_fd, name)
         dst_st = None
 
-    if dst_st is not None and stat.S_ISDIR(dst_st.st_mode):
+    if dst_st is not None:
         return False
 
     # Created writable, with the source mode applied by _apply_dir_mode()
@@ -268,17 +270,17 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name):
     mode = stat.S_IMODE(src_st.st_mode)
 
     try:
-        sfd = dirfd.open_file_at(src_fd, src_name, os.O_RDONLY)
+        sfd, _ = dirfd.open_regular_at(src_fd, src_name, os.O_RDONLY)
     except OSError as exc:
         log_error(f"Warning: cannot read '{src_name}': {exc}")
         return
 
     try:
         try:
-            tfd = dirfd.open_file_at(dst_fd, tmp, flags, mode)
+            tfd, _ = dirfd.open_regular_at(dst_fd, tmp, flags, mode)
         except PermissionError:
             dirfd.make_writable(dst_fd)
-            tfd = dirfd.open_file_at(dst_fd, tmp, flags, mode)
+            tfd, _ = dirfd.open_regular_at(dst_fd, tmp, flags, mode)
         try:
             dirfd.copy_data(sfd, tfd)
             dirfd.copy_metadata(sfd, tfd, src_st)
@@ -521,6 +523,17 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     src_path = resolve_container_path(src)
     dest_path = resolve_container_path(dest)
 
+    # A host source spelled as a symlink is followed, so that `sync /sdcard
+    # box:/x` transfers the directory it points at instead of recreating the
+    # link — `/sdcard` is a symlink on Termux, and this is the ordinary way
+    # to ask for it. The container side already gets that from
+    # resolve_container_path(), which walks every component including the
+    # last; host paths are not walked at all, so the dereference happens
+    # here, exactly as `copy` does it. Symlinks *within* the tree are
+    # preserved either way; only the endpoint is followed.
+    if container_from_spec(src) is None:
+        src_path = os.path.realpath(src_path)
+
     try:
         src_st = os.lstat(src_path)
     except OSError:
@@ -539,6 +552,10 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     if not src_is_dir and os.path.isdir(dest_path):
         dest_path = resolve_container_child(dest, dest_path,
                                             os.path.basename(src_path))
+
+    # Both ends are final now, which is the earliest point a planted symlink
+    # can no longer hide that they overlap.
+    refuse_src_dest_overlap(src, src_path, dest, dest_path)
 
     log_info("Synchronizing files...")
     log_info(f"Source: '{src_path}'")

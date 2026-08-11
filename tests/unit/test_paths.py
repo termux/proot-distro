@@ -121,6 +121,142 @@ def test_resolve_container_path_missing_container(capsys):
     assert "does not exist" in capsys.readouterr().err
 
 
+# ----- resolve_container_path(deref_leaf=False) ----------------------------
+
+def test_deref_leaf_false_keeps_a_leaf_symlink(builders):
+    """`copy --move` renames the entry, so its last component must stand.
+
+    Resolving the leaf would make the move act on the link's target: the
+    target left the container, the link stayed behind and dangled.
+    """
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.symlink("target", os.path.join(rootfs, "link"))
+
+    assert paths.resolve_container_path("box:/link") == \
+        os.path.join(rootfs, "target")
+    assert paths.resolve_container_path("box:/link", deref_leaf=False) == \
+        os.path.join(rootfs, "link")
+
+
+def test_deref_leaf_false_still_resolves_parent_symlinks(builders):
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.mkdir(os.path.join(rootfs, "real"))
+    os.symlink("/real", os.path.join(rootfs, "dir"))
+    os.symlink("x", os.path.join(rootfs, "real", "leaf"))
+
+    assert paths.resolve_container_path("box:/dir/leaf", deref_leaf=False) == \
+        os.path.join(rootfs, "real", "leaf")
+
+
+def test_deref_leaf_false_still_confines_an_absolute_parent_link(builders):
+    """Keeping the leaf must not weaken the containment of the parents."""
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.symlink("/", os.path.join(rootfs, "escape"))
+
+    resolved = paths.resolve_container_path("box:/escape/etc/x",
+                                            deref_leaf=False)
+    assert resolved.startswith(rootfs + os.sep)
+    assert resolved == os.path.join(rootfs, "etc", "x")
+
+
+@pytest.mark.parametrize("spec,tail", [("box:/a/.", "a"), ("box:/a/..", ""),
+                                       ("box:/a/", "a"), ("box:", "")])
+def test_deref_leaf_false_collapses_dot_components(builders, spec, tail):
+    """`.` and `..` name no entry of their own; the full walk handles them."""
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    expected = os.path.join(rootfs, tail) if tail else rootfs
+    assert paths.resolve_container_path(spec, deref_leaf=False) == expected
+
+
+# ----- refuse_src_dest_overlap --------------------------------------------
+
+def test_overlap_allows_a_sibling_with_a_shared_prefix(tmp_path):
+    """`tree` and `tree2` share a prefix but do not overlap."""
+    paths.refuse_src_dest_overlap("tree", str(tmp_path / "tree"),
+                                  "tree2", str(tmp_path / "tree2"))
+
+
+def test_overlap_rejects_the_same_path(tmp_path, capsys):
+    """A file copied onto itself was truncated while still being read."""
+    target = tmp_path / "f"
+    target.write_text("keep me")
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("f", str(target), "f", str(target))
+    assert exc.value.code == 1
+    assert "same file" in capsys.readouterr().err
+    assert target.read_text() == "keep me"
+
+
+def test_overlap_rejects_two_names_for_one_inode(tmp_path, capsys):
+    src = tmp_path / "f"
+    src.write_text("x")
+    dest = tmp_path / "g"
+    os.link(src, dest)
+    with pytest.raises(SystemExit):
+        paths.refuse_src_dest_overlap("f", str(src), "g", str(dest))
+    assert "same file" in capsys.readouterr().err
+
+
+def test_overlap_rejects_a_destination_inside_the_source(tmp_path, capsys):
+    src = tmp_path / "tree"
+    src.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        paths.refuse_src_dest_overlap("tree", str(src),
+                                      "tree/in", str(src / "in"))
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+
+
+def test_overlap_allows_a_destination_that_does_not_exist_yet(tmp_path):
+    src = tmp_path / "tree"
+    src.mkdir()
+    paths.refuse_src_dest_overlap("tree", str(src),
+                                  "out", str(tmp_path / "out"))
+
+
+# ----- pin_path diagnostics ----------------------------------------------
+
+def test_pin_path_reports_a_plain_non_directory_as_such(builders, capsys):
+    """ENOTDIR from an ordinary file must not be reported as a race.
+
+    O_NOFOLLOW|O_DIRECTORY on a symlink also raises ENOTDIR, so the two are
+    told apart by an lstat before anyone is told their path was tampered
+    with mid-command.
+    """
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    with open(os.path.join(rootfs, "file"), "w") as fh:
+        fh.write("x")
+
+    with pytest.raises(SystemExit) as exc:
+        with paths.pin_path("box:/file/below",
+                            os.path.join(rootfs, "file", "below")):
+            pass
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "changed while it was being resolved" not in err
+    assert "Not a directory" in err
+
+
+def test_pin_path_still_reports_a_symlink_component_as_a_race(builders,
+                                                              capsys):
+    builders.make_container("box")
+    rootfs = paths.container_rootfs("box")
+    os.mkdir(os.path.join(rootfs, "real"))
+    os.symlink("real", os.path.join(rootfs, "swapped"))
+
+    with pytest.raises(SystemExit) as exc:
+        with paths.pin_path("box:/swapped/x",
+                            os.path.join(rootfs, "swapped", "x")):
+            pass
+    assert exc.value.code == 1
+    assert "changed while it was being resolved" in capsys.readouterr().err
+
+
 # ----- container_locks_for_spec_pair --------------------------------------
 
 def _summarise(locks):

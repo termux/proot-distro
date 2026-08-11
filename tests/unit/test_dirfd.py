@@ -1,8 +1,10 @@
 # Tests for proot_distro.dirfd — the openat(2) walking primitives that
 # `copy` and `sync` are built on.
 
+import contextlib
 import errno
 import os
+import signal
 import stat
 
 import pytest
@@ -12,6 +14,30 @@ from proot_distro import dirfd
 
 def _fd(path):
     return dirfd.opendir(str(path))
+
+
+class _Blocked(Exception):
+    """Raised when a call under _deadline() did not return in time.
+
+    Deliberately not an OSError: the code under test catches OSError and
+    turns it into a tidy `sys.exit(1)`, which would make a blocked open
+    indistinguishable from a clean refusal and let the regression pass.
+    """
+
+
+@contextlib.contextmanager
+def _deadline(seconds=5):
+    """Turn a blocked syscall into a failure rather than a hung suite."""
+    def fire(signum, frame):
+        raise _Blocked("call did not return")
+
+    previous = signal.signal(signal.SIGALRM, fire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 # ----- opening ------------------------------------------------------------
@@ -240,3 +266,113 @@ def test_rmtree_at_missing_entry_is_noop(tmp_path):
         dirfd.rmtree_at(fd, "absent")
     finally:
         os.close(fd)
+
+
+# ----- open_regular_at ----------------------------------------------------
+
+def test_open_regular_at_returns_fd_and_stat(tmp_path):
+    (tmp_path / "f").write_text("data")
+    fd = _fd(tmp_path)
+    try:
+        ffd, st = dirfd.open_regular_at(fd, "f", os.O_RDONLY)
+        try:
+            assert st.st_size == 4
+            assert os.read(ffd, 4) == b"data"
+        finally:
+            os.close(ffd)
+    finally:
+        os.close(fd)
+
+
+def test_open_regular_at_refuses_symlink(tmp_path):
+    (tmp_path / "real").write_text("x")
+    os.symlink("real", tmp_path / "link")
+    fd = _fd(tmp_path)
+    try:
+        with pytest.raises(OSError) as exc:
+            dirfd.open_regular_at(fd, "link", os.O_RDONLY)
+        assert exc.value.errno == errno.ELOOP
+    finally:
+        os.close(fd)
+
+
+def test_open_regular_at_refuses_fifo_without_blocking(tmp_path):
+    """A planted pipe must be refused, not waited on.
+
+    Both directions need covering, and for different reasons: opening a FIFO
+    for writing blocks until a reader appears, which O_NONBLOCK turns into
+    ENXIO, while opening one for reading succeeds straight away and only the
+    type check catches it. With neither, a `copy` whose endpoint a guest had
+    replaced with a pipe hung for as long as the user left it running.
+    """
+    os.mkfifo(tmp_path / "pipe")
+    fd = _fd(tmp_path)
+    try:
+        with _deadline():
+            with pytest.raises(OSError) as wr:
+                dirfd.open_regular_at(fd, "pipe",
+                                      os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+            assert wr.value.errno == errno.ENXIO
+            with pytest.raises(OSError) as rd:
+                dirfd.open_regular_at(fd, "pipe", os.O_RDONLY)
+            assert rd.value.errno == errno.EINVAL
+    finally:
+        os.close(fd)
+
+
+def test_open_regular_at_refuses_a_directory(tmp_path):
+    (tmp_path / "d").mkdir()
+    fd = _fd(tmp_path)
+    try:
+        with pytest.raises(OSError):
+            dirfd.open_regular_at(fd, "d", os.O_RDONLY)
+    finally:
+        os.close(fd)
+
+
+# ----- chmod through descriptors ------------------------------------------
+
+@pytest.mark.skipif(not getattr(os, "O_PATH", 0), reason="needs O_PATH")
+def test_make_writable_works_on_an_o_path_fd(tmp_path):
+    """paths.pin_path hands out O_PATH fds, where fchmod is EBADF.
+
+    Every caller wraps the chmod in `except OSError: pass`, so the failure
+    was silent and the recovery it guards simply never happened at a copy or
+    sync endpoint: `sync <file> box:/unwritable/f` reported the permission
+    error that make_writable was called to clear.
+    """
+    d = tmp_path / "d"
+    d.mkdir()
+    os.chmod(d, 0o500)
+
+    fd = os.open(str(d), dirfd._O_PATH_DIR)
+    try:
+        with pytest.raises(OSError) as exc:
+            os.fchmod(fd, 0o700)        # the call that used to be swallowed
+        assert exc.value.errno == errno.EBADF
+        dirfd.make_writable(fd)
+    finally:
+        os.close(fd)
+
+    assert stat.S_IMODE(os.stat(d).st_mode) & stat.S_IRWXU == stat.S_IRWXU
+
+
+def test_rmtree_at_force_removes_unreadable_dir(tmp_path):
+    """Mode 0000 is what the force path exists for: EACCES, not EPERM.
+
+    An unwritable-but-readable directory (0500) never reaches the retry,
+    so it does not exercise this at all.
+    """
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "sub" / "f.txt").write_text("x")
+    os.chmod(tree / "sub", 0o000)
+
+    fd = _fd(tmp_path)
+    try:
+        with pytest.raises(OSError):
+            dirfd.rmtree_at(fd, "tree")
+        dirfd.rmtree_at(fd, "tree", force=True)
+    finally:
+        os.close(fd)
+    assert not tree.exists()

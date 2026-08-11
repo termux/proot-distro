@@ -7,7 +7,10 @@
 # could write anywhere on the host filesystem (and a `copy` out of it could
 # read any host file). Every path below must stay inside the rootfs.
 
+import contextlib
+import errno
 import os
+import signal
 import stat
 from types import SimpleNamespace
 
@@ -17,6 +20,30 @@ from proot_distro import dirfd
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs, resolve_container_path
+
+
+class _Blocked(Exception):
+    """Raised when a call under _deadline() did not return in time.
+
+    Deliberately not an OSError: the code under test catches OSError and
+    turns it into a tidy `sys.exit(1)`, which would make a blocked open
+    indistinguishable from a clean refusal and let the regression pass.
+    """
+
+
+@contextlib.contextmanager
+def _deadline(seconds=5):
+    """Turn a blocked syscall into a failure rather than a hung suite."""
+    def fire(signum, frame):
+        raise _Blocked("call did not return")
+
+    previous = signal.signal(signal.SIGALRM, fire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def _copy(source, destination, **over):
@@ -251,10 +278,13 @@ def test_sync_delete_does_not_chmod_host_file_through_symlink(
 ):
     """`--delete`'s chmod fallback must not act on symlink targets.
 
-    shutil.rmtree() failing with EPERM sends `sync` through a walk that
-    chmods every entry to force the removal through. os.chmod() follows
-    symlinks, so a link inside the removed subtree used to hand the
-    container a mode change on any host file.
+    A removal that fails with EPERM sends `sync` through a walk that chmods
+    entries to force it through. os.chmod() follows symlinks, so a link
+    inside the removed subtree used to hand the container a mode change on
+    any host file.
+
+    `extra` is mode 0000, not 0500: an unwritable directory is still
+    *readable*, so the descent succeeds and the fallback never runs at all.
     """
     builders.make_container("box")
     rootfs = container_rootfs("box")
@@ -264,12 +294,12 @@ def test_sync_delete_does_not_chmod_host_file_through_symlink(
     os.chmod(victim, 0o400)
 
     # `extra` has no counterpart in the source, so --delete removes it;
-    # mode 0500 makes rmtree's first attempt fail with PermissionError.
+    # mode 0000 makes the first attempt fail with PermissionError.
     dest = os.path.join(rootfs, "data")
     extra = os.path.join(dest, "extra")
     os.makedirs(extra)
     os.symlink(str(victim), os.path.join(extra, "link"))
-    os.chmod(extra, 0o500)
+    os.chmod(extra, 0o000)
 
     src = tmp_path / "tree"
     src.mkdir()
@@ -292,7 +322,7 @@ def test_rmtree_force_does_not_chmod_symlink_targets(tmp_path):
     tree = tmp_path / "tree"
     (tree / "sub").mkdir(parents=True)
     os.symlink(str(victim), tree / "sub" / "link")
-    os.chmod(tree / "sub", 0o500)
+    os.chmod(tree / "sub", 0o000)
 
     fd = dirfd.opendir(str(tmp_path))
     try:
@@ -303,6 +333,154 @@ def test_rmtree_force_does_not_chmod_symlink_targets(tmp_path):
     assert not tree.exists()
     assert stat.S_IMODE(os.stat(victim).st_mode) == 0o400
     assert victim.read_text() == "x"
+
+
+def test_rmtree_force_refuses_a_directory_swapped_for_a_symlink(
+    tmp_path, monkeypatch
+):
+    """The force path must not chmod an entry replaced mid-retry.
+
+    rmtree_at lstats an entry as a directory, fails to open it, then makes
+    it readable and tries again. Naming the entry in that chmod handed the
+    container a mode change on any host file it could point a link at, with
+    bits it chose itself by picking the mode of the directory it planted:
+    0044 | 0700 is 0746, so a 0600 private file came out group- and
+    world-writable. Racing it for real took a few thousand attempts, so the
+    swap is forced here to keep the test deterministic.
+    """
+    victim = tmp_path / "victim"
+    victim.write_text("private key")
+    os.chmod(victim, 0o600)
+
+    tree = tmp_path / "tree"
+    bait = tree / "bait"
+    bait.mkdir(parents=True)
+    os.chmod(bait, 0o044)          # unreadable: the descent gives EACCES
+
+    real_opendir_at = dirfd.opendir_at
+    swapped = []
+
+    def swapping_opendir_at(dir_fd, name):
+        if name == "bait" and not swapped:
+            swapped.append(name)
+            os.rmdir(bait)         # the guest wins the window
+            os.symlink(str(victim), str(bait))
+            raise PermissionError(errno.EACCES, "Permission denied", name)
+        return real_opendir_at(dir_fd, name)
+
+    monkeypatch.setattr(dirfd, "opendir_at", swapping_opendir_at)
+
+    fd = dirfd.opendir(str(tree))
+    try:
+        with pytest.raises(OSError):
+            dirfd.rmtree_at(fd, "bait", force=True)
+    finally:
+        os.close(fd)
+
+    assert swapped, "the swap never happened; the test proves nothing"
+    assert stat.S_IMODE(os.stat(victim).st_mode) == 0o600
+    assert victim.read_text() == "private key"
+
+
+# ----- hostile file types planted at an endpoint --------------------------
+
+def test_copy_refuses_a_fifo_planted_at_the_destination(tmp_path, builders,
+                                                        capsys):
+    """O_NOFOLLOW refuses a symlink but says nothing about a pipe.
+
+    Opening one for writing waits for a reader the guest need never supply,
+    which hung the copy indefinitely — including when the pipe was reached
+    through a symlink the resolver had already followed, as here.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.mkfifo(os.path.join(rootfs, "realfifo"))
+    os.symlink("/realfifo", os.path.join(rootfs, "innocent"))
+
+    payload = tmp_path / "p.txt"
+    payload.write_text("X")
+
+    with _deadline():
+        with pytest.raises(SystemExit) as exc:
+            _copy(str(payload), "box:/innocent")
+    assert exc.value.code == 1
+    # Still a pipe: nothing was written through it, nothing replaced it, and
+    # the resolver did follow the link to get here.
+    assert stat.S_ISFIFO(os.lstat(os.path.join(rootfs, "realfifo")).st_mode)
+    assert "realfifo" in capsys.readouterr().err
+
+
+def test_copy_refuses_a_fifo_named_as_the_source(tmp_path, builders, capsys):
+    builders.make_container("box")
+    os.mkfifo(os.path.join(container_rootfs("box"), "srcfifo"))
+
+    with _deadline():
+        with pytest.raises(SystemExit) as exc:
+            _copy("box:/srcfifo", str(tmp_path / "out"))
+    assert exc.value.code == 1
+    assert "not a regular file or directory" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_sync_survives_a_fifo_planted_at_the_destination(tmp_path, builders):
+    """sync writes a temp file and renames, so a pipe is simply replaced."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    os.mkfifo(os.path.join(rootfs, "fifo"))
+
+    payload = tmp_path / "p.txt"
+    payload.write_text("X")
+
+    with _deadline():
+        _sync(str(payload), "box:/fifo")
+    landed = os.path.join(rootfs, "fifo")
+    assert stat.S_ISREG(os.lstat(landed).st_mode)
+    assert open(landed).read() == "X"
+
+
+# ----- a planted link that folds the destination into the source ----------
+
+def test_copy_refuses_a_destination_a_link_folds_into_the_source(
+    tmp_path, builders, capsys
+):
+    """`backup -> /data` makes `copy -r box:/data box:/backup` self-copying.
+
+    The overlap is invisible in the specs and only shows up once both sides
+    are resolved. Left unchecked the walk recursed until the interpreter's
+    stack gave out, dumping a traceback and leaving a thousand directories
+    behind.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    data = os.path.join(rootfs, "data")
+    os.makedirs(os.path.join(data, "sub"))
+    with open(os.path.join(data, "sub", "f.txt"), "w") as fh:
+        fh.write("x")
+    os.symlink("/data", os.path.join(rootfs, "backup"))
+
+    with pytest.raises(SystemExit) as exc:
+        _copy("box:/data", "box:/backup/inner", recursive=True)
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(data)) == ["sub"]
+
+
+def test_sync_refuses_a_destination_a_link_folds_into_the_source(
+    tmp_path, builders, capsys
+):
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    data = os.path.join(rootfs, "data")
+    os.makedirs(data)
+    with open(os.path.join(data, "f.txt"), "w") as fh:
+        fh.write("x")
+    os.symlink("/data", os.path.join(rootfs, "mirror"))
+
+    with pytest.raises(SystemExit) as exc:
+        _sync("box:/data", "box:/mirror/inner")
+    assert exc.value.code == 1
+    assert "into itself" in capsys.readouterr().err
+    assert sorted(os.listdir(data)) == ["f.txt"]
 
 
 # ----- resolver-level guarantees ------------------------------------------
