@@ -74,9 +74,17 @@ Top-level utilities (each owns a focused concern):
   use `(dir_fd, leaf)` for every filesystem call; `str(pin)` stays the
   real path, for messages. `inside=True` walks the final component too
   — for a root only worked *underneath* — and so also refuses a root
-  that became a symlink. Host specs are not walked component by
-  component but still yield a `(dir_fd, leaf)` pair, so callers need no
-  special case.
+  that became a symlink. `create=True` makes the missing components
+  along that same walk (`_descend`: `mkdirat` off the validated fd, then
+  the `O_NOFOLLOW` open); a caller must **not** `os.makedirs()` the
+  parents first, since that addresses each level by path and builds the
+  tree through a symlink planted after the resolve, before the pin can
+  refuse. Host specs are not walked component by component but still
+  yield a `(dir_fd, leaf)` pair, so callers need no special case.
+  `resolve_container_child()` re-resolves a destination extended with
+  the source's base name (`copy f box:/dir` ⇒ `box:/dir/f`), so the
+  appended component gets the same chroot walk as one written in the
+  spec instead of being joined on literally.
 - `dirfd.py` — the openat(2) layer `copy`/`sync` walk with:
   `opendir_at`/`reopen`/`open_file_at` (always `O_NOFOLLOW`),
   `listdir_at`/`lstat_at`/`exists_at`, `copy_file_at`/`copy_symlink_at`/
@@ -186,12 +194,28 @@ path API is left in either command: `copytree`/`copy2`/`move` gave way
 to `dirfd.copy_tree_at` / `copy_file_at` / `renameat` (`move` falls back
 to copy+`rmtree_at` on `EXDEV`), and sync's walk is three fd-carrying
 recursions — `_collect_rels` (count + rel set), `_mirror_at` (write),
-and `_collect_extras_at`/`_remove_extras_at` for `--delete`.
+and `_collect_extras_at`/`_remove_extras_at` for `--delete`. Missing
+destination parents are made by the pinning walk itself
+(`pin_path(create=True)`), never by `os.makedirs()` beforehand.
+
+Destination directories are created **writable** (`0o700`) and given the
+source's mode only once their contents are in — `copy_tree_at` via
+`copy_metadata`, sync via `_apply_dir_mode`, both `fchmod` on the
+descended fd. `mkdir`'s mode argument is umask-masked and so cannot
+preserve a mode on its own (a `1777` source landed as `1755`), and a
+source directory that is not writable itself (`0555`) would otherwise
+reject its own contents mid-copy.
+
+A host source given as a symlink is dereferenced (`os.path.realpath`) so
+`cp` semantics hold — `copy -r /sdcard box:/x` is ordinary on Termux —
+while the container side gets the same from `resolve_container_path()`
+walking its final component. `--move` is exempt: `rename(2)` moves the
+link itself, and the `EXDEV` fallback recreates it verbatim.
 
 Two guards remain specific to `sync`, which writes into a pre-existing
 tree: `_sync_dir` **unlinks** a destination symlink where the source has
 a real directory (rsync's behaviour) rather than descending through it,
-and the permission fix-ups act on directory fds (`fchmod`) and skip
+and every permission fix-up acts on directory fds (`fchmod`) and skips
 symlinks, since `os.chmod()` has no symlink-relative form on Linux and
 would otherwise apply to whatever a planted link points at.
 

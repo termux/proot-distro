@@ -35,6 +35,13 @@
 #       Re-walk an already-resolved container path with O_NOFOLLOW and
 #       keep the directory fd open, so the I/O that follows cannot be
 #       redirected by a symlink planted after the resolve (TOCTOU).
+#       With create=True the same walk also makes the missing parents,
+#       so no caller has to create them by path beforehand.
+#
+#   resolve_container_child
+#       Re-resolve a destination that has been extended with the source's
+#       base name, so the appended component gets the same chroot walk as
+#       one that was written in the spec.
 #
 #   container_locks_for_spec_pair
 #       Build the ContainerLock list a copy/sync invocation needs:
@@ -165,6 +172,27 @@ def resolve_container_path(spec: str) -> str:
     return _resolve_within_root(rootfs, rel_path, spec)
 
 
+def resolve_container_child(spec: str, resolved: str, child: str) -> str:
+    """Resolve *child* under the already-resolved container path *resolved*.
+
+    `copy` and `sync` extend a destination directory with the source's
+    base name, so that `copy f box:/dir` writes to `box:/dir/f`. That
+    appended component is container content like any other and has to go
+    through the same chroot walk as one written in the spec: `/dir/f` may
+    itself be a symlink, and joining it literally would leave an
+    unresolved link at the leaf, which the O_NOFOLLOW open then refuses —
+    failing an operation that succeeds when spelled `box:/dir/f`.
+
+    A host destination is joined as-is; host paths are not walked.
+    """
+    joined = os.path.join(resolved, child)
+    name = container_from_spec(spec)
+    if name is None:
+        return joined
+    rootfs = os.path.normpath(container_rootfs(name))
+    return _resolve_within_root(rootfs, os.path.relpath(joined, rootfs), spec)
+
+
 # O_PATH opens a directory without needing read permission on it, which
 # matters for the execute-only directories `sync` deliberately tolerates.
 # dirfd.reopen() turns such a pin into a readable fd when one is needed.
@@ -195,8 +223,33 @@ class PinnedPath:
         return self.path
 
 
+def _descend(fd: int, part: str, create: bool) -> int:
+    """Open *part* under *fd*, close *fd*, and return the new fd.
+
+    With create=True a missing component is made on the way down. The
+    mkdir is relative to a directory fd the walk has already validated
+    and the open that follows is O_NOFOLLOW, so a component created here
+    is no more redirectable than one that was already present — which is
+    the whole reason the parents are not made by path beforehand.
+    """
+    try:
+        nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
+    except FileNotFoundError:
+        if not create:
+            raise
+        try:
+            # 0o777 & ~umask, the mode os.makedirs() used to apply here.
+            os.mkdir(part, 0o777, dir_fd=fd)
+        except FileExistsError:
+            pass                # lost a race with another writer; open it
+        nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
+    os.close(fd)
+    return nxt
+
+
 @contextmanager
-def pin_path(spec: str, resolved: str, *, inside: bool = False):
+def pin_path(spec: str, resolved: str, *, inside: bool = False,
+             create: bool = False):
     """Yield a PinnedPath for *resolved*, the result of resolving *spec*.
 
     resolve_container_path() returns a path with no symlink components,
@@ -217,6 +270,13 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False):
     has become a symlink, which the default cannot do: everything written
     below it would go straight through.
 
+    Pass create=True when the caller needs the walked directories to
+    exist. Making them here rather than with os.makedirs() beforehand is
+    what keeps the guarantee whole: makedirs() addresses each level by
+    path, so a component swapped for a symlink between the resolve and
+    the call is followed, and directories land outside the container
+    before the pin gets its chance to refuse.
+
     A host path (no container prefix) is not walked component by
     component — the host filesystem is not the threat — but its parent is
     still opened, so callers get the same (dir_fd, leaf) pair either way.
@@ -230,6 +290,8 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False):
                     os.path.dirname(resolved) or os.sep
                 )
                 leaf = "" if inside else os.path.basename(resolved)
+                if create:
+                    os.makedirs(base, exist_ok=True)
                 fd = os.open(base, _O_DIR)
             else:
                 rootfs = os.path.normpath(container_rootfs(name))
@@ -238,9 +300,7 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False):
                 leaf = "" if inside else (parts.pop() if parts else "")
                 fd = os.open(rootfs, _O_DIR)
                 for part in parts:
-                    nxt = os.open(part, _O_DIR | os.O_NOFOLLOW, dir_fd=fd)
-                    os.close(fd)
-                    fd = nxt
+                    fd = _descend(fd, part, create)
         except OSError as exc:
             if fd is not None:
                 os.close(fd)

@@ -116,6 +116,55 @@ def test_move_through_symlink_stays_inside(tmp_path, builders):
     assert not (outside / "moved.txt").exists()
 
 
+def test_copy_into_dir_reanchors_the_appended_name(tmp_path, builders):
+    """`copy f box:/dir` resolves box:/dir/f, and stays inside doing it.
+
+    The appended base name goes through the same chroot walk as one
+    written in the spec, so a link planted at that name is re-anchored at
+    the rootfs rather than followed out to the host.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.makedirs(os.path.join(rootfs, "dir"))
+    os.symlink(os.path.join(str(outside), "f.txt"),
+               os.path.join(rootfs, "dir", "f.txt"))
+
+    payload = tmp_path / "f.txt"
+    payload.write_text("PWNED")
+    _copy(str(payload), "box:/dir")
+
+    assert not (outside / "f.txt").exists()
+    landed = os.path.join(rootfs, str(outside).lstrip("/"), "f.txt")
+    assert open(landed).read() == "PWNED"
+
+
+def test_sync_into_dir_reanchors_the_appended_name(tmp_path, builders):
+    """sync re-anchors it too, and refuses rather than reaching the host.
+
+    Unlike copy, sync does not create a destination parent for a single
+    file (rsync does not either), so re-anchoring a link that points at a
+    host directory with no counterpart inside the rootfs leaves nothing
+    to write into and the command stops. Either way nothing lands outside.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.makedirs(os.path.join(rootfs, "dir"))
+    os.symlink(os.path.join(str(outside), "f.txt"),
+               os.path.join(rootfs, "dir", "f.txt"))
+
+    payload = tmp_path / "f.txt"
+    payload.write_text("PWNED")
+    with pytest.raises(SystemExit) as exc:
+        _sync(str(payload), "box:/dir")
+
+    assert exc.value.code == 1
+    assert not (outside / "f.txt").exists()
+
+
 # ----- copy: reading through a planted symlink ----------------------------
 
 def test_copy_source_symlink_cannot_read_host(tmp_path, builders):

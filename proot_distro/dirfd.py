@@ -234,19 +234,25 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
             if on_entry:
                 on_entry(child)
         elif stat.S_ISDIR(mode):
-            os.mkdir(name, stat.S_IMODE(mode), dir_fd=dst_dir_fd)
+            # Created writable, sealed afterwards. mkdir's mode is masked
+            # by the umask, so it cannot preserve the source mode on its
+            # own, and a source directory that is not writable itself
+            # (0555 and friends) would reject its own contents. copytree
+            # had the same two-step shape: makedirs() then copystat().
+            os.mkdir(name, 0o700, dir_fd=dst_dir_fd)
             sub_src = opendir_at(src_dir_fd, name)
             try:
                 sub_dst = opendir_at(dst_dir_fd, name)
                 try:
                     copy_tree_at(sub_src, sub_dst, rel=child,
                                  on_entry=on_entry, on_skip=on_skip)
+                    # After the contents: writing them bumps the mtime,
+                    # and the mode must not be applied any earlier.
+                    copy_metadata(sub_src, sub_dst, src_st)
                 finally:
                     os.close(sub_dst)
             finally:
                 os.close(sub_src)
-            # After the contents: writing them bumps the directory mtime.
-            set_times_at(dst_dir_fd, name, src_st)
         elif stat.S_ISREG(mode):
             copy_file_at(src_dir_fd, name, dst_dir_fd, name, src_st)
             if on_entry:

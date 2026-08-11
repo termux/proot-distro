@@ -250,6 +250,89 @@ def test_copy_leaf_swapped_after_resolve_is_refused(
     assert victim.read_text() == "original"
 
 
+# ----- the destination's missing parents ----------------------------------
+#
+# Creating them with os.makedirs() before pinning put a path-addressed
+# write ahead of the guarantee: the swap was still detected and the copy
+# still refused, but only after makedirs() had followed the planted link
+# and built the tree outside the container. pin_path(create=True) makes
+# them along the O_NOFOLLOW walk instead, so there is no window at all.
+
+def test_copy_makes_no_directories_outside_before_the_pin(
+    tmp_path, builders, monkeypatch, capsys
+):
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    payload = tmp_path / "payload.txt"
+    payload.write_text("PWNED")
+
+    # 'stage' does not exist at resolve time, so it is taken literally;
+    # the attacker plants it as a link before the parents get made.
+    done = []
+
+    def attack():
+        if not done:
+            done.append(True)
+            os.symlink(str(outside), os.path.join(rootfs, "stage"))
+
+    monkeypatch.setattr(copy_mod, "resolve_container_path",
+                        _racing_resolver("box:", attack))
+
+    with pytest.raises(SystemExit) as exc:
+        _copy(str(payload), "box:/stage/deep/nested/f.txt")
+
+    assert exc.value.code == 1
+    assert done, "the swap never fired; test is not exercising the race"
+    assert sorted(os.listdir(outside)) == []
+    assert "changed while it was being resolved" in capsys.readouterr().err
+
+
+def test_sync_makes_no_directories_outside_before_the_pin(
+    tmp_path, builders, monkeypatch, capsys
+):
+    """sync creates the destination root itself, so it had the same hole."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_text("S")
+
+    done = []
+
+    def attack():
+        if not done:
+            done.append(True)
+            os.symlink(str(outside), os.path.join(rootfs, "stage"))
+
+    monkeypatch.setattr(sync_mod, "resolve_container_path",
+                        _racing_resolver("box:", attack))
+
+    with pytest.raises(SystemExit):
+        sync_mod.command_sync(SimpleNamespace(
+            source=str(src), destination="box:/stage/deep/dest",
+            verbose=False, checksum=False, delete=False))
+
+    assert done
+    assert sorted(os.listdir(outside)) == []
+    assert "changed while it was being resolved" in capsys.readouterr().err
+
+
+def test_copy_creates_missing_parents_inside_the_container(tmp_path, builders):
+    """The create=True walk must still do what makedirs() did."""
+    builders.make_container("box")
+    payload = tmp_path / "p.txt"
+    payload.write_text("DATA")
+
+    _copy(str(payload), "box:/a/b/c/p.txt")
+
+    landed = os.path.join(container_rootfs("box"), "a", "b", "c", "p.txt")
+    assert open(landed).read() == "DATA"
+
+
 # ----- below the pinned root: the dir_fd walk -----------------------------
 #
 # Pinning the endpoints leaves everything the walk creates underneath them

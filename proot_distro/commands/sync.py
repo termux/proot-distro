@@ -56,7 +56,8 @@ from contextlib import ExitStack
 from proot_distro import dirfd
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.paths import (
-    container_locks_for_spec_pair, pin_path, resolve_container_path,
+    container_locks_for_spec_pair, pin_path, resolve_container_child,
+    resolve_container_path,
 )
 from proot_distro.progress import clear_bar, draw_count_bar
 
@@ -185,18 +186,19 @@ def _sync_dir(dst_fd, name, src_st):
         dst_st = None
 
     if dst_st is not None and stat.S_ISDIR(dst_st.st_mode):
-        try:
-            os.chmod(name, stat.S_IMODE(src_st.st_mode), dir_fd=dst_fd)
-        except OSError:
-            pass
         return False
 
+    # Created writable, with the source mode applied by _apply_dir_mode()
+    # once the contents are in. mkdir's mode is umask-masked and so cannot
+    # preserve the source mode anyway — syncing twice used to give two
+    # different results, the second run's chmod correcting the first run's
+    # masked mkdir.
     try:
-        os.mkdir(name, stat.S_IMODE(src_st.st_mode), dir_fd=dst_fd)
+        os.mkdir(name, 0o700, dir_fd=dst_fd)
     except PermissionError:
         dirfd.make_writable(dst_fd)
         try:
-            os.mkdir(name, stat.S_IMODE(src_st.st_mode), dir_fd=dst_fd)
+            os.mkdir(name, 0o700, dir_fd=dst_fd)
         except OSError as exc:
             log_error(f"Cannot create directory '{name}': {exc}")
             sys.exit(1)
@@ -204,6 +206,21 @@ def _sync_dir(dst_fd, name, src_st):
         log_error(f"Cannot create directory '{name}': {exc}")
         sys.exit(1)
     return True
+
+
+def _apply_dir_mode(sub_src, sub_dst):
+    """Give the destination directory its source's mode, after the descent.
+
+    fchmod on the descended fd, not chmod on the name: os.chmod() has no
+    symlink-relative form on Linux, so naming the entry would hand a
+    swapped-in link's target the mode change. Applying it only on the way
+    back up also keeps a read-only source directory (0555 and friends)
+    writable while its own contents are still being written.
+    """
+    try:
+        os.fchmod(sub_dst, stat.S_IMODE(os.fstat(sub_src).st_mode))
+    except OSError:
+        pass
 
 
 def _sync_symlink(src_fd, src_name, dst_fd, dst_name, src_st=None):
@@ -402,6 +419,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                 continue
             try:
                 _mirror_at(sub_src, sub_dst, child, ctx)
+                _apply_dir_mode(sub_src, sub_dst)
             finally:
                 os.close(sub_dst)
         finally:
@@ -516,31 +534,31 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
         sys.exit(1)
 
     # If src is a file and dest is an existing dir, place file inside it.
+    # Appended through the resolver: the name is a component inside the
+    # container like any other, and may itself be a symlink.
     if not src_is_dir and os.path.isdir(dest_path):
-        dest_path = os.path.join(dest_path, os.path.basename(src_path))
+        dest_path = resolve_container_child(dest, dest_path,
+                                            os.path.basename(src_path))
 
     log_info("Synchronizing files...")
     log_info(f"Source: '{src_path}'")
     log_info(f"Destination: '{dest_path}'")
-
-    if src_is_dir:
-        try:
-            os.makedirs(dest_path, exist_ok=True)
-        except OSError as exc:
-            log_error(f"Cannot create destination '{dest_path}': {exc}")
-            sys.exit(1)
 
     ctx = _Ctx(src_path, dest, dest_path, verbose, use_checksum)
 
     # Pin both roots. inside=True for a directory sync: everything is
     # written *underneath* the root, so the root's own name must be
     # covered too — a root that became a symlink is refused, not
-    # followed. The pins are held for the whole transfer.
+    # followed. The pins are held for the whole transfer. create=True
+    # makes the destination root along that same walk; os.makedirs() on
+    # the path would follow a symlink planted after the resolve and build
+    # the tree outside the container before the pin could refuse.
     with ExitStack() as pins:
         src_pin = pins.enter_context(pin_path(src, src_path,
                                               inside=src_is_dir))
         dest_pin = pins.enter_context(pin_path(dest, dest_path,
-                                               inside=src_is_dir))
+                                               inside=src_is_dir,
+                                               create=src_is_dir))
         try:
             if src_is_dir:
                 _sync_directory(src_pin, dest_pin, ctx, delete)

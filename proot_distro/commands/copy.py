@@ -32,8 +32,10 @@ from contextlib import ExitStack
 from proot_distro import dirfd
 from proot_distro.message import log_info, log_error, crit_error, warn
 from proot_distro.paths import (
+    container_from_spec,
     container_locks_for_spec_pair,
     pin_path,
+    resolve_container_child,
     resolve_container_path,
 )
 from proot_distro.progress import clear_bar
@@ -71,9 +73,10 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
         src_st = os.fstat(src_fd)
         # mkdirat refuses to create over anything that already exists,
         # including a planted symlink, which is copytree's behaviour too.
+        # Created writable; copy_metadata() below applies the real mode
+        # once the contents are in (see dirfd.copy_tree_at).
         try:
-            os.mkdir(dest_pin.leaf, stat.S_IMODE(src_st.st_mode),
-                     dir_fd=dest_pin.dir_fd)
+            os.mkdir(dest_pin.leaf, 0o700, dir_fd=dest_pin.dir_fd)
         except OSError as exc:
             # The fd-relative call only knows the leaf; report the path.
             raise OSError(exc.errno, exc.strerror, dest_display) from None
@@ -95,7 +98,7 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
         os.close(src_fd)
 
 
-def _move_pinned(src_pin, dest_pin, src_is_dir):
+def _move_pinned(src_pin, dest_pin):
     """Move via renameat, falling back to copy+remove across devices.
 
     rename(2) replaces a symlink sitting at the destination rather than
@@ -110,7 +113,16 @@ def _move_pinned(src_pin, dest_pin, src_is_dir):
         if exc.errno != errno.EXDEV:
             raise
 
-    if src_is_dir:
+    # Across devices the move becomes copy + remove. The type comes from
+    # the pinned fd rather than the earlier path probe, so a symlink is
+    # recognised as one and recreated verbatim — never followed, and
+    # never dereferenced, which is what rename(2) would have done too.
+    src_st = dirfd.lstat_at(src_pin.dir_fd, src_pin.leaf)
+    if stat.S_ISLNK(src_st.st_mode):
+        dirfd.copy_symlink_at(src_pin.dir_fd, src_pin.leaf,
+                              dest_pin.dir_fd, dest_pin.leaf, src_st)
+        os.unlink(src_pin.leaf, dir_fd=src_pin.dir_fd)
+    elif stat.S_ISDIR(src_st.st_mode):
         _copy_tree_pinned(src_pin, dest_pin, False, str(dest_pin))
         dirfd.rmtree_at(src_pin.dir_fd, src_pin.leaf, force=True)
     else:
@@ -129,6 +141,17 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
         crit_error("paths '.' and '..' are not allowed as copy destination.")
         sys.exit(1)
 
+    # A host source spelled as a symlink is copied by content, the way cp
+    # (and the shutil implementation this replaced) does. The container
+    # side gets this from resolve_container_path, which walks every
+    # component including the last; host paths are not walked at all, so
+    # the dereference happens here instead. Without it the O_NOFOLLOW
+    # open below refuses the source outright — `copy -r /sdcard box:/x`
+    # is an ordinary thing to ask for on Termux. A move is left alone:
+    # rename(2) moves the link itself, as mv does.
+    if not move_mode and container_from_spec(src) is None:
+        src_path = os.path.realpath(src_path)
+
     if not os.path.exists(src_path):
         crit_error(f"cannot copy '{src}' because the path does not exist.")
         sys.exit(1)
@@ -145,9 +168,12 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
 
     # A file copied onto an existing directory lands inside it, and so
     # does a moved directory. shutil did this implicitly; spell it out so
-    # the destination names the entry we are about to create.
+    # the destination names the entry we are about to create. The name is
+    # appended through the resolver, not joined on: it is a path
+    # component inside the container like any other, and may be a symlink.
     if (not src_is_dir or move_mode) and os.path.isdir(dest_path):
-        dest_path = os.path.join(dest_path, os.path.basename(src_path))
+        dest_path = resolve_container_child(dest, dest_path,
+                                            os.path.basename(src_path))
 
     log_info(f"Source: '{src_path}'")
     log_info(f"Destination: '{dest_path}'")
@@ -155,25 +181,24 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
     dest_dir = os.path.dirname(dest_path)
     if not os.path.isdir(dest_dir):
         log_info(f"Creating directory '{dest_dir}'...")
-        try:
-            os.makedirs(dest_dir, exist_ok=True)
-        except OSError as exc:
-            log_error(f"Cannot create directory '{dest_dir}': {exc}")
-            sys.exit(1)
 
     # Pin both endpoints, then address the filesystem only through the
     # pinned fds: neither the endpoints nor anything the walk creates
     # below them can be redirected by a symlink appearing mid-transfer.
+    # The destination's missing parents are made by that same walk
+    # (create=True) — making them by path first would write through a
+    # symlink planted after the resolve, before the pin could refuse.
     try:
         with ExitStack() as pins:
             src_pin = pins.enter_context(pin_path(src, src_path))
-            dest_pin = pins.enter_context(pin_path(dest, dest_path))
+            dest_pin = pins.enter_context(pin_path(dest, dest_path,
+                                                   create=True))
 
             if move_mode:
                 log_info("Moving files...")
                 if verbose:
                     log_info(f"Moving: '{src_path}' -> '{dest_path}'")
-                _move_pinned(src_pin, dest_pin, src_is_dir)
+                _move_pinned(src_pin, dest_pin)
             else:
                 log_info("Copying files, this may take a while...")
                 if src_is_dir:
