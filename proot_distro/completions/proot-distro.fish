@@ -390,7 +390,7 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
 # search
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
-    -l limit          -r -d 'Maximum number of results (default: 25)'
+    -l limit          -r -d 'Maximum number of results (default: 100)'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
     -s q -l quiet     -d 'Print only repository names, one per line'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
@@ -548,7 +548,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from push' -l allow-insecure       
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet           -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help            -d 'Show help'
 
-complete -c pd -f -n '__fish_seen_subcommand_from search' -l limit       -r -d 'Maximum number of results (default: 25)'
+complete -c pd -f -n '__fish_seen_subcommand_from search' -l limit       -r -d 'Maximum number of results (default: 100)'
 complete -c pd -f -n '__fish_seen_subcommand_from search' -s q -l quiet   -d 'Print only repository names, one per line'
 complete -c pd -f -n '__fish_seen_subcommand_from search' -s h -l help    -d 'Show help'
 

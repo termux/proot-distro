@@ -53,7 +53,7 @@ def command_search(args) -> None:
     if not query:
         crit_error("search term is not specified.")
         sys.exit(1)
-    limit = getattr(args, "limit", 25) or 25
+    limit = getattr(args, "limit", 100) or 100
     quiet = bool(getattr(args, "quiet", False))
 
     try:

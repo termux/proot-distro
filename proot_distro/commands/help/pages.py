@@ -756,7 +756,8 @@ HELP_PAGES = {
         "options": [
             ("-h, --help", "Show this help."),
             ("--limit [N]",
-             "Maximum number of results to show (default: 25)."),
+             "Maximum number of results to show (default: 100). Limits "
+             "over 100 fetch further pages from Docker Hub."),
             ("-q, --quiet",
              "Print only the repository names, one per line. Mutually "
              "exclusive with the table output."),

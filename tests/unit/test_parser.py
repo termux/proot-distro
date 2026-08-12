@@ -232,7 +232,7 @@ def test_search_parsing():
 def test_search_defaults():
     p = parser.build_parser()
     args, _ = p.parse_known_args(["search", "alpine"])
-    assert args.limit == 25
+    assert args.limit == 100
     assert args.quiet is False
 
 

@@ -533,7 +533,7 @@ query never touches your local cache.
 
 | Option | Description |
 |---|---|
-| `--limit N` | Maximum number of results to return (default `25`). |
+| `--limit N` | Maximum number of results to return (default `100`; larger limits page through Docker Hub). |
 | `-q`, `--quiet` | Print one bare repository name per line, ready to pipe into `install`. |
 | `-h`, `--help` | Show help for this command. |
 

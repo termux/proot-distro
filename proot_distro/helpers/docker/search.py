@@ -45,6 +45,11 @@ from proot_distro.helpers.docker.transport import _ua, get_auth_token, opener
 
 HUB_SEARCH_URL = "https://hub.docker.com/v2/search/repositories/"
 
+# Docker Hub caps a single search page at this many results; larger
+# limits are fetched by walking `page` until the limit is satisfied or
+# the API stops answering.
+MAX_PAGE_SIZE = 100
+
 # Media types that describe a multi-architecture image index — the only
 # manifest kind whose entries carry a platform we can read an arch from.
 _INDEX_MEDIA_TYPES = frozenset({DOCKER_MANIFEST_LIST_MEDIA, OCI_INDEX_MEDIA})
@@ -60,7 +65,7 @@ _INDEX_ACCEPT = ", ".join([
 ])
 
 
-def search_images(query: str, limit: int = 25) -> list:
+def search_images(query: str, limit: int = 100) -> list:
     """Search Docker Hub for repositories matching *query*.
 
     Returns a list of result dicts carrying the fields `docker search`
@@ -68,22 +73,32 @@ def search_images(query: str, limit: int = 25) -> list:
     plus the raw pull_count. Transient network failures are retried
     with the same policy as registry pulls. An empty *query* (after
     stripping) yields an empty list without any network access.
+
+    Docker Hub answers at most `MAX_PAGE_SIZE` repositories per page, so
+    a *limit* beyond that walks the `page` parameter until the limit is
+    satisfied or the API stops answering.
     """
     query = (query or "").strip()
     if not query:
         return []
-    params = {"query": query, "page_size": max(1, int(limit)), "page": 1}
-    url = f"{HUB_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers=_ua())
-
-    def _attempt():
-        with opener().open(req) as resp:
-            return resp.read()
-
-    data = json.loads(retry_http(_attempt, what="Searching Docker Hub"))
+    limit = max(1, int(limit))
     results = []
-    for item in data.get("results", []) or []:
-        results.append(
+    page = 1
+    while len(results) < limit:
+        page_size = min(MAX_PAGE_SIZE, limit - len(results))
+        params = {"query": query, "page_size": page_size, "page": page}
+        url = f"{HUB_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+        req = urllib.request.Request(url, headers=_ua())
+
+        def _attempt():
+            with opener().open(req) as resp:
+                return resp.read()
+
+        data = json.loads(retry_http(_attempt, what="Searching Docker Hub"))
+        fetched = data.get("results", []) or []
+        if not fetched:
+            break
+        results.extend(
             {
                 "name": item.get("repo_name") or item.get("name", "?"),
                 "description": (
@@ -96,7 +111,11 @@ def search_images(query: str, limit: int = 25) -> list:
                 "is_automated": item.get("is_automated") or False,
                 "pull_count": item.get("pull_count") or 0,
             }
+            for item in fetched
         )
+        if len(fetched) < page_size:
+            break
+        page += 1
     return results
 
 
