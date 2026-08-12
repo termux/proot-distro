@@ -36,6 +36,7 @@ import sys
 import tarfile
 
 from proot_distro.atomic import atomic_replace
+from proot_distro.compress import require_read_support
 from proot_distro.message import log_info
 from proot_distro.progress import clear_bar, progress_active
 from proot_distro.helpers.docker import (
@@ -284,6 +285,10 @@ def install_from_local_file(
     Detection uses a streaming probe that reads at most the first 500
     member headers — fast even on compressed multi-GB images.
     """
+    # A zstd outer archive needs Python 3.14; without it the probe below
+    # sees a corrupt tar and would report it as one.
+    require_read_support(archive_path, f"archive '{archive_path}'")
+
     # Streaming probe: read up to 500 member names to detect OCI
     # layout and determine the strip count for plain tarballs. For
     # compressed archives this decompresses only the leading portion.

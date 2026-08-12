@@ -234,7 +234,8 @@ HELP_PAGES = {
             ("-h, --help", "Show this help."),
             ("-c, --compress [TYPE]",
              "Force a specific compression algorithm, overriding the "
-             "file extension. Supported values: gzip, bzip2, xz, none."),
+             "file extension. Supported values: gzip, bzip2, xz, "
+             "zstd (needs Python 3.14+), none."),
             ("-o, --output [FILE]",
              "Write the archive to FILE instead of stdout. When "
              "--compress is not given, compression is inferred from "
@@ -728,8 +729,8 @@ HELP_PAGES = {
                 "intro": (
                     "Compression is detected automatically from the "
                     "file header. Supported: gzip, bzip2, xz, "
-                    "uncompressed tar. Applies to both file and "
-                    "stdin input."
+                    "zstd (needs Python 3.14+), uncompressed tar. "
+                    "Applies to both file and stdin input."
                     "\n\n"
                     "Only one container is restored per archive. An "
                     "archive holding more than one container, or no "

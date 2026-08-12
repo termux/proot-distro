@@ -60,8 +60,8 @@ from proot_distro.commands.install_local import install_from_local_file
 # Archive extensions stripped when deriving a container name from a filename.
 _ARCHIVE_EXTS = (
     ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz",
-    ".oci.tar.xz", ".oci.tar.gz", ".oci.tar",
-    ".tar.lzma", ".tlzma", ".tar",
+    ".oci.tar.xz", ".oci.tar.gz", ".oci.tar.zst", ".oci.tar",
+    ".tar.lzma", ".tlzma", ".tar.zst", ".tzst", ".tar",
 )
 
 

@@ -259,7 +259,8 @@ Two archive formats are supported, auto-detected by reading the first
   a standard Linux filesystem (`bin/`, `etc/`, `usr/`, …). The tool
   scores strip levels 0–4 and picks the one that lands the most
   recognised rootfs directories at the root. Supported compression:
-  gzip, bzip2, xz, lzma, or uncompressed. No `manifest.json` is written
+  gzip, bzip2, xz, lzma, zstd (needs Python 3.14+), or uncompressed. No
+  `manifest.json` is written
   for this format (so `reset` and `run` are not available).
 - **OCI image layout** — a tar archive that contains an `oci-layout`
   file at its root (as produced by `docker save`, `skopeo copy
@@ -270,8 +271,9 @@ Two archive formats are supported, auto-detected by reading the first
 
 The container name is derived from the archive filename by stripping
 known extensions (`.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`,
-`.tar.xz`, `.txz`, `.tar.lzma`, `.tlzma`, `.oci.tar`, `.oci.tar.gz`,
-`.oci.tar.xz`) and sanitising the result. Use `--name` to set an
+`.tar.xz`, `.txz`, `.tar.lzma`, `.tlzma`, `.tar.zst`, `.tzst`,
+`.oci.tar`, `.oci.tar.gz`, `.oci.tar.xz`, `.oci.tar.zst`) and
+sanitising the result. Use `--name` to set an
 explicit name.
 
 **Examples:**
@@ -973,15 +975,20 @@ Create a TAR archive of the container. The archive contains
 | Option | Description |
 |---|---|
 | `-o`, `--output FILE` | Write to FILE instead of stdout. Refuses to overwrite an existing file. |
-| `-c`, `--compress TYPE` | Force compression: `gzip`, `bzip2`, `xz`, or `none`. Overrides extension-based detection. |
+| `-c`, `--compress TYPE` | Force compression: `gzip`, `bzip2`, `xz`, `zstd` (needs Python 3.14+), or `none`. Overrides extension-based detection. |
 | `-v`, `--verbose` | Log each archived file. |
 | `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
 When `--output` is given, the compression algorithm is inferred from
 the file extension (`.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`, `.tar.xz`,
-`.txz`, `.tar.lzma`, `.tlzma`, or plain `.tar`) unless `--compress`
-overrides it. Unsupported extensions (`.tar.zst`, `.tzst`, `.tar.lz4`,
+`.txz`, `.tar.lzma`, `.tlzma`, `.tar.zst`, `.tzst`, or plain `.tar`)
+unless `--compress` overrides it. Unsupported extensions (`.tar.lz4`,
 `.tar.lz`) are rejected.
+
+Zstandard needs Python 3.14 or newer (built with libzstd), where it is
+both faster and smaller than the gzip that `.tar.gz` gives you; asking
+for it on an older interpreter is refused with a message saying so.
+Archives are written at level 10 whether they go to a file or a pipe.
 
 Without `--output`, the archive is written to stdout, uncompressed by
 default. Stdout cannot be a TTY (you must redirect or pipe).
@@ -1026,8 +1033,10 @@ Restore a container from a TAR archive. When `BACKUP_FILE` is omitted,
 archive data is read from stdin.
 
 Compression is detected automatically — `tarfile`'s `r|*` auto-detect
-handles file input; for stdin, the first 6 magic bytes are peeked to
-identify gzip / bzip2 / xz / lzma streams.
+handles file input; for stdin, the first magic bytes are peeked to
+identify gzip / bzip2 / xz / lzma / zstd streams. Reading a zstd
+archive needs Python 3.14 or newer; on an older interpreter it is
+reported as such rather than as a corrupt archive.
 
 **Options:**
 

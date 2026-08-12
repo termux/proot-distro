@@ -206,7 +206,7 @@ _proot_distro() {
                         '(-v --verbose -q --quiet)'{-v,--verbose}'[print each archived file]' \
                         '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '(-o --output)'{-o,--output}'[write archive to FILE instead of stdout]:file:_files' \
-                        '(-c --compress)'{-c,--compress}'[compression algorithm]:type:(gzip bzip2 xz none)' \
+                        '(-c --compress)'{-c,--compress}'[compression algorithm]:type:(gzip bzip2 xz zstd none)' \
                         '1:container:_proot_distro_containers'
                     ;;
 
@@ -216,7 +216,7 @@ _proot_distro() {
                         '(-h --help)'{-h,--help}'[show help]' \
                         '(-v --verbose -q --quiet)'{-v,--verbose}'[print each extracted file]' \
                         '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]' \
-                        '1:archive:_files -g "*.tar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz"'
+                        '1:archive:_files -g "*.tar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz *.tar.zst *.tzst"'
                     ;;
 
                 # -----------------------------------------------------------

@@ -48,6 +48,25 @@ Top-level utilities (each owns a focused concern):
   magic), `normalize_arch`, `get_emulator_args`, `ARCH_UNAME_M`.
 - `atomic.py` — `atomic_replace()`: mkstemp + `os.replace`; cleans up
   on `BaseException` (Ctrl-C never leaves half-written sentinels).
+- `compress.py` — everything the program knows about zstd, which needs
+  Python 3.14 (PEP 784) *and* an interpreter built against libzstd:
+  `ZSTD_AVAILABLE` (both halves — `TarFile.zstopen` exists without
+  libzstd and raises when called), `ZSTD_MAGIC`, `header_is_zstd` /
+  `file_is_zstd`, `require_read_support` / `require_write_support`,
+  `unsupported_msg` and `open_tar_writer`. **Reading** needs nothing
+  else: `tarfile`'s `r|*` / `r:*` auto-detect covers zstd from 3.14 on,
+  so OCI layers, rootfs tarballs and backups all read it for free —
+  what the sniffing is for is the *diagnosis* on an interpreter that
+  can't, where the same archive otherwise dies as
+  `ReadError('truncated header')` or a four-line "file could not be
+  opened successfully" dump naming neither zstd nor the Python version.
+  **Writing** needs an actual workaround: `tarfile.open(mode='w|zst')`
+  rejects a compression level ("compresslevel is only valid for w|gz
+  and w|bz2 modes") while the seekable `w:zst` takes `level=`, so a
+  piped backup would be stuck at libzstd's default 3 and differ from
+  the same backup written to a file. `open_tar_writer()` builds the
+  `ZstdFile` itself and hands tarfile a plain `w|` stream, so both
+  spellings produce byte-identical archives at `ZSTD_LEVEL`.
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock).
 - `session.py` — active-session registry for `ps`: `register_session`
@@ -552,8 +571,9 @@ otherwise full pipeline (token → manifest → arch unwrap → config blob
 stream-verified via `hashlib.sha256` before promotion. Digests pass
 through `validate_digest()` before being converted to filesystem
 paths (layer cache, OCI blob layout) so a crafted reference like
-`../foo:bar` can't escape the cache root. `zstd` mediaType is refused
-(Python `tarfile` lacks zstd). Whiteouts (`.wh..wh..opq` clears parent
+`../foo:bar` can't escape the cache root. A `zstd` mediaType is refused
+only when `compress.ZSTD_AVAILABLE` is False; with support present the
+blob rides the same `r|*` auto-detect a gzip layer does. Whiteouts (`.wh..wh..opq` clears parent
 dir; `.wh.<name>` deletes sibling), hardlink linkname filtering, and
 member-name traversal protection live in `helpers/tar_extract.py`.
 
@@ -703,6 +723,11 @@ uid/gid/uname/gname; refuses to write to a TTY without `--output`.
 Restore auto-detects compression (`tarfile r|*` files; magic-byte peek
 for stdin), routes members through `_dest_path()` into
 `containers/<name>/...`, re-rooting legacy `installed-rootfs/<name>`.
+Both ends speak zstd (`.tar.zst`/`.tzst`, `--compress zstd`) where
+`compress.ZSTD_AVAILABLE` says the interpreter can — written through
+`compress.open_tar_writer` so `-o file.tar.zst` and a piped backup
+compress alike, and refused *by name* where it cannot, on both the
+extension and the flag, so nothing surfaces as a corrupt archive.
 Traversal blocked (`..`/`.`/empty dropped; container name must match
 `_NAME_RE`). First entry per container triggers rootfs clear + lock.
 

@@ -263,7 +263,10 @@ def _backup(sub):
     p.add_argument("-o", "--output", metavar="FILE")
     p.add_argument(
         "-c", "--compress", dest="compression",
-        choices=["gzip", "bzip2", "xz", "none"], metavar="TYPE",
+        # zstd stays a valid choice even where the interpreter cannot
+        # write it, so command_backup can explain why rather than leave
+        # argparse to answer with a bare "invalid choice".
+        choices=["gzip", "bzip2", "xz", "zstd", "none"], metavar="TYPE",
     )
     vq = p.add_mutually_exclusive_group()
     vq.add_argument("-v", "--verbose", action="store_true")
