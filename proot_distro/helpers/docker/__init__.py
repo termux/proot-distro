@@ -73,6 +73,7 @@ from proot_distro.helpers.docker.pull import pull_image
 from proot_distro.helpers.docker.push import push_image
 from proot_distro.helpers.docker.search import (
     image_architectures,
+    is_installable,
     search_images,
 )
 
@@ -94,6 +95,7 @@ __all__ = (
     "image_architectures",
     "image_cache_entry",
     "insecure_registry_msg",
+    "is_installable",
     "iter_cached_images",
     "layer_cache_path",
     "load_manifest_cache",

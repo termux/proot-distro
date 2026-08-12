@@ -750,6 +750,10 @@ HELP_PAGES = {
             "official or automated, and the CPU architectures each "
             "image ships for."
             "\n\n"
+            "Only images that can be installed are shown — a hit is "
+            "dropped when its architecture cannot be determined or when "
+            "it ships only architectures proot-distro cannot install."
+            "\n\n"
             "Install a hit directly with "
             f"'{PROGRAM_NAME} install <image>'. Search is read-only "
             "and requires no authentication."
@@ -757,8 +761,9 @@ HELP_PAGES = {
         "options": [
             ("-h, --help", "Show this help."),
             ("--limit [N]",
-             "Maximum number of results to show (default: 100). Limits "
-             "over 100 fetch further pages from Docker Hub."),
+             "Maximum number of results to fetch from Docker Hub. The "
+             "default is unlimited — every repository the API will "
+             "serve for the query."),
             ("-q, --quiet",
              "Print only the repository names, one per line. Mutually "
              "exclusive with the table output."),
@@ -778,9 +783,12 @@ HELP_PAGES = {
                     "so custom registries cannot be searched."
                     "\n\n"
                     "The ARCH column is resolved by querying each "
-                    "repository's multi-arch manifest index. Images "
-                    "whose 'latest' tag is missing or single-architecture "
-                    "show '?'."
+                    "repository's published tag metadata, which names "
+                    "the CPU architecture of every platform the image "
+                    "ships. Images whose architecture cannot be "
+                    "determined, or that ship no architecture "
+                    "proot-distro can install, are dropped from the "
+                    "results."
                 ),
             },
         ],

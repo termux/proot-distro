@@ -535,7 +535,7 @@ query never touches your local cache.
 
 | Option | Description |
 |---|---|
-| `--limit N` | Maximum number of results to return (default `100`; larger limits page through Docker Hub). |
+| `--limit N` | Maximum number of results to fetch from Docker Hub (default: unlimited — every repository the API will serve for the query). |
 | `-q`, `--quiet` | Print one bare repository name per line, ready to pipe into `install`. |
 | `-h`, `--help` | Show help for this command. |
 
@@ -543,9 +543,12 @@ Results render as a NAME / DESCRIPTION / STARS / OFFICIAL / AUTOMATED /
 ARCH table that stacks onto two lines per result on terminals too narrow
 to align — mirroring the `list --image` layout. `OFFICIAL` and
 `AUTOMATED` are marked `[OK]`. The `ARCH` column lists the CPU
-architectures each image ships for, resolved by querying the
-repository's multi-arch manifest index; images whose `latest` tag is
-missing or single-architecture show `?`.
+architectures each image ships for, resolved by querying each
+repository's published tag metadata. Only images that can be installed
+are shown: a hit is dropped when its architecture cannot be determined
+or when it ships only architectures proot-distro cannot install, so
+every row (and every name `--quiet` prints) is a valid `install`
+target.
 
 Examples:
 

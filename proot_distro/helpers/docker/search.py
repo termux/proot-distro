@@ -25,47 +25,42 @@
 # therefore cannot be searched — Hub is the default registry anyway.
 #
 # image_architectures() is the second half: it reads a repository's
-# multi-arch manifest index from the registry so the search table can
-# list which CPU architectures each hit ships.
+# published tag metadata from the same hub.docker.com API, whose
+# images[] list names the OS and CPU architecture of every platform the
+# tag ships. One unauthenticated request answers what a registry token
+# dance plus a manifest fetch (and, for a single-architecture image, a
+# config-blob fetch) used to answer — and it answers for single-arch
+# images too, since the metadata lists an architecture per image.
 
 import json
 import urllib.parse
 import urllib.request
 
 from proot_distro.helpers.download import retry_http
-from proot_distro.helpers.docker.media import (
-    DOCKER_MANIFEST_LIST_MEDIA,
-    DOCKER_MANIFEST_MEDIA,
-    OCI_INDEX_MEDIA,
-    OCI_MANIFEST_MEDIA,
+from proot_distro.helpers.docker.refs import (
+    ARCH_TO_DOCKER,
+    DOCKER_TO_ARCH,
+    parse_image_ref,
 )
-from proot_distro.helpers.docker.refs import DOCKER_TO_ARCH, parse_image_ref
-from proot_distro.helpers.docker.transport import _ua, get_auth_token, opener
+from proot_distro.helpers.docker.transport import _ua, opener
 
 
 HUB_SEARCH_URL = "https://hub.docker.com/v2/search/repositories/"
 
 # Docker Hub caps a single search page at this many results; larger
 # limits are fetched by walking `page` until the limit is satisfied or
-# the API stops answering.
+# the API stops answering. The API answers HTTP 403 to any page past
+# the last one (in practice, past the second page of one hundred), so an
+# unbounded walk terminates exactly where a bounded one would.
 MAX_PAGE_SIZE = 100
 
-# Media types that describe a multi-architecture image index — the only
-# manifest kind whose entries carry a platform we can read an arch from.
-_INDEX_MEDIA_TYPES = frozenset({DOCKER_MANIFEST_LIST_MEDIA, OCI_INDEX_MEDIA})
-
-# The same Accept list as the pull pipeline, so the registry hands us an
-# index whenever the image ships one (single-arch images answer with their
-# plain manifest instead).
-_INDEX_ACCEPT = ", ".join([
-    OCI_INDEX_MEDIA,
-    DOCKER_MANIFEST_LIST_MEDIA,
-    OCI_MANIFEST_MEDIA,
-    DOCKER_MANIFEST_MEDIA,
-])
+# Published metadata for one repository's tag. A repository with no
+# 'latest' tag answers HTTP 404 — exactly the case the caller cannot
+# install, since `install <repo>` defaults to :latest.
+HUB_TAG_API = "https://hub.docker.com/v2/repositories/{}/tags/latest"
 
 
-def search_images(query: str, limit: int = 100) -> list:
+def search_images(query: str, limit: int = None) -> list:
     """Search Docker Hub for repositories matching *query*.
 
     Returns a list of result dicts carrying the fields `docker search`
@@ -76,16 +71,22 @@ def search_images(query: str, limit: int = 100) -> list:
 
     Docker Hub answers at most `MAX_PAGE_SIZE` repositories per page, so
     a *limit* beyond that walks the `page` parameter until the limit is
-    satisfied or the API stops answering.
+    satisfied or the API stops answering. With no *limit* (the default)
+    the walk continues until the API stops answering — every repository
+    Docker Hub will serve for the query.
     """
     query = (query or "").strip()
     if not query:
         return []
-    limit = max(1, int(limit))
     results = []
     page = 1
-    while len(results) < limit:
-        page_size = min(MAX_PAGE_SIZE, limit - len(results))
+    while limit is None or len(results) < limit:
+        if limit is None:
+            page_size = MAX_PAGE_SIZE
+        else:
+            page_size = min(MAX_PAGE_SIZE, max(1, int(limit)) - len(results))
+        if page_size <= 0:
+            break
         params = {"query": query, "page_size": page_size, "page": page}
         url = f"{HUB_SEARCH_URL}?{urllib.parse.urlencode(params)}"
         req = urllib.request.Request(url, headers=_ua())
@@ -94,7 +95,15 @@ def search_images(query: str, limit: int = 100) -> list:
             with opener().open(req) as resp:
                 return resp.read()
 
-        data = json.loads(retry_http(_attempt, what="Searching Docker Hub"))
+        try:
+            data = json.loads(retry_http(_attempt, what="Searching Docker Hub"))
+        except Exception:
+            # A page past the last one (Docker Hub answers HTTP 403)
+            # ends the walk with what we already have. A failure on the
+            # first page is a real network problem and must propagate.
+            if page == 1:
+                raise
+            break
         fetched = data.get("results", []) or []
         if not fetched:
             break
@@ -122,56 +131,58 @@ def search_images(query: str, limit: int = 100) -> list:
 def image_architectures(image_ref: str, insecure: bool = False) -> list:
     """Return the proot-distro arch names *image_ref*'s latest tag ships.
 
-    Search results are repositories, not tags, so the registry is always
-    probed for the 'latest' tag. The multi-arch manifest index is fetched
-    and each entry's platform is mapped back to a proot-distro
-    architecture name (unknown Docker arch names pass through unchanged).
+    Search results are repositories, not tags, so Docker Hub's tag API is
+    always asked about 'latest'. Its images[] metadata names the OS and
+    CPU architecture of every platform the tag ships — single-architecture
+    images included — and Docker arch names are mapped back to
+    proot-distro names, unknown ones passing through unchanged. A
+    repository with no 'latest' tag answers HTTP 404, which is exactly the
+    case the caller cannot install.
+
+    *insecure* is accepted for signature compatibility but ignored:
+    hub.docker.com is always reached over verified HTTPS.
 
     An empty list is returned whenever the answer cannot be determined —
-    the image is single-architecture (a plain manifest carries no
-    platform), the 'latest' tag does not exist, the repository is private,
-    or the network failed — so a search table never fails because one
-    repository refused to answer.
+    the 'latest' tag does not exist, the repository is private, the
+    network failed, or the registry is rate-limiting — so a search table
+    never fails because one repository refused to answer. Each lookup is
+    attempted once: a search resolving a page of repositories is
+    best-effort by design, and backing off five seconds per hit would
+    turn a rate-limited search into a crawl.
     """
-    registry, repo, _tag = parse_image_ref(image_ref)
-    try:
-        token, base = get_auth_token(repo, registry, insecure=insecure)
-    except Exception:
-        return []
-
-    headers = {**_ua(), "Accept": _INDEX_ACCEPT}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(
-        f"{base}/v2/{repo}/manifests/latest", headers=headers
-    )
+    _registry, repo, _tag = parse_image_ref(image_ref)
+    req = urllib.request.Request(HUB_TAG_API.format(repo), headers=_ua())
 
     def _attempt():
-        with opener(insecure).open(req) as resp:
-            return resp.read(), resp.headers.get("Content-Type", "")
+        with opener().open(req) as resp:
+            return resp.read()
 
     try:
-        body, ct = retry_http(
-            _attempt, what=f"Fetching manifest for {image_ref}"
-        )
+        data = json.loads(retry_http(
+            _attempt, what=f"Fetching tags for {image_ref}",
+            max_retries=1,
+        ))
     except Exception:
-        return []
-    try:
-        data = json.loads(body)
-    except ValueError:
-        return []
-
-    ct = ct.split(";")[0].strip() or data.get("mediaType", "")
-    if ct not in _INDEX_MEDIA_TYPES or "manifests" not in data:
         return []
 
     archs = set()
-    for entry in data.get("manifests", []) or []:
-        platform = entry.get("platform", {}) or {}
-        if platform.get("os", "linux") != "linux":
+    for image in data.get("images", []) or []:
+        if image.get("os", "linux") != "linux":
             continue
-        docker_arch = platform.get("architecture")
-        if not docker_arch:
+        docker_arch = image.get("architecture")
+        if not docker_arch or docker_arch == "unknown":
             continue
         archs.add(DOCKER_TO_ARCH.get(docker_arch, docker_arch))
     return sorted(archs)
+
+
+# The CPU architectures proot-distro can install. image_architectures()
+# lets unknown Docker arch names (ppc64le, s390x, …) pass through
+# unchanged, so a hit that ships only those must not count as installable.
+INSTALLABLE_ARCHS = frozenset(ARCH_TO_DOCKER)
+
+
+def is_installable(architectures: list) -> bool:
+    """True when at least one of *architectures* is an arch proot-distro
+    can install."""
+    return bool(set(architectures) & INSTALLABLE_ARCHS)

@@ -22,10 +22,15 @@
 # search`. Queries Docker Hub through helpers/docker/search.py and
 # renders a NAME/DESCRIPTION/STARS/OFFICIAL/AUTOMATED/ARCH table that
 # degrades to a stacked form on narrow terminals, mirroring the
-# `list --image` layout. The ARCH column is filled by querying each
-# repository's multi-arch manifest index concurrently; images whose
-# 'latest' tag cannot be resolved show '?'. `--quiet` prints bare
-# repository names for piping into `install`.
+# `list --image` layout. `--limit` is a ceiling on the number of
+# results fetched; the default is unlimited, so a search returns every
+# repository Docker Hub will serve for the query. The ARCH column is
+# filled by querying each repository's published tag metadata
+# concurrently; a hit whose architecture cannot be determined — or that
+# ships only architectures proot-distro cannot install — is dropped from
+# the results, so every image shown (and every name `--quiet` prints)
+# can be installed. `--quiet` prints bare repository names for piping
+# into `install`.
 
 import sys
 import urllib.error
@@ -35,7 +40,9 @@ from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import (
     C, msg, log_info, log_error, crit_error, terminal_width,
 )
-from proot_distro.helpers.docker import image_architectures, search_images
+from proot_distro.helpers.docker import (
+    image_architectures, is_installable, search_images,
+)
 
 # Fixed column order of the results table (docker search columns plus ARCH).
 _HEADERS = ("NAME", "DESCRIPTION", "STARS", "OFFICIAL", "AUTOMATED", "ARCH")
@@ -43,8 +50,10 @@ _GAP = 2
 # DESCRIPTION column must keep at least this many columns before the
 # table degrades to the stacked form (Termux on a phone).
 _STACKED_MIN = 24
-# Concurrent manifest-index queries per search (capped at the result count).
-_ARCH_WORKERS = 8
+# Concurrent manifest queries per search (capped at the result count).
+# High enough that a full search stays interactive, low enough not to
+# hammer the registry.
+_ARCH_WORKERS = 16
 
 
 def command_search(args) -> None:
@@ -53,7 +62,7 @@ def command_search(args) -> None:
     if not query:
         crit_error("search term is not specified.")
         sys.exit(1)
-    limit = getattr(args, "limit", 100) or 100
+    limit = getattr(args, "limit", None)
     quiet = bool(getattr(args, "quiet", False))
 
     try:
@@ -77,23 +86,34 @@ def command_search(args) -> None:
         log_error(f"Error: {exc}")
         sys.exit(1)
 
+    # Every result must resolve to a real, installable architecture —
+    # for `--quiet`, too, since the names are meant to be piped into
+    # `install`. Unknown-arch hits and hits shipping only architectures
+    # proot-distro cannot install are dropped here.
+    if results:
+        _resolve_architectures(results)
+        before = len(results)
+        results = [r for r in results
+                   if is_installable(r.get("architectures") or [])]
+        dropped = before - len(results)
+        if dropped:
+            log_info(f"Dropped {dropped} image(s) with no installable "
+                     f"architecture.")
+
     if quiet:
         for result in results:
             print(result.get("name", "?"))
         return
 
-    if results:
-        log_info(f"Resolving architectures for {len(results)} image(s)...")
-        _resolve_architectures(results)
-
     msg()
     if not results:
-        msg(f"{C['YELLOW']}No results found for '{query}' on Docker Hub."
-            f"{C['RST']}")
+        msg(f"{C['YELLOW']}No installable images found for '{query}' on "
+            f"Docker Hub.{C['RST']}")
         msg()
         return
 
-    msg(f"{C['CYAN']}Search results for '{query}' on Docker Hub:{C['RST']}")
+    msg(f"{C['CYAN']}Search results for '{query}' on Docker Hub:"
+        f"{C['RST']}")
     msg()
     _render_results(results)
     msg()
@@ -107,13 +127,14 @@ def command_search(args) -> None:
 # ---------------------------------------------------------------------------
 
 def _resolve_architectures(results: list) -> None:
-    """Populate each result's 'architectures' from the registry manifest.
+    """Populate each result's 'architectures' from the published tag
+    metadata.
 
-    Every repository is queried for its multi-arch manifest index. The
-    queries run concurrently so a full page of results does not serialize
-    into dozens of sequential round-trips. A repository that cannot be
-    resolved gets an empty list — the table shows '?' for it instead of
-    failing the whole search.
+    Every repository is queried for its published tag metadata. The
+    queries run concurrently so a full page of results does not
+    serialize into dozens of sequential round-trips. A repository that
+    cannot be resolved gets an empty list — command_search drops such a
+    hit rather than showing it, since it cannot be installed.
     """
     names = [result.get("name") or "?" for result in results]
     workers = min(_ARCH_WORKERS, len(names))

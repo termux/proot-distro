@@ -376,7 +376,7 @@ def _search(sub):
     p._pd_command = "search"
     p.add_argument("query", nargs="?", default=None, metavar="TERM")
     p.add_argument(
-        "--limit", dest="limit", type=int, default=100, metavar="N",
+        "--limit", dest="limit", type=int, default=None, metavar="N",
     )
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
