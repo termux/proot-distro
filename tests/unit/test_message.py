@@ -55,3 +55,31 @@ def test_warn_format(capsys):
     err = capsys.readouterr().err
     assert "Warning:" in err
     assert "careful" in err
+
+
+# ----- quote_path ---------------------------------------------------------
+
+def test_quote_path_leaves_ordinary_names_alone():
+    for name in ("/etc/passwd", "a b c.txt", "-dash", "юникод", "e'quote"):
+        assert message.quote_path(name) == name
+
+
+def test_quote_path_escapes_terminal_control_sequences():
+    """A rootfs name is the guest's to choose, and both commands print it."""
+    assert message.quote_path("a\x1b[31mRED\x1b[0m") == "a\\e[31mRED\\e[0m"
+    assert message.quote_path("hide\rme") == "hide\\rme"
+    assert message.quote_path("two\nlines") == "two\\nlines"
+    assert message.quote_path("tab\there") == "tab\\there"
+
+
+def test_quote_path_escapes_every_control_byte_and_del():
+    quoted = message.quote_path("".join(chr(c) for c in range(0x20)) + "\x7f")
+    assert "\x1b" not in quoted
+    assert not any(ch < " " for ch in quoted)
+    assert "\\x00" in quoted and "\\x7f" in quoted
+
+
+def test_quote_path_escapes_backslash_so_escapes_are_unambiguous():
+    """`a\\e[0m` typed into a name must not read as an ESC we escaped."""
+    assert message.quote_path("a\\e[0m") == "a\\\\e[0m"
+    assert message.quote_path("a\x1b[0m") == "a\\e[0m"
