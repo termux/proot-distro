@@ -68,3 +68,13 @@ def test_login_separator_inner_command(monkeypatch, capsys, builders):
     assert code == 0
     out = capsys.readouterr().out
     assert "echo" in out and "hi" in out
+
+
+def test_search_requires_term(monkeypatch, capsys):
+    assert _run(monkeypatch, ["search"]) == 1
+    assert "search term" in capsys.readouterr().err
+
+
+def test_search_quiet_does_not_set_global(monkeypatch):
+    _run(monkeypatch, ["search", "-q", "ubuntu"])
+    assert message.is_quiet() is False

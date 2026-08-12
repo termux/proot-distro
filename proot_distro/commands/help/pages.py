@@ -510,7 +510,8 @@ HELP_PAGES = {
              "supported. FILE must be executable."),
             ("--kernel [TEXT]",
              "Customize the kernel release string reported by uname."),
-            ("--hostname [TEXT]", "Customize the system hostname."),
+            ("--hostname [TEXT]",
+             "Customize the system hostname (default: container name)."),
             ("-w, --work-dir [PATH]", "Set the initial working directory."),
             ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
@@ -733,6 +734,50 @@ HELP_PAGES = {
         ],
     },
 
+    "search": {
+        "usage": "search [OPTIONS] TERM",
+        "summary": (
+            "Search Docker Hub for repositories matching TERM, like "
+            "'docker search'. Results show the repository name, a short "
+            "description, the star count, whether the repository is "
+            "official or automated, and the CPU architectures each "
+            "image ships for."
+            "\n\n"
+            "Install a hit directly with "
+            f"'{PROGRAM_NAME} install <image>'. Search is read-only "
+            "and requires no authentication."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("--limit [N]",
+             "Maximum number of results to show (default: 25)."),
+            ("-q, --quiet",
+             "Print only the repository names, one per line. Mutually "
+             "exclusive with the table output."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} search ubuntu",
+            f"{PROGRAM_NAME} search --limit 10 alpine",
+            f"{PROGRAM_NAME} search -q nextcloud",
+        ],
+        "footer": [
+            {
+                "title": "NOTES",
+                "intro": (
+                    "Search is only available for Docker Hub — the "
+                    "default registry. The OCI Distribution "
+                    "specification defines no standard search endpoint, "
+                    "so custom registries cannot be searched."
+                    "\n\n"
+                    "The ARCH column is resolved by querying each "
+                    "repository's multi-arch manifest index. Images "
+                    "whose 'latest' tag is missing or single-architecture "
+                    "show '?'."
+                ),
+            },
+        ],
+    },
+
     "run": {
         "usage": "run [OPTIONS] CONTAINER [-- ARG ...]",
         "summary": (
@@ -800,7 +845,8 @@ HELP_PAGES = {
              "supported. FILE must be executable."),
             ("--kernel [TEXT]",
              "Customize the kernel release string reported by uname."),
-            ("--hostname [TEXT]", "Customize the system hostname."),
+            ("--hostname [TEXT]",
+             "Customize the system hostname (default: container name)."),
             ("-w, --work-dir [PATH]", "Set the initial working directory."),
             ("-e, --env VAR=VALUE",
              "Set an environment variable. Can be specified multiple "
@@ -896,4 +942,5 @@ TOP_COMMANDS = [
     ("sync", "Sync files from/to container."),
     ("build", "Build an OCI image from a Dockerfile."),
     ("push", "Push a locally built image to a registry."),
+    ("search", "Search Docker Hub for images."),
 ]

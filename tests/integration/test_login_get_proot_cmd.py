@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro.arch import get_device_cpu_arch
+from proot_distro.commands import login as login_mod
 from proot_distro.commands.login import command_login, _detect_dist_type
 from proot_distro.commands.login import proot_cmd
 from proot_distro.commands.run import command_run
@@ -236,3 +237,56 @@ def test_termux_type_login_applies_image_env(builders, capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "FOO=frommanifest" in out
+
+
+def _captured_hostname(monkeypatch, builders, name, **over):
+    """Run command_login, recording the hostname passed to build_proot_args."""
+    captured = {}
+
+    def fake_build(**kw):
+        captured.update(kw)
+        return ["proot"]
+
+    monkeypatch.setattr(login_mod, "build_proot_args", fake_build)
+    with pytest.raises(SystemExit) as exc:
+        command_login(_login_args(name, **over))
+    assert exc.value.code == 0
+    return captured
+
+
+def test_default_hostname_is_container_name(builders, monkeypatch):
+    captured = _captured_hostname(monkeypatch, builders, "mybox", hostname=None)
+    assert captured["hostname"] == "mybox"
+
+
+def test_explicit_hostname_wins(builders, monkeypatch):
+    captured = _captured_hostname(monkeypatch, builders, "mybox",
+                                  hostname="customhost")
+    assert captured["hostname"] == "customhost"
+
+
+def test_empty_hostname_defaults_to_container_name(builders, monkeypatch):
+    captured = _captured_hostname(monkeypatch, builders, "mybox",
+                                  hostname="")
+    assert captured["hostname"] == "mybox"
+
+
+def test_run_default_hostname_is_container_name(builders, monkeypatch):
+    captured = {}
+
+    def fake_build(**kw):
+        captured.update(kw)
+        return ["proot"]
+
+    monkeypatch.setattr(login_mod, "build_proot_args", fake_build)
+    builders.make_container("runbox", arch=HOST_ARCH, manifest={
+        "image_config": {"config": {"Cmd": ["/bin/echo", "hi"]}},
+    })
+    args = SimpleNamespace(
+        container_name="runbox", run_args=[], get_proot_cmd=True,
+        work_dir=None, user="root",
+    )
+    with pytest.raises(SystemExit) as exc:
+        command_run(args)
+    assert exc.value.code == 0
+    assert captured["hostname"] == "runbox"

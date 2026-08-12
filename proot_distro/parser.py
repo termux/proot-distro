@@ -74,6 +74,7 @@ REQUIRED_ARGS = {
     "run":     [("container_name", "container name is not specified.")],
     "push":    [("image_ref", "image reference is not specified"
                  " (e.g. 'myrepo/myapp:1.0').")],
+    "search":  [("query", "search term is not specified.")],
 }
 
 
@@ -175,6 +176,7 @@ def build_parser() -> _PdArgumentParser:
     _sync(sub)
     _build(sub)
     _push(sub)
+    _search(sub)
     _run(sub)
     _ps(sub)
     _kill(sub)
@@ -361,6 +363,17 @@ def _push(sub):
     )
     p.add_argument(
         "--allow-insecure", dest="allow_insecure", action="store_true",
+    )
+    p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+
+
+def _search(sub):
+    p = sub.add_parser("search", add_help=False)
+    p._pd_command = "search"
+    p.add_argument("query", nargs="?", default=None, metavar="TERM")
+    p.add_argument(
+        "--limit", dest="limit", type=int, default=25, metavar="N",
     )
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-h", "--help", action="store_true")

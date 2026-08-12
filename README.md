@@ -25,6 +25,7 @@ exporting it as a standalone OCI tarball.
    * [`install`](#install--install-a-container)
    * [`build`](#build--build-an-image-from-a-dockerfile)
    * [`push`](#push--push-a-built-image-to-a-registry)
+   * [`search`](#search--search-docker-hub-for-images)
    * [`login`](#login--start-a-shell-inside-a-container)
    * [`run`](#run--run-the-image-defined-entrypoint)
    * [`list`](#list--list-installed-containers)
@@ -518,6 +519,49 @@ upload must restart from zero.
 
 ---
 
+### `search` — Search Docker Hub for images
+
+```
+proot-distro search [OPTIONS] TERM
+```
+
+Queries Docker Hub's own repository search, mirroring `docker search`.
+The OCI Distribution specification has no standard search endpoint, so
+this works only against Docker Hub — the default registry — and not
+against self-hosted registries. No authentication is required, and the
+query never touches your local cache.
+
+| Option | Description |
+|---|---|
+| `--limit N` | Maximum number of results to return (default `25`). |
+| `-q`, `--quiet` | Print one bare repository name per line, ready to pipe into `install`. |
+| `-h`, `--help` | Show help for this command. |
+
+Results render as a NAME / DESCRIPTION / STARS / OFFICIAL / AUTOMATED /
+ARCH table that stacks onto two lines per result on terminals too narrow
+to align — mirroring the `list --image` layout. `OFFICIAL` and
+`AUTOMATED` are marked `[OK]`. The `ARCH` column lists the CPU
+architectures each image ships for, resolved by querying the
+repository's multi-arch manifest index; images whose `latest` tag is
+missing or single-architecture show `?`.
+
+Examples:
+
+```sh
+# Find images related to Ubuntu
+proot-distro search ubuntu
+
+# Top 5 results, bare names
+proot-distro search --limit 5 -q ubuntu
+
+# Search and install directly
+proot-distro search -q alpine | while read -r repo; do
+  proot-distro install "$repo" -n myalpine
+done
+```
+
+---
+
 ### `login` — Start a shell inside a container
 
 ```
@@ -564,7 +608,7 @@ proot-distro login ubuntu --get-proot-cmd
 | `-b`, `--bind SRC[:DST]` | Bind a custom path (repeatable). `SRC` is resolved via `os.path.abspath`. `DST`, when given, must be an absolute path (relative destinations are rejected). Overlap with an existing destination emits a warning but the bind is still added. |
 | `--emulator PATH` | Override the QEMU emulator binary for cross-arch containers. PATH must be executable. Only QEMU user-mode and Blink are known to work. |
 | `--kernel STRING` | Customize the kernel release string reported by `uname -r`. Default: `6.17.0-PRoot-Distro`. |
-| `--hostname STRING` | Customize the hostname inside the container. Default: `localhost`. |
+| `--hostname STRING` | Customize the hostname inside the container. Default: the container name. |
 | `-w`, `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
 | `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env` and the baseline defaults. |
 | `-d`, `--detach` | Start the session in the background and return to the prompt immediately. The session is daemonized (double-fork + `setsid`, detached from the controlling terminal) and its stdin/stdout/stderr are redirected to `/dev/null`, so output is discarded — redirect inside your own command if you need logs. A detached `login` with no `-- COMMAND` exits at once (the shell reads EOF). Track it with [`proot-distro ps`](#ps--list-active-sessions) and stop it with [`proot-distro kill`](#kill--stop-active-sessions). |

@@ -79,6 +79,7 @@ def test_each_subcommand_parses():
         (["sync", "a", "b"], "sync"),
         (["build", "."], "build"),
         (["push", "me/app:1"], "push"),
+        (["search", "ubuntu"], "search"),
         (["run", "box"], "run"),
         (["login", "box"], "login"),
         (["kill", "box"], "kill"),
@@ -216,3 +217,39 @@ def test_required_args_for_switches_on_image_flag():
     # Every other command falls through to the static table.
     assert parser.required_args_for("install", SimpleNamespace()) == \
         parser.REQUIRED_ARGS["install"]
+
+
+def test_search_parsing():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["search", "ubuntu", "--limit", "10"])
+    assert args.command == "search"
+    assert args.query == "ubuntu"
+    assert args.limit == 10
+    assert args.quiet is False
+    assert unknown == []
+
+
+def test_search_defaults():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["search", "alpine"])
+    assert args.limit == 25
+    assert args.quiet is False
+
+
+def test_search_quiet_flag():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["search", "-q", "ubuntu"])
+    assert args.query == "ubuntu"
+    assert args.quiet is True
+    assert unknown == []
+
+
+def test_search_missing_positional_is_none():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["search"])
+    assert args.query is None  # nargs="?", validated later by REQUIRED_ARGS
+
+
+def test_search_required_args_table():
+    assert ("query",) == tuple(a for a, _ in parser.REQUIRED_ARGS["search"])
+    assert "search term" in parser.REQUIRED_ARGS["search"][0][1]

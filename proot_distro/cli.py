@@ -56,6 +56,7 @@ from proot_distro.commands.sync import command_sync
 from proot_distro.commands.run import command_run
 from proot_distro.commands.build import command_build
 from proot_distro.commands.push import command_push
+from proot_distro.commands.search import command_search
 from proot_distro.commands.ps import command_ps
 from proot_distro.commands.kill import command_kill
 
@@ -75,6 +76,7 @@ _COMMAND_HANDLERS = {
     "run":         command_run,
     "build":       command_build,
     "push":        command_push,
+    "search":      command_search,
     "ps":          command_ps,
     "kill":        command_kill,
     "help":        command_help,
@@ -176,13 +178,14 @@ def _ensure_proot_available(first_canonical: str) -> None:
     `build` and `push` are exempt from this startup probe: `build` may
     run a Dockerfile with no RUN instructions in pure-Python mode, and
     `push` only reads from the local manifest/layer cache and uploads
-    to a registry. `build` runs its own check after parsing the
-    Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
-    present. `kill` and `ps` are exempt too: they only inspect and
-    signal already-running sessions via the session registry and never
-    invoke proot.
+    to a registry. `search` only queries the Docker Hub search API and
+    downloads nothing, so it is exempt too. `build` runs its own check
+    after parsing the Dockerfile and refuses only when RUN (or ONBUILD
+    RUN) is actually present. `kill` and `ps` are exempt too: they only
+    inspect and signal already-running sessions via the session registry
+    and never invoke proot.
     """
-    if first_canonical in ("build", "push", "kill", "ps"):
+    if first_canonical in ("build", "push", "kill", "ps", "search"):
         return
     ensure_proot_installed()
 
@@ -322,10 +325,10 @@ def main() -> None:
 
     # Enable quiet mode globally before dispatch so helpers
     # (helpers/docker, helpers/download, etc.) silence their info
-    # lines and progress bars too. `list` and `ps` have different
-    # --quiet semantics (print names / PIDs only) and do not use
-    # log_info(), so the global flag is left off for them.
-    if canonical not in ("list", "ps") and getattr(args, "quiet", False):
+    # lines and progress bars too. `list`, `ps`, and `search` have
+    # different --quiet semantics (print names / PIDs only) and do not
+    # use log_info(), so the global flag is left off for them.
+    if canonical not in ("list", "ps", "search") and getattr(args, "quiet", False):
         set_quiet(True)
 
     handler = _COMMAND_HANDLERS.get(canonical)

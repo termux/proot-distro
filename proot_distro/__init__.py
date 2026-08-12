@@ -22,4 +22,33 @@
 
 Public entry point is :func:`proot_distro.cli.main`, exposed as the
 `proot-distro` and `pd` console scripts via pyproject.toml.
+
+A programmatic interface is also available on this package root:
+
+    import proot_distro
+
+    result = proot_distro.run("ubuntu", ["echo", "hello"])
+    print(result.stdout)
+
+    proot_distro.reinstall("ubuntu")
+
+See :mod:`proot_distro.api` for the full reference.
 """
+
+from proot_distro.api import (
+    ProotDistroError,
+    ContainerNotInstalled,
+    CommandError,
+    ProotResult,
+    run,
+    reinstall,
+)
+
+__all__ = (
+    "ProotDistroError",
+    "ContainerNotInstalled",
+    "CommandError",
+    "ProotResult",
+    "run",
+    "reinstall",
+)

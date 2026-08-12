@@ -55,7 +55,7 @@ _proot_distro() {
     _init_completion || return
 
     local -r _all_commands="install remove rename reset login list ps kill backup restore
-        clear-cache copy sync run build push help"
+        clear-cache copy sync run build push search help"
 
     # Complete the subcommand itself
     if [[ ${cword} -eq 1 ]]; then
@@ -320,8 +320,18 @@ _proot_distro() {
             ;;
 
         # -----------------------------------------------------------------------
+        search)
+            case "${prev}" in
+                --limit) return ;;
+            esac
+            if [[ "${cur}" == -* ]]; then
+                COMPREPLY=($(compgen -W "--limit -q --quiet -h --help" -- "${cur}"))
+            fi
+            ;;
+
+        # -----------------------------------------------------------------------
         help)
-            local topics="install remove rename reset login list ps kill backup restore clear-cache copy sync run build push"
+            local topics="install remove rename reset login list ps kill backup restore clear-cache copy sync run build push search"
             COMPREPLY=($(compgen -W "${topics}" -- "${cur}"))
             ;;
 

@@ -307,7 +307,21 @@ def _check_shell_available(rootfs, container_path, login_shell, container_name):
     sys.exit(1)
 
 
-def _command_login_inner(container_name: str, args, lock) -> None:
+def build_login_runtime(container_name: str, args) -> dict:
+    """Resolve the runtime state of a login/run session without exec'ing.
+
+    Shared by the CLI (command_login, which then registers the session
+    and exec's proot) and the programmatic API (proot_distro.api.run,
+    which runs the resulting argv via subprocess), so the two frontends
+    can never drift on proot argv, guest environment, or user/bind/env
+    resolution.
+
+    Returns a dict with the resolved rootfs, distro type, child
+    environment, proot argv and session metadata. Unresolvable state
+    (missing rootfs, unknown user, unavailable shell, unemulatable
+    Termux-type container) is fatal and exits with the CLI's usual
+    messages.
+    """
     migrate_legacy_rootfs(container_name)
 
     rootfs = container_rootfs(container_name)
@@ -323,7 +337,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         getattr(args, "kernel", DEFAULT_FAKE_KERNEL_RELEASE)
         or DEFAULT_FAKE_KERNEL_RELEASE
     )
-    hostname = getattr(args, "hostname", "localhost") or "localhost"
+    hostname = getattr(args, "hostname", "") or container_name
     login_wd = getattr(args, "work_dir", "") or ""
     redirect_ports = getattr(args, "redirect_ports", False)
     isolated = getattr(args, "isolated", False)
@@ -338,7 +352,6 @@ def _command_login_inner(container_name: str, args, lock) -> None:
     extra_env = getattr(args, "env", []) or []
     login_cmd = getattr(args, "login_cmd", []) or []
     run_inner = getattr(args, "_run_inner", None)
-    detach = getattr(args, "detach", False)
 
     if dist_type == "termux":
         if not login_wd:
@@ -468,6 +481,39 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         child_env["PROOT_L2S_DIR"] = l2s_dir
     child_env.pop("LD_PRELOAD", None)
 
+    return {
+        "container_name": container_name,
+        "rootfs": rootfs,
+        "dist_type": dist_type,
+        "container_path": container_path,
+        "child_env": child_env,
+        "proot_bin": proot_bin,
+        "proot_args": proot_args,
+        "login_user": login_user,
+        "login_uid": login_uid,
+        "login_gid": login_gid,
+        "login_home": login_home,
+        "inner": inner,
+        "isolated": isolated,
+        "minimal": minimal,
+        "hostname": hostname,
+        "kernel_release": kernel_release,
+    }
+
+
+def _command_login_inner(container_name: str, args, lock) -> None:
+    rt = build_login_runtime(container_name, args)
+
+    child_env = rt["child_env"]
+    proot_bin = rt["proot_bin"]
+    proot_args = rt["proot_args"]
+    inner = rt["inner"]
+    login_user = rt["login_user"]
+    isolated = rt["isolated"]
+    minimal = rt["minimal"]
+    run_inner = getattr(args, "_run_inner", None)
+    detach = getattr(args, "detach", False)
+
     if getattr(args, "get_proot_cmd", False):
         parts = ["env", "-i"]
         for k, v in child_env.items():
@@ -524,4 +570,4 @@ def _command_login_inner(container_name: str, args, lock) -> None:
     os.execvpe(proot_bin, proot_args, child_env)
 
 
-__all__ = ("command_login",)
+__all__ = ("command_login", "build_login_runtime")

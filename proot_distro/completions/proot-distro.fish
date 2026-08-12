@@ -71,7 +71,7 @@ end
 function __proot_distro_no_subcommand
     not __fish_seen_subcommand_from \
         install remove rename reset login list ps kill backup restore \
-        clear-cache copy sync run build push help
+        clear-cache copy sync run build push search help
 end
 
 # ---------------------------------------------------------------------------
@@ -93,6 +93,7 @@ complete -c proot-distro -f -n __proot_distro_no_subcommand -a sync        -d 'S
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a run         -d 'Run the image entrypoint/cmd in a container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a build       -d 'Build an OCI image from a Dockerfile'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a push        -d 'Push a locally built image to a registry'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a search      -d 'Search Docker Hub for images'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a help        -d 'Show help'
 
 # Global help flag (before subcommand)
@@ -386,10 +387,20 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
+    -l limit          -r -d 'Maximum number of results (default: 25)'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
+    -s q -l quiet     -d 'Print only repository names, one per line'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
+    -s h -l help      -d 'Show help'
+
+# ---------------------------------------------------------------------------
 # help
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push' \
+    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push search' \
     -d 'Topic'
 
 # ---------------------------------------------------------------------------
@@ -411,6 +422,7 @@ complete -c pd -f -n __proot_distro_no_subcommand -a sync        -d 'Synchronize
 complete -c pd -f -n __proot_distro_no_subcommand -a run         -d 'Run the image entrypoint/cmd in a container'
 complete -c pd -f -n __proot_distro_no_subcommand -a build       -d 'Build an OCI image from a Dockerfile'
 complete -c pd -f -n __proot_distro_no_subcommand -a push        -d 'Push a locally built image to a registry'
+complete -c pd -f -n __proot_distro_no_subcommand -a search      -d 'Search Docker Hub for images'
 complete -c pd -f -n __proot_distro_no_subcommand -a help        -d 'Show help'
 complete -c pd -f -n __proot_distro_no_subcommand -s h -l help   -d 'Show help'
 
@@ -536,5 +548,9 @@ complete -c pd -f -n '__fish_seen_subcommand_from push' -l allow-insecure       
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet           -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help            -d 'Show help'
 
+complete -c pd -f -n '__fish_seen_subcommand_from search' -l limit       -r -d 'Maximum number of results (default: 25)'
+complete -c pd -f -n '__fish_seen_subcommand_from search' -s q -l quiet   -d 'Print only repository names, one per line'
+complete -c pd -f -n '__fish_seen_subcommand_from search' -s h -l help    -d 'Show help'
+
 complete -c pd -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push' -d 'Topic'
+    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push search' -d 'Topic'

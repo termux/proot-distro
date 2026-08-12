@@ -85,6 +85,7 @@ _proot_distro() {
                 'run:run the image entrypoint/cmd in a container'
                 'build:build an OCI image from a Dockerfile'
                 'push:push a locally built image to a registry'
+                'search:search Docker Hub for images'
                 'help:show help'
             )
             _describe 'command' subcommands
@@ -311,12 +312,21 @@ _proot_distro() {
                     ;;
 
                 # -----------------------------------------------------------
+                search)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '--limit[maximum number of results]:N' \
+                        '(-q --quiet)'{-q,--quiet}'[print only repository names, one per line]' \
+                        '1:search term'
+                    ;;
+
+                # -----------------------------------------------------------
                 help)
                     local -a topics
                     topics=(
                         install remove rename reset login list ps kill
                         backup restore clear-cache copy sync run
-                        build push
+                        build push search
                     )
                     _describe 'topic' topics
                     ;;
