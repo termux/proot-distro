@@ -29,6 +29,9 @@ import stat
 import sys
 import tarfile
 
+from proot_distro.compress import (
+    ZSTD_AVAILABLE, open_tar_writer, unavailable_msg, unsupported_msg,
+)
 from proot_distro.l2s import resolve_l2s_target
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.progress import (
@@ -49,17 +52,20 @@ _COMPRESS_EXTS = (
     ('.txz',      'xz'),
     ('.tar.lzma', 'xz'),
     ('.tlzma',    'xz'),
+    ('.tar.zst',  'zst'),
+    ('.tzst',     'zst'),
     ('.tar',      ''),
 )
 
 # Extensions that look like compression requests but are not supported.
-_UNSUPPORTED_EXTS = ('.tar.zst', '.tzst', '.tar.lz4', '.tar.lz')
+_UNSUPPORTED_EXTS = ('.tar.lz4', '.tar.lz')
 
 # Maps --compress argument values to tarfile compression identifiers.
 _COMPRESSION_ARG_MAP = {
     'gzip':  'gz',
     'bzip2': 'bz2',
     'xz':    'xz',
+    'zstd':  'zst',
     'none':  '',
 }
 
@@ -67,16 +73,20 @@ _COMPRESSION_ARG_MAP = {
 def _compression_mode(filename: str) -> str:
     """Return the tarfile compression suffix for *filename*'s extension.
 
-    Raises ValueError for recognised-but-unsupported formats.
+    Raises ValueError for recognised-but-unsupported formats — which
+    includes zstd on an interpreter that cannot write it, since the
+    extension is what asked for the format.
     Falls back to uncompressed ('') for unknown extensions.
     """
     low = filename.lower()
     for ext, comp in _COMPRESS_EXTS:
         if low.endswith(ext):
+            if comp == 'zst' and not ZSTD_AVAILABLE:
+                raise ValueError(unsupported_msg(f"output format '{ext}'"))
             return comp
     for ext in _UNSUPPORTED_EXTS:
         if low.endswith(ext):
-            raise ValueError(f"Compression format '{ext}' is not supported.")
+            raise ValueError(f"compression format '{ext}' is not supported.")
     return ''
 
 
@@ -289,7 +299,7 @@ def command_backup(args) -> None:
             try:
                 compression = _compression_mode(output_path)
             except ValueError as exc:
-                crit_error(str(exc).lower())
+                crit_error(str(exc))
                 sys.exit(1)
     else:
         if sys.stdout.isatty():
@@ -303,6 +313,12 @@ def command_backup(args) -> None:
             if compression_arg is not None
             else ''
         )
+
+    # `--compress zstd` stays a valid choice on every interpreter so the
+    # refusal can say why instead of argparse's bare "invalid choice".
+    if compression == 'zst' and not ZSTD_AVAILABLE:
+        crit_error(unavailable_msg("compression type 'zstd'"))
+        sys.exit(1)
 
     with ContainerLock(container_name, exclusive=False, command="backup"):
         _run_backup(
@@ -391,15 +407,26 @@ def _run_backup(
             log_info(f"Adding: '{arc}'")
         _draw_bar()
 
-    try:
+    def _open_archive():
+        """Return the context manager producing the TarFile to write."""
+        if compression == 'zst':
+            # Not tarfile's own zstd mode: `w|zst` refuses a compression
+            # level, so a piped backup would be stuck at libzstd's
+            # default while `-o file.tar.zst` could pick one. See
+            # proot_distro.compress.
+            return open_tar_writer(
+                output_path,
+                None if output_path else sys.stdout.buffer,
+            )
         tar_mode = f'w:{compression}' if output_path else f'w|{compression}'
-        tar_target = output_path if output_path else sys.stdout.buffer
-
-        with tarfile.open(
-            tar_target if output_path else None,
-            fileobj=None if output_path else tar_target,
+        return tarfile.open(
+            output_path if output_path else None,
+            fileobj=None if output_path else sys.stdout.buffer,
             mode=tar_mode,
-        ) as tf:
+        )
+
+    try:
+        with _open_archive() as tf:
             for src, arc in entries:
                 _add_path(tf, src, arc, rootfs_dir, on_read=_on_read)
                 _on_entry(arc)

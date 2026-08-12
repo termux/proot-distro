@@ -239,7 +239,7 @@ complete -c proot-distro -n '__fish_seen_subcommand_from backup' \
     -s o -l output     -r -d 'Write archive to FILE instead of stdout'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
     -s c -l compress   -r -d 'Compression algorithm' \
-    -a 'gzip\tgzip bzip2\tbzip2 xz\txz none\tNo compression'
+    -a 'gzip\tgzip bzip2\tbzip2 xz\txz zstd\tzstd none\tNo compression'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
     -s v -l verbose    -d 'Print each archived file'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from backup' \
@@ -482,7 +482,7 @@ complete -c pd -f -n '__fish_seen_subcommand_from kill' -s h -l help    -d 'Show
 
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -a '(__proot_distro_containers)' -d 'Container'
 complete -c pd -n   '__fish_seen_subcommand_from backup' -s o -l output    -r -d 'Output archive file'
-complete -c pd -f -n '__fish_seen_subcommand_from backup' -s c -l compress -r -d 'Compression type' -a 'gzip bzip2 xz none'
+complete -c pd -f -n '__fish_seen_subcommand_from backup' -s c -l compress -r -d 'Compression type' -a 'gzip bzip2 xz zstd none'
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -s v -l verbose -d 'Verbose output'
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from backup' -s h -l help    -d 'Show help'

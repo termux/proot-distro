@@ -55,8 +55,10 @@ def test_pull_missing_layer_no_network(tmp_path, builders, monkeypatch):
         pull_mod.pull_image("x:miss", str(root), "x86_64")
 
 
-def test_pull_zstd_layer_rejected(tmp_path, builders):
-    # zstd-compressed layers are unsupported by Python's tarfile.
+def test_pull_zstd_layer_rejected(tmp_path, builders, monkeypatch):
+    # zstd-compressed layers need Python 3.14's tarfile; where that is
+    # missing the layer is refused up front rather than mid-extraction.
+    monkeypatch.setattr(pull_mod, "ZSTD_AVAILABLE", False)
     _seed_manifest(
         builders, "x:zstd", "x86_64",
         [{"name": "etc/x", "type": "file", "data": b"z"}],

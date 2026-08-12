@@ -30,7 +30,9 @@
 # archive leaves the target untouched (or, if a broken rootfs was written,
 # the partial result is removed rather than left rootfs-less). Compression
 # is auto-detected via tarfile r|* (archive file) or from header magic
-# bytes (stdin). For file input,
+# bytes (stdin) — zstd included, where the interpreter can read it; where
+# it cannot, the archive is named as zstd rather than reported as a
+# corrupt tar (see proot_distro.compress). For file input,
 # progress is tracked in compressed bytes consumed so total_size is
 # os.path.getsize() — instant, no upfront scan needed.
 
@@ -40,6 +42,9 @@ import stat
 import sys
 import tarfile
 
+from proot_distro.compress import (
+    ZSTD_AVAILABLE, ZSTD_MAGIC, file_is_zstd, header_is_zstd, unsupported_msg,
+)
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.message import (
     C, msg, log_info, log_error, crit_error,
@@ -64,6 +69,7 @@ _MAGIC_COMPRESS = (
     (b'BZh',           'bz2'),  # bzip2
     (b'\xfd7zXZ\x00',  'xz'),   # xz
     (b'\x5d\x00',      'xz'),   # lzma legacy (lzma.open handles both)
+    (ZSTD_MAGIC,       'zst'),  # zstandard (Python 3.14+)
 )
 
 # Legacy archive prefix.
@@ -301,6 +307,21 @@ def command_restore(args) -> None:
             return False
         parts = name.split('/')
         return len(parts) == 1 and not name.endswith('/')
+
+    # A zstd archive on an interpreter that cannot read one would reach
+    # tarfile as an unrecognisable stream and be reported as corruption,
+    # so it is named here instead — before anything is opened.
+    if not ZSTD_AVAILABLE:
+        if archive:
+            unsupported, subject = file_is_zstd(archive), f"archive '{archive}'"
+        else:
+            unsupported = header_is_zstd(
+                sys.stdin.buffer.peek(len(ZSTD_MAGIC))
+            )
+            subject = "the archive on stdin"
+        if unsupported:
+            crit_error(unsupported_msg(subject))
+            sys.exit(1)
 
     raw_fh = None
     # Restore targets exactly one container and only mutates it once the

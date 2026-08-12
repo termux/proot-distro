@@ -35,6 +35,7 @@ import os
 import urllib.error
 import urllib.request
 
+from proot_distro.compress import ZSTD_AVAILABLE, unsupported_msg
 from proot_distro.message import log_info, log_error
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.download import retry_http
@@ -280,11 +281,11 @@ def pull_image(
     for i, layer in enumerate(layers):
         digest = layer["digest"]
         media_type = layer.get("mediaType", "")
-        if "zstd" in media_type:
+        if "zstd" in media_type and not ZSTD_AVAILABLE:
             raise RuntimeError(
-                f"Layer {i + 1}/{n_layers} uses zstd compression which is "
-                "not supported by Python's tarfile module. "
-                "Try a different image tag that ships gzip-compressed layers."
+                unsupported_msg(f"Layer {i + 1}/{n_layers}")
+                + " Try a different image tag that ships gzip-compressed "
+                  "layers."
             )
 
         short_id = digest.split(":")[-1][:12]

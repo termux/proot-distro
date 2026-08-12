@@ -69,6 +69,7 @@ import shutil
 import stat
 import tarfile
 
+from proot_distro.compress import require_read_support
 from proot_distro.progress import ByteCounter, clear_bar, draw_bytes_bar
 
 
@@ -84,8 +85,12 @@ def extract_tar_to_rootfs(
     See module docstring for the shared invariants. The function
     consumes a compressed-or-not tar stream via tarfile's `'r|*'`
     auto-detect, so it works for raw tar, .tar.gz, .tar.bz2, .tar.xz,
-    and a Docker/OCI layer blob alike.
+    .tar.zst (Python 3.14+), and a Docker/OCI layer blob alike.
     """
+    # Auto-detect only recognises zstd from Python 3.14 on; without it
+    # the stream reads as a truncated tar, so say what it really is.
+    require_read_support(archive_path, f"archive '{archive_path}'")
+
     total_size = os.path.getsize(archive_path)
     deferred_links: list = []  # (dest, src) — copied after all regular files
     deferred_dirs: list = []   # (dest, mtime) — stamped after all writes

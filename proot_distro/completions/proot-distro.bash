@@ -179,7 +179,7 @@ _proot_distro() {
                     _filedir
                     return ;;
                 -c|--compress)
-                    COMPREPLY=($(compgen -W "gzip bzip2 xz none" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "gzip bzip2 xz zstd none" -- "${cur}"))
                     return ;;
             esac
             if [[ "${cur}" == -* ]]; then
@@ -194,7 +194,7 @@ _proot_distro() {
             if [[ "${cur}" == -* ]]; then
                 COMPREPLY=($(compgen -W "--verbose --quiet --help" -- "${cur}"))
             else
-                _filedir '@(tar|tar.gz|tgz|tar.bz2|tbz2|tar.xz|txz)'
+                _filedir '@(tar|tar.gz|tgz|tar.bz2|tbz2|tar.xz|txz|tar.zst|tzst)'
             fi
             ;;
 
