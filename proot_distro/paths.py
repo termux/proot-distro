@@ -83,8 +83,22 @@ def container_manifest(name: str) -> str:
 
 
 def container_from_spec(spec: str):
-    """Return the container name in a `name:path` spec, or None."""
-    return spec.split(":", 1)[0] if ":" in spec else None
+    """Return the container name in a `name:path` spec, or None.
+
+    A colon separates a container from a path only when nothing before it
+    is a directory separator, which is the rule scp and rsync use:
+    `box:/etc` names a container, while `/tmp/a:b` and `./a:b` are host
+    paths that happen to have a colon in the name. Treating every colon as
+    a separator left such a path unreachable — the whole prefix was taken
+    for a container name and rejected as invalid — with no spelling that
+    could say otherwise. A bare `a:b` is still a container spec, so a host
+    file named that way in the current directory is addressed as `./a:b`,
+    exactly as scp requires.
+    """
+    head, sep, _ = spec.partition(":")
+    if not sep or "/" in head:
+        return None
+    return head
 
 
 # Upper bound on symlink hops taken while resolving one spec, mirroring
@@ -207,10 +221,11 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
     sides of a transfer name the entry that will really be touched — a
     container path from the walk below, a host path from realpath().
     """
-    if ":" not in spec:
+    name = container_from_spec(spec)
+    if name is None:
         return _host_path(os.path.abspath(spec), deref_leaf)
 
-    name, _, rel_path = spec.partition(":")
+    rel_path = spec.partition(":")[2]
     if not is_valid_name(name):
         crit_error(f"invalid container name '{name}' in spec '{spec}'.")
         sys.exit(1)

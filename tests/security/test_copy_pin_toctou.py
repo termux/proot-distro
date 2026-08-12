@@ -391,8 +391,10 @@ def test_copy_recursive_swap_below_root_does_not_escape(
     real_copy = dirfd.copy_file_at
     fired = []
 
-    def racing(src_dir_fd, src_name, dst_dir_fd, dst_name, src_st=None):
-        real_copy(src_dir_fd, src_name, dst_dir_fd, dst_name, src_st)
+    def racing(src_dir_fd, src_name, dst_dir_fd, dst_name, src_st=None,
+               **kwargs):
+        real_copy(src_dir_fd, src_name, dst_dir_fd, dst_name, src_st,
+                  **kwargs)
         target = os.path.join(rootfs, "dest", "sub")
         if not fired and os.path.isdir(target):
             fired.append(True)
@@ -428,8 +430,8 @@ def test_sync_swap_below_root_does_not_escape(
     real_sync_dir = sync_mod._sync_dir
     fired = []
 
-    def racing(dst_fd, name, shown):
-        created = real_sync_dir(dst_fd, name, shown)
+    def racing(dst_fd, name):
+        created = real_sync_dir(dst_fd, name)
         target = os.path.join(dest, "sub")
         if not fired and name == "sub" and os.path.isdir(target):
             fired.append(True)

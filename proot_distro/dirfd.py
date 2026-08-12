@@ -488,9 +488,10 @@ def copy_file_at(src_dir_fd: int, src_name: str,
     was planted since, and a pipe or a device is not something a copy has
     any business overwriting without saying so.
 
-    Without replace the create is plain O_EXCL, which is all copy_tree_at
-    needs: every directory it writes into was just made by mkdir, so
-    nothing can legitimately be there.
+    Without replace the create is plain O_EXCL, which is all a fresh tree
+    needs: every directory copy_tree_at made itself is empty, so nothing
+    can legitimately be there. Merging into a tree that already exists
+    passes replace=True, since there quite legitimately can be.
     """
     sfd, sfd_st = open_regular_at(src_dir_fd, src_name, os.O_RDONLY)
     try:
@@ -526,10 +527,26 @@ def copy_file_at(src_dir_fd: int, src_name: str,
 
 
 def copy_symlink_at(src_dir_fd: int, src_name: str,
-                    dst_dir_fd: int, dst_name: str, src_st=None) -> None:
-    """Recreate a symlink at the destination, target verbatim."""
+                    dst_dir_fd: int, dst_name: str, src_st=None, *,
+                    replace: bool = False) -> None:
+    """Recreate a symlink at the destination, target verbatim.
+
+    Pass replace=True when the destination name may already be taken —
+    symlink(2) has no O_TRUNC and would only report EEXIST. The old name is
+    unlinked first, which removes a *name* and never writes through what it
+    held, so a hardlink to a file outside the container is not touched
+    either. A directory standing there is left for the unlink to refuse,
+    since emptying one is not this call's decision to make.
+    """
     target = os.readlink(src_name, dir_fd=src_dir_fd)
-    os.symlink(target, dst_name, dir_fd=dst_dir_fd)
+    if replace:
+        try:
+            os.symlink(target, dst_name, dir_fd=dst_dir_fd)
+        except FileExistsError:
+            os.unlink(dst_name, dir_fd=dst_dir_fd)
+            os.symlink(target, dst_name, dir_fd=dst_dir_fd)
+    else:
+        os.symlink(target, dst_name, dir_fd=dst_dir_fd)
     if src_st is not None:
         set_times_at(dst_dir_fd, dst_name, src_st)
 
@@ -601,6 +618,7 @@ def count_tree_at(dir_fd: int) -> int:
 
 
 def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
+                 merge: bool = False,
                  on_entry=None, on_skip=None, on_error=None) -> None:
     """Recursively copy the contents of one directory into another.
 
@@ -609,6 +627,17 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
     preserved. Unlike copytree, a device/FIFO/socket is reported to
     on_skip and left out rather than aborting the whole transfer — the
     same choice `backup` and `sync` already make.
+
+    With merge=True an entry the destination already holds is written over
+    rather than refused, which is what `cp -a` does and what a second run
+    of the same copy needs: a directory already there is descended into
+    instead of ending the entry on mkdir's EEXIST, a file is replaced
+    through the temp-and-rename path (see copy_file_at), and a symlink is
+    unlinked and recreated. A destination whose *type* disagrees with the
+    source's is still refused and reported, as cp refuses to overwrite a
+    directory with a file or the reverse. Without merge every create is
+    exclusive, which is what a move's cross-device fallback wants:
+    rename(2) would not have overwritten a populated directory either.
 
     on_entry(rel_path) is called for each file and symlink written.
 
@@ -671,21 +700,37 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                 mode = src_st.st_mode
 
                 if stat.S_ISLNK(mode):
-                    copy_symlink_at(src_fd, name, dst_fd, name, src_st)
+                    copy_symlink_at(src_fd, name, dst_fd, name, src_st,
+                                    replace=merge)
                     if on_entry:
                         on_entry(child)
                 elif stat.S_ISDIR(mode):
                     # Created writable, sealed on the way back up: mkdir's
                     # mode is masked by the umask and so cannot preserve
                     # the source mode on its own.
-                    os.mkdir(name, 0o700, dir_fd=dst_fd)
+                    fresh = True
+                    try:
+                        os.mkdir(name, 0o700, dir_fd=dst_fd)
+                    except FileExistsError:
+                        if not merge:
+                            raise
+                        fresh = False
                     sub_src = opendir_at(src_fd, name)
                     # Pushed before the second open, so a failure there
                     # leaves the first fd on the stack for close_frames.
                     stack.append([sub_src, None, child, None, src_st, True])
-                    stack[-1][1] = opendir_at(dst_fd, name)
+                    # O_NOFOLLOW, so a name the merge did not create refuses
+                    # a symlink and reports a plain file as ENOTDIR — cp
+                    # declines to overwrite a non-directory with one too.
+                    sub_dst = stack[-1][1] = opendir_at(dst_fd, name)
+                    if not fresh:
+                        # A directory left by an earlier copy carries the
+                        # source's own mode, which need not be writable.
+                        # copy_metadata puts it back on the way up.
+                        make_writable(sub_dst)
                 elif stat.S_ISREG(mode):
-                    copy_file_at(src_fd, name, dst_fd, name, src_st)
+                    copy_file_at(src_fd, name, dst_fd, name, src_st,
+                                 replace=merge)
                     if on_entry:
                         on_entry(child)
                 elif on_skip:

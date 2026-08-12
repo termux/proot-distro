@@ -63,7 +63,10 @@ Top-level utilities (each owns a focused concern):
   meaning — `remove --image` wants a reference, not a container),
   `_PdArgumentParser` (per-command help on error).
 - `paths.py` — `container_dir/_rootfs/_manifest`, `[name:]path` spec
-  resolver, `container_locks_for_spec_pair`. The container side of a spec
+  resolver, `container_locks_for_spec_pair`. A colon separates a container
+  from a path only when nothing before it is a `/` — scp's rule, and the
+  only spelling that lets a host path hold a colon at all (`./a:b`, since
+  a bare `a:b` still names a container). The container side of a spec
   is resolved with **chroot semantics** (`_resolve_within_root`): each
   component is walked in turn, absolute symlink targets are re-anchored
   at the rootfs, relative ones follow from the link's directory, and `..`
@@ -154,6 +157,18 @@ Top-level utilities (each owns a focused concern):
   `copy_tree_at` takes an `on_error(rel, exc)` and **steps over** an entry
   it cannot copy instead of ending the transfer, which is `cp -r`'s
   behaviour; without the callback the exception still propagates.
+  `merge=True` writes into a destination tree that **already exists** — a
+  directory there is descended into rather than ending the entry on
+  mkdir's EEXIST, a file goes through `copy_file_at(replace=True)`, a
+  symlink through `copy_symlink_at(replace=True)` (unlink then recreate;
+  `symlink(2)` has no O_TRUNC), and a pre-existing directory gets
+  `make_writable` on the way down since it may carry a mode of the
+  source's that is not writable. A destination whose **type** disagrees
+  with the source's is still refused per entry, as `cp` refuses to
+  overwrite a directory with a file or the reverse. `copy -r` passes it so
+  a second run updates instead of dying; `--move`'s EXDEV fallback does
+  not, since `rename(2)` would not have overwritten a populated directory
+  either.
   `count_tree_at()` is the cheap pre-pass giving `copy -r` a denominator
   for its progress bar; it counts non-directories, because a directory is
   only "written" once its contents are in.
@@ -179,8 +194,18 @@ Top-level utilities (each owns a focused concern):
   at the cost of a hardlinked destination losing its link. `replace=True`
   additionally **refuses** a destination that is not a regular file: the
   resolve already followed any link that stood there, so one there now was
-  planted since. `copy_tree_at` needs no `replace` — every directory it
-  writes into was just made by `mkdir`.
+  planted since. A fresh `copy_tree_at` needs no `replace` — every
+  directory it writes into was just made by `mkdir` — but `merge=True`
+  passes it, since a destination that already exists quite legitimately
+  holds entries. The rule covers **metadata** as well: sync's
+  `_refresh_file_metadata` is the up-to-date path, which by definition
+  rewrites nothing, so it declines to `fchmod`/`utime` a destination with
+  `st_nlink != 1` and asks for a full rewrite instead. That call was the
+  one write in either command aimed at an inode it had not created, and a
+  planted hardlink handed the guest the mode (and, under `--checksum`, the
+  timestamps) of any host file within its reach — no race required, and on
+  Termux `$TERMUX_PREFIX` is bound into every non-isolated container by
+  default with `RUNTIME_DIR` underneath it.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
@@ -292,6 +317,12 @@ as `cp` and `mv` both do: the source's base name is appended through
 `resolve_container_child()`. That covers `copy -r` too, which used to
 append only for a file source and so died on the `mkdir`'s EEXIST.
 
+A recursive copy **merges** into a destination tree that already exists
+(`copy_tree_at(merge=True)`), as `cp -a` does, so running the same copy
+twice updates it rather than dying on the top-level `mkdir`. `--move`
+keeps `rename(2)`'s rule instead and refuses a populated destination
+directory, so a move means the same thing on either side of an `EXDEV`.
+
 Both commands treat an entry they cannot read or write as **per-entry**:
 reported, stepped over, and counted, with the command exiting 1 at the
 end (`_Ctx.failures` for sync, `_copy_tree_pinned`'s return for copy).
@@ -299,19 +330,39 @@ end (`_Ctx.failures` for sync, `_copy_tree_pinned`'s return for copy).
 both of sync's passes meet the same tree and counting one bad entry twice
 made a single unreadable file report as "2 entries".
 `copy -r` used to stop at the first locked directory and `sync` used to
-come back 0 after skipping one. `copy --move` reads that count before it
-removes anything — an EXDEV fallback whose copy half skipped a file must
-not delete the only remaining copy of it.
+come back 0 after skipping one. In sync that rule reaches **every** kind
+of entry, not just files: `_sync_dir`, `_sync_symlink` and
+`_unlink_robust` raise `OSError` for their caller to report rather than
+exiting where they stand, which is what let a destination filesystem with
+no symlinks at all (vfat, i.e. `/sdcard`) end the whole transfer on the
+first link it met and leave the rest untransferred behind one line of
+output.
+
+`copy --move` reads that count before it removes anything — an EXDEV
+fallback whose copy half skipped a file must not delete the only
+remaining copy of it. **Deliberate** skips count too: no tree this module
+writes carries a device/FIFO/socket, which is a warning during a copy and
+silent data loss during a move, and on Termux the common move (a rootfs
+directory onto `/sdcard`) is exactly the cross-device one.
 
 Directory **modes and timestamps** are preserved by both. sync's
 `_apply_dir_metadata` is `copy_metadata` on the descended fds (it used to
 set only the mode, so a synced tree was stamped with the moment of the
 sync), and `_sync_directory` applies the source root's metadata last of
 all — after the mirror *and* the prune, both of which bump the mtime, and
-because the mode may take the write bit off the directory. A regular file
-whose **mode alone** changed is fixed in place by `_refresh_file_mode()`
-without rewriting the content: `_needs_update` compares type, size and
-mtime, so a `chmod +x` was otherwise invisible for good.
+because the mode may take the write bit off the directory. **Every other**
+directory gets that from `_remove_extras_at`, which snapshots each level's
+`fstat` before touching it and restores mode and times as the frame
+unwinds: the prune runs after `_apply_dir_metadata` settled them, so a
+directory that happened to hold an orphan came out stamped with the moment
+of the sync and, if it was read-only, wearing `make_writable`'s `0755`.
+A regular file whose **metadata alone** drifted is fixed in place by
+`_refresh_file_metadata()` without rewriting the content: `_needs_update`
+compares type, size and mtime (or content), never permissions, so a
+`chmod +x` was invisible for good — and under `--checksum`, where matching
+content means no rewrite, so was a changed timestamp. Times are compared
+at whole-second granularity, the same as `_needs_update`, or a filesystem
+storing less precision than the source is found wanting on every run.
 
 Destination directories are created **writable** (`0o700`) and given the
 source's mode only once their contents are in — `copy_tree_at` via
@@ -393,7 +444,10 @@ silently did nothing.
 
 A device/FIFO/socket named as the **whole source** is refused by `sync`
 with a message, as `copy` already did — it used to return from
-`_sync_single` without a word and report "Finished synchronizing".
+`_sync_single` without a word and report "Finished synchronizing". One met
+*inside* a tree is skipped with a warning by both, sync included: it used
+to go quietly into `skipped_rels`, leaving the user to diff the trees to
+find out it had not arrived.
 
 Two counters have to stay honest. `_Ctx.saw()` is the single way a source
 entry is recorded, and it recomputes `total` from `src_rels`, because the

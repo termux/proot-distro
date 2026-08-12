@@ -24,13 +24,19 @@
 # trees preserving symlinks (like cp -a); a destination that already exists
 # as a directory receives the source inside it, as cp and mv both do.
 #
+# A recursive copy merges into a destination tree that is already there,
+# as cp -a does, so running the same copy twice updates it instead of
+# stopping on the first mkdir's EEXIST. --move keeps rename(2)'s rule
+# instead and refuses a populated destination directory.
+#
 # Hard links become independent copies (nothing distinguishes one a guest
 # made to a host file from an ordinary entry — see dirfd.open_new_at), and
 # a sparsely stored file is written back sparsely. An entry that cannot be
 # read is reported and stepped over rather than ending the transfer, which
 # is `cp -r`'s behaviour; the command exits non-zero when any were, and
 # --move then leaves the source in place, since the copy it would be
-# deleting is incomplete.
+# deleting is incomplete — including when the only thing missing is a
+# device, FIFO or socket, which no tree this module writes carries across.
 
 import errno
 import os
@@ -73,7 +79,8 @@ def _opendir_pinned(pin):
     return dirfd.reopen(pin.dir_fd, pin.leaf)
 
 
-def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
+def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display, *,
+                      merge=False):
     """Recreate the source directory under the destination, fd by fd.
 
     Replaces shutil.copytree(symlinks=True). copytree walks by path, so
@@ -81,26 +88,46 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
     can be swapped for a symlink mid-transfer; carrying the fds down the
     walk removes that entirely.
 
-    Returns the number of entries that could not be copied. They are
-    reported one by one and stepped over rather than ending the transfer
-    (see dirfd.copy_tree_at), so the caller has to ask — `--move` in
-    particular must not remove a source whose copy came up short.
+    Returns (failures, skipped): entries that could not be copied, and
+    device/FIFO/socket entries deliberately left out. Both are reported one
+    by one and stepped over rather than ending the transfer (see
+    dirfd.copy_tree_at), so the caller has to ask — `--move` in particular
+    must remove nothing when either count is non-zero, since the source
+    holds the only copy of whatever did not make it across.
+
+    merge=True lets the walk write into a destination tree that already
+    exists (see dirfd.copy_tree_at). `--move`'s cross-device fallback
+    leaves it off so that it refuses a populated destination directory,
+    which is what the rename(2) it stands in for would have done.
     """
     failures = [0]
+    skipped = [0]
     src_fd = _opendir_pinned(src_pin)
     try:
         src_st = os.fstat(src_fd)
-        # mkdirat refuses to create over anything that already exists,
-        # including a planted symlink, which is copytree's behaviour too.
         # Created writable; copy_metadata() below applies the real mode
-        # once the contents are in (see dirfd.copy_tree_at).
+        # once the contents are in (see dirfd.copy_tree_at). Without merge,
+        # mkdirat refuses to create over anything that already exists,
+        # including a planted symlink — copytree's behaviour too.
         try:
             os.mkdir(dest_pin.leaf, 0o700, dir_fd=dest_pin.dir_fd)
+        except FileExistsError:
+            if not merge:
+                raise OSError(errno.EEXIST, os.strerror(errno.EEXIST),
+                              dest_display) from None
         except OSError as exc:
             # The fd-relative call only knows the leaf; report the path.
             raise OSError(exc.errno, exc.strerror, dest_display) from None
-        dst_fd = dirfd.opendir_at(dest_pin.dir_fd, dest_pin.leaf)
+        # O_NOFOLLOW: a name the mkdir did not create is only descended
+        # into when it really is a directory. Re-raised with the path for
+        # the same reason the mkdir is — merging onto a plain file reports
+        # ENOTDIR from here, and the leaf alone does not say where.
         try:
+            dst_fd = dirfd.opendir_at(dest_pin.dir_fd, dest_pin.leaf)
+        except OSError as exc:
+            raise OSError(exc.errno, exc.strerror, dest_display) from None
+        try:
+            dirfd.make_writable(dst_fd)
             # Entry names come from the tree being copied, so they are
             # quoted: a rootfs name may carry ESC (see message.quote_path).
             def shown(rel):
@@ -131,6 +158,7 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
 
             def on_skip(rel):
                 done[0] += 1
+                skipped[0] += 1
                 warn(f"skipping special file '{shown(rel)}'.")
 
             def on_error(rel, exc):
@@ -141,7 +169,7 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
                 log_error(f"Warning: cannot copy '{src_shown(rel)}': "
                           f"{quote_path(exc.strerror or str(exc))}")
 
-            dirfd.copy_tree_at(src_fd, dst_fd, on_entry=on_entry,
+            dirfd.copy_tree_at(src_fd, dst_fd, merge=merge, on_entry=on_entry,
                                on_skip=on_skip, on_error=on_error)
             dirfd.copy_metadata(src_fd, dst_fd, src_st)
         finally:
@@ -149,7 +177,7 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display):
             os.close(dst_fd)
     finally:
         os.close(src_fd)
-    return failures[0]
+    return failures[0], skipped[0]
 
 
 def _move_pinned(src_pin, dest_pin, verbose=False):
@@ -159,9 +187,13 @@ def _move_pinned(src_pin, dest_pin, verbose=False):
     following it, and both ends are named relative to a pinned fd, so the
     fast path needs no further protection.
 
-    Returns the number of entries the fallback could not copy. Nothing is
-    removed from the source when that is non-zero: a move whose copy half
-    skipped an unreadable file would otherwise delete the one copy of it.
+    Returns the number of entries the fallback did not carry across.
+    Nothing is removed from the source when that is non-zero: a move whose
+    copy half skipped an entry would otherwise delete the one copy of it.
+    Entries skipped *by design* count here too — a device, FIFO or socket
+    is left out of every tree this module writes, which is a warning during
+    a copy but silent data loss during a move, and on Termux the common
+    move (a rootfs onto /sdcard) is exactly the cross-device one.
     """
     try:
         os.rename(src_pin.leaf, dest_pin.leaf,
@@ -192,13 +224,13 @@ def _move_pinned(src_pin, dest_pin, verbose=False):
                               dest_pin.dir_fd, dest_pin.leaf, src_st)
         os.unlink(src_pin.leaf, dir_fd=src_pin.dir_fd)
     elif stat.S_ISDIR(src_st.st_mode):
-        failures = _copy_tree_pinned(src_pin, dest_pin, verbose,
-                                     str(dest_pin))
-        if failures:
+        failures, skipped = _copy_tree_pinned(src_pin, dest_pin, verbose,
+                                              str(dest_pin))
+        if failures or skipped:
             # The copy half is incomplete, so the source is now the only
             # place some of those entries exist. Keep it.
             log_error("Source left in place: the copy did not complete.")
-            return failures
+            return failures + skipped
         dirfd.rmtree_at(src_pin.dir_fd, src_pin.leaf, force=True)
     else:
         dirfd.copy_file_at(src_pin.dir_fd, src_pin.leaf,
@@ -319,8 +351,12 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
             else:
                 log_info("Copying files, this may take a while...")
                 if src_is_dir:
-                    failures = _copy_tree_pinned(src_pin, dest_pin, verbose,
-                                                 dest_path)
+                    # merge=True: a destination tree that already exists is
+                    # written into rather than refused, which is what cp -a
+                    # does and what running the same copy twice needs.
+                    failures, _ = _copy_tree_pinned(src_pin, dest_pin,
+                                                    verbose, dest_path,
+                                                    merge=True)
                 else:
                     if verbose:
                         log_info(f"Copying: '{quote_path(src_path)}' -> "

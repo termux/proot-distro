@@ -736,3 +736,299 @@ def test_sparse_copy_distrusts_an_all_data_answer(tmp_path, builders,
     st = os.stat(out)
     assert open(out, "rb").read() == open(src, "rb").read()
     assert st.st_blocks * 512 < st.st_size
+
+
+# ----- one entry is one entry: sync steps over what it cannot write -------
+
+def test_sync_keeps_going_when_a_symlink_cannot_be_written(tmp_path,
+                                                           builders,
+                                                           monkeypatch):
+    """A destination that will not hold a symlink must cost one entry.
+
+    vfat holds no symlinks at all, and vfat is what /sdcard is, so
+    `sync box:/etc /sdcard/backup` met this on the first link it reached
+    and stopped there — everything after it silently untransferred behind
+    a single line of output. Reported and skipped now, as `copy -r`
+    already did with the same tree.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "aaa").write_text("a")
+    os.symlink("aaa", src / "mmm")          # sorts between the two files
+    (src / "zzz").write_text("z")
+
+    def no_symlinks(*args, **kwargs):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "symlink", no_symlinks)
+    code = _exit_code(lambda: _sync(str(src), "box:/dest"))
+
+    dest = os.path.join(rootfs, "dest")
+    assert code == 1
+    assert sorted(os.listdir(dest)) == ["aaa", "zzz"]
+
+
+def test_sync_keeps_going_when_a_directory_cannot_be_created(tmp_path,
+                                                             builders,
+                                                             monkeypatch):
+    """Same for a subdirectory, whose subtree is then left alone."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    (src / "mmm").mkdir(parents=True)
+    (src / "mmm" / "inner").write_text("i")
+    (src / "aaa").write_text("a")
+    (src / "zzz").write_text("z")
+
+    real_mkdir = os.mkdir
+
+    def failing(name, *args, **kwargs):
+        if name == "mmm":
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_mkdir(name, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", failing)
+    code = _exit_code(lambda: _sync(str(src), "box:/dest"))
+    monkeypatch.setattr(os, "mkdir", real_mkdir)
+
+    dest = os.path.join(rootfs, "dest")
+    assert code == 1
+    assert sorted(os.listdir(dest)) == ["aaa", "zzz"]
+
+
+def test_sync_delete_reports_an_orphan_it_cannot_remove(tmp_path, builders,
+                                                        monkeypatch):
+    """A prune that cannot finish is one failed entry, not a dead command."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep").write_text("k")
+    dest = os.path.join(rootfs, "dest")
+    os.makedirs(dest)
+    for name in ("orphan1", "orphan2"):
+        with open(os.path.join(dest, name), "w") as fh:
+            fh.write("o")
+
+    real_unlink = os.unlink
+
+    def failing(name, *args, **kwargs):
+        if name == "orphan1":
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+        return real_unlink(name, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", failing)
+    code = _exit_code(lambda: _sync(str(src), "box:/dest", delete=True))
+    monkeypatch.setattr(os, "unlink", real_unlink)
+
+    assert code == 1
+    assert sorted(os.listdir(dest)) == ["keep", "orphan1"]
+
+
+# ----- --delete leaves the metadata the mirror settled -------------------
+
+def test_sync_delete_keeps_the_mode_of_a_directory_it_pruned(tmp_path,
+                                                             builders):
+    """make_writable's u+rwx must not outlive the removal it enabled."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    (src / "ro").mkdir(parents=True)
+    dest = os.path.join(rootfs, "dest", "ro")
+    os.makedirs(dest)
+    with open(os.path.join(dest, "orphan"), "w") as fh:
+        fh.write("o")
+    os.chmod(src / "ro", 0o555)
+
+    _sync(str(src), "box:/dest", delete=True)
+
+    assert not os.path.exists(os.path.join(dest, "orphan"))
+    assert stat.S_IMODE(os.stat(dest).st_mode) == 0o555
+
+
+def test_sync_delete_keeps_the_mtime_of_a_directory_it_pruned(tmp_path,
+                                                              builders):
+    """The prune runs after _apply_dir_metadata, and removing bumps mtime.
+
+    Only the root was put right afterwards (_sync_directory does it last of
+    all), so every subdirectory an orphan happened to sit in came out
+    stamped with the moment of the sync instead of the source's — in a
+    command whose contract is that timestamps are preserved.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    (src / "d").mkdir(parents=True)
+    (src / "d" / "keep").write_text("k")
+    dest = os.path.join(rootfs, "dest", "d")
+    os.makedirs(dest)
+    with open(os.path.join(dest, "orphan"), "w") as fh:
+        fh.write("o")
+    os.utime(src / "d", (1_000_000_000, 1_000_000_000))
+
+    _sync(str(src), "box:/dest", delete=True)
+
+    assert not os.path.exists(os.path.join(dest, "orphan"))
+    assert int(os.stat(dest).st_mtime) == 1_000_000_000
+
+
+# ----- what is skipped is said out loud ----------------------------------
+
+def test_sync_warns_about_a_special_file_it_skips(tmp_path, builders,
+                                                  capsys):
+    """`copy -r` warned; sync left the user to diff the tree and find out."""
+    builders.make_container("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    os.mkfifo(src / "pipe")
+    (src / "ok").write_text("o")
+
+    _sync(str(src), "box:/dest")
+
+    dest = os.path.join(container_rootfs("box"), "dest")
+    assert sorted(os.listdir(dest)) == ["ok"]
+    assert "skipping special file" in capsys.readouterr().err
+
+
+# ----- --checksum settles the timestamps it decided not to rewrite -------
+
+def test_sync_checksum_brings_the_mtime_along(tmp_path, builders):
+    """Matching content is not a reason to leave the timestamp behind.
+
+    rsync -c updates it; here nothing did, so the destination kept a stale
+    mtime that the *next* plain run then rewrote the whole file over.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "f").write_text("same")
+    dest = os.path.join(rootfs, "dest")
+    os.makedirs(dest)
+    with open(os.path.join(dest, "f"), "w") as fh:
+        fh.write("same")
+    os.utime(src / "f", (1_000_000_000, 1_000_000_000))
+    os.utime(os.path.join(dest, "f"), (1_500_000_000, 1_500_000_000))
+
+    _sync(str(src), "box:/dest", checksum=True)
+
+    assert int(os.stat(os.path.join(dest, "f")).st_mtime) == 1_000_000_000
+
+
+# ----- copy -r merges, as cp -a does -------------------------------------
+
+def test_copy_recursive_merges_into_a_tree_that_is_already_there(tmp_path,
+                                                                 builders):
+    """Running the same copy twice updates the destination.
+
+    mkdirat refuses to create over anything, so the second run died on
+    EEXIST at the top of the tree — a copy that cannot be repeated is not
+    the `cp -a` the command advertises.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f").write_text("one")
+    os.symlink("f", src / "sub" / "link")
+    dest = os.path.join(rootfs, "dest")
+    os.makedirs(dest)
+
+    _copy(str(src), "box:/dest", recursive=True)
+    (src / "sub" / "f").write_text("two")
+    (src / "sub" / "new").write_text("n")
+    _copy(str(src), "box:/dest", recursive=True)
+
+    landed = os.path.join(dest, "src", "sub")
+    assert sorted(os.listdir(landed)) == ["f", "link", "new"]
+    assert open(os.path.join(landed, "f")).read() == "two"
+    assert os.readlink(os.path.join(landed, "link")) == "f"
+
+
+def test_copy_recursive_merge_refuses_a_type_conflict(tmp_path, builders,
+                                                      capsys):
+    """cp will not put a directory where a file is, or the reverse."""
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f").write_text("s")
+    (src / "plain").write_text("p")
+    dest = os.path.join(rootfs, "dest", "src")
+    os.makedirs(dest)
+    with open(os.path.join(dest, "sub"), "w") as fh:     # file vs directory
+        fh.write("in the way")
+    os.makedirs(os.path.join(dest, "plain"))             # directory vs file
+
+    code = _exit_code(lambda: _copy(str(src), "box:/dest", recursive=True))
+
+    assert code == 1
+    assert open(os.path.join(dest, "sub")).read() == "in the way"
+    assert os.path.isdir(os.path.join(dest, "plain"))
+    assert "cannot copy" in capsys.readouterr().err
+
+
+def test_move_refuses_a_populated_destination_directory(tmp_path, builders,
+                                                        monkeypatch):
+    """The cross-device fallback keeps rename(2)'s rule, not cp's.
+
+    A same-device move gets ENOTEMPTY from the kernel; the fallback has to
+    refuse it too, or `--move` would mean one thing on a phone's internal
+    storage and another onto /sdcard.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = os.path.join(rootfs, "src")
+    os.makedirs(src)
+    with open(os.path.join(src, "f"), "w") as fh:
+        fh.write("s")
+    dest = os.path.join(rootfs, "dest")
+    os.makedirs(dest)
+    with open(os.path.join(dest, "occupied"), "w") as fh:
+        fh.write("d")
+
+    real_rename = os.rename
+
+    def no_rename(*args, **kwargs):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "rename", no_rename)
+    code = _exit_code(lambda: _copy("box:/src", "box:/dest/occupied",
+                                    move=True))
+    monkeypatch.setattr(os, "rename", real_rename)
+
+    assert code == 1
+    assert os.path.isfile(os.path.join(src, "f"))       # source untouched
+
+
+def test_move_across_devices_keeps_the_source_when_a_fifo_is_skipped(
+    tmp_path, builders, monkeypatch
+):
+    """No tree this module writes carries a FIFO, so a move must not delete.
+
+    The skip is a warning during a copy and silent data loss during a move,
+    and on Termux the common move — a rootfs directory onto /sdcard — is
+    exactly the cross-device one that takes this path.
+    """
+    builders.make_container("box")
+    rootfs = container_rootfs("box")
+    src = os.path.join(rootfs, "src")
+    os.makedirs(src)
+    with open(os.path.join(src, "real"), "w") as fh:
+        fh.write("r")
+    os.mkfifo(os.path.join(src, "pipe"))
+
+    real_rename = os.rename
+
+    def no_rename(*args, **kwargs):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "rename", no_rename)
+    code = _exit_code(lambda: _copy("box:/src", "box:/moved", move=True))
+    monkeypatch.setattr(os, "rename", real_rename)
+
+    assert code == 1
+    assert sorted(os.listdir(src)) == ["pipe", "real"]
+    assert sorted(os.listdir(os.path.join(rootfs, "moved"))) == ["real"]

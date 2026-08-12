@@ -532,3 +532,32 @@ def test_locks_src_only():
 
 def test_locks_neither():
     assert paths.container_locks_for_spec_pair("/a", "/b", "copy") == []
+
+
+# ----- a colon only separates when nothing before it is a path ------------
+
+def test_container_from_spec_ignores_a_colon_in_a_host_path():
+    """scp's rule: a '/' before the colon means the whole thing is a path.
+
+    Without it a host file with a colon in its name could not be addressed
+    at all — the prefix was taken for a container name and rejected as
+    invalid, with no spelling available to say otherwise.
+    """
+    assert paths.container_from_spec("/tmp/a:b") is None
+    assert paths.container_from_spec("./a:b") is None
+    assert paths.container_from_spec("dir/a:b") is None
+    # A bare name still separates, so `./` is how a local `a:b` is spelled.
+    assert paths.container_from_spec("a:b") == "a"
+    assert paths.container_from_spec("box:/etc/hosts") == "box"
+
+
+def test_resolve_host_path_with_a_colon_in_its_name(tmp_path, monkeypatch):
+    target = tmp_path / "odd:name"
+    target.write_text("x")
+    monkeypatch.chdir(tmp_path)
+    assert paths.resolve_container_path(str(target)) == str(target)
+    assert paths.resolve_container_path("./odd:name") == str(target)
+
+
+def test_locks_none_for_host_paths_holding_colons():
+    assert paths.container_locks_for_spec_pair("/a:1", "/b:2", "copy") == []
