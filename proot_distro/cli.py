@@ -58,6 +58,7 @@ from proot_distro.commands.build import command_build
 from proot_distro.commands.push import command_push
 from proot_distro.commands.ps import command_ps
 from proot_distro.commands.kill import command_kill
+from proot_distro.commands.search import command_search
 
 
 _COMMAND_HANDLERS = {
@@ -77,6 +78,7 @@ _COMMAND_HANDLERS = {
     "push":        command_push,
     "ps":          command_ps,
     "kill":        command_kill,
+    "search":      command_search,
     "help":        command_help,
 }
 
@@ -180,9 +182,11 @@ def _ensure_proot_available(first_canonical: str) -> None:
     Dockerfile and refuses only when RUN (or ONBUILD RUN) is actually
     present. `kill` and `ps` are exempt too: they only inspect and
     signal already-running sessions via the session registry and never
-    invoke proot.
+    invoke proot. So is `search`, which only queries Docker Hub —
+    refusing to look up an image because the runtime for it is not
+    installed yet would be backwards.
     """
-    if first_canonical in ("build", "push", "kill", "ps"):
+    if first_canonical in ("build", "push", "kill", "ps", "search"):
         return
     ensure_proot_installed()
 
@@ -324,7 +328,9 @@ def main() -> None:
     # (helpers/docker, helpers/download, etc.) silence their info
     # lines and progress bars too. `list` and `ps` have different
     # --quiet semantics (print names / PIDs only) and do not use
-    # log_info(), so the global flag is left off for them.
+    # log_info(), so the global flag is left off for them. `search`
+    # means both — bare names on stdout *and* no info lines, including
+    # the retry notices its helper emits — so it keeps the flag.
     if canonical not in ("list", "ps") and getattr(args, "quiet", False):
         set_quiet(True)
 

@@ -50,6 +50,7 @@ def test_install_allow_insecure_flag():
     ("bak", "backup"), ("bkp", "backup"),
     ("clear", "clear-cache"), ("cl", "clear-cache"),
     ("cp", "copy"),
+    ("s", "search"), ("se", "search"),
     ("h", "help"), ("he", "help"), ("hel", "help"),
 ])
 def test_alias_table(alias, canonical):
@@ -82,9 +83,35 @@ def test_each_subcommand_parses():
         (["run", "box"], "run"),
         (["login", "box"], "login"),
         (["kill", "box"], "kill"),
+        (["search", "ubuntu"], "search"),
     ]:
         args, _ = p.parse_known_args(argv)
         assert args.command == cmd
+
+
+@pytest.mark.parametrize("flag", ["-l", "--limit"])
+def test_search_limit_flag(flag):
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["search", "ubuntu", flag, "50"])
+    assert args.command == "search"
+    assert args.query == "ubuntu"
+    # Kept as a string; commands/search.py validates and reports on it.
+    assert args.limit == "50"
+    assert unknown == []
+
+
+def test_search_defaults():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["se", "ubuntu"])
+    assert args.limit is None
+    assert args.quiet is False
+
+
+def test_search_missing_query_is_none():
+    p = parser.build_parser()
+    args, _ = p.parse_known_args(["search"])
+    assert args.query is None  # validated later by REQUIRED_ARGS
+    assert ("query",) == tuple(a for a, _ in parser.REQUIRED_ARGS["search"])
 
 
 def test_ps_quiet_flag():

@@ -54,8 +54,8 @@ _proot_distro() {
     local cur prev words cword
     _init_completion || return
 
-    local -r _all_commands="install remove rename reset login list ps kill backup restore
-        clear-cache copy sync run build push help"
+    local -r _all_commands="install search remove rename reset login list ps kill backup
+        restore clear-cache copy sync run build push help"
 
     # Complete the subcommand itself
     if [[ ${cword} -eq 1 ]]; then
@@ -80,6 +80,17 @@ _proot_distro() {
                 COMPREPLY=($(compgen -W "-n --name -a --architecture --allow-insecure -q --quiet -h --help" -- "${cur}"))
             elif [[ "${cur}" == /* || "${cur}" == ./* || "${cur}" == ../* ]]; then
                 _filedir
+            fi
+            ;;
+
+        # -----------------------------------------------------------------------
+        search)
+            case "${prev}" in
+                -l|--limit)
+                    return ;;
+            esac
+            if [[ "${cur}" == -* ]]; then
+                COMPREPLY=($(compgen -W "-l --limit -q --quiet -h --help" -- "${cur}"))
             fi
             ;;
 
@@ -321,7 +332,7 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         help)
-            local topics="install remove rename reset login list ps kill backup restore clear-cache copy sync run build push"
+            local topics="install search remove rename reset login list ps kill backup restore clear-cache copy sync run build push"
             COMPREPLY=($(compgen -W "${topics}" -- "${cur}"))
             ;;
 

@@ -74,6 +74,8 @@ REQUIRED_ARGS = {
     "run":     [("container_name", "container name is not specified.")],
     "push":    [("image_ref", "image reference is not specified"
                  " (e.g. 'myrepo/myapp:1.0').")],
+    "search":  [("query", "search query is not specified"
+                 " (e.g. 'ubuntu').")],
 }
 
 
@@ -101,6 +103,7 @@ ALIAS_TO_CANONICAL = {
     "bak": "backup", "bkp": "backup",
     "clear": "clear-cache", "cl": "clear-cache",
     "cp": "copy",
+    "s": "search", "se": "search",
     "h": "help", "he": "help", "hel": "help",
 }
 
@@ -163,6 +166,7 @@ def build_parser() -> _PdArgumentParser:
     sub.add_parser("help", aliases=["hel", "he", "h"], add_help=False)
 
     _install(sub)
+    _search(sub)
     _remove(sub)
     _rename(sub)
     _reset(sub)
@@ -201,6 +205,18 @@ def _install(sub):
     p.add_argument(
         "--allow-insecure", dest="allow_insecure", action="store_true",
     )
+    p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+
+
+def _search(sub):
+    p = sub.add_parser("search", aliases=["se", "s"], add_help=False)
+    p._pd_command = "search"
+    p.add_argument("query", nargs="?", default=None, metavar="QUERY")
+    # Left as a string: the command validates it so a bad value reports
+    # what is wrong with it (too small, too large, not a number) rather
+    # than argparse's bare "invalid int value".
+    p.add_argument("-l", "--limit", metavar="N")
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
 

@@ -55,6 +55,41 @@ def test_quiet_flag_sets_global(monkeypatch):
     assert message.is_quiet() is True
 
 
+def test_search_missing_query(monkeypatch, capsys):
+    assert _run(monkeypatch, ["search"]) == 1
+    assert "search query is not specified" in capsys.readouterr().err
+
+
+def test_search_dispatches_without_proot(monkeypatch, capsys):
+    # Searching must not require proot on the host: nothing is run, the
+    # command only queries Docker Hub.
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
+    seen = {}
+
+    def fake_search(query, limit):
+        seen["query"] = query
+        seen["limit"] = limit
+        return [], 0
+
+    monkeypatch.setattr(
+        "proot_distro.commands.search.search_images", fake_search
+    )
+    assert _run(monkeypatch, ["s", "ubuntu", "--limit", "3"]) is None
+    assert seen == {"query": "ubuntu", "limit": 3}
+
+
+def test_search_quiet_sets_global_quiet(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "proot_distro.commands.search.search_images",
+        lambda _q, _l: ([{"name": "ubuntu", "description": "", "stars": 1,
+                          "pulls": 1, "official": False,
+                          "automated": False}], 1),
+    )
+    _run(monkeypatch, ["search", "-q", "ubuntu"])
+    assert message.is_quiet() is True
+    assert capsys.readouterr().out == "ubuntu\n"
+
+
 def test_unknown_option_rejected(monkeypatch, capsys):
     assert _run(monkeypatch, ["list", "--bogus-option"]) == 1
     assert "unrecognized option" in capsys.readouterr().err

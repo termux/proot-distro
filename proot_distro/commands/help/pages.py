@@ -417,6 +417,62 @@ HELP_PAGES = {
         ],
     },
 
+    "search": {
+        "usage": "search [OPTIONS] QUERY",
+        "aliases": ("se", "s"),
+        "summary": (
+            "Search Docker Hub for images matching QUERY. Equivalent "
+            "to 'docker search'."
+            "\n\n"
+            "Results are printed as a table of repository name, "
+            "description, star count, pull count and whether the image "
+            "is an official one. Any listed name can be handed straight "
+            f"to '{PROGRAM_NAME} install'."
+            "\n\n"
+            "Only Docker Hub is searchable. Searching is not part of "
+            "the OCI distribution protocol, so custom registries "
+            "(ghcr.io, gallery.ecr.aws, self-hosted ones) cannot be "
+            "queried this way — browse their own web interface instead."
+        ),
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("-l, --limit [N]",
+             "Maximum number of results to show. Default: 25, "
+             "maximum: 1000. Docker Hub serves 100 results per "
+             "request, so a larger limit is collected page by page."),
+            ("-q, --quiet",
+             "Print only repository names, one per line, without the "
+             "table. Suitable for piping into other commands."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} search ubuntu",
+            f"{PROGRAM_NAME} search --limit 50 'linux distro'",
+            f"{PROGRAM_NAME} search -q alpine | head -1 | "
+                f"xargs {PROGRAM_NAME} install",
+        ],
+        "footer": [
+            {
+                "title": "NOTES",
+                "intro": (
+                    "Only public repositories are searched, and "
+                    "PD_DOCKER_AUTH is not sent: the Hub search "
+                    "endpoint ignores credentials, so private images "
+                    "never appear in results even when authentication "
+                    "is configured. They can still be installed "
+                    "directly by reference."
+                    "\n\n"
+                    "A result says nothing about which CPU "
+                    "architectures an image was built for, nor whether "
+                    "it holds a usable root filesystem. Both are only "
+                    "known once the image is pulled."
+                    "\n\n"
+                    "Star and pull counts are Docker Hub's own "
+                    "popularity figures, shown as reported."
+                ),
+            },
+        ],
+    },
+
     "list": {
         "usage": "list [OPTIONS]",
         "aliases": ("li", "ls"),
@@ -903,6 +959,7 @@ HELP_PAGES = {
 # Top-level command table for the no-args help screen.
 TOP_COMMANDS = [
     ("help", "Show this help."),
+    ("search", "Search images on Docker Hub."),
     ("install", "Install distribution from OCI image or rootfs archive."),
     ("list", "List created containers or cached images."),
     ("login", "Start interactive shell inside a container."),

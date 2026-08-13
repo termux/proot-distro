@@ -231,7 +231,7 @@ Top-level utilities (each owns a focused concern):
 
 Commands (`commands/`): `backup`, `build`, `clear_cache`, `copy`,
 `install` (+`install_local`), `kill`, `list`, `ps`, `push`, `remove`,
-`rename`, `reset`, `restore`, `run`, `sync`; subpackages
+`rename`, `reset`, `restore`, `run`, `search`, `sync`; subpackages
 `help/{pages,render}` and
 `login/{bindings,detach,env,migrate,passwd,proot_cmd,quoting}`.
 
@@ -239,7 +239,7 @@ Helpers (`helpers/`): `build_cache`, `dockerfile`, `download`,
 `layer_diff`, `oci_writer`, `rootfs`, `tar_extract`; subpackages
 `build_engine/{constants,copy_step,dockerignore,engine,errors,handlers,
 parsing,run_step,stage,users}` and `docker/{cache,layers,media,pull,
-push,refs,transport}`.
+push,refs,search,transport}`.
 
 ## Key paths
 
@@ -297,6 +297,7 @@ would shadow the container's.
 | Command | Aliases | Lock |
 |---|---|---|
 | `install` | `add`, `i`, `in`, `ins` | container exclusive |
+| `search` | `se`, `s` | none (network only, touches nothing on disk) |
 | `remove` | `rm` | container exclusive; `--image` ⇒ `BuildLock` per removed `(ref, arch)` |
 | `rename`, `reset` | — | container exclusive |
 | `login` | `sh` | container shared (fd inherited by proot) |
@@ -315,6 +316,26 @@ would shadow the container's.
 `install` accepts an image reference, a local path (must start with
 `/`, `./`, `../`, or `~`), or an `http(s)://` URL. `--user` takes name,
 numeric uid, or `user:group`.
+
+`search` is `docker search`: `helpers/docker/search.py` queries Docker
+Hub's `index.docker.io/v1/search` — the one registry API that is **Hub
+only**, since searching is not part of the OCI distribution protocol, so
+no other registry is reachable this way. Credentials are deliberately
+**not** forwarded (Hub ignores Basic auth here — a bogus `user:password`
+still answers 200 with the same public results — so sending them would
+hand the user's registry password to a third endpoint for nothing);
+private repositories therefore never appear. The response is other
+users' text, so `_normalize()` is a trust boundary: a repository name
+that fails Docker's own name grammar is **dropped** (nothing could
+install it, and `--quiet` prints names bare), and the description is
+collapsed to one line and run through `quote_path`. Hub caps `n` at 100,
+so `-l/--limit` above that walks `page` with a **constant** page size —
+the page number multiplies the page size, so shrinking `n` for the last
+request would re-fetch rows already held. `--limit` is capped at 1000
+(ten requests). `commands/search.py` is presentation only: a
+NAME/DESCRIPTION/STARS/PULLS/OFFICIAL table laid out like
+`list --image` (DESCRIPTION takes the leftover width; below 20 columns
+of it the rows stack), or bare names on stdout under `--quiet`.
 
 `copy`/`sync` resolve both endpoints through `resolve_container_path()`,
 pin them with `pin_path()`, and then address the filesystem **only**
@@ -515,8 +536,10 @@ not a silent no-op.
 2. Root warn (non-fatal); nested-proot reject (reads
    `/proc/<pid>/status`, follows one TracerPid hop).
 3. proot probe; on Termux + TTY, offers `pkg install`. **`build`,
-   `push`, `kill`, and `ps` are exempt** (`kill`/`ps` only signal or
-   read running sessions); `build` runs its own gate via
+   `push`, `kill`, `ps`, and `search` are exempt** (`kill`/`ps` only
+   signal or read running sessions, `search` only queries Hub — refusing
+   to look an image up because its runtime is not installed yet would be
+   backwards); `build` runs its own gate via
    `build_engine.needs_proot()` (True only with a RUN-family).
 4. Per-command `-h`/`--help`/`--usage` intercepted **before** argparse
    so missing positionals never produce errors instead of help. Unknown
@@ -526,8 +549,11 @@ not a silent no-op.
 6. `REQUIRED_ARGS` check. `restore` intentionally absent — it decides
    from stdin TTY state.
 7. `--quiet`: `set_quiet(True)` before dispatch unless command is
-   `list` (its `--quiet` is different: container names only).
-   `log_info()` becomes no-op; errors/warns/`msg()` always show.
+   `list` or `ps` (their `--quiet` is different: container names / PIDs
+   only). `search` means both — bare names *and* silence, including its
+   helper's retry notices — so it keeps the global flag and re-checks
+   `args.quiet` itself. `log_info()` becomes no-op; errors/warns/`msg()`
+   always show.
 
 ## Locking
 
@@ -603,6 +629,12 @@ cache, re-canonicalises and verifies SHA against `manifest.config.digest`,
 HEAD-probes each blob, uploads the missing via POST-uploads + monolithic
 PUT (no chunked, no cross-repo mount, no multi-arch index). 401/403 ⇒
 `push_denied_msg`.
+
+Search (`search.py`) is the odd one out: Docker Hub only, anonymous, no
+token exchange, no cache — see the `search` notes under "Commands and
+locks" for why the credentials stay home and how paging works.
+`search_images(query, limit)` returns `(hits, total)`; every field is
+re-typed out of the JSON before it leaves the module.
 
 ## Login env (`commands/login/`)
 

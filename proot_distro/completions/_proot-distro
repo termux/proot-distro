@@ -70,6 +70,7 @@ _proot_distro() {
             local -a subcommands
             subcommands=(
                 'install:install a container from a Docker image or local archive'
+                'search:search Docker Hub for images'
                 'remove:remove a container or a cached image'
                 'rename:rename a container'
                 'reset:reinstall a container from its original image'
@@ -105,6 +106,15 @@ _proot_distro() {
                         '--allow-insecure[allow pulling from an HTTP-only (insecure) registry]' \
                         '(-q --quiet)'{-q,--quiet}'[suppress non-error output]' \
                         '1:docker image or local archive:_files'
+                    ;;
+
+                # -----------------------------------------------------------
+                search)
+                    _arguments \
+                        '(-h --help)'{-h,--help}'[show help]' \
+                        '(-l --limit)'{-l,--limit}'[maximum number of results (default 25)]:count' \
+                        '(-q --quiet)'{-q,--quiet}'[print only repository names, one per line]' \
+                        '1:search query'
                     ;;
 
                 # -----------------------------------------------------------
@@ -314,8 +324,8 @@ _proot_distro() {
                 help)
                     local -a topics
                     topics=(
-                        install remove rename reset login list ps kill
-                        backup restore clear-cache copy sync run
+                        install search remove rename reset login list ps
+                        kill backup restore clear-cache copy sync run
                         build push
                     )
                     _describe 'topic' topics

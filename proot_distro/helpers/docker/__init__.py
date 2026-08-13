@@ -32,6 +32,8 @@
 #                    through manifest fetch, layer download, apply.
 #   push.py        — push_image: blob existence probe, upload session,
 #                    monolithic PUT, manifest PUT.
+#   search.py      — search_images: Docker Hub's repository search,
+#                    the one registry API that is Hub-only.
 
 from proot_distro.helpers.docker.refs import (
     ARCH_TO_DOCKER,
@@ -69,11 +71,20 @@ from proot_distro.helpers.docker.layers import (
 )
 from proot_distro.helpers.docker.pull import pull_image
 from proot_distro.helpers.docker.push import push_image
+from proot_distro.helpers.docker.search import (
+    SEARCH_DEFAULT_LIMIT,
+    SEARCH_LIMIT_MAX,
+    SEARCH_PAGE_MAX,
+    search_images,
+)
 
 __all__ = (
     "ARCH_TO_DOCKER",
     "AuthStrippingRedirectHandler",
     "DOCKER_TO_ARCH",
+    "SEARCH_DEFAULT_LIMIT",
+    "SEARCH_LIMIT_MAX",
+    "SEARCH_PAGE_MAX",
     "all_layers_cached",
     "annotate_manifest_cache",
     "apply_layer",
@@ -97,6 +108,7 @@ __all__ = (
     "push_image",
     "registry_base_url",
     "save_manifest_cache",
+    "search_images",
     "validate_digest",
     "with_explicit_tag",
 )

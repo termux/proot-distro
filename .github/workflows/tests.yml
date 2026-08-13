@@ -101,6 +101,12 @@ jobs:
             pd list -q | grep -Fx "${name}"
           }
 
+          echo "::group::Docker Hub search"
+          # Table form names the official image; --quiet is the pipeable one.
+          assert_contains "$(pd search alpine --limit 5 2>&1)" "alpine"
+          pd search -q alpine --limit 5 | grep -Fx "alpine"
+          echo "::endgroup::"
+
           echo "::group::Alpine Linux (3.24.1)"
           pd install -n alpine-work alpine:3.24.1
           assert_container_listed alpine-work

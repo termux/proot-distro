@@ -23,6 +23,7 @@ exporting it as a standalone OCI tarball.
 3. [Quick start](#quick-start)
 4. [Commands](#commands-reference)
    * [`install`](#install--install-a-container)
+   * [`search`](#search--search-docker-hub-for-images)
    * [`build`](#build--build-an-image-from-a-dockerfile)
    * [`push`](#push--push-a-built-image-to-a-registry)
    * [`login`](#login--start-a-shell-inside-a-container)
@@ -130,6 +131,9 @@ as the `root` user.
 ### Quick start
 
 ```sh
+# Look up images on Docker Hub
+proot-distro search ubuntu
+
 # Install Ubuntu 24.04 from Docker Hub
 proot-distro install ubuntu:24.04
 
@@ -304,6 +308,69 @@ Only HTTP or HTTPS links are supported.
 
 The default container name derived from the last URL component. Use `--name`
 to override.
+
+---
+
+### `search` — Search Docker Hub for images
+
+```
+proot-distro search [-l|--limit N] [-q|--quiet] QUERY
+Aliases: se, s
+```
+
+Search Docker Hub for images matching QUERY — the equivalent of
+`docker search`. Any listed name can be handed straight to
+[`install`](#install--install-a-container).
+
+| Option | Description |
+|---|---|
+| `-l`, `--limit N` | Maximum number of results to show. Default: 25, maximum: 1000. Docker Hub serves 100 results per request, so a larger limit is collected page by page (one request per 100). |
+| `-q`, `--quiet` | Print only repository names, one per line, on stdout — for piping. Also suppresses the info line. |
+
+```
+NAME                   DESCRIPTION                            STARS  PULLS  OFFICIAL
+nginx                  Official build of Nginx.               21357  13.3B  [OK]
+nginx/nginx-ingress    NGINX and NGINX Plus Ingress Contro…      122   1.1B
+ubuntu/nginx           Nginx, a high-performance reverse p…      130  12.4M
+
+Showing 3 of 291103 matches. Narrow the query or raise --limit N.
+```
+
+* `STARS` and `PULLS` are Docker Hub's own popularity figures, shown as
+  reported. Pull counts are abbreviated (`13.3B` = 13.3 billion).
+* `OFFICIAL` marks a Docker-official image with `[OK]`, like
+  `docker search` does.
+* `DESCRIPTION` takes whatever width is left over and is truncated with
+  an ellipsis. On a terminal too narrow for the columns (a phone), each
+  result is printed as a stacked block instead.
+
+Pipe-friendly form:
+
+```
+# One repository name per line
+proot-distro search --quiet alpine
+
+# Install the top hit
+proot-distro search -q alpine | head -1 | xargs proot-distro install
+```
+
+Notes and limitations:
+
+* **Docker Hub only.** Searching is not part of the OCI distribution
+  protocol; a registry that serves `/v2/` says nothing about whether it
+  can be searched, and `ghcr.io`, `gallery.ecr.aws` and self-hosted
+  registries generally cannot. Browse their own web interface instead.
+* **Public repositories only.** `PD_DOCKER_AUTH` is deliberately not
+  sent — Hub's search endpoint ignores credentials, so forwarding them
+  would hand a registry password to a third endpoint for nothing.
+  Private images never appear in results, but can still be installed
+  directly by reference.
+* A result says nothing about which CPU architectures the image was
+  built for, nor whether it holds a usable root filesystem. Both are
+  only known once the image is pulled.
+* Repository names are validated against Docker's own name grammar and
+  descriptions are escaped before display, so a crafted entry cannot
+  emit terminal control sequences.
 
 ---
 
@@ -1344,7 +1411,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `TERMUX_APP__APP_VERSION_NAME`, `TERMUX_VERSION` | Either one (when set) counts as one of the indicators that flips on Termux mode in `_detect_termux()`. |
 | `XDG_DATA_HOME` | On non-Termux hosts, base for `$XDG_DATA_HOME/proot-distro/`. Defaults to `~/.local/share`. |
 | `XDG_CACHE_HOME` | On non-Termux hosts, base for `$XDG_CACHE_HOME/proot-distro/`. Defaults to `~/.cache`. |
-| `PD_DOCKER_AUTH` | Credentials for pulling and pushing Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install`, `build` (`FROM` base-image pulls), and `push` (with `pull,push` scope). |
+| `PD_DOCKER_AUTH` | Credentials for pulling and pushing Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install`, `build` (`FROM` base-image pulls), and `push` (with `pull,push` scope). Not sent by `search` — Docker Hub's search endpoint ignores it. |
 | `PD_PROOT_BIN` | Absolute path to a custom `proot` executable, used in place of the PATH lookup for `login`, `run`, and `build` RUN steps. Must point at an existing, executable file or the command exits with an error. |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |

@@ -70,7 +70,7 @@ end
 # ---------------------------------------------------------------------------
 function __proot_distro_no_subcommand
     not __fish_seen_subcommand_from \
-        install remove rename reset login list ps kill backup restore \
+        install search remove rename reset login list ps kill backup restore \
         clear-cache copy sync run build push help
 end
 
@@ -78,6 +78,7 @@ end
 # Subcommands
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a install     -d 'Install a container from a Docker image or local archive'
+complete -c proot-distro -f -n __proot_distro_no_subcommand -a search      -d 'Search Docker Hub for images'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a remove      -d 'Remove a container or a cached image'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a rename      -d 'Rename a container'
 complete -c proot-distro -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
@@ -111,6 +112,16 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
     -s q -l quiet      -d 'Suppress non-error output'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from install' \
+    -s h -l help       -d 'Show help'
+
+# ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
+    -s l -l limit      -r -d 'Maximum number of results (default 25)'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
+    -s q -l quiet      -d 'Print only repository names, one per line'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from search' \
     -s h -l help       -d 'Show help'
 
 # ---------------------------------------------------------------------------
@@ -389,13 +400,14 @@ complete -c proot-distro -f -n '__fish_seen_subcommand_from push' \
 # help
 # ---------------------------------------------------------------------------
 complete -c proot-distro -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push' \
+    -a 'install search remove rename reset login list ps kill backup restore clear-cache copy sync run build push' \
     -d 'Topic'
 
 # ---------------------------------------------------------------------------
 # pd (same entry point, duplicate all completions)
 # ---------------------------------------------------------------------------
 complete -c pd -f -n __proot_distro_no_subcommand -a install     -d 'Install a container from a Docker image or local archive'
+complete -c pd -f -n __proot_distro_no_subcommand -a search      -d 'Search Docker Hub for images'
 complete -c pd -f -n __proot_distro_no_subcommand -a remove      -d 'Remove a container or a cached image'
 complete -c pd -f -n __proot_distro_no_subcommand -a rename      -d 'Rename a container'
 complete -c pd -f -n __proot_distro_no_subcommand -a reset       -d 'Reinstall a container from its original image'
@@ -455,6 +467,10 @@ complete -c pd -f -n '__fish_seen_subcommand_from login' -s e -l env           -
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s d -l detach           -d 'Start session in background'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -l get-proot-cmd         -d 'Print proot command'
 complete -c pd -f -n '__fish_seen_subcommand_from login' -s h -l help             -d 'Show help'
+
+complete -c pd -f -n '__fish_seen_subcommand_from search' -s l -l limit -r -d 'Maximum number of results (default 25)'
+complete -c pd -f -n '__fish_seen_subcommand_from search' -s q -l quiet    -d 'Print only repository names, one per line'
+complete -c pd -f -n '__fish_seen_subcommand_from search' -s h -l help     -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s i -l image -d 'List cached OCI images'
 complete -c pd -f -n '__fish_seen_subcommand_from list' -s q -l quiet -d 'Suppress non-error output'
@@ -537,4 +553,4 @@ complete -c pd -f -n '__fish_seen_subcommand_from push' -s q -l quiet           
 complete -c pd -f -n '__fish_seen_subcommand_from push' -s h -l help            -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from help' \
-    -a 'install remove rename reset login list ps kill backup restore clear-cache copy sync run build push' -d 'Topic'
+    -a 'install search remove rename reset login list ps kill backup restore clear-cache copy sync run build push' -d 'Topic'
