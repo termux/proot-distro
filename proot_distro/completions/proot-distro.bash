@@ -211,7 +211,7 @@ _proot_distro() {
 
         # -----------------------------------------------------------------------
         clear-cache)
-            COMPREPLY=($(compgen -W "--verbose --quiet --help" -- "${cur}"))
+            COMPREPLY=($(compgen -W "--orphan --verbose --quiet --help" -- "${cur}"))
             ;;
 
         # -----------------------------------------------------------------------

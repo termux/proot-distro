@@ -105,6 +105,41 @@ def lookup(recipe_hash):
     return data.get("entries", {}).get(recipe_hash)
 
 
+def recorded_layer_digests():
+    """Return (digests, readable) for every layer blob the index pins.
+
+    A cache hit applies its layer straight out of the layer cache, so
+    those blobs are live references even when no image manifest lists
+    them — a multi-stage intermediate, or a step whose image has since
+    been rebuilt under another tag. Anything pruning the layer cache has
+    to count them, or the first `build` after the prune re-runs every
+    instruction.
+
+    *readable* is False when the index exists but could not be parsed,
+    which the caller must not read as "the index pins nothing". No lock
+    is taken: _save_index() publishes through atomic_replace(), so a
+    reader either sees the previous index or the next one, never a torn
+    one — the same reason lookup() runs unlocked.
+    """
+    try:
+        with open(_INDEX_PATH) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return set(), True
+    except (OSError, ValueError):
+        return set(), False
+
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, dict):
+        return set(), False
+
+    digests = set()
+    for entry in entries.values():
+        if isinstance(entry, dict) and entry.get("layer_digest"):
+            digests.add(entry["layer_digest"])
+    return digests, True
+
+
 def record(recipe_hash, layer_digest, diff_id, size, image_config_patch=None):
     """Record a build-cache entry."""
     # Lock around the full read-modify-write so concurrent builds don't

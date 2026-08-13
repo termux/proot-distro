@@ -233,6 +233,7 @@ _proot_distro() {
                 clear-cache)
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
+                        '--orphan[remove only unreferenced layer blobs]' \
                         '(-v --verbose -q --quiet)'{-v,--verbose}'[list removed files]' \
                         '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]'
                     ;;

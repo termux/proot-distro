@@ -453,7 +453,11 @@ re-running the instruction. Pass `--no-cache` to skip cache lookups.
 The build cache index lives at
 `$BASE_CACHE_DIR/build_cache_index.json`; layer blobs themselves are
 stored alongside registry-pulled blobs in `$BASE_CACHE_DIR/oci_layers/`.
-`proot-distro clear-cache` deletes both.
+`proot-distro clear-cache` deletes both;
+[`clear-cache --orphan`](#clear-cache--delete-the-download-cache) keeps
+the build cache and collects only the blobs it no longer pins — the
+layers of a build that failed, or the previous output of a step that
+has been rebuilt since.
 
 **Examples:**
 
@@ -1249,7 +1253,7 @@ proot-distro sync --delete ./app ubuntu:/opt/app
 ### `clear-cache` — Delete the download cache
 
 ```
-proot-distro clear-cache
+proot-distro clear-cache [OPTIONS]
 Aliases: clear, cl
 ```
 
@@ -1261,6 +1265,7 @@ reported after the operation in human-readable units.
 
 | Option | Description |
 |---|---|
+| `--orphan` | Remove only unreferenced layer blobs; keep the rest of the cache. |
 | `-v`, `--verbose` | Log each deleted file. |
 | `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
@@ -1272,6 +1277,49 @@ To reclaim the space taken by a single image instead of the whole
 cache, use
 [`remove --image`](#remove--delete-a-container), which keeps the layers
 that other cached images still share.
+
+**Orphan layers**
+
+`--orphan` sweeps only the blobs in `oci_layers/` that nothing points
+at any more, and leaves every cached image, every manifest, and the
+build cache index untouched:
+
+```sh
+# Free the blobs nothing references, keep the caches usable
+proot-distro clear-cache --orphan
+
+# ...and name each one as it goes
+proot-distro clear-cache --orphan --verbose
+```
+
+A blob counts as **referenced** while either a cached image lists it
+(`list --image` shows those) or a build-cache entry pins it. The build
+cache is a reference on purpose — its layers appear in no manifest, so
+collecting them would silently empty it; a plain `clear-cache` is what
+drops the build cache too.
+
+Orphans are what is left over when a reference disappears without its
+blobs:
+
+- a **build that failed** partway leaves the layers of the steps that
+  already ran,
+- a **rebuild** whose step produced different output replaces that
+  step's blob and strands the previous one,
+- an image **installed from a local OCI archive** caches its layers
+  without ever writing a manifest entry,
+- a download killed mid-flight leaves a partial `.tmp` file behind.
+
+Installed containers are never affected: their rootfs is an independent
+copy that holds no layers, the same reasoning
+[`remove --image`](#remove--delete-a-container) already applies.
+
+Two things make the sweep safe rather than merely convenient. It
+**refuses to run** while another `proot-distro` command holds an
+exclusive lock — a build in progress has layers on disk that nothing
+references yet, and from the outside those are indistinguishable from
+orphans. And a manifest entry or a build index it **cannot parse**
+aborts the sweep with nothing deleted, because an unreadable reference
+is not an absent one.
 
 ---
 

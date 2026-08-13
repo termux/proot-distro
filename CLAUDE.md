@@ -68,7 +68,9 @@ Top-level utilities (each owns a focused concern):
   `ZstdFile` itself and hands tarfile a plain `w|` stream, so both
   spellings produce byte-identical archives at `ZSTD_LEVEL`.
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
-- `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock).
+- `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock), and
+  `busy_locks()` (shared-flock probe over both namespaces, naming the
+  exclusive holders — what `clear-cache --orphan` asks before sweeping).
 - `session.py` — active-session registry for `ps`: `register_session`
   (inheritable flock survives `execvpe`, like the container lock; records
   a `detach` flag among the per-session metadata), `active_sessions`
@@ -307,7 +309,7 @@ would shadow the container's.
 | `kill` | — | none (reads session registry, signals PIDs) |
 | `backup` | `bak`, `bkp` | container shared |
 | `restore` | — | container exclusive, lazy per first TarInfo |
-| `clear-cache` | `clear`, `cl` | none |
+| `clear-cache` | `clear`, `cl` | none (`--orphan` refuses while any lock is held) |
 | `copy` | `cp` | shared src, exclusive dest |
 | `sync` | — | shared src, exclusive dest |
 | `build`, `push` | — | `BuildLock` keyed on `(image_ref, arch)` |
@@ -528,6 +530,42 @@ bytes, and names containers installed from that image (unaffected —
 only their `reset` needs it back). `-a` without `--image` is an error,
 not a silent no-op.
 
+`clear-cache --orphan` sweeps only the blobs in `LAYER_CACHE_DIR` that
+nothing references, leaving the manifest cache and the build index in
+place. Two sources are roots, and both are read **strictly**:
+`docker.referenced_blob_digests()` (every digest a manifest names —
+layers *and* the config descriptor) and
+`build_cache.recorded_layer_digests()`. Neither may fall back to "no
+references" on a read failure, which is why the first exists next to
+`iter_cached_images()` rather than being derived from it: that function
+**skips** an entry it cannot parse, which is right for an inventory and
+would be data loss here (a truncated manifest entry would make its whole
+image collectable). Either source failing aborts the sweep with nothing
+deleted. Digests map **forward** into file names — a name in the cache
+is garbage exactly when no live reference produces it — so a leftover
+`.tmp` from a killed download is collected for free, and a digest too
+malformed for `layer_cache_path()` is simply skipped (no writer could
+have created a file for it).
+The build index is a root **on purpose**: its layers appear in no
+manifest (a multi-stage intermediate, or a step whose image was rebuilt
+under another tag), so collecting them would silently empty the build
+cache — a plain `clear-cache` is the way to drop that too. Note
+`remove --image` answers this differently, computing its keep set from
+`iter_cached_images()` alone and so unlinking blobs the index still
+pins; that is deliberate (an explicitly named image is not an automatic
+sweep) and harmless (`run_step` re-checks `isfile` on a hit).
+Containers are not roots either, matching `remove --image`.
+The sweep **refuses to run** while `busy_locks()` reports an exclusive
+holder: a build in progress has already written its COPY/ADD layers
+(only `do_run` records into the index) and stores the manifest naming
+them last of all, so mid-build those blobs are indistinguishable from
+orphans. It is a snapshot, not a lock — it cannot see a build that
+starts a moment later — and shared holders (`login`, `backup`) are
+deliberately ignored, since they never write to the cache. Names read
+back out of the layer cache go through `quote_path`: on Termux
+`RUNTIME_DIR` sits under the bound `$TERMUX_PREFIX`, so a guest can
+create a file there and `--verbose` prints it.
+
 ## CLI flow (`cli.main()`)
 
 1. SIGQUIT → `KeyboardInterrupt` so every existing `except` handles
@@ -576,6 +614,20 @@ the output `(image_ref, arch)`; concurrent builds with different tags
 can still race on shared caches, safe because every writer uses
 `atomic.atomic_replace()` and `build_cache` holds its own flock over
 the index's RMW.
+
+`busy_locks()` reads that state from the outside: `*.lock` in both
+directories, each probed with a **shared** non-blocking flock (the
+`session._session_alive` idiom — a refusal means an exclusive holder,
+success means unheld), returning `(path, read_lock_info(path))` per
+holder. Shared holders answer the probe and so never appear, which is
+what `clear-cache --orphan` wants: `login`/`backup` hold shared locks
+and write nothing to the cache, while every cache writer (`install`,
+and `reset` through it; `build`/`push`) holds an exclusive one. An
+errno other than EACCES/EAGAIN counts as unheld, the same rule
+`acquire()` uses so a filesystem ignoring flock cannot wedge the
+caller. The hint may be empty: `acquire()` opens the lock file `"w"`
+*before* it flocks, so a process that lost the race has already
+truncated the holder's PID line.
 
 ## Architecture
 
@@ -744,7 +796,10 @@ Build cache: `compute_recipe_hash(parent_digest, instr, extra)` keys
 into `build_cache_index.json`. Hit ⇒ apply cached layer, skip proot.
 `build_cache.record()` holds its own flock over the index.
 `clear-cache` removes top-level entries under `BASE_CACHE_DIR` including
-the index.
+the index; `clear-cache --orphan` keeps it and treats
+`recorded_layer_digests()` as roots (unlocked read — `_save_index`
+publishes through `atomic_replace`, so a reader sees one whole index or
+the other, the same reason `lookup()` takes no lock).
 
 ## Backup / restore
 

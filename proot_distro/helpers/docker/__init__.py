@@ -51,6 +51,7 @@ from proot_distro.helpers.docker.cache import (
     layer_cache_path,
     load_manifest_cache,
     manifest_cache_path,
+    referenced_blob_digests,
     save_manifest_cache,
     validate_digest,
 )
@@ -106,6 +107,7 @@ __all__ = (
     "pull_image",
     "push_denied_msg",
     "push_image",
+    "referenced_blob_digests",
     "registry_base_url",
     "save_manifest_cache",
     "search_images",

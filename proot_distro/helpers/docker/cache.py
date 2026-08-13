@@ -237,6 +237,56 @@ def _read_record(path: str, image_ref: str = "", arch: str = ""):
     }
 
 
+def referenced_blob_digests():
+    """Return (digests, unreadable) covering every cached image's blobs.
+
+    *digests* is every blob digest the manifest cache names — the layers
+    and the config descriptor, i.e. the complete set of blobs an entry
+    would need to be installed or pushed. *unreadable* lists the entry
+    paths that could not be parsed.
+
+    Callers pruning the layer cache must treat a non-empty *unreadable*
+    as a reason to stop rather than as an absence of references, which
+    is why this exists next to iter_cached_images() instead of being
+    derived from it: that function skips an entry it cannot read, which
+    is right for an inventory and wrong for deciding what is garbage.
+    """
+    digests, unreadable = set(), []
+    try:
+        names = sorted(os.listdir(MANIFEST_CACHE_DIR))
+    except FileNotFoundError:
+        return digests, unreadable
+    except OSError:
+        # The directory itself is unreadable: every entry in it is
+        # unaccounted for, so report the directory as the blocker.
+        return digests, [MANIFEST_CACHE_DIR]
+
+    for fname in names:
+        # Entries are '<key>.json'; atomic_replace's in-flight temporary
+        # files carry a '.tmp' suffix and are deliberately not read.
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(MANIFEST_CACHE_DIR, fname)
+        try:
+            with open(path) as fh:
+                payload = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            unreadable.append(path)
+            continue
+        manifest = (
+            payload.get("manifest") if isinstance(payload, dict) else None
+        )
+        if not isinstance(manifest, dict):
+            unreadable.append(path)
+            continue
+        descriptors = list(manifest.get("layers") or [])
+        descriptors.append(manifest.get("config"))
+        for descriptor in descriptors:
+            if isinstance(descriptor, dict) and descriptor.get("digest"):
+                digests.add(descriptor["digest"])
+    return digests, unreadable
+
+
 def _ref_hints() -> dict:
     """Map cache key → (image_ref, arch) recovered from installed containers.
 

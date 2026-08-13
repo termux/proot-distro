@@ -252,7 +252,7 @@ HELP_PAGES = {
     },
 
     "clear-cache": {
-        "usage": "clear-cache",
+        "usage": "clear-cache [OPTIONS]",
         "aliases": ("clear", "cl"),
         "summary": (
             "Remove all files from downloads cache (e.g. Docker image "
@@ -260,10 +260,37 @@ HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
+            ("--orphan",
+             "Remove only the layer blobs nothing references any "
+             "more, keeping the rest of the cache intact."),
             ("-v, --verbose", "Log each removed file."),
             ("-q, --quiet",
              "Suppress non-error output. Mutually exclusive "
              "with --verbose."),
+        ],
+        "examples": [
+            f"{PROGRAM_NAME} clear-cache --orphan",
+        ],
+        "footer": [
+            {
+                "title": "ORPHAN LAYERS",
+                "intro": (
+                    "A layer blob is referenced while a cached image "
+                    "lists it or a build-cache entry pins it; anything "
+                    "else is an orphan, left behind by a build that "
+                    "failed, by a rebuild that replaced a step's "
+                    "output, or by an image installed from a local OCI "
+                    "archive. Installed containers hold no layers - "
+                    "their rootfs is a separate copy - so they are "
+                    "never affected. Because the build cache counts as "
+                    "a reference, --orphan never shrinks it; plain "
+                    "clear-cache is what drops the build cache too. "
+                    "The sweep refuses to run while another "
+                    f"{PROGRAM_NAME} command holds a lock, since a "
+                    "build in progress has layers on disk that nothing "
+                    "references yet."
+                ),
+            },
         ],
     },
 

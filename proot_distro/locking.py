@@ -113,6 +113,66 @@ def read_lock_info(lock_path: str) -> str:
         return ""
 
 
+def _lock_is_held(lock_path: str) -> bool:
+    """Return True iff some process holds *lock_path* exclusively.
+
+    Shared, non-blocking flock probe — the same one session.py uses to
+    tell a live session from a dead one. A refusal means an exclusive
+    holder is present; success means the file is unheld, and the shared
+    lock is dropped again immediately rather than held across any work.
+    Any other errno is treated as "not held", matching acquire()'s rule
+    that a filesystem which ignores flock must not stall the caller.
+    """
+    try:
+        fd = os.open(lock_path, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as exc:
+            return exc.errno in (errno.EACCES, errno.EAGAIN)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        return False
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def busy_locks() -> list:
+    """Return (lock_path, hint) for every lock another process holds.
+
+    Both namespaces are scanned, so one call covers every command that
+    writes to the download cache: `install` (and `reset`, through it)
+    takes an exclusive ContainerLock, `build` and `push` an exclusive
+    BuildLock. Shared holders — a `login` session, a running `backup` —
+    do not answer the probe and are deliberately absent from the result:
+    they never touch the cache.
+
+    The answer is a snapshot by construction. It says nothing about a
+    command that starts immediately afterwards, so it is a guard against
+    running concurrently with work in progress, not a lock.
+    """
+    held = []
+    for directory in (LOCKS_DIR, _BUILD_LOCKS_DIR):
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".lock"):
+                continue
+            path = os.path.join(directory, name)
+            if _lock_is_held(path):
+                held.append((path, read_lock_info(path)))
+    return held
+
+
 class _FlockBase:
     """Shared flock(2) machinery for the lock classes below.
 
