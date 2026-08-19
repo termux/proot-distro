@@ -80,16 +80,6 @@ def test_manifest_cache_miss_returns_none():
     assert cfg == {}
 
 
-def test_all_layers_cached(builders):
-    digest, _size, _diff = builders.seed_cached_layer(
-        [{"name": "etc/x", "type": "file", "data": b"1"}]
-    )
-    assert cache.all_layers_cached([{"digest": digest}]) is True
-    assert cache.all_layers_cached(
-        [{"digest": "sha256:" + "0" * 64}]
-    ) is False
-
-
 def test_manifest_cache_records_ref_and_arch():
     import json
     cache.save_manifest_cache("ubuntu:24.04", "x86_64", {"layers": []},
@@ -176,18 +166,6 @@ def test_data_matches_digest():
     assert cache.require_data_digest(data, good) == data
     with pytest.raises(RuntimeError, match="does not match its digest"):
         cache.require_data_digest(b"other", good, what="Manifest")
-
-
-def test_file_matches_digest(tmp_path):
-    import hashlib
-    blob = tmp_path / "blob"
-    blob.write_bytes(b"x" * (2 * 1024 * 1024 + 7))   # spans several chunks
-    digest = "sha256:" + hashlib.sha256(blob.read_bytes()).hexdigest()
-    assert cache.file_matches_digest(str(blob), digest) is True
-    blob.write_bytes(b"tampered")
-    assert cache.file_matches_digest(str(blob), digest) is False
-    # A file that isn't there is not a usable blob either.
-    assert cache.file_matches_digest(str(tmp_path / "absent"), digest) is False
 
 
 def _read_fd(fd):

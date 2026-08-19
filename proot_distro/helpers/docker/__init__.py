@@ -46,10 +46,8 @@ from proot_distro.helpers.docker.refs import (
     with_explicit_tag,
 )
 from proot_distro.helpers.docker.cache import (
-    all_layers_cached,
     annotate_manifest_cache,
     data_matches_digest,
-    file_matches_digest,
     image_cache_entry,
     iter_cached_images,
     layer_cache_path,
@@ -94,7 +92,6 @@ __all__ = (
     "SEARCH_DEFAULT_LIMIT",
     "SEARCH_LIMIT_MAX",
     "SEARCH_PAGE_MAX",
-    "all_layers_cached",
     "annotate_manifest_cache",
     "apply_layer",
     "data_matches_digest",
@@ -105,7 +102,6 @@ __all__ = (
     "derive_alias",
     "download_blob",
     "env_basic_auth",
-    "file_matches_digest",
     "get_auth_token",
     "image_cache_entry",
     "insecure_registry_msg",

@@ -171,17 +171,6 @@ def load_manifest_cache(image_ref: str, arch: str):
         return None, None, {}
 
 
-def all_layers_cached(layers: list) -> bool:
-    """Return True iff every layer's blob file is already on disk.
-
-    Presence only — see open_verified_layer() for the content check a
-    caller must make before it uses a blob for anything.
-    """
-    return all(
-        os.path.isfile(layer_cache_path(layer["digest"])) for layer in layers
-    )
-
-
 # ---------------------------------------------------------------------------
 # Blob integrity
 # ---------------------------------------------------------------------------
@@ -229,28 +218,6 @@ def require_data_digest(data: bytes, digest: str, what: str = "Blob") -> bytes:
             f"The content was altered in transit or at rest."
         )
     return data
-
-
-def file_matches_digest(path: str, digest: str) -> bool:
-    """Return True when the file at *path* hashes to *digest*.
-
-    An unreadable or vanished file answers False — the caller wanted a
-    usable blob, and one it cannot read is not usable. A digest whose
-    algorithm cannot be hashed still raises, because that is a bug or an
-    attack rather than a missing file.
-    """
-    _algo, expected = split_digest(digest)
-    hasher = hashlib.sha256()
-    try:
-        with open(path, "rb") as fh:
-            while True:
-                chunk = fh.read(_BLOB_CHUNK)
-                if not chunk:
-                    break
-                hasher.update(chunk)
-    except OSError:
-        return False
-    return hasher.hexdigest() == expected
 
 
 def fd_matches_digest(fd: int, digest: str) -> bool:
