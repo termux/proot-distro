@@ -41,8 +41,8 @@ import tarfile
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.helpers.docker import (
-    layer_cache_path,
     parse_image_ref,
+    require_verified_layer,
     save_manifest_cache,
 )
 from proot_distro.helpers.docker.media import (
@@ -214,12 +214,12 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
             )
             for layer in manifest["layers"]:
                 hex_digest = layer["digest"].split(":", 1)[1]
-                src = layer_cache_path(layer["digest"])
-                if not os.path.isfile(src):
-                    raise RuntimeError(
-                        f"Layer blob {layer['digest']} is missing from the "
-                        f"cache; cannot package OCI archive."
-                    )
+                # The archive is content-addressed for whoever loads it,
+                # so a blob is packed only if it still hashes to the name
+                # the manifest gives it.
+                src = require_verified_layer(
+                    layer["digest"], what="Layer blob"
+                )
                 _add_file(tf, src, f"blobs/sha256/{hex_digest}")
 
 

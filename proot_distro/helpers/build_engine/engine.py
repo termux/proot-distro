@@ -33,7 +33,7 @@ import re
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.message import C, log_info
 from proot_distro.helpers.docker import (
-    ARCH_TO_DOCKER, apply_layer, layer_cache_path, pull_image,
+    ARCH_TO_DOCKER, apply_layer, pull_image, require_verified_layer,
 )
 from proot_distro.helpers.dockerfile import expand_vars
 from proot_distro.helpers.rootfs import write_hosts, write_resolv_conf
@@ -394,13 +394,16 @@ class BuildEngine:
             json.dumps(parent.image_config)
         )
         for layer in parent.layers:
-            cache_path = layer_cache_path(layer["digest"])
-            if not os.path.isfile(cache_path):
-                raise BuildError(
-                    f"Layer {layer['digest']} of stage "
-                    f"'{parent.name or parent.index}' is missing from "
-                    f"the cache."
+            # Verified, not merely present: these layers were produced by
+            # this build, so a blob that no longer hashes to its digest
+            # cannot be refetched and must not be applied.
+            try:
+                cache_path = require_verified_layer(
+                    layer["digest"],
+                    what=f"Layer of stage '{parent.name or parent.index}':",
                 )
+            except RuntimeError as exc:
+                raise BuildError(str(exc)) from exc
             apply_layer(cache_path, new_stage.rootfs_dir)
         new_stage.layers = list(parent.layers)
         new_stage.parent_layer_digest = parent.parent_layer_digest

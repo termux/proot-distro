@@ -22,7 +22,9 @@
 #
 #   refs.py        — parse_image_ref, derive_alias, ARCH_TO_DOCKER.
 #                    No I/O.
-#   cache.py       — manifest/layer cache paths + save/load helpers.
+#   cache.py       — manifest/layer cache paths + save/load helpers,
+#                    and the digest checks every blob consumer runs
+#                    before trusting a cached file's name.
 #   media.py       — OCI/Docker media-type constants + canonical_json.
 #   transport.py   — User-Agent, AuthStrippingRedirectHandler, the
 #                    PD_DOCKER_AUTH token exchange.
@@ -46,14 +48,20 @@ from proot_distro.helpers.docker.refs import (
 from proot_distro.helpers.docker.cache import (
     all_layers_cached,
     annotate_manifest_cache,
+    data_matches_digest,
+    file_matches_digest,
     image_cache_entry,
     iter_cached_images,
     layer_cache_path,
     load_manifest_cache,
     manifest_cache_path,
     referenced_blob_digests,
+    require_data_digest,
+    require_verified_layer,
     save_manifest_cache,
+    split_digest,
     validate_digest,
+    verified_layer_path,
 )
 from proot_distro.helpers.docker.transport import (
     AuthStrippingRedirectHandler,
@@ -89,6 +97,7 @@ __all__ = (
     "all_layers_cached",
     "annotate_manifest_cache",
     "apply_layer",
+    "data_matches_digest",
     "auth_denied_msg",
     "auth_note",
     "auth_opener",
@@ -96,6 +105,7 @@ __all__ = (
     "derive_alias",
     "download_blob",
     "env_basic_auth",
+    "file_matches_digest",
     "get_auth_token",
     "image_cache_entry",
     "insecure_registry_msg",
@@ -109,8 +119,12 @@ __all__ = (
     "push_image",
     "referenced_blob_digests",
     "registry_base_url",
+    "require_data_digest",
+    "require_verified_layer",
     "save_manifest_cache",
     "search_images",
+    "split_digest",
     "validate_digest",
+    "verified_layer_path",
     "with_explicit_tag",
 )

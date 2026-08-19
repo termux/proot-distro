@@ -22,8 +22,15 @@
 # Two caches live side-by-side under BASE_CACHE_DIR:
 #
 #   layers/<digest-with-colon-as-underscore>
-#       One file per blob. Cached layers are trusted (their content
-#       digest was verified on entry via the streaming sha256).
+#       One file per blob, named for the digest of its content. The
+#       name is not evidence: download_blob() verifies a blob it
+#       fetches, but the directory itself is writable by anything that
+#       can reach it — on Termux it sits under the $TERMUX_PREFIX bound
+#       into every non-isolated container, and `install <archive>`
+#       deposits blobs a remote party chose the digests for. Every
+#       consumer therefore re-hashes a blob before using it, via
+#       verified_layer_path() (re-obtainable: evict and refetch) or
+#       require_verified_layer() (locally built: refuse, keep the file).
 #
 #   manifests/<sha256-prefix>.json
 #       { "image_ref": ..., "arch": ...,
@@ -48,6 +55,7 @@ from proot_distro.atomic import atomic_replace
 from proot_distro.constants import (
     CONTAINERS_DIR, LAYER_CACHE_DIR, MANIFEST_CACHE_DIR,
 )
+from proot_distro.message import warn
 from proot_distro.helpers.docker.refs import DOCKER_TO_ARCH, canonical_ref
 
 
@@ -159,10 +167,139 @@ def load_manifest_cache(image_ref: str, arch: str):
 
 
 def all_layers_cached(layers: list) -> bool:
-    """Return True iff every layer's blob file is already on disk."""
+    """Return True iff every layer's blob file is already on disk.
+
+    Presence only — see verified_layer_path() for the content check a
+    caller must make before it uses a blob for anything.
+    """
     return all(
         os.path.isfile(layer_cache_path(layer["digest"])) for layer in layers
     )
+
+
+# ---------------------------------------------------------------------------
+# Blob integrity
+# ---------------------------------------------------------------------------
+
+# Hash in 1 MiB slices: large enough that the read syscalls disappear
+# against the hashing itself, small enough not to matter on a phone.
+_BLOB_CHUNK = 1024 * 1024
+
+
+def split_digest(digest: str) -> tuple:
+    """Return ``(algorithm, lowercase hex)`` for a hashable *digest*.
+
+    Raises RuntimeError for a malformed digest and for any algorithm
+    this program cannot compute. Refusing the latter is the point: a
+    digest we cannot hash is a digest we cannot check, so no blob may
+    be used under one.
+    """
+    validate_digest(digest)
+    algo, hex_val = digest.split(":", 1)
+    if algo.lower() != "sha256":
+        raise RuntimeError(
+            f"Unsupported digest algorithm '{algo}' in '{digest}' "
+            f"(only sha256 is supported)."
+        )
+    return algo.lower(), hex_val.lower()
+
+
+def data_matches_digest(data: bytes, digest: str) -> bool:
+    """Return True when *data* hashes to *digest*."""
+    _algo, expected = split_digest(digest)
+    return hashlib.sha256(data).hexdigest() == expected
+
+
+def require_data_digest(data: bytes, digest: str, what: str = "Blob") -> bytes:
+    """Return *data* when it hashes to *digest*; raise otherwise.
+
+    For content addressed by digest but not stored in the layer cache —
+    a manifest fetched by digest out of an index, an image config blob,
+    a JSON blob read out of an OCI archive.
+    """
+    if not data_matches_digest(data, digest):
+        raise RuntimeError(
+            f"{what} does not match its digest {digest} "
+            f"(got sha256:{hashlib.sha256(data).hexdigest()}). "
+            f"The content was altered in transit or at rest."
+        )
+    return data
+
+
+def file_matches_digest(path: str, digest: str) -> bool:
+    """Return True when the file at *path* hashes to *digest*.
+
+    An unreadable or vanished file answers False — the caller wanted a
+    usable blob, and one it cannot read is not usable. A digest whose
+    algorithm cannot be hashed still raises, because that is a bug or an
+    attack rather than a missing file.
+    """
+    _algo, expected = split_digest(digest)
+    hasher = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(_BLOB_CHUNK)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+    except OSError:
+        return False
+    return hasher.hexdigest() == expected
+
+
+def verified_layer_path(digest: str, *, evict: bool = True):
+    """Return the cached blob path for *digest*, or None.
+
+    None means "do not use the cache for this layer": either no blob is
+    there, or the one that is does not hash to its own name. In the
+    second case the file is removed (unless *evict* is False) so the
+    next attempt refetches it, and the user is told — a blob whose
+    content stopped matching its digest was replaced by something, and
+    silently repairing that would hide it.
+
+    Use this wherever the blob can be obtained again (a registry pull, a
+    build-cache hit, an archive still open); use require_verified_layer()
+    where it cannot.
+    """
+    path = layer_cache_path(digest)
+    if not os.path.isfile(path):
+        return None
+    if file_matches_digest(path, digest):
+        return path
+    short = digest.split(":")[-1][:12]
+    if evict:
+        warn(f"Cached layer {short} does not match its digest; discarding "
+             f"it so it can be fetched again.")
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    else:
+        warn(f"Cached layer {short} does not match its digest; ignoring it.")
+    return None
+
+
+def require_verified_layer(digest: str, *, what: str = "Layer blob") -> str:
+    """Return the cached blob path for *digest*; raise if it is unusable.
+
+    The no-refetch counterpart of verified_layer_path(): a locally built
+    layer exists nowhere else, so a mismatch is reported and the file is
+    left alone for the user to inspect rather than deleted out from
+    under them.
+    """
+    path = layer_cache_path(digest)
+    if not os.path.isfile(path):
+        raise RuntimeError(
+            f"{what} {digest} is missing from the layer cache."
+        )
+    if not file_matches_digest(path, digest):
+        raise RuntimeError(
+            f"{what} {digest} does not match its digest; the layer cache "
+            f"holds content that was not produced by this build. Rebuild "
+            f"the image to repopulate the cache."
+        )
+    return path
 
 
 # ---------------------------------------------------------------------------

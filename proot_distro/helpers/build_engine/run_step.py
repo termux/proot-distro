@@ -51,7 +51,9 @@ from proot_distro.helpers.build_cache import (
 from proot_distro.helpers.build_engine.constants import PREDEFINED_ARGS
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.users import resolve_user_for_proot
-from proot_distro.helpers.docker import apply_layer, layer_cache_path
+from proot_distro.helpers.docker import (
+    apply_layer, layer_cache_path, verified_layer_path,
+)
 from proot_distro.helpers.layer_diff import (
     diff_snapshots, snapshot, write_layer_tar,
 )
@@ -87,8 +89,14 @@ def do_run(engine, instr):
     if not engine.no_cache:
         hit = cache_lookup(recipe)
         if hit is not None:
-            cached_path = layer_cache_path(hit["layer_digest"])
-            if os.path.isfile(cached_path):
+            # A recorded layer whose blob no longer hashes to its digest
+            # is not a cache hit: the step is re-run instead, which is
+            # what an evicted blob would have caused anyway.
+            try:
+                cached_path = verified_layer_path(hit["layer_digest"])
+            except RuntimeError:
+                cached_path = None
+            if cached_path is not None:
                 apply_layer(cached_path, stage.rootfs_dir)
                 stage.layers.append({
                     "digest": hit["layer_digest"],

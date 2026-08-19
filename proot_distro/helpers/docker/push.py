@@ -45,7 +45,7 @@ from proot_distro.progress import (
     clear_bar, fmt_size,
 )
 from proot_distro.helpers.docker.cache import (
-    layer_cache_path, load_manifest_cache,
+    file_matches_digest, layer_cache_path, load_manifest_cache,
 )
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
@@ -353,6 +353,16 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
 
             log_info(f"{short_id}: Uploading layer {i + 1}/{n_layers} "
                      f"({fmt_size(size)})...")
+            # The registry hashes what we PUT and rejects a mismatch with
+            # an opaque 400; checking here names the real problem, and
+            # keeps a cache blob that was swapped for someone else's
+            # content from being published under this image's digest.
+            if not file_matches_digest(path, digest):
+                raise RuntimeError(
+                    f"Layer blob {digest} does not match its digest; the "
+                    f"local cache holds content that was not produced by "
+                    f"this build. Rebuild the image before pushing."
+                )
             _upload_blob_file(
                 repo, digest, path, token, base, insecure, label=short_id,
             )

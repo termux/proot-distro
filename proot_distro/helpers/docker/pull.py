@@ -25,13 +25,19 @@
 #      a token + the missing layers need to be fetched.
 #   2. On manifest miss, resolve the registry manifest. Manifest-list
 #      indexes are unwrapped to the arch-specific child manifest.
-#   3. For each layer: skip when cached, otherwise download_blob. Apply
-#      the layer onto the supplied rootfs directory.
+#   3. For each layer: skip when a cached blob re-hashes to its digest,
+#      otherwise download_blob. Apply the layer onto the supplied rootfs
+#      directory.
 #   4. Return a small metadata dict the caller can use to write
 #      containers/<name>/manifest.json and surface image labels.
+#
+# Everything addressed by digest is checked against it before use: the
+# arch-specific manifest fetched out of an index, the config blob, and
+# every layer blob — whether it arrived over the network or was already
+# sitting in the cache. Neither a cache file's name nor a registry's
+# word is treated as evidence of content.
 
 import json
-import os
 import urllib.error
 import urllib.request
 
@@ -40,11 +46,11 @@ from proot_distro.message import log_info, log_error
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.download import retry_http
 from proot_distro.helpers.docker.cache import (
-    all_layers_cached,
     annotate_manifest_cache,
-    layer_cache_path,
     load_manifest_cache,
+    require_data_digest,
     save_manifest_cache,
+    verified_layer_path,
 )
 from proot_distro.helpers.docker.layers import apply_layer, download_blob
 from proot_distro.helpers.docker.media import (
@@ -92,6 +98,12 @@ def _get_manifest(
             return resp.read(), resp.headers.get("Content-Type", "")
 
     body, ct = retry_http(_attempt, what=f"Fetching manifest {ref}")
+    # A reference containing ':' is a digest, not a tag: the registry's
+    # answer is content-addressed, so it has to hash to what we asked
+    # for. This is the only check standing between a hostile mirror (or
+    # an --allow-insecure MITM) and an arbitrary layer list.
+    if ":" in ref:
+        require_data_digest(body, ref, what=f"Manifest for '{repo}'")
     data = json.loads(body)
     # Prefer the Content-Type header; fall back to the mediaType field.
     data["_ct"] = ct.split(";")[0].strip() or data.get("mediaType", "")
@@ -167,7 +179,14 @@ def _fetch_config_blob(
     repo: str, cfg_digest: str, token: str, base: str,
     insecure: bool = False,
 ) -> dict:
-    """Fetch the image config blob; return parsed dict (empty on error)."""
+    """Fetch the image config blob; return parsed dict (empty on error).
+
+    A blob that does not hash to *cfg_digest* is fatal rather than
+    empty: this config supplies Entrypoint/Cmd/Env, which `run` and
+    `login` go on to execute, and it is persisted into the manifest
+    cache. An unreachable or unparsable config is merely degraded and
+    still answers {} the way it always has.
+    """
     if not cfg_digest:
         return {}
     try:
@@ -181,9 +200,37 @@ def _fetch_config_blob(
             with opener(insecure).open(req) as resp:
                 return resp.read()
 
-        return json.loads(retry_http(_attempt, what="Fetching image config"))
+        body = retry_http(_attempt, what="Fetching image config")
     except Exception:
         return {}
+
+    require_data_digest(body, cfg_digest, what="Image config blob")
+    try:
+        return json.loads(body)
+    except (ValueError, TypeError):
+        return {}
+
+
+def _usable_cached_layers(layers: list) -> dict:
+    """Return ``{digest: path}`` for every layer blob already usable.
+
+    Usable means present *and* hashing to its own digest. A blob that
+    fails is dropped by verified_layer_path(), so it is simply absent
+    here and gets downloaded again like any other missing layer.
+
+    Deciding this once per pull, before the first apply, is what keeps
+    the cost at one hash per blob: the "is it all cached?" question and
+    the per-layer "download or reuse?" question read the same answer.
+    """
+    usable = {}
+    for layer in layers:
+        digest = layer.get("digest")
+        if not digest or digest in usable:
+            continue
+        path = verified_layer_path(digest)
+        if path is not None:
+            usable[digest] = path
+    return usable
 
 
 def pull_image(
@@ -192,9 +239,10 @@ def pull_image(
     """Pull an OCI/Docker image and extract all layers into *rootfs_dir*.
 
     The manifest is checked in the local cache first. If cached and
-    every layer is present, the install runs entirely without network
-    access. If the manifest is cached but some layers are missing, only
-    an auth token is fetched before downloading the missing layers.
+    every layer blob is present *and* re-hashes to its digest, the
+    install runs entirely without network access. If the manifest is
+    cached but some layers are missing or fail that check, only an auth
+    token is fetched before downloading them again.
 
     Registry traffic uses verified HTTPS unless *insecure* is set. With
     *insecure* a custom registry is reached over HTTPS with certificate
@@ -218,13 +266,11 @@ def pull_image(
         # entry is an old one that never stored its own reference.
         annotate_manifest_cache(image_ref, arch)
         layers = manifest.get("layers", [])
-        if all_layers_cached(layers):
+        usable = _usable_cached_layers(layers)
+        missing = sum(1 for layer in layers if layer["digest"] not in usable)
+        if not missing:
             log_info(f"Image '{image_ref}' ({arch}) is cached.")
         else:
-            missing = sum(
-                1 for layer in layers
-                if not os.path.isfile(layer_cache_path(layer["digest"]))
-            )
             log_info(f"Downloading {missing} missing "
                      f"layer(s) for '{image_ref}' ({arch})...")
             try:
@@ -270,6 +316,7 @@ def pull_image(
             repo, cfg_digest, token, base, insecure
         )
         save_manifest_cache(image_ref, arch, manifest, repo, image_config)
+        usable = _usable_cached_layers(manifest.get("layers", []))
 
     layers = manifest.get("layers", [])
     if not layers:
@@ -289,8 +336,8 @@ def pull_image(
             )
 
         short_id = digest.split(":")[-1][:12]
-        cached_path = layer_cache_path(digest)
-        if os.path.isfile(cached_path):
+        cached_path = usable.get(digest)
+        if cached_path is not None:
             log_info(f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
                      f"skipping download.")
             layer_path = cached_path

@@ -553,7 +553,8 @@ cache — a plain `clear-cache` is the way to drop that too. Note
 `remove --image` answers this differently, computing its keep set from
 `iter_cached_images()` alone and so unlinking blobs the index still
 pins; that is deliberate (an explicitly named image is not an automatic
-sweep) and harmless (`run_step` re-checks `isfile` on a hit).
+sweep) and harmless (`run_step` re-verifies the blob on a hit and
+re-runs the step when it is gone or does not match).
 Containers are not roots either, matching `remove --image`.
 The sweep **refuses to run** while `busy_locks()` reports an exclusive
 holder: a build in progress has already written its COPY/ADD layers
@@ -642,12 +643,47 @@ uname, so emulated containers self-report correctly.
 
 ## Docker / OCI registry (`helpers/docker/`)
 
-Pull is manifest-cache-first: cached + all layers present ⇒ fully
-offline; cached + missing layers ⇒ fetch token + missing only;
-otherwise full pipeline (token → manifest → arch unwrap → config blob
-→ layers). Cache writes use `atomic_replace`. Layer digests are
-stream-verified via `hashlib.sha256` before promotion. Digests pass
-through `validate_digest()` before being converted to filesystem
+Pull is manifest-cache-first: cached + all layers present *and*
+verified ⇒ fully offline; cached + missing layers ⇒ fetch token +
+missing only; otherwise full pipeline (token → manifest → arch unwrap
+→ config blob → layers). Cache writes use `atomic_replace`. Layer
+digests are stream-verified via `hashlib.sha256` before promotion.
+
+Verification is **on use, not only on entry**: a blob's file name is
+not evidence of its content, because `download_blob()` is not the only
+writer of `LAYER_CACHE_DIR`. On Termux that directory sits under the
+`$TERMUX_PREFIX` bound read-write into every non-isolated container, so
+a guest can plant `sha256_<hex>` for any digest it likes (public
+images' digests are public), and `install <archive|URL>` deposits blobs
+a remote party chose the digests for. Taken at its name, either one
+gets applied into the *next* image that references that digest — with
+no download, since a present blob short-circuits the fetch. So
+`cache.py` owns the choke points and every consumer goes through one:
+`verified_layer_path()` where the blob can be obtained again (pull,
+`download_blob`'s own cache hit, `install`'s OCI path, a `RUN`
+build-cache hit) — mismatch ⇒ warn, unlink, refetch or re-run — and
+`require_verified_layer()` where it cannot (`push`, `write_oci_archive`,
+`FROM <stage>` re-apply) — mismatch ⇒ refuse, and *leave the file*, a
+locally built layer existing nowhere else. `pull_image` runs
+`_usable_cached_layers()` once per pull so the "all cached?" question
+and each "download or reuse?" question share one hash per blob.
+`split_digest()` refuses an algorithm the program cannot compute
+(anything but sha256): a digest that cannot be checked must not be a
+digest a blob is trusted under. Blobs written by the build engine take
+their digest from the bytes just written (`layer_diff`), so name and
+content agree by construction; a plain (non-OCI) rootfs tarball carries
+no digest at all and is the one archive nothing can check.
+
+The same rule covers everything else addressed by a digest rather than
+a name: the arch-specific manifest fetched out of an index and the
+image config blob are both checked against the digest that requested
+them (`require_data_digest`), the config because `run`/`login` execute
+its Entrypoint/Cmd/Env and it is persisted into the manifest cache; and
+inside a local OCI archive, `index.json` is the root of trust while the
+manifest and config blobs below it are verified (`_oci_read_blob_json`)
+and each layer is hashed as it is copied into the cache
+(`_oci_cache_layer`), so a mismatched blob never reaches disk. Digests
+pass through `validate_digest()` before being converted to filesystem
 paths (layer cache, OCI blob layout) so a crafted reference like
 `../foo:bar` can't escape the cache root. A `zstd` mediaType is refused
 only when `compress.ZSTD_AVAILABLE` is False; with support present the

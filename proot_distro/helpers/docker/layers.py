@@ -25,13 +25,14 @@
 # they don't get clobbered by intermediate file writes.
 
 import hashlib
-import os
 import urllib.request
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
 from proot_distro.helpers.download import retry_http
-from proot_distro.helpers.docker.cache import layer_cache_path
+from proot_distro.helpers.docker.cache import (
+    layer_cache_path, split_digest, verified_layer_path,
+)
 from proot_distro.helpers.docker.transport import (
     opener, _ua,
 )
@@ -45,21 +46,19 @@ def download_blob(
     """Download a blob to the layer cache; return the local file path.
 
     Streams the bytes through sha256 and verifies the result against the
-    expected *digest* before promoting the .tmp file. The cache therefore
-    only ever contains intact layers.
+    expected *digest* before promoting the .tmp file.
+
+    A blob already in the cache is re-hashed rather than taken at its
+    name (verified_layer_path): the file may have been written by
+    something other than this function, so its name is not evidence of
+    its content. One that fails is dropped and downloaded again.
     """
     dest = layer_cache_path(digest)
-    if os.path.isfile(dest):
-        return dest
+    cached = verified_layer_path(digest)
+    if cached is not None:
+        return cached
 
-    if ":" not in digest:
-        raise RuntimeError(f"Malformed layer digest '{digest}'.")
-    algo, expected_hex = digest.split(":", 1)
-    if algo.lower() != "sha256":
-        raise RuntimeError(
-            f"Unsupported layer digest algorithm '{algo}' (only sha256 "
-            f"is supported)."
-        )
+    _algo, expected_hex = split_digest(digest)
 
     url = f"{base}/v2/{repo}/blobs/{digest}"
     headers = {**_ua()}

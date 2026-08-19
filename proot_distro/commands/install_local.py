@@ -23,15 +23,18 @@
 #
 #   - OCI image layout (oci-layout marker present) — layer blobs are
 #     unpacked into LAYER_CACHE_DIR and applied via apply_layer, mirroring
-#     the on-disk shape produced by a Docker pull.
+#     the on-disk shape produced by a Docker pull. Every blob read out of
+#     the archive is hashed against the digest the archive names it by:
+#     the file is a stranger's (`install ./img.tar`, or an http(s):// URL),
+#     and LAYER_CACHE_DIR is shared with every image the user pulls, so an
+#     unchecked blob would sit there under a digest a later pull trusts.
 #   - Plain rootfs tar — extracted directly into the destination, with
 #     a strip-count heuristic that figures out how many leading path
 #     components to drop so well-known rootfs dirs (`etc`, `usr`, …)
 #     land at the rootfs root.
 
+import hashlib
 import json
-import os
-import shutil
 import sys
 import tarfile
 
@@ -41,11 +44,15 @@ from proot_distro.message import log_info
 from proot_distro.progress import clear_bar, progress_active
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER, DOCKER_TO_ARCH, apply_layer, layer_cache_path,
-    validate_digest,
+    require_data_digest, split_digest, validate_digest,
+    verified_layer_path,
 )
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
 
+
+# Copy/hash slice for layer blobs coming out of an OCI archive.
+_BLOB_CHUNK = 1024 * 1024
 
 # Top-level directory names that signal a rootfs filesystem root.
 _ROOTFS_DIRS = frozenset({
@@ -108,23 +115,46 @@ def _oci_blob_path(digest: str) -> str:
     return f"blobs/{algo}/{hex_val}"
 
 
-def _oci_read_json(tf, member_map, path):
-    """Extract a member from the outer archive and parse it as JSON."""
+def _oci_open_member(tf, member_map, path):
+    """Return a readable file object for one regular member of the archive."""
     member = member_map.get(path)
     if member is None:
         raise RuntimeError(f"OCI archive is missing required file: {path}")
     if not member.isreg():
         # Reject hardlinks and symlinks: Python's extractfile() follows them
-        # within the archive, letting a crafted outer tar redirect a JSON read
-        # to an unrelated member (e.g. a layer blob used as index.json).
+        # within the archive, letting a crafted outer tar redirect a read to
+        # an unrelated member (e.g. a layer blob used as index.json).
         raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
     fobj = tf.extractfile(member)
     if fobj is None:
         raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
+    return fobj
+
+
+def _oci_read_json(tf, member_map, path):
+    """Extract a member from the outer archive and parse it as JSON."""
+    fobj = _oci_open_member(tf, member_map, path)
     try:
         return json.loads(fobj.read())
     finally:
         fobj.close()
+
+
+def _oci_read_blob_json(tf, member_map, digest):
+    """Read the JSON blob named by *digest* and check that it hashes to it.
+
+    index.json is the archive's root of trust and is read by name; every
+    step below it — the image manifest, the image config — is addressed
+    by digest, so a swapped blob is caught here rather than believed.
+    """
+    path = _oci_blob_path(digest)
+    fobj = _oci_open_member(tf, member_map, path)
+    try:
+        data = fobj.read()
+    finally:
+        fobj.close()
+    require_data_digest(data, digest, what=f"OCI archive blob '{path}'")
+    return json.loads(data)
 
 
 def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
@@ -153,15 +183,11 @@ def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
 
     # Slow path: read each manifest → config to detect architecture.
     for entry in index_manifests:
-        manifest = _oci_read_json(
-            tf, member_map, _oci_blob_path(entry["digest"])
-        )
+        manifest = _oci_read_blob_json(tf, member_map, entry["digest"])
         config_digest = manifest.get("config", {}).get("digest", "")
         if not config_digest:
             continue
-        config = _oci_read_json(
-            tf, member_map, _oci_blob_path(config_digest)
-        )
+        config = _oci_read_blob_json(tf, member_map, config_digest)
         if config.get("architecture") == docker_arch:
             return entry
 
@@ -172,28 +198,39 @@ def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
 
 
 def _oci_cache_layer(tf, member_map, digest):
-    """Extract a layer blob from the outer archive into LAYER_CACHE_DIR."""
+    """Extract a layer blob from the outer archive into LAYER_CACHE_DIR.
+
+    The bytes are hashed as they are copied and the blob is promoted
+    only if it matches *digest*. The cache is shared with every image
+    the user pulls and a cached blob is reused on the strength of its
+    name, so a layer that does not hash to the digest the archive names
+    it by must never reach it — otherwise one crafted archive silently
+    replaces a layer of any image whose digests it chooses to claim.
+    """
     blob_path = _oci_blob_path(digest)
-    member = member_map.get(blob_path)
-    if member is None:
-        raise RuntimeError(f"OCI archive is missing layer blob: {blob_path}")
-    if not member.isreg():
-        # Reject hardlinks and symlinks: Python's extractfile() follows them
-        # within the archive, letting a crafted outer tar swap one image's
-        # layer for another's without any digest check catching the swap.
-        raise RuntimeError(
-            f"OCI layer blob is not a regular file: {blob_path}"
-        )
-    fobj = tf.extractfile(member)
-    if fobj is None:
-        raise RuntimeError(
-            f"OCI layer blob is not a regular file: {blob_path}"
-        )
+    _algo, expected_hex = split_digest(digest)
+    fobj = _oci_open_member(tf, member_map, blob_path)
     cache_path = layer_cache_path(digest)
+    hasher = hashlib.sha256()
     try:
+        # atomic_replace removes the temporary on any exception, so a
+        # mismatch leaves nothing behind for a later pull to pick up.
         with atomic_replace(cache_path) as tmp:
             with open(tmp, "wb") as out:
-                shutil.copyfileobj(fobj, out)
+                while True:
+                    chunk = fobj.read(_BLOB_CHUNK)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    out.write(chunk)
+            actual_hex = hasher.hexdigest()
+            if actual_hex != expected_hex:
+                raise RuntimeError(
+                    f"OCI archive layer blob '{blob_path}' does not match "
+                    f"its digest (expected {digest}, got "
+                    f"sha256:{actual_hex}). The archive is corrupt or was "
+                    f"tampered with."
+                )
     finally:
         fobj.close()
     return cache_path
@@ -217,14 +254,12 @@ def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
         tf, member_map, index_manifests, dist_arch
     )
 
-    manifest = _oci_read_json(
-        tf, member_map, _oci_blob_path(manifest_entry["digest"])
-    )
+    manifest = _oci_read_blob_json(tf, member_map, manifest_entry["digest"])
 
     config_digest = manifest.get("config", {}).get("digest", "")
     if not config_digest:
         raise RuntimeError("OCI image manifest has no config digest.")
-    image_config = _oci_read_json(tf, member_map, _oci_blob_path(config_digest))
+    image_config = _oci_read_blob_json(tf, member_map, config_digest)
 
     docker_arch = image_config.get("architecture", "")
     actual_arch = DOCKER_TO_ARCH.get(docker_arch, dist_arch)
@@ -239,15 +274,17 @@ def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
         short_id = digest[:19]
         size = layer.get("size", 0)
         size_str = f" ({fmt_size(size)})" if size else ""
-        cache_path = layer_cache_path(digest)
+        cache_path = verified_layer_path(digest)
 
-        if os.path.isfile(cache_path):
+        if cache_path is not None:
             log_info(f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
                      f"skipping.")
         else:
+            # Absent, or present with content that no longer hashes to its
+            # digest — either way the archive in hand is the better copy.
             log_info(f"{short_id}: Caching layer "
                      f"{i + 1}/{n_layers}{size_str}...")
-            _oci_cache_layer(tf, member_map, digest)
+            cache_path = _oci_cache_layer(tf, member_map, digest)
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
         apply_layer(cache_path, rootfs_dir)

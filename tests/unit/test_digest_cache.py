@@ -144,3 +144,100 @@ def test_iter_cached_images_skips_unreadable_entries():
     with open(os.path.join(MANIFEST_CACHE_DIR, "notjson.txt"), "w") as fh:
         fh.write("ignored")
     assert [r["image_ref"] for r in cache.iter_cached_images()] == ["img:1"]
+
+
+# ---------------------------------------------------------------------------
+# Blob integrity — the digest checks every cached-blob consumer runs
+# ---------------------------------------------------------------------------
+
+def test_split_digest_normalizes():
+    assert cache.split_digest("SHA256:ABCD") == ("sha256", "abcd")
+
+
+@pytest.mark.parametrize("digest", [
+    "sha512:" + "0" * 128,      # well-formed but not hashable here
+    "multihash.v1:ff00",
+    "../foo:bar",               # malformed digests still raise
+    "sha256:zz",
+])
+def test_split_digest_rejects_unhashable(digest):
+    # A digest we cannot compute is a digest we cannot check, so it may
+    # never reach a blob consumer as if it had been verified.
+    with pytest.raises(RuntimeError):
+        cache.split_digest(digest)
+
+
+def test_data_matches_digest():
+    import hashlib
+    data = b"payload"
+    good = "sha256:" + hashlib.sha256(data).hexdigest()
+    assert cache.data_matches_digest(data, good) is True
+    assert cache.data_matches_digest(b"other", good) is False
+    assert cache.require_data_digest(data, good) == data
+    with pytest.raises(RuntimeError, match="does not match its digest"):
+        cache.require_data_digest(b"other", good, what="Manifest")
+
+
+def test_file_matches_digest(tmp_path):
+    import hashlib
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"x" * (2 * 1024 * 1024 + 7))   # spans several chunks
+    digest = "sha256:" + hashlib.sha256(blob.read_bytes()).hexdigest()
+    assert cache.file_matches_digest(str(blob), digest) is True
+    blob.write_bytes(b"tampered")
+    assert cache.file_matches_digest(str(blob), digest) is False
+    # A file that isn't there is not a usable blob either.
+    assert cache.file_matches_digest(str(tmp_path / "absent"), digest) is False
+
+
+def test_verified_layer_path_accepts_intact_blob(builders):
+    digest, _size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"1"}]
+    )
+    assert cache.verified_layer_path(digest) == cache.layer_cache_path(digest)
+
+
+def test_verified_layer_path_evicts_and_warns(builders, capsys):
+    digest, _size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"1"}]
+    )
+    path = cache.layer_cache_path(digest)
+    with open(path, "wb") as fh:
+        fh.write(b"not the layer this name promises")
+
+    assert cache.verified_layer_path(digest) is None
+    assert not os.path.exists(path), "a mismatched blob is dropped"
+    assert "does not match its digest" in capsys.readouterr().err
+
+
+def test_verified_layer_path_keeps_blob_when_evict_false(builders):
+    digest, _size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"1"}]
+    )
+    path = cache.layer_cache_path(digest)
+    with open(path, "wb") as fh:
+        fh.write(b"tampered")
+    assert cache.verified_layer_path(digest, evict=False) is None
+    assert os.path.isfile(path)
+
+
+def test_verified_layer_path_missing_blob():
+    assert cache.verified_layer_path("sha256:" + "0" * 64) is None
+
+
+def test_require_verified_layer_refuses_without_deleting(builders):
+    digest, _size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"1"}]
+    )
+    assert cache.require_verified_layer(digest) == cache.layer_cache_path(digest)
+
+    path = cache.layer_cache_path(digest)
+    with open(path, "wb") as fh:
+        fh.write(b"tampered")
+    with pytest.raises(RuntimeError, match="does not match its digest"):
+        cache.require_verified_layer(digest)
+    # Locally built layers exist nowhere else: report, don't destroy.
+    assert os.path.isfile(path)
+
+    with pytest.raises(RuntimeError, match="missing"):
+        cache.require_verified_layer("sha256:" + "0" * 64)
