@@ -136,3 +136,67 @@ def test_missing_etc_is_a_no_op(tmp_path):
     write_hosts(str(root))
     register_android_ids(str(root))
     assert os.listdir(str(root)) == []
+
+
+# --- /etc/profile.d/termux-profile.sh -------------------------------------
+
+def _profile_env(tmp_path):
+    root = tmp_path / "rootfs"
+    (root / "etc" / "profile.d").mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.write_text("HOST FILE\n")
+    victim.chmod(0o600)
+    return str(root), victim
+
+
+def test_profile_snippet_symlink_is_unlinked_not_written_through(tmp_path):
+    from proot_distro.commands.login.env import inject_termux_profile
+    root, victim = _profile_env(tmp_path)
+    link = os.path.join(root, "etc", "profile.d", "termux-profile.sh")
+    os.symlink(str(victim), link)
+
+    inject_termux_profile(root, {"FOO": "bar"})
+
+    assert victim.read_text() == "HOST FILE\n"
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o600
+    assert not os.path.islink(link)
+    assert "export FOO='bar'" in open(link).read()
+
+
+def test_profile_d_symlink_does_not_redirect_the_write(tmp_path):
+    from proot_distro.commands.login.env import inject_termux_profile
+    root, _victim = _profile_env(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    import shutil
+    shutil.rmtree(os.path.join(root, "etc", "profile.d"))
+    os.symlink(str(outside), os.path.join(root, "etc", "profile.d"))
+
+    inject_termux_profile(root, {"FOO": "bar"})
+
+    assert os.listdir(str(outside)) == []
+
+
+def test_profile_snippet_written_normally(tmp_path):
+    from proot_distro.commands.login.env import inject_termux_profile
+    root, _victim = _profile_env(tmp_path)
+    snippet = os.path.join(root, "etc", "profile.d", "termux-profile.sh")
+    legacy = os.path.join(root, "etc", "profile.d", "termux-prefix.sh")
+    open(legacy, "w").write("stale")
+
+    inject_termux_profile(root, {"FOO": "bar"})
+
+    assert stat.S_IMODE(os.stat(snippet).st_mode) == 0o644
+    assert "export FOO='bar'" in open(snippet).read()
+    assert not os.path.exists(legacy), "the legacy snippet is still removed"
+
+
+def test_profile_snippet_skipped_without_profile_d(tmp_path):
+    from proot_distro.commands.login.env import inject_termux_profile
+    root, _victim = _profile_env(tmp_path)
+    import shutil
+    shutil.rmtree(os.path.join(root, "etc", "profile.d"))
+
+    inject_termux_profile(root, {"FOO": "bar"})
+
+    assert os.listdir(os.path.join(root, "etc")) == []

@@ -29,6 +29,7 @@ import json
 import os
 import re
 
+from proot_distro import dirfd
 from proot_distro.constants import TERMUX_PREFIX
 
 
@@ -38,6 +39,9 @@ from proot_distro.constants import TERMUX_PREFIX
 # they reach the profile.d snippet — otherwise a name carrying spaces,
 # quotes, or `;` would break the sourced script.
 _VALID_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# The snippet /etc/profile sources to re-export the proot-distro vars.
+_PROFILE_SNIPPET = "termux-profile.sh"
 
 
 # Android system environment variables harvested from the launching
@@ -103,17 +107,53 @@ def inject_termux_profile(rootfs: str, env: dict) -> None:
     proot-distro value wins. Per-session vars and proot-internal vars
     are excluded via _PROFILE_INJECT_SKIP.
     """
-    profile_d = os.path.join(rootfs, "etc", "profile.d")
-    if not os.path.isdir(profile_d):
+    # The snippet is written on the host side of proot, into a directory
+    # the guest owns, so neither the path nor the name may be trusted:
+    # os.path.isdir() follows a link at `etc` or `profile.d`, and
+    # open(..., "w") followed by os.chmod() follows one at the file. A
+    # guest leaving `termux-profile.sh -> <a host file>` behind had that
+    # file truncated and rewritten with export lines on the next login,
+    # and chmod'ed 0644 after. Everything below is named against a
+    # descriptor instead (see _open_profile_d and dirfd).
+    profile_fd = _open_profile_d(rootfs)
+    if profile_fd is None:
         return
-    snippet = os.path.join(profile_d, "termux-profile.sh")
+    try:
+        _write_profile_snippet(profile_fd, env)
+    finally:
+        os.close(profile_fd)
+
+
+def _open_profile_d(rootfs: str):
+    """Open <rootfs>/etc/profile.d as a descriptor, refusing symlinks.
+
+    None when there is no such directory, which is the same condition the
+    os.path.isdir() check used to express — the snippet is only dropped
+    into a profile.d a distribution already ships, never into one this
+    would have to create.
+    """
+    fd = None
+    try:
+        fd = dirfd.opendir(rootfs)
+        for part in ("etc", "profile.d"):
+            nxt = dirfd.opendir_at(fd, part)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except OSError:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return None
+
+
+def _write_profile_snippet(profile_fd: int, env: dict) -> None:
+    """Compose and write termux-profile.sh under the open profile.d fd."""
     # Remove the legacy filename (PATH-only era) so a previously-used
     # container doesn't keep sourcing stale content.
-    legacy_snippet = os.path.join(profile_d, "termux-prefix.sh")
-    try:
-        os.remove(legacy_snippet)
-    except OSError:
-        pass
+    dirfd.unlink_quietly(profile_fd, "termux-prefix.sh")
     termux_bin = f"{TERMUX_PREFIX}/bin"
 
     lines = [
@@ -138,9 +178,21 @@ def inject_termux_profile(rootfs: str, env: dict) -> None:
         lines.append(f"export {key}='{escaped}'")
 
     content = "\n".join(lines) + "\n"
+    # Unlink then create O_EXCL rather than opening for write: that
+    # removes a *name*, so a link is dropped instead of written through
+    # and a hard link to a host file keeps its content, and the fresh
+    # inode is one nothing else can already have a claim on. The mode
+    # goes on the descriptor, since os.chmod() on the name would follow
+    # whatever reappeared under it.
+    dirfd.unlink_quietly(profile_fd, _PROFILE_SNIPPET)
     try:
-        with open(snippet, "w") as fh:
-            fh.write(content)
-        os.chmod(snippet, 0o644)
+        fd, _st = dirfd.open_new_at(profile_fd, _PROFILE_SNIPPET, 0o644)
+    except OSError:
+        return
+    try:
+        os.write(fd, content.encode())
+        os.fchmod(fd, 0o644)
     except OSError:
         pass
+    finally:
+        os.close(fd)
