@@ -68,6 +68,22 @@ Top-level utilities (each owns a focused concern):
   `ZstdFile` itself and hands tarfile a plain `w|` stream, so both
   spellings produce byte-identical archives at `ZSTD_LEVEL`.
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
+  `resolve_l2s_target()` decides whether a symlink is one of proot's
+  hard-link stand-ins and where its content really is. An l2s chain is
+  two hops — the entry points at an intermediate, the intermediate at the
+  backing file — and `backup`/`layer_diff` must follow both, so
+  containment is decided on the **fully resolved** end (`realpath` on
+  target and rootfs alike, the latter because `container_rootfs()`
+  composes its prefix lexically). A lexical `normpath` + `startswith`
+  was not enough: two `ln -s` calls inside a guest (`x ->
+  .proot.l2s.a0001`, `.proot.l2s.a0001 -> /host/path`) put a first hop
+  inside the rootfs and a second outside it, and the host file's bytes
+  went into the backup archive and into layers `push` uploads.
+  `open_l2s_backing()` is what the callers actually read through: it
+  re-walks the resolved path from a rootfs fd with `O_NOFOLLOW` and hands
+  back `(fd, stat)`, closing the resolve→read window (`backup` holds only
+  a shared lock, so a `login` session can run alongside it) and refusing
+  a FIFO planted under the name.
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock), and
   `busy_locks()` (shared-flock probe over both namespaces, naming the
   exclusive holders — what `clear-cache --orphan` asks before sweeping).

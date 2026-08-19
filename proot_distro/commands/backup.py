@@ -32,7 +32,7 @@ import tarfile
 from proot_distro.compress import (
     ZSTD_AVAILABLE, open_tar_writer, unavailable_msg, unsupported_msg,
 )
-from proot_distro.l2s import resolve_l2s_target
+from proot_distro.l2s import open_l2s_backing, resolve_l2s_target
 from proot_distro.message import log_info, log_error, crit_error
 from proot_distro.progress import (
     REDRAW_THRESHOLD_BYTES, clear_bar, draw_bytes_bar,
@@ -196,31 +196,36 @@ def _add_path(
         if target is not None:
             l2s_path = resolve_l2s_target(src, target, rootfs)
             if l2s_path is not None:
-                try:
-                    cst = os.stat(l2s_path)
-                except OSError:
-                    cst = None
-                if cst is not None and stat.S_ISREG(cst.st_mode):
-                    info = tarfile.TarInfo(arcname)
-                    info.type = tarfile.REGTYPE
-                    info.size = cst.st_size
-                    info.mode = stat.S_IMODE(cst.st_mode)
-                    info.mtime = int(cst.st_mtime)
-                    info.uid = 0
-                    info.gid = 0
-                    info.uname = ''
-                    info.gname = ''
+                # Through a descriptor, not the name: the resolve and the
+                # read are two steps and backup holds only a shared lock,
+                # so a live session could re-point a component in between
+                # (see l2s.open_l2s_backing).
+                opened = open_l2s_backing(rootfs, l2s_path)
+                if opened is not None:
+                    cfd, cst = opened
                     try:
-                        with open(l2s_path, 'rb') as fh:
+                        info = tarfile.TarInfo(arcname)
+                        info.type = tarfile.REGTYPE
+                        info.size = cst.st_size
+                        info.mode = stat.S_IMODE(cst.st_mode)
+                        info.mtime = int(cst.st_mtime)
+                        info.uid = 0
+                        info.gid = 0
+                        info.uname = ''
+                        info.gname = ''
+                        try:
+                            fh = open(cfd, 'rb', closefd=False)
                             tf.addfile(
                                 info,
                                 _ReadCounter(fh, on_read) if on_read else fh,
                             )
-                    except OSError:
-                        pass
+                        except OSError:
+                            pass
+                    finally:
+                        os.close(cfd)
                     return
-                # Backing file missing or non-regular: fall through and
-                # store the symlink as-is.
+                # Backing file missing, unreadable or non-regular: fall
+                # through and store the symlink as-is.
 
     try:
         info = tf.gettarinfo(src, arcname=arcname)
@@ -376,12 +381,12 @@ def _run_backup(
             l2s_path = resolve_l2s_target(src, target, rootfs_dir)
             if l2s_path is None:
                 continue
-            try:
-                cst = os.stat(l2s_path)
-            except OSError:
+            opened = open_l2s_backing(rootfs_dir, l2s_path)
+            if opened is None:
                 continue
-            if stat.S_ISREG(cst.st_mode):
-                total_size += cst.st_size
+            cfd, cst = opened
+            os.close(cfd)
+            total_size += cst.st_size
 
     done_size = 0
 

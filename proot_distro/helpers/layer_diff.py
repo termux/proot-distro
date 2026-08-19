@@ -44,7 +44,7 @@ import stat
 import tarfile
 import zlib
 
-from proot_distro.l2s import resolve_l2s_target
+from proot_distro.l2s import open_l2s_backing, resolve_l2s_target
 from proot_distro.progress import (
     clear_bar, draw_bytes_bar, progress_active,
 )
@@ -396,20 +396,24 @@ def _add_entry(tf, rootfs, rel):
         # the layer is self-contained.
         l2s_path = resolve_l2s_target(full, target, rootfs)
         if l2s_path is not None:
-            try:
-                cst = os.stat(l2s_path)
-            except OSError:
-                cst = None
-            if cst is not None and stat.S_ISREG(cst.st_mode):
-                tinfo.type = tarfile.REGTYPE
-                tinfo.size = cst.st_size
-                tinfo.mode = stat.S_IMODE(cst.st_mode)
-                tinfo.mtime = int(cst.st_mtime)
+            # Through a descriptor rather than the name, so a component
+            # re-pointed after the resolve fails instead of being followed
+            # (see l2s.open_l2s_backing). A layer is the worse place for
+            # that to go unchecked: `push` uploads it to a registry.
+            opened = open_l2s_backing(rootfs, l2s_path)
+            if opened is not None:
+                cfd, cst = opened
                 try:
-                    with open(l2s_path, "rb") as fobj:
-                        tf.addfile(tinfo, fobj)
-                except OSError:
-                    pass
+                    tinfo.type = tarfile.REGTYPE
+                    tinfo.size = cst.st_size
+                    tinfo.mode = stat.S_IMODE(cst.st_mode)
+                    tinfo.mtime = int(cst.st_mtime)
+                    try:
+                        tf.addfile(tinfo, open(cfd, "rb", closefd=False))
+                    except OSError:
+                        pass
+                finally:
+                    os.close(cfd)
                 return
 
         try:

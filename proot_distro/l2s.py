@@ -34,6 +34,7 @@
 import os
 import signal
 
+from proot_distro import dirfd
 from proot_distro.message import log_info, log_error
 
 
@@ -66,25 +67,83 @@ def resolve_l2s_target(symlink_full: str, target: str, rootfs: str):
     is therefore by basename prefix, not by directory, so symlinks are
     recognised regardless of where the producing proot stashed them.
 
-    Callers (backup, build layer writer) materialise the symlink as
-    the backing file's content via os.stat / open() on the returned
-    path — both follow symlinks and land on the final file automatically.
+    The whole chain is resolved, so the returned path names the file
+    holding the content rather than the intermediate that stands in
+    front of it. That is what containment has to be decided on:
+    normpath() collapses ".." without consulting the filesystem, so a
+    chain whose first hop lands inside the rootfs and whose second leaves
+    it satisfied the old prefix test. Two `ln -s` calls inside a guest
+    were enough —
+
+        innocent.txt          -> .proot.l2s.evil0001
+        .proot.l2s.evil0001   -> /absolute/host/path
+
+    — and the callers, which must follow the intermediate because that is
+    what an l2s chain is, read straight through to the host file: backup
+    packed its bytes into the archive under innocent.txt's name, and the
+    build engine packed them into a layer that `push` then uploads to a
+    registry.
+
+    Callers open the result with open_l2s_backing() rather than by path,
+    which re-walks it with O_NOFOLLOW; see there for why.
     """
     name = os.path.basename(target)
     if not name.startswith(_L2S_NAME_PREFIXES):
         return None
     if os.path.isabs(target):
-        abs_target = os.path.normpath(target)
+        abs_target = target
     else:
-        abs_target = os.path.normpath(
-            os.path.join(os.path.dirname(symlink_full), target)
-        )
-    rootfs_abs = os.path.abspath(rootfs)
-    if abs_target != rootfs_abs and not abs_target.startswith(
-        rootfs_abs + os.sep
+        abs_target = os.path.join(os.path.dirname(symlink_full), target)
+    # realpath on both sides: the rootfs prefix is composed lexically by
+    # container_rootfs(), so a symlinked $HOME or ~/.local/share would
+    # otherwise leave a resolved target and the root it must sit under
+    # spelled differently and looking unrelated.
+    real_target = os.path.realpath(abs_target)
+    rootfs_real = os.path.realpath(rootfs)
+    if real_target != rootfs_real and not real_target.startswith(
+        rootfs_real + os.sep
     ):
         return None
-    return abs_target
+    return real_target
+
+
+def open_l2s_backing(rootfs: str, l2s_path: str):
+    """Open the backing file resolve_l2s_target() named. (fd, stat) or None.
+
+    Resolving a path and reading it are two steps, and between them a
+    guest can swap a component for a symlink pointing out of the rootfs —
+    `backup` holds only a shared lock, so a `login` session can be running
+    while the archive is written. The components are therefore re-walked
+    from a descriptor on the rootfs with O_NOFOLLOW, which fails on a
+    swapped component instead of following it, and the caller gets a
+    descriptor rather than a name to open again. Same guarantee
+    paths.pin_path() gives `copy` and `sync`, for the same reason.
+
+    open_regular_at() refuses anything that is not a regular file, so a
+    FIFO planted under the name cannot block the read waiting for a peer
+    that never comes.
+    """
+    rootfs_real = os.path.realpath(rootfs)
+    rel = os.path.relpath(l2s_path, rootfs_real)
+    parts = [p for p in rel.split(os.sep) if p and p != os.curdir]
+    if not parts or os.pardir in parts:
+        return None
+    fd = None
+    try:
+        fd = dirfd.opendir(rootfs_real)
+        for part in parts[:-1]:
+            nxt = dirfd.opendir_at(fd, part)
+            os.close(fd)
+            fd = nxt
+        return dirfd.open_regular_at(fd, parts[-1], os.O_RDONLY)
+    except OSError:
+        return None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def rewrite_l2s_targets(rootfs: str, old_prefix: str) -> None:
