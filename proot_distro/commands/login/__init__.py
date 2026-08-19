@@ -42,7 +42,8 @@ from proot_distro.constants import (
     DEFAULT_FAKE_KERNEL_RELEASE,
     PROGRAM_NAME,
 )
-from proot_distro.message import C, msg, crit_error
+from proot_distro import dirfd
+from proot_distro.message import C, msg, crit_error, warn
 from proot_distro.arch import (
     detect_installed_arch,
     get_device_cpu_arch,
@@ -463,9 +464,18 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         # directory upfront. Without this the first session lets proot
         # choose the location implicitly while a simultaneous session
         # sets it explicitly — they can race when both start at once.
-        l2s_dir = os.path.join(rootfs, ".l2s")
-        os.makedirs(l2s_dir, exist_ok=True)
-        child_env["PROOT_L2S_DIR"] = l2s_dir
+        # Through a descriptor: the name is inside the rootfs, so a guest
+        # can leave `.l2s` behind as a symlink and proot would then write
+        # every hard-link backing file into whatever host directory it
+        # named. Unset rather than pointed somewhere unvalidated — proot
+        # falls back to placing each intermediate next to its original,
+        # which is what it did before the pin was added.
+        l2s_dir = dirfd.makedirs_under(rootfs, (".l2s",))
+        if l2s_dir is not None:
+            child_env["PROOT_L2S_DIR"] = l2s_dir
+        else:
+            warn("container's .l2s is not a plain directory; leaving "
+                 "PROOT_L2S_DIR unset for this session.")
     child_env.pop("LD_PRELOAD", None)
 
     if getattr(args, "get_proot_cmd", False):

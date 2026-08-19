@@ -41,6 +41,7 @@ from proot_distro.constants import (
     TERMUX_APP_PACKAGE,
     TERMUX_HOME,
 )
+from proot_distro import dirfd
 from proot_distro.message import crit_error, warn
 from proot_distro.arch import ARCH_UNAME_M
 from proot_distro.sysdata import fake_proc_bindings
@@ -162,11 +163,14 @@ def _add_non_minimal_binds(
             args.append(f"--bind={TERMUX_PREFIX}")
 
     # A termux-type guest still needs its own cache dir to exist; create
-    # it inside the rootfs (never bound from the host).
+    # it inside the rootfs (never bound from the host). Level by level off
+    # a descriptor, since every component of that path is image content:
+    # os.makedirs() would have built the tree wherever a `data` symlink
+    # pointed, which on the host side of proot is anywhere the user can
+    # write. Nothing depends on the result, so a refusal is silent.
     if IS_TERMUX and dist_type == "termux" and not isolated:
-        os.makedirs(
-            os.path.join(rootfs, "data", "data", TERMUX_APP_PACKAGE, "cache"),
-            exist_ok=True,
+        dirfd.makedirs_under(
+            rootfs, ("data", "data", TERMUX_APP_PACKAGE, "cache")
         )
 
     if use_shared_home:
@@ -195,13 +199,21 @@ def _add_termux_dev_binds(args, rootfs):
     args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")
     args += fake_proc_bindings(rootfs)
 
-    tmp_dir = os.path.join(rootfs, "tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-    try:
-        os.chmod(tmp_dir, 0o1777)
-    except OSError:
-        pass
-    args.append(f"--bind={tmp_dir}:/dev/shm")
+    # /dev/shm is the container's own /tmp. Both steps here used to take
+    # that name at face value: os.makedirs(exist_ok=True) accepts a symlink
+    # to a directory, os.chmod() follows it, and the bind then handed proot
+    # whatever it led to. An image shipping `tmp -> <host home>` — or a
+    # guest leaving one behind from an earlier session — got that directory
+    # chmod'ed 1777 and mounted inside the container, and this runs even
+    # under --isolated, which is the one mode meant to bind nothing of the
+    # host at all. Made and chmod'ed through descriptors instead; a name
+    # that will not validate is left unbound rather than followed.
+    tmp_dir = dirfd.makedirs_under(rootfs, ("tmp",), mode=0o1777)
+    if tmp_dir is not None:
+        args.append(f"--bind={tmp_dir}:/dev/shm")
+    else:
+        warn("container's /tmp is not a plain directory; starting without "
+             "the /dev/shm bind.")
 
 
 def _add_dalvik_cache_binds(args):

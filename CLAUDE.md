@@ -163,6 +163,23 @@ Top-level utilities (each owns a focused concern):
   `copy_file_at`/`copy_symlink_at`/`copy_tree_at`/`count_tree_at`,
   `rmtree_at`/`unlink_quietly`, `temp_name`, `close_frames`, and fd-based
   metadata (`copy_metadata`, `set_times_at`, `make_writable`).
+  `makedirs_under(root, parts, mode)` is the one entry point taking a
+  *path* — `os.makedirs()`'s replacement for a directory whose components
+  are guest or image content. Each level is `mkdirat`'ed off the
+  descriptor of the level above and reopened `O_NOFOLLOW`, and the mode
+  goes on through `_chmod_fd`; `None` means "a component is a symlink or
+  is not a directory", which callers treat as *do not use this path*
+  rather than falling back to the name. `login` needs it because it makes
+  three such directories on the **host** side, before proot is exec'd and
+  so with nothing confining the write: `<rootfs>/tmp` (chmod 1777 and
+  bound in as `/dev/shm` — and `_add_termux_dev_binds` runs even under
+  `--isolated`), `<rootfs>/.l2s` (handed to proot as `PROOT_L2S_DIR`) and
+  a termux-type guest's `data/data/<pkg>/cache`. `makedirs(exist_ok=True)`
+  accepts a symlink to a directory and `chmod` follows one, so naming
+  them was enough to have a host directory relaxed to 1777 and mounted
+  into the container. proot still resolves the bind source by name when
+  it mounts it, so a session running against the same container can race
+  the check; what this removes is the persistent case.
   Nothing here takes a path below the root, so no component can be
   re-pointed mid-walk. `REFUSED` / `is_refusal()` cover both errnos a
   refused descent can raise — Linux reports `O_NOFOLLOW|O_DIRECTORY` on a

@@ -201,6 +201,65 @@ def open_new_at(dir_fd: int, name: str, mode: int = 0o644):
         return open_regular_at(dir_fd, name, flags, mode)
 
 
+def makedirs_under(root: str, parts, mode: int = None):
+    """Create the directory *parts* names under *root*. Path, or None.
+
+    Every level is made with mkdirat off the descriptor of the level above
+    and reopened with O_NOFOLLOW, so a component that is a symlink is
+    refused instead of followed. os.makedirs() addresses each level by its
+    path, so a link the image shipped -- or a guest planted -- sends the
+    whole tree wherever it points, and the mode applied afterwards goes
+    with it. That matters here because these directories are made on the
+    *host* side, before proot is exec'd, so nothing confines the write.
+
+    None means the directory could not be made inside *root*: a component
+    is a symlink or is not a directory, or the mkdir itself failed.
+    Callers treat that as "do not use this path" rather than falling back
+    to the name, since one that could not be validated is not one to hand
+    to proot as a bind source.
+
+    *mode* is applied to the leaf through its descriptor, never through
+    its name -- Linux has no AT_SYMLINK_NOFOLLOW for fchmodat(2), so a
+    named chmod is the very hole this is closing.
+
+    The name still has to be resolved once more by proot itself when it
+    binds it, so a session running against the same container can in
+    principle re-point a component in between. That window cannot be shut
+    from here; what this removes is the persistent case, where the image
+    ships the link or a guest leaves one behind between sessions.
+    """
+    try:
+        fd = opendir(root)
+    except OSError:
+        return None
+    try:
+        for part in parts:
+            try:
+                nxt = opendir_at(fd, part)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, 0o777, dir_fd=fd)
+                except FileExistsError:
+                    pass            # lost a race with another writer
+                except OSError:
+                    return None
+                try:
+                    nxt = opendir_at(fd, part)
+                except OSError:
+                    return None
+            except OSError:
+                # A symlink (ELOOP, or ENOTDIR for O_NOFOLLOW|O_DIRECTORY
+                # on Linux), or a plain file standing in the way.
+                return None
+            os.close(fd)
+            fd = nxt
+        if mode is not None:
+            _chmod_fd(fd, mode)
+        return os.path.join(root, *parts)
+    finally:
+        os.close(fd)
+
+
 def unlink_quietly(dir_fd: int, name: str) -> None:
     """Remove *name* under dir_fd, ignoring failure — for temp-file cleanup."""
     try:
