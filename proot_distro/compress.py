@@ -44,6 +44,7 @@
 # itself and gives tarfile a plain `w|` stream to write into, so both
 # spellings go through one code path at one level.
 
+import os
 import sys
 import tarfile
 
@@ -129,6 +130,23 @@ def require_read_support(path: str, subject: str = "") -> None:
         return
     if file_is_zstd(path):
         raise RuntimeError(unsupported_msg(subject or f"'{path}'"))
+
+
+def require_read_support_fd(fd: int, subject: str) -> None:
+    """require_read_support() against an open descriptor.
+
+    Same diagnosis, for a caller holding the blob open rather than
+    naming it. pread leaves the file position alone, so this can be
+    asked at any point without disturbing the read that follows.
+    """
+    if ZSTD_AVAILABLE:
+        return
+    try:
+        head = os.pread(fd, len(ZSTD_MAGIC), 0)
+    except OSError:
+        return
+    if header_is_zstd(head):
+        raise RuntimeError(unsupported_msg(subject))
 
 
 def require_write_support() -> None:

@@ -69,12 +69,15 @@
 #     so the denominator is os.path.getsize() and no upfront scan is
 #     needed.
 
+import hashlib
 import os
 import shutil
 import stat
 import tarfile
 
-from proot_distro.compress import require_read_support
+from proot_distro.compress import (
+    require_read_support, require_read_support_fd,
+)
 from proot_distro.progress import ByteCounter, clear_bar, draw_bytes_bar
 
 
@@ -96,22 +99,120 @@ def extract_tar_to_rootfs(
     # the stream reads as a truncated tar, so say what it really is.
     require_read_support(archive_path, f"archive '{archive_path}'")
 
-    total_size = os.path.getsize(archive_path)
+    with open(archive_path, "rb") as raw_fh:
+        _extract_stream(
+            raw_fh, os.path.getsize(archive_path), rootfs_dir,
+            strip=strip, handle_whiteouts=handle_whiteouts,
+        )
+
+
+class _HashingReader:
+    """Stream wrapper that hashes every byte drawn through it."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.hasher = hashlib.sha256()
+
+    def read(self, size=-1):
+        data = self._fh.read(size)
+        self.hasher.update(data)
+        return data
+
+    def readinto(self, buf):
+        n = self._fh.readinto(buf)
+        if n:
+            self.hasher.update(memoryview(buf)[:n])
+        return n
+
+    def drain(self) -> None:
+        """Pull whatever is left so the hash covers the whole stream.
+
+        tarfile stops at the end-of-archive marker, so the tail of the
+        *compressed* file is never pulled through on its own — and a
+        digest over a prefix is not a digest over the blob.
+        """
+        while self._fh.read(1 << 20):
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def extract_tar_fd_to_rootfs(
+    fd: int,
+    rootfs_dir: str,
+    *,
+    strip: int = 0,
+    handle_whiteouts: bool = False,
+    subject: str = "archive",
+    expected_sha256: str = "",
+) -> None:
+    """Stream-extract the archive behind *fd* into *rootfs_dir*.
+
+    The same extraction, reading a descriptor rather than a name. Naming
+    a blob twice — once to hash it, once to read it — is what leaves room
+    for it to change in between, and on Termux that room is real:
+    LAYER_CACHE_DIR sits under the `$TERMUX_PREFIX` bound read-write into
+    every non-isolated container, so a session running alongside an
+    install can reach it. A descriptor settles which *inode* is read.
+
+    It does not settle which *bytes*: an inode can be truncated and
+    rewritten in place just as easily as a name can be re-pointed. So
+    with *expected_sha256* the bytes are hashed **as they are consumed**
+    and the extraction raises if the total does not match. That is the
+    check that actually covers the read, the pre-hash upstream being what
+    decides whether to use the cache entry at all (evict and refetch, or
+    refuse). The hex is passed in rather than a digest string so this
+    module stays clear of helpers.docker, which imports it.
+
+    The failure is raised after the fact — the members are already on the
+    rootfs by the time the last byte proves the archive wrong. Every
+    caller discards the tree on error: `install` removes the container
+    directory, `build` its temporary stage.
+
+    The descriptor stays open and its position is left at the end;
+    callers own it.
+    """
+    require_read_support_fd(fd, subject)
+    os.lseek(fd, 0, os.SEEK_SET)
+    raw_fh = open(fd, "rb", closefd=False)
+    hashing = _HashingReader(raw_fh) if expected_sha256 else raw_fh
+    try:
+        _extract_stream(
+            hashing, os.fstat(fd).st_size, rootfs_dir,
+            strip=strip, handle_whiteouts=handle_whiteouts,
+        )
+        if expected_sha256:
+            hashing.drain()
+            actual = hashing.hasher.hexdigest()
+            if actual != expected_sha256:
+                raise RuntimeError(
+                    f"{subject} does not match its digest "
+                    f"(expected sha256:{expected_sha256}, read "
+                    f"sha256:{actual}). The blob changed while it was "
+                    f"being applied."
+                )
+    finally:
+        raw_fh.close()
+
+
+def _extract_stream(raw_fh, total_size, rootfs_dir, *, strip,
+                    handle_whiteouts) -> None:
+    """The extraction proper, over an already-open binary stream."""
     deferred_links: list = []  # (dest, src) — copied after all regular files
     deferred_dirs: list = []   # (dest, mtime) — stamped after all writes
 
-    with open(archive_path, "rb") as raw_fh:
-        counter = ByteCounter(raw_fh)
-        with tarfile.open(fileobj=counter, mode="r|*") as tf:
-            for member in tf:
-                _process_member(
-                    member, tf, rootfs_dir,
-                    strip=strip,
-                    handle_whiteouts=handle_whiteouts,
-                    deferred_links=deferred_links,
-                    deferred_dirs=deferred_dirs,
-                )
-                draw_bytes_bar(counter.count, total_size)
+    counter = ByteCounter(raw_fh)
+    with tarfile.open(fileobj=counter, mode="r|*") as tf:
+        for member in tf:
+            _process_member(
+                member, tf, rootfs_dir,
+                strip=strip,
+                handle_whiteouts=handle_whiteouts,
+                deferred_links=deferred_links,
+                deferred_dirs=deferred_dirs,
+            )
+            draw_bytes_bar(counter.count, total_size)
 
     # All regular files written; now copy hard links. shutil.copy2
     # preserves mtime, which was already set above. Both endpoints are

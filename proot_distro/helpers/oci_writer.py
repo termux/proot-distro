@@ -42,7 +42,7 @@ import tarfile
 from proot_distro.atomic import atomic_replace
 from proot_distro.helpers.docker import (
     parse_image_ref,
-    require_verified_layer,
+    open_required_layer,
     save_manifest_cache,
 )
 from proot_distro.helpers.docker.media import (
@@ -217,10 +217,15 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
                 # The archive is content-addressed for whoever loads it,
                 # so a blob is packed only if it still hashes to the name
                 # the manifest gives it.
-                src = require_verified_layer(
+                # The descriptor the check was made on, so the bytes
+                # packed are the bytes that were hashed.
+                src_fd = open_required_layer(
                     layer["digest"], what="Layer blob"
                 )
-                _add_file(tf, src, f"blobs/sha256/{hex_digest}")
+                try:
+                    _add_fd(tf, src_fd, f"blobs/sha256/{hex_digest}")
+                finally:
+                    os.close(src_fd)
 
 
 def _build_docker_manifest(manifest, config_digest_hex, image_ref):
@@ -263,8 +268,9 @@ def _add_bytes(tf, arcname, data):
     tf.addfile(tinfo, io.BytesIO(data))
 
 
-def _add_file(tf, src_path, arcname):
-    st = os.stat(src_path)
+def _add_fd(tf, src_fd, arcname):
+    """Add the open file *src_fd* to *tf* under *arcname*."""
+    st = os.fstat(src_fd)
     tinfo = tarfile.TarInfo(arcname)
     tinfo.size = st.st_size
     tinfo.mode = 0o644
@@ -273,5 +279,5 @@ def _add_file(tf, src_path, arcname):
     tinfo.gid = 0
     tinfo.uname = ""
     tinfo.gname = ""
-    with open(src_path, "rb") as fh:
-        tf.addfile(tinfo, fh)
+    os.lseek(src_fd, 0, os.SEEK_SET)
+    tf.addfile(tinfo, open(src_fd, "rb", closefd=False))

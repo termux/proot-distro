@@ -52,7 +52,7 @@ from proot_distro.helpers.build_engine.constants import PREDEFINED_ARGS
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.users import resolve_user_for_proot
 from proot_distro.helpers.docker import (
-    apply_layer, layer_cache_path, verified_layer_path,
+    apply_layer, layer_cache_path, open_verified_layer,
 )
 from proot_distro.helpers.layer_diff import (
     diff_snapshots, snapshot, write_layer_tar,
@@ -93,11 +93,15 @@ def do_run(engine, instr):
             # is not a cache hit: the step is re-run instead, which is
             # what an evicted blob would have caused anyway.
             try:
-                cached_path = verified_layer_path(hit["layer_digest"])
+                cached_fd = open_verified_layer(hit["layer_digest"])
             except RuntimeError:
-                cached_path = None
-            if cached_path is not None:
-                apply_layer(cached_path, stage.rootfs_dir)
+                cached_fd = None
+            if cached_fd is not None:
+                try:
+                    apply_layer(cached_fd, stage.rootfs_dir,
+                                digest=hit["layer_digest"])
+                finally:
+                    os.close(cached_fd)
                 stage.layers.append({
                     "digest": hit["layer_digest"],
                     "size": hit["size"],

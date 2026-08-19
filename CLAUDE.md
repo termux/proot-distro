@@ -692,14 +692,38 @@ a remote party chose the digests for. Taken at its name, either one
 gets applied into the *next* image that references that digest — with
 no download, since a present blob short-circuits the fetch. So
 `cache.py` owns the choke points and every consumer goes through one:
-`verified_layer_path()` where the blob can be obtained again (pull,
+`open_verified_layer()` where the blob can be obtained again (pull,
 `download_blob`'s own cache hit, `install`'s OCI path, a `RUN`
 build-cache hit) — mismatch ⇒ warn, unlink, refetch or re-run — and
-`require_verified_layer()` where it cannot (`push`, `write_oci_archive`,
+`open_required_layer()` where it cannot (`push`, `write_oci_archive`,
 `FROM <stage>` re-apply) — mismatch ⇒ refuse, and *leave the file*, a
 locally built layer existing nowhere else. `pull_image` runs
 `_usable_cached_layers()` once per pull so the "all cached?" question
 and each "download or reuse?" question share one hash per blob.
+
+Both hand back an open **descriptor**, never a path, and every consumer
+reads through it: `apply_layer`, `_add_fd` (OCI archive) and
+`_upload_blob_fd` (push) all take one, and `download_blob` opens its
+temporary *before* `atomic_replace` promotes it, so the fd is bound to
+the inode those bytes went into. Hashing a name and then reading that
+name are two acts on two possibly-different files, and the window is
+not theoretical — a session can be running against a container while an
+install proceeds, and on Termux it can reach the cache.
+
+A descriptor settles which *inode* is read, not which *bytes*: the same
+inode can be truncated and rewritten in place. So `apply_layer` also
+passes the expected hex to `extract_tar_fd_to_rootfs`, which hashes the
+stream **as it is consumed** (`_HashingReader`, plus a `drain()` — tarfile
+stops at the end-of-archive marker, and a digest over a prefix is no
+digest at all) and raises if the total does not match. That check is
+after the fact by nature: the members are on the rootfs by the time the
+last byte proves the archive wrong, which is why every caller discards
+the tree on error (`install` removes the container directory, `build`
+its temporary stage). The pre-hash upstream is what decides whether to
+*use* a cache entry — evict and refetch, or refuse; the streaming hash
+is what covers the read. `expected_sha256` is passed as hex rather than
+a digest string so `tar_extract` stays clear of `helpers.docker`, which
+imports it.
 `split_digest()` refuses an algorithm the program cannot compute
 (anything but sha256): a digest that cannot be checked must not be a
 digest a blob is trusted under. Blobs written by the build engine take

@@ -45,7 +45,7 @@ from proot_distro.progress import (
     clear_bar, fmt_size,
 )
 from proot_distro.helpers.docker.cache import (
-    file_matches_digest, layer_cache_path, load_manifest_cache,
+    layer_cache_path, load_manifest_cache, open_required_layer,
 )
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
@@ -181,15 +181,20 @@ def _upload_blob_bytes(
     retry_http(_attempt, what=f"Uploading {digest[:19]}")
 
 
-def _upload_blob_file(
-    repo: str, digest: str, file_path: str, token: str,
+def _upload_blob_fd(
+    repo: str, digest: str, src_fd: int, token: str,
     base: str, insecure: bool = False, label: str = "",
 ) -> None:
-    """Upload a blob from *file_path* (streamed, POST + monolithic PUT)."""
+    """Upload the blob behind *src_fd* (streamed, POST + monolithic PUT).
+
+    A descriptor rather than a path, so the bytes published are the ones
+    the digest check was made on — see cache.open_required_layer. Each
+    attempt rewinds it, since a retry re-streams from the start.
+    """
     headers = {**_ua()}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    size = os.path.getsize(file_path)
+    size = os.fstat(src_fd).st_size
 
     def _attempt():
         # A retry re-opens the upload session and re-streams the file from the
@@ -206,7 +211,8 @@ def _upload_blob_file(
         sep = "&" if "?" in put_url else "?"
         put_url = f"{put_url}{sep}digest={urllib.parse.quote(digest, safe='')}"
         try:
-            with open(file_path, "rb") as fh:
+            os.lseek(src_fd, 0, os.SEEK_SET)
+            with open(src_fd, "rb", closefd=False) as fh:
                 reader = _ProgressReader(fh, size, label or digest[:19])
                 put_req = urllib.request.Request(
                     put_url,
@@ -342,8 +348,6 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     for i, layer in enumerate(layers):
         digest = layer["digest"]
         short_id = digest.split(":")[-1][:12]
-        path = layer_cache_path(digest)
-        size = os.path.getsize(path)
 
         try:
             if _blob_exists(repo, digest, token, base, insecure):
@@ -351,21 +355,23 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
                          f"exists on registry, skipping upload.")
                 continue
 
-            log_info(f"{short_id}: Uploading layer {i + 1}/{n_layers} "
-                     f"({fmt_size(size)})...")
             # The registry hashes what we PUT and rejects a mismatch with
             # an opaque 400; checking here names the real problem, and
             # keeps a cache blob that was swapped for someone else's
             # content from being published under this image's digest.
-            if not file_matches_digest(path, digest):
-                raise RuntimeError(
-                    f"Layer blob {digest} does not match its digest; the "
-                    f"local cache holds content that was not produced by "
-                    f"this build. Rebuild the image before pushing."
+            # The upload then streams the descriptor the check was made
+            # on, so the name cannot be re-pointed in between.
+            src_fd = open_required_layer(digest)
+            try:
+                size = os.fstat(src_fd).st_size
+                log_info(f"{short_id}: Uploading layer {i + 1}/{n_layers} "
+                         f"({fmt_size(size)})...")
+                _upload_blob_fd(
+                    repo, digest, src_fd, token, base, insecure,
+                    label=short_id,
                 )
-            _upload_blob_file(
-                repo, digest, path, token, base, insecure, label=short_id,
-            )
+            finally:
+                os.close(src_fd)
             bytes_uploaded += size
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):

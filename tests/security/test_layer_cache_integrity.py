@@ -78,7 +78,8 @@ def test_pull_refetches_a_poisoned_cached_layer(tmp_path, builders,
         called.append(dg)
         with open(layer_cache_path(dg), "wb") as fh:
             fh.write(good)
-        return layer_cache_path(dg)
+        # download_blob hands back an open descriptor, not a name.
+        return os.open(layer_cache_path(dg), os.O_RDONLY)
 
     monkeypatch.setattr(pull_mod, "download_blob", fake_download)
 
@@ -89,6 +90,110 @@ def test_pull_refetches_a_poisoned_cached_layer(tmp_path, builders,
     assert called == [digest], "the poisoned blob was not reused"
     assert (root / "etc" / "os-release").read_bytes() == b"ID=real\n"
     assert not (root / "etc" / "PWNED").exists()
+
+
+def _swap_between_check_and_apply(monkeypatch, swap):
+    """Run *swap* just before the first apply, as a live guest could."""
+    real_apply = pull_mod.apply_layer
+    done = []
+
+    def apply_after_swap(layer_fd, rootfs_dir, **kw):
+        if not done:
+            done.append(swap())
+        return real_apply(layer_fd, rootfs_dir, **kw)
+
+    monkeypatch.setattr(pull_mod, "apply_layer", apply_after_swap)
+    return done
+
+
+def test_pull_applies_the_inode_it_hashed_not_the_name(tmp_path, builders,
+                                                       monkeypatch):
+    """The blob's *name* is re-pointed after verification, before the apply.
+
+    Verification used to hand back a path, so the extraction opened the
+    name a second time and got whatever was standing there by then. On
+    Termux that is a live possibility rather than a thought experiment:
+    the layer cache sits under the $TERMUX_PREFIX bound read-write into
+    every non-isolated container, so a session can be running while an
+    install proceeds. Carrying the descriptor settles which inode is
+    read, so the good layer still lands and the pull succeeds.
+    """
+    digest = _seed_image(builders)
+    path = layer_cache_path(digest)
+
+    def repoint():
+        evil, _d, _i = builders.make_layer_blob(EVIL)
+        os.unlink(path)                     # a new inode under the old name
+        with open(path, "wb") as fh:
+            fh.write(evil)
+        return True
+
+    done = _swap_between_check_and_apply(monkeypatch, repoint)
+
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    pull_mod.pull_image("x:1", str(root), "x86_64")
+
+    assert done, "the test did not exercise the swap"
+    assert (root / "etc" / "os-release").read_bytes() == b"ID=real\n"
+    assert not (root / "etc" / "PWNED").exists()
+
+
+def test_pull_refuses_a_blob_rewritten_under_its_own_descriptor(
+        tmp_path, builders, monkeypatch):
+    """The same inode is truncated and rewritten in place.
+
+    A descriptor cannot help here — it names the inode being rewritten —
+    so the guarantee has to come from hashing the bytes as they are
+    consumed. The attacker's layer is applied and then the digest check
+    at the end of the stream refuses it, which is why every caller
+    discards the tree on error rather than keeping a partial rootfs.
+    """
+    digest = _seed_image(builders)
+
+    # _poison opens the existing file "wb": same inode, new content.
+    done = _swap_between_check_and_apply(
+        monkeypatch, lambda: _poison(digest, builders))
+
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    with pytest.raises(RuntimeError, match="does not match its digest"):
+        pull_mod.pull_image("x:1", str(root), "x86_64")
+
+    assert done, "the test did not exercise the swap"
+
+
+def _open_fds():
+    return set(os.listdir("/proc/self/fd"))
+
+
+def test_pull_leaves_no_open_descriptors(tmp_path, builders):
+    # The verified blobs are held open for the whole pull, so the cleanup
+    # has to be exact -- a leak here would accumulate one fd per layer per
+    # install.
+    _seed_image(builders)
+    root = tmp_path / "rootfs"
+    root.mkdir()
+
+    before = _open_fds()
+    pull_mod.pull_image("x:1", str(root), "x86_64")
+    assert len(_open_fds() - before) == 0
+
+
+def test_pull_closes_descriptors_when_a_layer_fails(tmp_path, builders,
+                                                    monkeypatch):
+    digest = _seed_image(builders)
+    monkeypatch.setattr(pull_mod, "apply_layer",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("boom")))
+    root = tmp_path / "rootfs"
+    root.mkdir()
+
+    before = _open_fds()
+    with pytest.raises(RuntimeError, match="boom"):
+        pull_mod.pull_image("x:1", str(root), "x86_64")
+    assert len(_open_fds() - before) == 0
+    assert os.path.isfile(layer_cache_path(digest))
 
 
 def test_pull_offline_refuses_a_poisoned_cached_layer(tmp_path, builders,
@@ -312,7 +417,7 @@ def test_push_refuses_a_poisoned_layer_blob(builders, monkeypatch):
     monkeypatch.setattr(push_mod, "_blob_exists", lambda *a, **k: False)
 
     uploaded = []
-    monkeypatch.setattr(push_mod, "_upload_blob_file",
+    monkeypatch.setattr(push_mod, "_upload_blob_fd",
                         lambda *a, **k: uploaded.append(a))
 
     with pytest.raises(RuntimeError, match="does not match its digest"):

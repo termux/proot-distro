@@ -148,8 +148,7 @@ def test_writethrough_absolute_symlink_across_layers_contained(env):
     # The realistic OCI vector: one layer plants 'evil' -> /abs/host-dir and a
     # *later* layer writes 'evil/pwned' through the now-existing symlink. The
     # pre-existing absolute symlink must not be followed out of the rootfs.
-    from _builders import make_tar
-    from proot_distro.helpers.docker.layers import apply_layer
+    from _builders import apply_layer_file, make_tar
 
     tmp_path, root, sentinel = env
     outside = str(tmp_path / "outside")
@@ -161,8 +160,8 @@ def test_writethrough_absolute_symlink_across_layers_contained(env):
     make_tar(str(l2),
              [{"name": "evil/pwned", "type": "file", "data": b"ESCAPED"}],
              compression="gz")
-    apply_layer(str(l1), root)
-    apply_layer(str(l2), root)
+    apply_layer_file(str(l1), root)
+    apply_layer_file(str(l2), root)
 
     assert not os.path.exists(os.path.join(outside, "pwned"))
     assert sorted(os.listdir(outside)) == ["secret"]

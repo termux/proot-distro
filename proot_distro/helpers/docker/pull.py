@@ -38,6 +38,7 @@
 # word is treated as evidence of content.
 
 import json
+import os
 import urllib.error
 import urllib.request
 
@@ -50,7 +51,7 @@ from proot_distro.helpers.docker.cache import (
     load_manifest_cache,
     require_data_digest,
     save_manifest_cache,
-    verified_layer_path,
+    open_verified_layer,
 )
 from proot_distro.helpers.docker.layers import apply_layer, download_blob
 from proot_distro.helpers.docker.media import (
@@ -212,25 +213,39 @@ def _fetch_config_blob(
 
 
 def _usable_cached_layers(layers: list) -> dict:
-    """Return ``{digest: path}`` for every layer blob already usable.
+    """Return ``{digest: fd}`` for every layer blob already usable.
 
     Usable means present *and* hashing to its own digest. A blob that
-    fails is dropped by verified_layer_path(), so it is simply absent
+    fails is dropped by open_verified_layer(), so it is simply absent
     here and gets downloaded again like any other missing layer.
 
     Deciding this once per pull, before the first apply, is what keeps
     the cost at one hash per blob: the "is it all cached?" question and
     the per-layer "download or reuse?" question read the same answer.
+
+    The descriptors are held open for the rest of the pull, which is
+    what makes that one hash count for the apply as well — the bytes
+    extracted are the ones hashed here, not whatever the name refers to
+    by then. pull_image closes them.
     """
     usable = {}
     for layer in layers:
         digest = layer.get("digest")
         if not digest or digest in usable:
             continue
-        path = verified_layer_path(digest)
-        if path is not None:
-            usable[digest] = path
+        fd = open_verified_layer(digest)
+        if fd is not None:
+            usable[digest] = fd
     return usable
+
+
+def _close_all(fds) -> None:
+    """Close every descriptor in *fds*, ignoring failures."""
+    for fd in fds:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def pull_image(
@@ -257,16 +272,32 @@ def pull_image(
     """
     token = None
     base = None
+    # Descriptors on verified cached blobs, held for the whole pull so the
+    # hash taken below is the one the apply reads through; closed in the
+    # finally, on every path out including a failed download.
+    usable: dict = {}
 
     manifest, repo, image_config = load_manifest_cache(image_ref, arch)
     registry = parse_image_ref(image_ref)[0]
+    try:
+        return _pull_layers(
+            image_ref, rootfs_dir, arch, insecure,
+            manifest, repo, image_config, registry, token, base, usable,
+        )
+    finally:
+        _close_all(usable.values())
+
+
+def _pull_layers(image_ref, rootfs_dir, arch, insecure,
+                 manifest, repo, image_config, registry, token, base, usable):
+    """pull_image's body, with the caller owning the descriptor cleanup."""
 
     if manifest is not None:
         # The hit proves which image this entry holds; record it when the
         # entry is an old one that never stored its own reference.
         annotate_manifest_cache(image_ref, arch)
         layers = manifest.get("layers", [])
-        usable = _usable_cached_layers(layers)
+        usable.update(_usable_cached_layers(layers))
         missing = sum(1 for layer in layers if layer["digest"] not in usable)
         if not missing:
             log_info(f"Image '{image_ref}' ({arch}) is cached.")
@@ -316,7 +347,7 @@ def pull_image(
             repo, cfg_digest, token, base, insecure
         )
         save_manifest_cache(image_ref, arch, manifest, repo, image_config)
-        usable = _usable_cached_layers(manifest.get("layers", []))
+        usable.update(_usable_cached_layers(manifest.get("layers", [])))
 
     layers = manifest.get("layers", [])
     if not layers:
@@ -336,18 +367,21 @@ def pull_image(
             )
 
         short_id = digest.split(":")[-1][:12]
-        cached_path = usable.get(digest)
-        if cached_path is not None:
+        # A cached descriptor belongs to `usable` and is closed with it —
+        # the same layer may be listed twice, and extraction rewinds — while
+        # a freshly downloaded one is this iteration's to close.
+        layer_fd = usable.get(digest)
+        owned = layer_fd is None
+        if not owned:
             log_info(f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
                      f"skipping download.")
-            layer_path = cached_path
         else:
             size = layer.get("size", 0)
             size_str = f" ({fmt_size(size)})" if size else ""
             log_info(f"{short_id}: Downloading layer "
                      f"{i + 1}/{n_layers}{size_str}...")
             try:
-                layer_path = download_blob(
+                layer_fd = download_blob(
                     repo, digest, token or "", base, insecure
                 )
             except urllib.error.HTTPError as dl_err:
@@ -358,7 +392,11 @@ def pull_image(
                 raise
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
-        apply_layer(layer_path, rootfs_dir)
+        try:
+            apply_layer(layer_fd, rootfs_dir, digest=digest)
+        finally:
+            if owned:
+                _close_all((layer_fd,))
 
     return {
         "manifest": manifest,

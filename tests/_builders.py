@@ -132,6 +132,21 @@ def rootfs_members(extra=()):
 # Layer blobs (gzipped tar) + OCI image-layout archives
 # ---------------------------------------------------------------------------
 
+def apply_layer_file(path, rootfs_dir):
+    """apply_layer() for a blob that lives at *path*.
+
+    The production API takes the descriptor the digest check was made on
+    (cache.open_verified_layer), so a test holding a blob on disk opens it
+    itself. Kept here so the ownership rule stays in one place.
+    """
+    from proot_distro.helpers.docker.layers import apply_layer
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        apply_layer(fd, rootfs_dir)
+    finally:
+        os.close(fd)
+
+
 def make_layer_blob(members):
     """Return (gzip_bytes, digest, diff_id) for an OCI/Docker layer."""
     raw = make_tar_bytes(members)

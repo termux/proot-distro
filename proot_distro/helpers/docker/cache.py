@@ -29,8 +29,12 @@
 #       into every non-isolated container, and `install <archive>`
 #       deposits blobs a remote party chose the digests for. Every
 #       consumer therefore re-hashes a blob before using it, via
-#       verified_layer_path() (re-obtainable: evict and refetch) or
-#       require_verified_layer() (locally built: refuse, keep the file).
+#       open_verified_layer() (re-obtainable: evict and refetch) or
+#       open_required_layer() (locally built: refuse, keep the file).
+#       Both hand back an open **descriptor**, not a path: hashing a
+#       name and then reading that name again are two acts on two
+#       possibly-different files, and a guest sharing the directory can
+#       swap the blob in between.
 #
 #   manifests/<sha256-prefix>.json
 #       { "image_ref": ..., "arch": ...,
@@ -50,6 +54,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.constants import (
@@ -169,7 +174,7 @@ def load_manifest_cache(image_ref: str, arch: str):
 def all_layers_cached(layers: list) -> bool:
     """Return True iff every layer's blob file is already on disk.
 
-    Presence only — see verified_layer_path() for the content check a
+    Presence only — see open_verified_layer() for the content check a
     caller must make before it uses a blob for anything.
     """
     return all(
@@ -248,31 +253,82 @@ def file_matches_digest(path: str, digest: str) -> bool:
     return hasher.hexdigest() == expected
 
 
-def verified_layer_path(digest: str, *, evict: bool = True):
-    """Return the cached blob path for *digest*, or None.
+def fd_matches_digest(fd: int, digest: str) -> bool:
+    """True when the bytes behind *fd* hash to *digest*.
 
-    None means "do not use the cache for this layer": either no blob is
-    there, or the one that is does not hash to its own name. In the
-    second case the file is removed (unless *evict* is False) so the
+    The position is rewound before and after, so the caller can hand the
+    same descriptor straight to whoever reads it.
+    """
+    _algo, expected = split_digest(digest)
+    hasher = hashlib.sha256()
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(fd, _BLOB_CHUNK)
+            if not chunk:
+                break
+            hasher.update(chunk)
+        os.lseek(fd, 0, os.SEEK_SET)
+    except OSError:
+        return False
+    return hasher.hexdigest() == expected
+
+
+def _open_blob(digest: str):
+    """Open the cache file for *digest* read-only. Descriptor, or None.
+
+    O_NOFOLLOW, and a regular file or nothing: this directory is not
+    only ours to write (see the module header), so the entry standing
+    at a blob's name may be a symlink or a pipe someone else put there.
+    """
+    try:
+        fd = os.open(layer_cache_path(digest), os.O_RDONLY | os.O_NOFOLLOW
+                     | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return None
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def open_verified_layer(digest: str, *, evict: bool = True):
+    """Open the cached blob for *digest* if it matches. Descriptor, or None.
+
+    None means "do not use the cache for this layer": either no usable
+    blob is there, or the one that is does not hash to its own name. In
+    the second case the file is removed (unless *evict* is False) so the
     next attempt refetches it, and the user is told — a blob whose
     content stopped matching its digest was replaced by something, and
     silently repairing that would hide it.
 
+    A **descriptor** rather than a path, because hashing a name and then
+    reading that name again are two acts on two possibly-different
+    files. The window is not theoretical: on Termux LAYER_CACHE_DIR sits
+    under the `$TERMUX_PREFIX` bound read-write into every non-isolated
+    container, so a guest running while an install proceeds can swap the
+    blob between the check and the read. The caller closes it.
+
     Use this wherever the blob can be obtained again (a registry pull, a
-    build-cache hit, an archive still open); use require_verified_layer()
+    build-cache hit, an archive still open); use open_required_layer()
     where it cannot.
     """
-    path = layer_cache_path(digest)
-    if not os.path.isfile(path):
+    fd = _open_blob(digest)
+    if fd is None:
         return None
-    if file_matches_digest(path, digest):
-        return path
+    if fd_matches_digest(fd, digest):
+        return fd
+    os.close(fd)
     short = digest.split(":")[-1][:12]
     if evict:
         warn(f"Cached layer {short} does not match its digest; discarding "
              f"it so it can be fetched again.")
         try:
-            os.unlink(path)
+            os.unlink(layer_cache_path(digest))
         except OSError:
             pass
     else:
@@ -280,26 +336,27 @@ def verified_layer_path(digest: str, *, evict: bool = True):
     return None
 
 
-def require_verified_layer(digest: str, *, what: str = "Layer blob") -> str:
-    """Return the cached blob path for *digest*; raise if it is unusable.
+def open_required_layer(digest: str, *, what: str = "Layer blob") -> int:
+    """Open the cached blob for *digest*; raise if unusable. Descriptor.
 
-    The no-refetch counterpart of verified_layer_path(): a locally built
+    The no-refetch counterpart of open_verified_layer(): a locally built
     layer exists nowhere else, so a mismatch is reported and the file is
     left alone for the user to inspect rather than deleted out from
-    under them.
+    under them. The caller closes the descriptor.
     """
-    path = layer_cache_path(digest)
-    if not os.path.isfile(path):
+    fd = _open_blob(digest)
+    if fd is None:
         raise RuntimeError(
             f"{what} {digest} is missing from the layer cache."
         )
-    if not file_matches_digest(path, digest):
+    if not fd_matches_digest(fd, digest):
+        os.close(fd)
         raise RuntimeError(
             f"{what} {digest} does not match its digest; the layer cache "
             f"holds content that was not produced by this build. Rebuild "
             f"the image to repopulate the cache."
         )
-    return path
+    return fd
 
 
 # ---------------------------------------------------------------------------

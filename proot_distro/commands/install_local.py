@@ -35,6 +35,7 @@
 
 import hashlib
 import json
+import os
 import sys
 import tarfile
 
@@ -44,8 +45,8 @@ from proot_distro.message import log_info
 from proot_distro.progress import clear_bar, progress_active
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER, DOCKER_TO_ARCH, apply_layer, layer_cache_path,
-    require_data_digest, split_digest, validate_digest,
-    verified_layer_path,
+    open_verified_layer, require_data_digest, split_digest,
+    validate_digest,
 )
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
@@ -200,12 +201,17 @@ def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
 def _oci_cache_layer(tf, member_map, digest):
     """Extract a layer blob from the outer archive into LAYER_CACHE_DIR.
 
+    Returns an open descriptor on the cached blob; the caller closes it.
     The bytes are hashed as they are copied and the blob is promoted
     only if it matches *digest*. The cache is shared with every image
     the user pulls and a cached blob is reused on the strength of its
     name, so a layer that does not hash to the digest the archive names
     it by must never reach it — otherwise one crafted archive silently
     replaces a layer of any image whose digests it chooses to claim.
+
+    The descriptor is taken on the temporary before it is renamed into
+    place, so it is bound to the inode these bytes went into rather than
+    to a name that something else may claim afterwards.
     """
     blob_path = _oci_blob_path(digest)
     _algo, expected_hex = split_digest(digest)
@@ -231,9 +237,10 @@ def _oci_cache_layer(tf, member_map, digest):
                     f"sha256:{actual_hex}). The archive is corrupt or was "
                     f"tampered with."
                 )
+            fd = os.open(tmp, os.O_RDONLY)
     finally:
         fobj.close()
-    return cache_path
+    return fd
 
 
 def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
@@ -274,9 +281,12 @@ def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
         short_id = digest[:19]
         size = layer.get("size", 0)
         size_str = f" ({fmt_size(size)})" if size else ""
-        cache_path = verified_layer_path(digest)
+        # A descriptor, not a name: the blob is hashed and then read, and
+        # naming it twice is what lets it change in between (see
+        # cache.open_verified_layer).
+        layer_fd = open_verified_layer(digest)
 
-        if cache_path is not None:
+        if layer_fd is not None:
             log_info(f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
                      f"skipping.")
         else:
@@ -284,10 +294,16 @@ def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
             # digest — either way the archive in hand is the better copy.
             log_info(f"{short_id}: Caching layer "
                      f"{i + 1}/{n_layers}{size_str}...")
-            cache_path = _oci_cache_layer(tf, member_map, digest)
+            layer_fd = _oci_cache_layer(tf, member_map, digest)
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
-        apply_layer(cache_path, rootfs_dir)
+        try:
+            apply_layer(layer_fd, rootfs_dir, digest=digest)
+        finally:
+            try:
+                os.close(layer_fd)
+            except OSError:
+                pass
 
     annotations = manifest_entry.get("annotations", {})
     image_ref = (

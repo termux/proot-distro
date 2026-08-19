@@ -4,8 +4,8 @@
 import os
 import tarfile
 
+from _builders import apply_layer_file
 from proot_distro.helpers import layer_diff
-from proot_distro.helpers.docker.layers import apply_layer
 
 
 def _write(path, data=b"x"):
@@ -67,7 +67,7 @@ def test_write_layer_tar_roundtrip(tmp_path):
 
     dest = str(tmp_path / "dest")
     os.makedirs(dest)
-    apply_layer(out, dest)
+    apply_layer_file(out, dest)
     assert open(os.path.join(dest, "etc", "hostname"), "rb").read() == b"guest\n"
     assert open(os.path.join(dest, "usr", "bin", "tool"), "rb").read() == b"BINARY"
     assert os.readlink(os.path.join(dest, "etc", "alias")) == "hostname"
@@ -118,7 +118,7 @@ def test_write_files_layer_roundtrip(tmp_path):
     layer_diff.write_files_layer(file_map, out)
     dest = str(tmp_path / "dest")
     os.makedirs(dest)
-    apply_layer(out, dest)
+    apply_layer_file(out, dest)
     assert open(os.path.join(dest, "etc", "conf"), "rb").read() == b"cfg"
     assert os.readlink(os.path.join(dest, "etc", "link")) == "conf"
 

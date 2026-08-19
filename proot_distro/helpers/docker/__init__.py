@@ -57,11 +57,11 @@ from proot_distro.helpers.docker.cache import (
     manifest_cache_path,
     referenced_blob_digests,
     require_data_digest,
-    require_verified_layer,
+    open_required_layer,
     save_manifest_cache,
     split_digest,
     validate_digest,
-    verified_layer_path,
+    open_verified_layer,
 )
 from proot_distro.helpers.docker.transport import (
     AuthStrippingRedirectHandler,
@@ -120,11 +120,11 @@ __all__ = (
     "referenced_blob_digests",
     "registry_base_url",
     "require_data_digest",
-    "require_verified_layer",
+    "open_required_layer",
     "save_manifest_cache",
     "search_images",
     "split_digest",
     "validate_digest",
-    "verified_layer_path",
+    "open_verified_layer",
     "with_explicit_tag",
 )

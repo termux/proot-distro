@@ -25,36 +25,41 @@
 # they don't get clobbered by intermediate file writes.
 
 import hashlib
+import os
 import urllib.request
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
 from proot_distro.helpers.download import retry_http
 from proot_distro.helpers.docker.cache import (
-    layer_cache_path, split_digest, verified_layer_path,
+    layer_cache_path, open_verified_layer, split_digest,
 )
 from proot_distro.helpers.docker.transport import (
     opener, _ua,
 )
-from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
+from proot_distro.helpers.tar_extract import extract_tar_fd_to_rootfs
 
 
 def download_blob(
     repo: str, digest: str, token: str, base: str,
     insecure: bool = False,
-) -> str:
-    """Download a blob to the layer cache; return the local file path.
+) -> int:
+    """Download a blob to the layer cache; return an open descriptor on it.
 
     Streams the bytes through sha256 and verifies the result against the
-    expected *digest* before promoting the .tmp file.
+    expected *digest* before promoting the .tmp file. The descriptor is
+    opened on that .tmp *before* the rename, so it names the very inode
+    whose bytes were just hashed — os.replace() carries the inode across,
+    and re-opening the destination by name afterwards would have cost a
+    second full hash to prove the same thing. The caller closes it.
 
     A blob already in the cache is re-hashed rather than taken at its
-    name (verified_layer_path): the file may have been written by
+    name (open_verified_layer): the file may have been written by
     something other than this function, so its name is not evidence of
     its content. One that fails is dropped and downloaded again.
     """
     dest = layer_cache_path(digest)
-    cached = verified_layer_path(digest)
+    cached = open_verified_layer(digest)
     if cached is not None:
         return cached
 
@@ -89,20 +94,37 @@ def download_blob(
                         f"Layer integrity check failed for digest '{digest}': "
                         f"expected {expected_hex}, got {actual_hex}."
                     )
+                # Opened before the rename below promotes it, so the
+                # descriptor is bound to the inode these bytes went into
+                # and nothing that later happens to the name can change
+                # what the caller reads.
+                fd = os.open(tmp, os.O_RDONLY)
         finally:
             clear_bar()
-        return dest
+        return fd
 
     short_id = digest.split(":")[-1][:12]
     return retry_http(_attempt, what=f"Downloading layer {short_id}")
 
 
-def apply_layer(layer_path: str, rootfs_dir: str) -> None:
+def apply_layer(layer_fd: int, rootfs_dir: str, *, digest: str = "") -> None:
     """Apply one OCI/Docker layer (gzipped tar) onto rootfs_dir.
 
-    Thin wrapper around extract_tar_to_rootfs that turns on OCI
-    whiteout handling (.wh.<name> deletes sibling, .wh..wh..opq
-    clears the parent dir). See that function for the full set of
-    invariants enforced during extraction.
+    Takes the **descriptor** the verification handed back, not a path, so
+    the inode read is the one that was hashed (see
+    cache.open_verified_layer). With *digest* the extraction re-hashes as
+    it consumes and refuses a total that does not match, which is what
+    covers the remaining case a descriptor cannot: the same inode
+    truncated and rewritten in place. Thin wrapper around
+    extract_tar_fd_to_rootfs that turns on OCI whiteout handling
+    (.wh.<name> deletes sibling, .wh..wh..opq clears the parent dir). See
+    that function for the full set of invariants enforced during
+    extraction.
     """
-    extract_tar_to_rootfs(layer_path, rootfs_dir, handle_whiteouts=True)
+    short = digest.split(":")[-1][:12] if digest else ""
+    expected = split_digest(digest)[1] if digest else ""
+    extract_tar_fd_to_rootfs(
+        layer_fd, rootfs_dir, handle_whiteouts=True,
+        subject=f"layer {short}" if short else "layer",
+        expected_sha256=expected,
+    )

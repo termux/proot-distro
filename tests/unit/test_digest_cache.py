@@ -190,14 +190,53 @@ def test_file_matches_digest(tmp_path):
     assert cache.file_matches_digest(str(tmp_path / "absent"), digest) is False
 
 
-def test_verified_layer_path_accepts_intact_blob(builders):
+def _read_fd(fd):
+    """Read a descriptor from the start without consuming ownership."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def test_open_verified_layer_accepts_intact_blob(builders):
     digest, _size, _diff = builders.seed_cached_layer(
         [{"name": "etc/x", "type": "file", "data": b"1"}]
     )
-    assert cache.verified_layer_path(digest) == cache.layer_cache_path(digest)
+    fd = cache.open_verified_layer(digest)
+    assert fd is not None
+    try:
+        # The descriptor is the blob, and it comes back rewound so the
+        # caller can hand it straight to whoever reads it.
+        assert os.lseek(fd, 0, os.SEEK_CUR) == 0
+        assert _read_fd(fd) == open(cache.layer_cache_path(digest), "rb").read()
+    finally:
+        os.close(fd)
 
 
-def test_verified_layer_path_evicts_and_warns(builders, capsys):
+def test_open_verified_layer_reads_the_bytes_it_hashed(builders):
+    # The point of returning a descriptor: repointing the *name* after the
+    # check cannot change what the caller goes on to read.
+    digest, _size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"1"}]
+    )
+    path = cache.layer_cache_path(digest)
+    good = open(path, "rb").read()
+
+    fd = cache.open_verified_layer(digest)
+    assert fd is not None
+    try:
+        os.unlink(path)
+        with open(path, "wb") as fh:
+            fh.write(b"swapped after the check")
+        assert _read_fd(fd) == good
+    finally:
+        os.close(fd)
+
+
+def test_open_verified_layer_evicts_and_warns(builders, capsys):
     digest, _size, _diff = builders.seed_cached_layer(
         [{"name": "etc/x", "type": "file", "data": b"1"}]
     )
@@ -205,39 +244,59 @@ def test_verified_layer_path_evicts_and_warns(builders, capsys):
     with open(path, "wb") as fh:
         fh.write(b"not the layer this name promises")
 
-    assert cache.verified_layer_path(digest) is None
+    assert cache.open_verified_layer(digest) is None
     assert not os.path.exists(path), "a mismatched blob is dropped"
     assert "does not match its digest" in capsys.readouterr().err
 
 
-def test_verified_layer_path_keeps_blob_when_evict_false(builders):
+def test_open_verified_layer_keeps_blob_when_evict_false(builders):
     digest, _size, _diff = builders.seed_cached_layer(
         [{"name": "etc/x", "type": "file", "data": b"1"}]
     )
     path = cache.layer_cache_path(digest)
     with open(path, "wb") as fh:
         fh.write(b"tampered")
-    assert cache.verified_layer_path(digest, evict=False) is None
+    assert cache.open_verified_layer(digest, evict=False) is None
     assert os.path.isfile(path)
 
 
-def test_verified_layer_path_missing_blob():
-    assert cache.verified_layer_path("sha256:" + "0" * 64) is None
+def test_open_verified_layer_missing_blob():
+    assert cache.open_verified_layer("sha256:" + "0" * 64) is None
 
 
-def test_require_verified_layer_refuses_without_deleting(builders):
+def test_open_verified_layer_refuses_a_symlinked_blob(builders, tmp_path):
+    # The cache directory is not only ours to write (on Termux it sits
+    # under the bound $TERMUX_PREFIX), so the entry at a blob's name may
+    # be a link someone else put there. O_NOFOLLOW refuses it.
     digest, _size, _diff = builders.seed_cached_layer(
         [{"name": "etc/x", "type": "file", "data": b"1"}]
     )
-    assert cache.require_verified_layer(digest) == cache.layer_cache_path(digest)
+    path = cache.layer_cache_path(digest)
+    elsewhere = tmp_path / "elsewhere"
+    os.replace(path, str(elsewhere))
+    os.symlink(str(elsewhere), path)
+
+    assert cache.open_verified_layer(digest, evict=False) is None
+
+
+def test_open_required_layer_refuses_without_deleting(builders):
+    digest, _size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"1"}]
+    )
+    fd = cache.open_required_layer(digest)
+    try:
+        assert os.fstat(fd).st_size == os.path.getsize(
+            cache.layer_cache_path(digest))
+    finally:
+        os.close(fd)
 
     path = cache.layer_cache_path(digest)
     with open(path, "wb") as fh:
         fh.write(b"tampered")
     with pytest.raises(RuntimeError, match="does not match its digest"):
-        cache.require_verified_layer(digest)
+        cache.open_required_layer(digest)
     # Locally built layers exist nowhere else: report, don't destroy.
     assert os.path.isfile(path)
 
     with pytest.raises(RuntimeError, match="missing"):
-        cache.require_verified_layer("sha256:" + "0" * 64)
+        cache.open_required_layer("sha256:" + "0" * 64)
