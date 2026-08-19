@@ -854,6 +854,28 @@ or `do_copy_or_add`. FROM resolves `scratch`, named stages (re-apply
 cached layers), or external images via `pull_image()`. Base image
 `OnBuild` triggers fire after FROM.
 
+Destination paths are normalised **whether or not they are absolute**
+(`do_workdir`, `_do_copy_or_add`). Only the relative branch used to be,
+so an absolute one carried its `..` onward: `WORKDIR /../../../x`
+composed `<rootfs>/../../../x` and `os.makedirs()` created that
+directory as many levels above the rootfs as asked for — anywhere the
+invoking user can write, `chmod 0755` behind it — and a base image's
+`ONBUILD WORKDIR` reaches it, so the Dockerfile need not contain the
+line. `..` is resolved against the guest's `/`, clamping at the image
+root the way a chroot does and the way Docker reads it. COPY/ADD
+restores the **trailing slash** `normpath` strips, since `_copy_url` /
+`_dest_arcname` / `_add_directory_tree` read it back and `COPY x
+/opt/app/` would otherwise change meaning.
+
+`layer_diff.layer_path_parts()` is the one rule for what a name may be,
+applied by both halves of a COPY/ADD — `_materialise_files` (the tree)
+and `write_files_layer` (the tar), which used to filter separately, so
+only the tree did. Nothing here would extract a `..` member
+(`tar_extract` drops it), but a layer is the artefact that leaves the
+machine: `push` uploads it, and what `..` means is then decided by
+whatever loads it. The packer's synthesised-ancestor loop goes through
+the same rule, or it invents a `..` directory entry above the bad name.
+
 RUN under Termux uses `--link2symlink`. To keep produced layers
 portable, `layer_diff.snapshot()` skips `<rootfs>/.l2s/`, and
 `_add_entry()` follows symlinks pointing into it to pack the backing

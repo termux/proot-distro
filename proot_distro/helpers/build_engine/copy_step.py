@@ -48,7 +48,9 @@ from proot_distro.helpers.build_engine.users import resolve_chown
 from proot_distro.helpers.docker import (
     AuthStrippingRedirectHandler, layer_cache_path, pull_image,
 )
-from proot_distro.helpers.layer_diff import write_files_layer
+from proot_distro.helpers.layer_diff import (
+    layer_path_parts, write_files_layer,
+)
 from proot_distro.helpers.tar_extract import _safe_resolve
 
 
@@ -110,8 +112,19 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
             resolved.append(("rootfs", src))
 
     is_dir_dest = dest.endswith("/") or len(sources) > 1
-    if not dest.startswith("/"):
-        dest = os.path.normpath(os.path.join(stage.workdir or "/", dest))
+    # Normalised whether or not it is absolute. ".." inside an image is
+    # resolved against the guest's "/", so `/../foo` is `/foo` -- which is
+    # what Docker makes of it. Only the relative branch used to be
+    # normalised, so an absolute dest carried its ".." all the way to the
+    # arcname, where the tree dropped the entry and the layer kept it.
+    # The trailing slash is restored because it is read again further
+    # down (_copy_url, _dest_arcname, _add_directory_tree) and normpath
+    # strips it; without that, normalising here would quietly change what
+    # `COPY x /opt/app/` means.
+    trailing = dest.endswith("/")
+    dest = os.path.normpath(os.path.join(stage.workdir or "/", dest))
+    if trailing and not dest.endswith("/"):
+        dest += "/"
 
     uid, gid = resolve_chown(stage.rootfs_dir, chown) if chown else (0, 0)
     mode_override = (
@@ -444,8 +457,10 @@ def _materialise_files(rootfs_dir, file_map):
     """
     for arcname in sorted(file_map.keys()):
         entry = file_map[arcname]
-        parts = [p for p in arcname.split("/") if p not in ("", ".")]
-        if not parts or ".." in parts:
+        # Same rule the layer is packed by, so the tree and the tar agree
+        # on what the instruction produced (see layer_diff.layer_path_parts).
+        parts = layer_path_parts(arcname)
+        if parts is None:
             continue
         parent = _safe_resolve(rootfs_dir, parts[:-1])
         if parent is None:

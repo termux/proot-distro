@@ -315,6 +315,28 @@ def write_layer_tar(rootfs, paths_to_pack, deleted, out_path,
     return _pack_stream(out_path, total, _populate)
 
 
+def layer_path_parts(arcname):
+    """The components *arcname* names inside the image, or None if it escapes.
+
+    One rule for the two halves of a COPY/ADD, which used to filter
+    separately: only the materialiser dropped a name containing "..", so
+    `COPY x /../foo` wrote nothing to the rootfs and packed "../foo" into
+    the layer -- plus a synthesised ".." directory entry above it, since
+    the parent loop below walks whatever components it is given.
+
+    Nothing this program extracts would apply either one; tar_extract
+    drops them on the way back in. But a layer is the artefact that
+    leaves the machine, and once `push` has uploaded it, what ".." means
+    is decided by whatever loads it next. So the packer holds its input
+    to the same rule as the tree, rather than trusting a caller to have
+    checked.
+    """
+    parts = [p for p in arcname.split("/") if p not in ("", os.curdir)]
+    if not parts or os.pardir in parts:
+        return None
+    return parts
+
+
 def write_files_layer(file_map, out_path):
     """Pack a {arcname → entry} mapping into a gzipped OCI layer."""
     sorted_items = sorted(file_map.items())
@@ -341,13 +363,17 @@ def write_files_layer(file_map, out_path):
 
     def _populate(tf):
         # Synthesise parent directory entries so the layer applies
-        # cleanly even when intermediate dirs were not COPY'd.
+        # cleanly even when intermediate dirs were not COPY'd. Both loops
+        # go through layer_path_parts, so a name that escapes the image
+        # root contributes neither an entry nor an ancestor.
         seen_dirs = set()
         for arcname, _ in sorted_items:
-            parts = arcname.split("/")
+            parts = layer_path_parts(arcname)
+            if parts is None:
+                continue
             for k in range(1, len(parts)):
                 dpath = "/".join(parts[:k])
-                if dpath and dpath not in seen_dirs:
+                if dpath not in seen_dirs:
                     seen_dirs.add(dpath)
                     dinfo = tarfile.TarInfo(dpath)
                     dinfo.type = tarfile.DIRTYPE
@@ -355,6 +381,8 @@ def write_files_layer(file_map, out_path):
                     dinfo.mtime = 0
                     tf.addfile(dinfo)
         for arcname, entry in sorted_items:
+            if layer_path_parts(arcname) is None:
+                continue
             _add_file_map_entry(tf, arcname, entry)
 
     return _pack_stream(out_path, total, _populate)

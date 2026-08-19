@@ -133,10 +133,17 @@ def do_workdir(engine, instr):
         raise BuildError(
             f"WORKDIR with empty path at line {instr['lineno']}."
         )
-    if not path.startswith("/"):
-        path = os.path.normpath(
-            os.path.join(engine.current.workdir or "/", path)
-        )
+    # Normalised whether or not it is absolute. Only the relative branch
+    # used to be, so `WORKDIR /../../../x` kept its ".." into host_path
+    # below -- and os.makedirs() then created that directory as many
+    # levels above the rootfs as the instruction asked for, anywhere the
+    # invoking user can write, with a chmod 0755 behind it. The layer
+    # picked up a matching "../x" arcname. ".." is resolved against the
+    # guest's "/" here, clamping at the image root the way a chroot does
+    # and the way Docker reads it.
+    path = os.path.normpath(
+        os.path.join("/", engine.current.workdir or "/", path)
+    )
     engine.current.workdir = path
     cfg = engine.current.image_config.setdefault("config", {})
     cfg["WorkingDir"] = path
