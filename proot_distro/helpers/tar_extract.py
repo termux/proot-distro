@@ -34,9 +34,14 @@
 #
 #   - Block/char/FIFO/socket entries are skipped.
 #   - Members containing ".." or empty components after strip are
-#     dropped so a crafted archive cannot escape the rootfs. Bare "."
-#     components are kept (OCI layers commonly use "./foo" paths);
-#     os.path.join collapses them so they cannot escape either.
+#     dropped so a crafted archive cannot escape the rootfs. Interior "."
+#     components are kept (OCI layers commonly use "./foo" paths) and
+#     _safe_resolve drops them on the way through; a *trailing* one is
+#     dropped with the member, since it names the parent directory rather
+#     than an entry and the writers would have acted on that.
+#   - A whiteout deletes the name after its ".wh." prefix, and that name
+#     is held to the same rule: ".wh..." spells ".." and reached above
+#     the extraction root (see _apply_whiteout).
 #   - Every destination's parent is resolved through any pre-existing
 #     symlink components with each hop clamped inside the rootfs
 #     (_safe_resolve): absolute symlink targets are re-rooted at the
@@ -157,7 +162,15 @@ def _process_member(member, tf, rootfs_dir, *, strip, handle_whiteouts,
         return
 
     rel_path = "/".join(rel_parts)
-    if not rel_path or rel_path == ".":
+    if not rel_path or rel_parts[-1] == os.curdir:
+        # A trailing '.' names the directory the member already sits in
+        # rather than an entry of its own, and os.path.join keeps it in
+        # the path, so the writers below acted on that directory: a
+        # symlink member rmtree'd its whole contents before failing on
+        # EEXIST, and a regular one ended the extraction on EISDIR.
+        # Interior '.' components stay allowed — OCI layers spell their
+        # paths './foo' as a matter of course and _safe_resolve drops
+        # them on the way through.
         return
 
     # Resolve the destination's parent through any pre-existing symlink
@@ -208,8 +221,21 @@ def _apply_whiteout(rel_parts, parent) -> bool:
                 _remove_fstree(os.path.join(parent, entry))
         return True
     if basename.startswith(".wh."):
-        # Regular whiteout: delete the named sibling.
-        _remove_fstree(os.path.join(parent, basename[4:]))
+        # Regular whiteout: delete the named sibling. What is deleted is
+        # the part after the prefix, and it has to name a sibling: `.wh...`
+        # slices to '..', which os.path.join leaves in the path and
+        # _remove_fstree then rmtree's — the parent's parent, which for a
+        # whiteout at the top of a layer is one level *above* the
+        # extraction root. A single such member emptied
+        # containers/<name>/, manifest and rootfs together, during an
+        # install of a crafted image. `.wh.` and `.wh..` slice to '' and
+        # '.', which name the parent itself and cost it its contents.
+        # None of the three names a sibling, so there is nothing for the
+        # whiteout to delete; the member is still consumed, since an entry
+        # called `.wh.*` is not one to write into the rootfs either.
+        target = basename[4:]
+        if target not in ("", os.curdir, os.pardir):
+            _remove_fstree(os.path.join(parent, target))
         return True
     return False
 

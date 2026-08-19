@@ -248,6 +248,80 @@ def test_opaque_whiteout_clears_parent_only(env):
     assert os.path.exists(os.path.join(root, "top"))
 
 
+def test_whiteout_dotdot_name_does_not_escape(env):
+    # ".wh..." strips to "..", which named the parent's parent — for a
+    # top-level whiteout that is one level above the extraction root, i.e.
+    # containers/<name>/ during an install. The member must delete nothing.
+    tmp_path, root, sentinel = env
+    # A sibling of the rootfs, standing in for containers/<name>/manifest.json.
+    sibling = tmp_path / "outside" / "manifest.json"
+    sibling.write_text("KEEP")
+    _extract(tmp_path, root, [
+        {"name": "keep", "type": "file", "data": b"k"},
+        {"name": ".wh...", "type": "file"},
+    ], handle_whiteouts=True)
+    assert sibling.read_text() == "KEEP"
+    assert sentinel.read_text() == "SECRET"
+    assert set(os.listdir(tmp_path)) <= {"root", "outside", "evil.tar"}
+    assert os.path.isdir(root)
+    assert os.path.exists(os.path.join(root, "keep"))
+    # The whiteout member is consumed, not written into the rootfs.
+    assert not os.path.exists(os.path.join(root, ".wh..."))
+
+
+def test_nested_whiteout_dotdot_name_spares_parent(env):
+    tmp_path, root, sentinel = env
+    _extract(tmp_path, root, [
+        {"name": "d", "type": "dir"},
+        {"name": "d/sub", "type": "dir"},
+        {"name": "d/keep", "type": "file", "data": b"k"},
+        {"name": "d/sub/.wh...", "type": "file"},
+    ], handle_whiteouts=True)
+    _assert_no_escape(tmp_path, sentinel)
+    assert os.path.exists(os.path.join(root, "d", "keep"))
+    assert os.path.isdir(os.path.join(root, "d", "sub"))
+
+
+@pytest.mark.parametrize("name", [".wh.", ".wh.."])
+def test_whiteout_naming_own_parent_deletes_nothing(env, name):
+    # ".wh." and ".wh.." strip to "" and ".", both of which name the
+    # directory the whiteout sits in rather than a sibling. Neither is a
+    # sibling to remove, so the contents stay.
+    tmp_path, root, sentinel = env
+    _extract(tmp_path, root, [
+        {"name": "keep", "type": "file", "data": b"k"},
+        {"name": name, "type": "file"},
+    ], handle_whiteouts=True)
+    _assert_no_escape(tmp_path, sentinel)
+    assert os.path.isdir(root)
+    assert os.path.exists(os.path.join(root, "keep"))
+    assert not os.path.exists(os.path.join(root, name))
+
+
+@pytest.mark.parametrize("kind,extra", [
+    ("symlink", {"linkname": "/etc/passwd"}),
+    ("file", {"data": b"X"}),
+    ("dir", {}),
+])
+def test_trailing_dot_member_dropped(env, kind, extra):
+    # "d/." names the directory the member sits in, and os.path.join keeps
+    # the "." in the path: a symlink member rmtree'd the directory's whole
+    # contents before failing on EEXIST, and a regular one ended the
+    # extraction on EISDIR.
+    tmp_path, root, sentinel = env
+    _extract(tmp_path, root, [
+        {"name": "d", "type": "dir"},
+        {"name": "d/keep", "type": "file", "data": b"k"},
+        {"name": "d/.", "type": kind, **extra},
+        {"name": "after", "type": "file", "data": b"a"},
+    ], handle_whiteouts=True)
+    _assert_no_escape(tmp_path, sentinel)
+    assert os.path.isdir(os.path.join(root, "d"))
+    assert os.listdir(os.path.join(root, "d")) == ["keep"]
+    # Extraction carried on past the bad member.
+    assert os.path.exists(os.path.join(root, "after"))
+
+
 def test_whiteouts_ignored_when_disabled(env):
     tmp_path, root, sentinel = env
     # With handle_whiteouts=False (plain rootfs tar), .wh. files are simply
