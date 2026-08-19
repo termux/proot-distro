@@ -23,43 +23,164 @@
 # Android UIDs). Kept separate from the install command so the same fixups
 # can be applied by other entry points (e.g. restore). No subprocess calls
 # here — only Python standard-library filesystem operations.
+#
+# Everything here runs against a rootfs that was just unpacked from an
+# image the user named but did not write, so every entry these functions
+# touch is attacker-chosen content. Nothing below addresses a file by
+# path: `etc` is opened once with O_NOFOLLOW (_open_etc) and each file is
+# named as (fd, name) from there, because os.chmod() and open() both
+# follow symlinks and the four id files are exactly the names an image
+# would ship as links. See _open_etc and _append_at.
 
 import grp
 import os
 import pwd
 import stat
 
+from proot_distro import dirfd
 from proot_distro.constants import (
     DEFAULT_PRIMARY_NS,
     DEFAULT_SECONDARY_NS,
 )
 
 
-def write_resolv_conf(rootfs: str) -> None:
-    """Replace /etc/resolv.conf with a plain file containing default DNS servers."""
-    path = os.path.join(rootfs, "etc", "resolv.conf")
+# What the id files are chmod'ed to: readable by all, writable by owner.
+_ID_FILE_MODE = (
+    stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+)
+
+
+def _open_etc(rootfs: str):
+    """Open <rootfs>/etc as a directory fd, or None when there is no such dir.
+
+    O_NOFOLLOW, because `etc` is image content like everything else below
+    it: an image shipping it as a symlink aimed every write in this module
+    at whatever directory the link named — a host directory, since the
+    write happens outside proot. Callers close the fd.
+
+    None covers a missing `etc`, one that is a symlink, and one that is not
+    a directory. Both call sites already skip the fixups when there is no
+    `etc` to fix up, so there is nothing new to report here.
+    """
     try:
-        os.remove(path)
+        root_fd = os.open(rootfs, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+    try:
+        return dirfd.opendir_at(root_fd, "etc")
+    except OSError:
+        return None
+    finally:
+        os.close(root_fd)
+
+
+def _replace_at(etc_fd: int, name: str, content: str) -> None:
+    """Replace <etc>/<name> with a plain file holding *content*.
+
+    The old entry is unlinked rather than truncated, so a symlink standing
+    under the name is removed instead of written through, and the create is
+    O_EXCL (dirfd.open_new_at), so whatever reappears under the name is not
+    adopted either — a hard link to a host file being the case nothing about
+    the entry could reveal.
+    """
+    dirfd.unlink_quietly(etc_fd, name)
+    try:
+        fd, _st = dirfd.open_new_at(etc_fd, name, 0o644)
+    except OSError:
+        return
+    try:
+        os.write(fd, content.encode())
     except OSError:
         pass
-    with open(path, "w") as fh:
-        fh.write(f"nameserver {DEFAULT_PRIMARY_NS}\n")
-        fh.write(f"nameserver {DEFAULT_SECONDARY_NS}\n")
+    finally:
+        os.close(fd)
+
+
+def _append_at(etc_fd: int, name: str, line: str, *,
+               create: bool = False) -> bool:
+    """Append *line* to <etc>/<name>. True when it was written.
+
+    O_NOFOLLOW so a link shipped under the name is refused rather than
+    followed, and dirfd.open_regular_at's fstat refuses every remaining
+    type as well: a FIFO would otherwise block the append waiting for a
+    reader the image never provides.
+
+    With create=True a missing file is made, which is what `open(path,
+    "a")` did for passwd, shadow and group — a minimal image may ship
+    none of the three. The create is O_EXCL, so one that appeared in
+    between is left alone rather than written into; gshadow keeps its
+    original create=False, having always been guarded by an exists check.
+    """
+    flags = os.O_WRONLY | os.O_APPEND
+    try:
+        fd, _st = dirfd.open_regular_at(etc_fd, name, flags)
+    except FileNotFoundError:
+        if not create:
+            return False
+        try:
+            fd, _st = dirfd.open_regular_at(
+                etc_fd, name, flags | os.O_CREAT | os.O_EXCL, _ID_FILE_MODE
+            )
+        except OSError:
+            return False
+    except OSError:
+        return False
+    try:
+        os.write(fd, line.encode())
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def _chmod_at(etc_fd: int, name: str) -> None:
+    """Give <etc>/<name> the id-file mode, if it is there and is a file.
+
+    Through the descriptor: Linux has no AT_SYMLINK_NOFOLLOW for
+    fchmodat(2), so naming the entry in os.chmod() handed the mode change
+    to whatever a link under it pointed at. An image shipping
+    `etc/shadow -> ~/.ssh/id_rsa` had the host's key relaxed to 0644 on a
+    plain install, before a word of the rootfs was ever run.
+    """
+    try:
+        fd, _st = dirfd.open_regular_at(etc_fd, name, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fchmod(fd, _ID_FILE_MODE)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def write_resolv_conf(rootfs: str) -> None:
+    """Replace /etc/resolv.conf with a plain file containing default DNS servers."""
+    etc_fd = _open_etc(rootfs)
+    if etc_fd is None:
+        return
+    try:
+        _replace_at(etc_fd, "resolv.conf", (
+            f"nameserver {DEFAULT_PRIMARY_NS}\n"
+            f"nameserver {DEFAULT_SECONDARY_NS}\n"
+        ))
+    finally:
+        os.close(etc_fd)
 
 
 def write_hosts(rootfs: str) -> None:
-    """Write a minimal /etc/hosts into the rootfs."""
-    path = os.path.join(rootfs, "etc", "hosts")
-    # Unlink any pre-existing entry first. Some images ship /etc/hosts
-    # as a symlink (e.g. to a runtime-provided path); opening for write
-    # would otherwise follow the symlink and overwrite whatever it
-    # points at instead of replacing the host file inside the rootfs.
+    """Write a minimal /etc/hosts into the rootfs.
+
+    Some images ship /etc/hosts as a symlink (to a runtime-provided path,
+    say), so the name is unlinked and recreated rather than opened for
+    write — see _replace_at.
+    """
+    etc_fd = _open_etc(rootfs)
+    if etc_fd is None:
+        return
     try:
-        os.remove(path)
-    except OSError:
-        pass
-    with open(path, "w") as fh:
-        fh.write(
+        _replace_at(etc_fd, "hosts", (
             "# IPv4.\n"
             "127.0.0.1   localhost.localdomain localhost\n\n"
             "# IPv6.\n"
@@ -70,21 +191,35 @@ def write_hosts(rootfs: str) -> None:
             "ff02::1     ip6-allnodes\n"
             "ff02::2     ip6-allrouters\n"
             "ff02::3     ip6-allhosts\n"
-        )
+        ))
+    finally:
+        os.close(etc_fd)
 
 
 def register_android_ids(rootfs: str) -> None:
-    """Add the Termux Android UID/GID entries to passwd/shadow/group/gshadow."""
-    for p in ("etc/passwd", "etc/shadow", "etc/group", "etc/gshadow"):
-        full = os.path.join(rootfs, p)
-        if os.path.exists(full):
-            try:
-                os.chmod(
-                    full,
-                    stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
-                )
-            except OSError:
-                pass
+    """Add the Termux Android UID/GID entries to passwd/shadow/group/gshadow.
+
+    Every one of the four files is addressed as (etc fd, name) with
+    O_NOFOLLOW rather than by path. They are the names an image is most
+    likely to ship as symlinks, and both operations this does — a chmod
+    and an append — follow one: an image shipping `etc/shadow` as a link
+    to a file in the invoking user's home had that file relaxed to 0644
+    and a passwd line appended to it, on a plain `install`, from nothing
+    but the image's own content. See _chmod_at and _append_at.
+    """
+    etc_fd = _open_etc(rootfs)
+    if etc_fd is None:
+        return
+    try:
+        _register_android_ids_at(etc_fd)
+    finally:
+        os.close(etc_fd)
+
+
+def _register_android_ids_at(etc_fd: int) -> None:
+    """register_android_ids' body, against an open descriptor on /etc."""
+    for name in ("passwd", "shadow", "group", "gshadow"):
+        _chmod_at(etc_fd, name)
 
     try:
         uid = os.getuid()
@@ -93,20 +228,16 @@ def register_android_ids(rootfs: str) -> None:
     except Exception:
         return
 
-    passwd_path = os.path.join(rootfs, "etc", "passwd")
-    shadow_path = os.path.join(rootfs, "etc", "shadow")
-    group_path = os.path.join(rootfs, "etc", "group")
-    gshadow_path = os.path.join(rootfs, "etc", "gshadow")
-
-    try:
-        with open(passwd_path, "a") as fh:
-            fh.write(
-                f"aid_{username_result}:x:{uid}:{gid}:Termux:/:/sbin/nologin\n"
-            )
-        with open(shadow_path, "a") as fh:
-            fh.write(f"aid_{username_result}:*:18446:0:99999:7:::\n")
-    except OSError:
-        pass
+    if not _append_at(
+        etc_fd, "passwd",
+        f"aid_{username_result}:x:{uid}:{gid}:Termux:/:/sbin/nologin\n",
+        create=True,
+    ):
+        # passwd is the one file that must be there (install checks for it
+        # before calling), so a failure on it means the rest is pointless.
+        return
+    _append_at(etc_fd, "shadow",
+               f"aid_{username_result}:*:18446:0:99999:7:::\n", create=True)
 
     seen: set[int] = set()
     all_gids: list[int] = []
@@ -120,15 +251,11 @@ def register_android_ids(rootfs: str) -> None:
             gname = grp.getgrgid(g).gr_name
         except KeyError:
             continue
-        try:
-            with open(group_path, "a") as fh:
-                fh.write(
-                    f"aid_{gname}:x:{g}:root,aid_{username_result}\n"
-                )
-            if os.path.exists(gshadow_path):
-                with open(gshadow_path, "a") as fh:
-                    fh.write(
-                        f"aid_{gname}:*::root,aid_{username_result}\n"
-                    )
-        except OSError:
-            pass
+        _append_at(
+            etc_fd, "group", f"aid_{gname}:x:{g}:root,aid_{username_result}\n",
+            create=True,
+        )
+        # gshadow is optional; _append_at declines a name that is not there.
+        _append_at(
+            etc_fd, "gshadow", f"aid_{gname}:*::root,aid_{username_result}\n"
+        )
