@@ -61,7 +61,8 @@ from proot_distro.helpers.docker import (
 from proot_distro.helpers.layer_diff import (
     layer_path_parts, write_files_layer,
 )
-from proot_distro.helpers.tar_extract import _safe_resolve
+from proot_distro.helpers.tar_extract import safe_resolve_parts
+from proot_distro import dirfd
 
 
 # Chunk size for spooling, the same one tar_extract streams with.
@@ -515,13 +516,26 @@ def _materialise_files(rootfs_dir, file_map):
     Sorting the arcnames guarantees every parent is materialised before
     its children, so a symlink entry lands before anything written
     "through" it. The destination's parent is then resolved with
-    _safe_resolve, which follows existing symlink components but clamps
-    each hop inside rootfs_dir — otherwise an ADD'd tar (or a stage)
-    could ship `evil -> /` followed by `evil/passwd` and the write would
-    escape onto the host. The final component is left unresolved so we
-    replace the entry itself, never a same-named symlink's target — which
-    means every kind has to drop a link standing there first, the
-    directory branch included.
+    safe_resolve_parts, which follows existing symlink components but
+    clamps each hop inside rootfs_dir — otherwise an ADD'd tar (or a
+    stage) could ship `evil -> /` followed by `evil/passwd` and the write
+    would escape onto the host.
+
+    The resolve says where the entry belongs; it does not make writing
+    there safe on its own, because it decides that by name and everything
+    afterwards used the answer by name too. os.makedirs(), os.remove(),
+    shutil.copyfile() and os.chmod() all resolve the path again, so a
+    component re-pointed in between — by a background process an earlier
+    RUN left running, which off Termux nothing kills — sent the whole
+    instruction wherever the new link led. The parent is therefore
+    re-walked off a descriptor (dirfd.opendir_under, O_NOFOLLOW per
+    level, creating what is missing) and the entry itself is written as
+    (dir_fd, name).
+
+    The final component is deliberately not resolved, so we replace the
+    entry itself and never a same-named symlink's target — which means
+    every kind has to drop a link standing there first, the directory
+    branch included.
     """
     for arcname in sorted(file_map.keys()):
         entry = file_map[arcname]
@@ -530,58 +544,80 @@ def _materialise_files(rootfs_dir, file_map):
         parts = layer_path_parts(arcname)
         if parts is None:
             continue
-        parent = _safe_resolve(rootfs_dir, parts[:-1])
-        if parent is None:
+        resolved = safe_resolve_parts(rootfs_dir, parts[:-1])
+        if resolved is None:
             continue
-        host = os.path.join(parent, parts[-1])
+
+        dir_fd = dirfd.opendir_under(rootfs_dir, resolved, create=True)
+        if dir_fd is None:
+            raise BuildError(
+                f"Failed to write '{arcname}' into rootfs: "
+                f"'{'/'.join(resolved)}' is not a directory inside it"
+            )
         try:
-            os.makedirs(parent, exist_ok=True)
-        except OSError:
-            pass
-        kind = entry["kind"]
-        try:
-            if kind == "dir":
-                # A symlink already standing at this name would send both
-                # the mkdir and the chmod to whatever it points at. The
-                # parent is resolved with clamping but the final component
-                # is deliberately left alone, so `etc -> /home/user` in the
-                # image plus an ADD'd tar carrying an `etc/` member had that
-                # host directory chmod'ed to the member's mode -- and the
-                # tree then disagreed with the layer, which records a plain
-                # directory there. Overlay semantics replace a symlink with
-                # a real directory; the tar extractor already drops it the
-                # same way (see helpers/tar_extract), the materialiser did
-                # not. The other three kinds unlink whatever is in the way
-                # already.
-                if os.path.islink(host):
-                    try:
-                        os.remove(host)
-                    except OSError:
-                        pass
-                os.makedirs(host, exist_ok=True)
-                try:
-                    os.chmod(host, entry.get("mode", 0o755))
-                except OSError:
-                    pass
-            elif kind == "symlink":
-                if os.path.lexists(host):
-                    try:
-                        os.remove(host)
-                    except OSError:
-                        pass
-                os.symlink(entry["target"], host)
-            elif kind == "file":
-                if os.path.lexists(host):
-                    try:
-                        os.remove(host)
-                    except OSError:
-                        pass
-                shutil.copyfile(entry["src"], host)
-                try:
-                    os.chmod(host, entry.get("mode", 0o644))
-                except OSError:
-                    pass
+            _materialise_entry(dir_fd, parts[-1], entry)
         except OSError as exc:
             raise BuildError(
                 f"Failed to write '{arcname}' into rootfs: {exc}"
             ) from exc
+        finally:
+            os.close(dir_fd)
+
+
+def _drop_entry_at(dir_fd, name):
+    """Remove whatever holds *name*, ignoring failure — as os.remove did."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def _materialise_entry(dir_fd, name, entry):
+    """Write one file_map entry into the directory dir_fd refers to."""
+    kind = entry["kind"]
+    if kind == "dir":
+        # A symlink already standing at this name would send both the
+        # mkdir and the chmod to whatever it points at. The parent is
+        # resolved with clamping but the final component is deliberately
+        # left alone, so `etc -> /home/user` in the image plus an ADD'd
+        # tar carrying an `etc/` member had that host directory chmod'ed
+        # to the member's mode -- and the tree then disagreed with the
+        # layer, which records a plain directory there. Overlay semantics
+        # replace a symlink with a real directory; the tar extractor
+        # already drops it the same way (see helpers/tar_extract).
+        try:
+            st = dirfd.lstat_at(dir_fd, name)
+        except OSError:
+            st = None
+        if st is not None and stat.S_ISLNK(st.st_mode):
+            _drop_entry_at(dir_fd, name)
+        try:
+            os.mkdir(name, 0o777, dir_fd=dir_fd)
+        except FileExistsError:
+            pass
+        # chmod_at opens O_PATH|O_NOFOLLOW and sets the mode on the
+        # descriptor: fchmodat(2) has no AT_SYMLINK_NOFOLLOW, so naming
+        # the entry would hand the mode to a link planted since the mkdir.
+        dirfd.chmod_at(dir_fd, name, entry.get("mode", 0o755), only_dir=True)
+    elif kind == "symlink":
+        # symlink(2) has no O_TRUNC; whatever is there has to go first.
+        _drop_entry_at(dir_fd, name)
+        os.symlink(entry["target"], name, dir_fd=dir_fd)
+    elif kind == "file":
+        # open_new_at is O_EXCL and drops a leftover rather than adopting
+        # it, so the bytes always land in a new inode inside this
+        # directory -- never through a hardlink to somewhere else, which
+        # is the one thing O_NOFOLLOW cannot refuse.
+        fd, _st = dirfd.open_new_at(dir_fd, name, entry.get("mode", 0o644))
+        try:
+            with open(entry["src"], "rb") as src, \
+                    os.fdopen(fd, "wb", closefd=False) as dst:
+                shutil.copyfileobj(src, dst, _SPOOL_CHUNK)
+            # Explicitly, because the mode open_new_at created the file
+            # with went through the umask.
+            try:
+                os.fchmod(fd, entry.get("mode", 0o644))
+            except OSError:
+                pass
+        finally:
+            os.close(fd)

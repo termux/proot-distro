@@ -43,6 +43,7 @@ import stat
 import tarfile
 import zlib
 
+from proot_distro import dirfd
 from proot_distro.l2s import open_l2s_backing, resolve_l2s_target
 from proot_distro.progress import (
     clear_bar, draw_bytes_bar, progress_active,
@@ -52,12 +53,16 @@ from proot_distro.progress import (
 _CRC_CHUNK = 65536
 
 
-def _file_crc32(path):
-    """Return the zlib.crc32 of `path`'s content as an unsigned int.
+def _file_crc32(dir_fd, name):
+    """Return the zlib.crc32 of *name*'s content as an unsigned int.
 
     A 32-bit CRC is fast (C-implemented in zlib, ~GB/s) and good enough
     to distinguish content as long as we already trust the cheap (size,
     mtime) check to flag obvious modifications.
+
+    Opened as (dir_fd, name) through open_regular_at, so the file whose
+    content is read is the one the walk lstat'ed a moment ago, whatever
+    a process left over from an earlier RUN does to the name in between.
 
     Returns 0xFFFFFFFF on read failure; that value collides with a
     legitimate CRC only with probability 1/2^32, and the file is going
@@ -65,7 +70,11 @@ def _file_crc32(path):
     """
     crc = 0
     try:
-        with open(path, "rb") as fh:
+        fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
+    except OSError:
+        return 0xFFFFFFFF
+    try:
+        with open(fd, "rb", closefd=False) as fh:
             while True:
                 chunk = fh.read(_CRC_CHUNK)
                 if not chunk:
@@ -73,7 +82,71 @@ def _file_crc32(path):
                 crc = zlib.crc32(chunk, crc)
     except OSError:
         return 0xFFFFFFFF
+    finally:
+        os.close(fd)
     return crc & 0xFFFFFFFF
+
+
+class _ParentFds:
+    """Directory descriptors for the parents of the entries being packed.
+
+    Every rel handed to _add_entry came off snapshot()'s own walk, so its
+    parents were real directories then. Between then and the pack a
+    process an earlier RUN left running can replace one with a symlink --
+    off Termux nothing kills such a process, since --kill-on-exit is a
+    Termux-only extension -- and naming the entry then reads through it.
+    A layer is the worst place for that: `push` uploads it to a registry.
+
+    So each parent is re-walked from the rootfs descriptor with
+    O_NOFOLLOW and the entry is addressed as (dir_fd, name). The rels
+    arrive sorted, so caching the last parent covers a whole directory's
+    worth of entries and the walk costs about one openat apiece.
+    """
+
+    def __init__(self, rootfs):
+        self._root_fd = dirfd.opendir(rootfs)
+        self._rel = None
+        self._fd = None
+        self._owned = False
+
+    def open(self, parent_rel):
+        """Return a descriptor for *parent_rel* under the rootfs, or None."""
+        if self._fd is not None and parent_rel == self._rel:
+            return self._fd
+        self._release()
+        self._rel = parent_rel
+        if not parent_rel:
+            self._fd, self._owned = self._root_fd, False
+            return self._fd
+        fd, owned = self._root_fd, False
+        for comp in parent_rel.split("/"):
+            try:
+                nxt = dirfd.opendir_at(fd, comp)
+            except OSError:
+                if owned:
+                    os.close(fd)
+                self._fd, self._owned = None, False
+                return None
+            if owned:
+                os.close(fd)
+            fd, owned = nxt, True
+        self._fd, self._owned = fd, owned
+        return fd
+
+    def _release(self):
+        if self._owned and self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+        self._fd, self._owned = None, False
+
+    def close(self):
+        self._release()
+        try:
+            os.close(self._root_fd)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -102,45 +175,70 @@ def snapshot(rootfs):
     build's tmp rootfs and not part of the user-visible filesystem.
     Symlinks pointing into it are resolved to file content at
     layer-write time (see `_add_entry`).
+
+    The walk carries directory descriptors rather than paths: os.scandir
+    on a name descends whatever it resolves to now, and the CRC then
+    opened that name a second time, so a process an earlier RUN left
+    running could have a host file's content decide a fingerprint. Only
+    the fds along the current path are open, so the rootfs's depth is
+    the image's business, not the interpreter's.
     """
     state = {}
-    stack = [(rootfs, "")]
-    while stack:
-        dirpath, rel_prefix = stack.pop()
-        try:
-            it = os.scandir(dirpath)
-        except OSError:
-            continue
-        try:
-            for entry in it:
-                name = entry.name
-                rel = rel_prefix + name if rel_prefix else name
+    try:
+        root_fd = dirfd.opendir(rootfs)
+    except OSError:
+        return state
+
+    # Frame layout: [fd, None, pending names, rel prefix, owned].
+    stack = [[root_fd, None, None, "", True]]
+    try:
+        while stack:
+            frame = stack[-1]
+            fd, _, pending, rel_prefix, owned = frame
+            if pending is None:
                 try:
-                    st = entry.stat(follow_symlinks=False)
+                    pending = frame[2] = dirfd.listdir_at(fd)
+                except OSError:
+                    pending = frame[2] = []
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
+
+            name = pending.pop()
+            rel = rel_prefix + name if rel_prefix else name
+            try:
+                st = dirfd.lstat_at(fd, name)
+            except OSError:
+                continue
+            mode = st.st_mode
+            if stat.S_ISLNK(mode):
+                try:
+                    state[rel] = ("symlink", os.readlink(name, dir_fd=fd))
+                except OSError:
+                    pass
+            elif stat.S_ISDIR(mode):
+                if rel_prefix == "" and name == ".l2s":
+                    continue
+                state[rel] = ("dir", stat.S_IMODE(mode))
+                try:
+                    sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
-                mode = st.st_mode
-                if stat.S_ISLNK(mode):
-                    try:
-                        state[rel] = ("symlink", os.readlink(entry.path))
-                    except OSError:
-                        pass
-                elif stat.S_ISDIR(mode):
-                    if rel_prefix == "" and name == ".l2s":
-                        continue
-                    state[rel] = ("dir", stat.S_IMODE(mode))
-                    stack.append((entry.path, rel + "/"))
-                elif stat.S_ISREG(mode):
-                    state[rel] = (
-                        "file",
-                        st.st_size,
-                        st.st_mtime_ns,
-                        stat.S_IMODE(mode),
-                        _file_crc32(entry.path),
-                    )
-                # Other types intentionally skipped.
-        finally:
-            it.close()
+                stack.append([sub, None, None, rel + "/", True])
+            elif stat.S_ISREG(mode):
+                state[rel] = (
+                    "file",
+                    st.st_size,
+                    st.st_mtime_ns,
+                    stat.S_IMODE(mode),
+                    _file_crc32(fd, name),
+                )
+            # Other types intentionally skipped.
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
     return state
 
 
@@ -306,10 +404,19 @@ def write_layer_tar(rootfs, paths_to_pack, deleted, out_path,
             total += st.st_size
 
     def _populate(tf):
-        for rel in sorted_paths:
-            _add_entry(tf, rootfs, rel)
-        for wh in _whiteout_paths(deleted, opaque_dirs):
-            _add_whiteout(tf, wh)
+        try:
+            parents = _ParentFds(rootfs)
+        except OSError:
+            parents = None
+        try:
+            for rel in sorted_paths:
+                if parents is not None:
+                    _add_entry(tf, parents, rootfs, rel)
+            for wh in _whiteout_paths(deleted, opaque_dirs):
+                _add_whiteout(tf, wh)
+        finally:
+            if parents is not None:
+                parents.close()
 
     return _pack_stream(out_path, total, _populate)
 
@@ -388,11 +495,22 @@ def write_files_layer(file_map, out_path):
 # Per-entry tar emitters
 # ---------------------------------------------------------------------------
 
-def _add_entry(tf, rootfs, rel):
-    """Add the on-disk entry at <rootfs>/<rel> to the tar by arcname=rel."""
+def _add_entry(tf, parents, rootfs, rel):
+    """Add the on-disk entry at <rootfs>/<rel> to the tar by arcname=rel.
+
+    *parents* supplies the descriptor of the entry's parent directory, so
+    every one of the calls below names the entry relative to a directory
+    the walk itself opened — see _ParentFds. The joined path is still
+    needed for the l2s chain, which is resolved by name and then read
+    through open_l2s_backing's own descriptor walk.
+    """
+    parent_rel, _, name = rel.rpartition("/")
+    dir_fd = parents.open(parent_rel)
+    if dir_fd is None:
+        return
     full = os.path.join(rootfs, rel)
     try:
-        st = os.lstat(full)
+        st = dirfd.lstat_at(dir_fd, name)
     except OSError:
         return
 
@@ -406,7 +524,7 @@ def _add_entry(tf, rootfs, rel):
 
     if stat.S_ISLNK(st.st_mode):
         try:
-            target = os.readlink(full)
+            target = os.readlink(name, dir_fd=dir_fd)
         except OSError:
             return
 
@@ -452,13 +570,23 @@ def _add_entry(tf, rootfs, rel):
         tinfo.size = 0
         tf.addfile(tinfo)
     elif stat.S_ISREG(st.st_mode):
-        tinfo.type = tarfile.REGTYPE
-        tinfo.size = st.st_size
+        # The size comes off the fstat of the descriptor that is about to
+        # be read, not off the earlier lstat of the name: those are two
+        # different files the moment anything replaces the entry, and
+        # tarfile writes exactly tinfo.size bytes from what it is handed.
         try:
-            with open(full, "rb") as fobj:
-                tf.addfile(tinfo, fobj)
+            fd, fst = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
         except OSError:
-            pass
+            return
+        try:
+            tinfo.type = tarfile.REGTYPE
+            tinfo.size = fst.st_size
+            try:
+                tf.addfile(tinfo, open(fd, "rb", closefd=False))
+            except OSError:
+                pass
+        finally:
+            os.close(fd)
     # Other types intentionally skipped (devices, FIFOs).
 
 
@@ -534,15 +662,42 @@ def _add_file_map_entry(tf, arcname, entry):
         tinfo.mtime = int(st.st_mtime)
         tf.addfile(tinfo)
     elif stat.S_ISREG(st.st_mode):
-        tinfo = tarfile.TarInfo(arcname)
-        tinfo.type = tarfile.REGTYPE
-        tinfo.size = st.st_size
-        tinfo.mode = (
-            entry.get("mode", stat.S_IMODE(st.st_mode))
-            if isinstance(entry, dict) else stat.S_IMODE(st.st_mode)
-        )
-        tinfo.mtime = int(st.st_mtime)
-        tinfo.uid = (entry.get("uid", 0) if isinstance(entry, dict) else 0)
-        tinfo.gid = (entry.get("gid", 0) if isinstance(entry, dict) else 0)
-        with open(src_path, "rb") as fobj:
-            tf.addfile(tinfo, fobj)
+        # Opened before it is measured, and never followed: the lstat
+        # above named the file, and a source spooled into the build's own
+        # tmp_root is reachable by anything running with this user's
+        # rights -- a process an earlier RUN left behind included. What
+        # gets packed is the inode this descriptor holds, or nothing.
+        opened = _open_source(src_path)
+        if opened is None:
+            return
+        fd, fst = opened
+        try:
+            tinfo = tarfile.TarInfo(arcname)
+            tinfo.type = tarfile.REGTYPE
+            tinfo.size = fst.st_size
+            tinfo.mode = (
+                entry.get("mode", stat.S_IMODE(fst.st_mode))
+                if isinstance(entry, dict) else stat.S_IMODE(fst.st_mode)
+            )
+            tinfo.mtime = int(fst.st_mtime)
+            tinfo.uid = (entry.get("uid", 0) if isinstance(entry, dict) else 0)
+            tinfo.gid = (entry.get("gid", 0) if isinstance(entry, dict) else 0)
+            tf.addfile(tinfo, open(fd, "rb", closefd=False))
+        finally:
+            os.close(fd)
+
+
+def _open_source(src_path):
+    """Open a file_map source as a regular file. (fd, stat), or None."""
+    try:
+        fd = os.open(src_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file")
+    except OSError:
+        os.close(fd)
+        return None
+    return fd, st

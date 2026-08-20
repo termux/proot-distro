@@ -396,6 +396,19 @@ def _defer_hardlink(member, strip, rel_parts, deferred_links):
 def _safe_resolve(root, parts):
     """Resolve *parts* beneath *root*, clamping every hop inside it.
 
+    Returns an absolute path guaranteed to live within *root*, or None
+    if a symlink loop / excessive chain is hit (caller skips the entry).
+    See safe_resolve_parts, which does the work.
+    """
+    resolved = safe_resolve_parts(root, parts)
+    if resolved is None:
+        return None
+    return os.path.join(root, *resolved)
+
+
+def safe_resolve_parts(root, parts):
+    """The components *parts* resolves to beneath *root*, or None.
+
     Walks *parts* component by component starting at *root*. Existing
     symlink components are followed, but their targets are interpreted
     relative to *root*: an absolute target re-roots at *root* and ".."
@@ -405,11 +418,15 @@ def _safe_resolve(root, parts):
     in-rootfs location. Components that don't exist yet are taken
     verbatim (a not-yet-written subtree can't be a symlink).
 
-    Returns an absolute path guaranteed to live within *root*, or None
-    if a symlink loop / excessive chain is hit (caller skips the entry).
     Pass parent components only when the final element must not be
     followed (file/dir/symlink writes); pass the full path to resolve a
     hardlink's source file.
+
+    The components come back rather than a joined path for a caller that
+    means to descend them with openat(2): the walk says where the entry
+    belongs, but it resolves each level by name, so a component
+    re-pointed afterwards would still be followed by whatever acts on
+    the result. Only re-walking the answer off a descriptor closes that.
     """
     resolved: list = []
     pending = list(parts)
@@ -443,7 +460,7 @@ def _safe_resolve(root, parts):
             pending[:0] = tparts
         else:
             resolved.append(comp)
-    return os.path.join(root, *resolved)
+    return resolved
 
 
 def _write_regular(dest: str, member, tf) -> None:

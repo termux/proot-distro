@@ -1102,15 +1102,47 @@ whatever loads it. The packer's synthesised-ancestor loop goes through
 the same rule, or it invents a `..` directory entry above the bad name.
 
 `_materialise_files` resolves each entry's **parents** with
-`_safe_resolve` and leaves the final component alone on purpose, so the
-entry itself is replaced rather than written through — which means every
-kind has to drop a link standing there first. The three that write data
-already unlinked whatever was in the way; the `dir` branch did not, so an
-image shipping `etc -> <host dir>` plus an ADD'd tar carrying an `etc/`
-member had `os.makedirs(exist_ok=True)` accept the link and the chmod
-behind it land on the host directory — and the tree then disagreed with
-the layer, which records a plain directory at that name. It now drops the
-link the way `tar_extract` does when the same layer is applied.
+`safe_resolve_parts` and leaves the final component alone on purpose, so
+the entry itself is replaced rather than written through — which means
+every kind has to drop a link standing there first. The three that write
+data already unlinked whatever was in the way; the `dir` branch did not,
+so an image shipping `etc -> <host dir>` plus an ADD'd tar carrying an
+`etc/` member had `os.makedirs(exist_ok=True)` accept the link and the
+chmod behind it land on the host directory — and the tree then disagreed
+with the layer, which records a plain directory at that name. It now
+drops the link the way `tar_extract` does when the same layer is applied.
+
+That resolve says where the entry *belongs*; it does not make writing
+there safe, because it decides by name and everything after it used the
+answer by name too — `os.makedirs`, `os.remove`, `shutil.copyfile`,
+`os.chmod` each resolve the path again. So the resolved components are
+re-walked off a descriptor (`dirfd.opendir_under`, `O_NOFOLLOW` per
+level, creating what is missing) and the entry is written as
+`(dir_fd, name)`: `mkdir`+`chmod_at` for a directory, `symlink` after an
+unlink, and `open_new_at` for a file — `O_EXCL`, so the bytes land in a
+new inode and never through a hardlink to somewhere else, which is the
+one thing `O_NOFOLLOW` cannot refuse. The mode goes on with an explicit
+`fchmod`, since the one `open()` creates with is umask-masked. A
+resolved parent that is not a directory by then raises `BuildError`
+rather than being followed. `safe_resolve_parts` is `_safe_resolve`
+returning the components instead of the joined path, for exactly that
+re-walk; `_safe_resolve` is now a join on top of it.
+
+The packer has the same shape in reverse: `snapshot()` lists the tree
+and `_add_entry()` reads it afterwards, and both named every entry.
+`snapshot()` now walks on directory descriptors (an explicit stack, so
+only the current path's fds are open) and fingerprints a file through
+`open_regular_at`, and `_add_entry()` takes its parent from
+`_ParentFds` — a one-entry cache over the same `O_NOFOLLOW` walk, which
+costs about one `openat` per entry since the rels arrive sorted — and
+sizes a regular file from the **fstat of the descriptor it is about to
+read**, not from the earlier `lstat` of the name. `_add_file_map_entry`
+opens its source before measuring it for the same reason. What could
+move underneath either of them is a process an earlier RUN left running
+(nothing kills one off Termux, `--kill-on-exit` being a Termux-only
+proot extension) or, on Termux, a session of another container, since
+the stage tree lives under the bound `$TERMUX_PREFIX`. A layer is the
+worst place for that to go unchecked: `push` uploads it.
 
 RUN under Termux uses `--link2symlink`. To keep produced layers
 portable, `layer_diff.snapshot()` skips `<rootfs>/.l2s/`, and

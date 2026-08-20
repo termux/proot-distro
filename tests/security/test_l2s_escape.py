@@ -15,7 +15,7 @@ import pytest
 
 from proot_distro import l2s
 from proot_distro.commands.backup import _add_path
-from proot_distro.helpers.layer_diff import _add_entry
+from proot_distro.helpers.layer_diff import _add_entry, _ParentFds
 
 
 @pytest.fixture
@@ -57,7 +57,13 @@ def _backup_member(root, rel):
 
 
 def _layer_member(root, rel):
-    return _pack(lambda tf: _add_entry(tf, root, rel))
+    # _add_entry addresses the entry as (dir_fd, name) now; _ParentFds is
+    # what the packer normally carries the parent descriptors in.
+    parents = _ParentFds(root)
+    try:
+        return _pack(lambda tf: _add_entry(tf, parents, root, rel))
+    finally:
+        parents.close()
 
 
 def _plant_escape(root, secret):
