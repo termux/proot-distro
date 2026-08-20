@@ -1327,6 +1327,38 @@ proot extension) or, on Termux, a session of another container, since
 the stage tree lives under the bound `$TERMUX_PREFIX`. A layer is the
 worst place for that to go unchecked: `push` uploads it.
 
+A step is over when nothing of it is still running, which is not the
+same as its command having exited. proot's event loop ends when its
+last **tracee** does, so anything a step leaves behind keeps proot
+alive: off Termux `RUN service x start` never returned at all, and the
+build waited on the daemon for as long as it ran. Termux's proot has
+`--kill-on-exit` for exactly this; upstream proot has no equivalent, so
+`run_step` watches the step instead of waiting on it.
+`_wait_for_step()` polls two cheap things — proot's own children
+(`/proc/<pid>/task/<pid>/children`), whose only member is the root
+tracee, and this process's children, which is where the step's orphans
+land because `_become_subreaper()` set `PR_SET_CHILD_SUBREAPER` before
+the step spawned anything. An empty first list plus a non-empty second
+means the command has finished and what is left is leftovers;
+`_stop_step()` then SIGTERMs them (each one plus any group it leads,
+since a daemon setsids into its own), waits out `_STRAY_GRACE_SECONDS`,
+SIGKILLs the rest and reaps them. proot is **skipped** by name until it
+has reported the step's exit status, which it still does correctly —
+the root tracee's status is what it returns, however the rest of them
+go. This process and the group it is in are never targets: a step runs
+in a session of its own, so its group id can only be proot's, and one
+that is this program's own group means the caller got the pgid wrong —
+which must not come out as a SIGTERM to everything sharing the
+build's terminal. An orphan created while the command is still running is left alone,
+since proot's children list is not empty then. A kernel that refuses
+the prctl leaves the wait exactly as it was. `_reap()` names the pids
+it collects rather than calling `waitpid(-1)`, which could take proot's
+status out from under `Popen.wait()` and turn a failed step into a
+passing one. A here-doc body is handed to the step as an unlinked
+temp file rather than through a pipe, since watching the step leaves no
+`communicate()` to feed one and a body past the pipe buffer would
+deadlock.
+
 RUN under Termux uses `--link2symlink`. To keep produced layers
 portable, `layer_diff.snapshot()` skips `<rootfs>/.l2s/`, and
 `_add_entry()` follows symlinks pointing into it to pack the backing

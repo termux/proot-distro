@@ -153,7 +153,7 @@ def _exec_proot_args(tmp_path, rootfs, monkeypatch):
     class _Proc:
         pid = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
         returncode = 0

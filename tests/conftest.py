@@ -9,6 +9,7 @@
 # root conftest.py before collecting test modules, so doing it here at module
 # top is sufficient for the whole session.
 
+import ctypes
 import os
 import shutil
 import sys
@@ -92,11 +93,32 @@ def pytest_collection_modifyitems(config, items):
 # Per-test isolation.
 # ---------------------------------------------------------------------------
 
+def _clear_child_subreaper():
+    """Drop the subreaper flag a RUN step sets on the process it runs in.
+
+    run_step asks for PR_SET_CHILD_SUBREAPER so a step's daemonised
+    leftovers are reparented onto the build process rather than onto
+    init. It is process-wide and survives the test that triggered it,
+    which changes where *every* orphan in this process lands afterwards
+    -- `kill`'s process-tree walk is one of the things that notices.
+    """
+    from proot_distro.helpers.build_engine import run_step
+
+    run_step._subreaper_asked = None
+    try:
+        ctypes.CDLL(None, use_errno=True).prctl(
+            run_step._PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0
+        )
+    except (OSError, AttributeError, ValueError):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _clean_runtime():
     """Reset process globals and wipe the runtime/cache trees around each test."""
     message.set_quiet(False)
     locking._held_exclusive.clear()
+    _clear_child_subreaper()
     for d in (constants.RUNTIME_DIR, constants.BASE_CACHE_DIR):
         shutil.rmtree(d, ignore_errors=True)
     os.makedirs(constants.CONTAINERS_DIR, exist_ok=True)
@@ -106,6 +128,7 @@ def _clean_runtime():
     yield
     message.set_quiet(False)
     locking._held_exclusive.clear()
+    _clear_child_subreaper()
 
 
 # ---------------------------------------------------------------------------
