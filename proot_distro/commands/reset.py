@@ -34,7 +34,9 @@ from proot_distro.commands.remove import _remove_path
 from proot_distro.commands.install import command_install
 from proot_distro.locking import ContainerLock
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_manifest, container_rootfs
+from proot_distro.paths import (
+    container_is_installed, container_manifest, container_rootfs,
+)
 
 
 def command_reset(args) -> None:
@@ -46,7 +48,10 @@ def command_reset(args) -> None:
     rootfs_dir = container_rootfs(container_name)
     manifest_path = container_manifest(container_name)
 
-    if not os.path.isdir(rootfs_dir):
+    # Walked down to rather than named: os.path.isdir() followed a
+    # `containers/<name>` a guest had re-pointed, and reset would then
+    # have gone on to clear a rootfs inside whatever it led to.
+    if not container_is_installed(container_name):
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
 

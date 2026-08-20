@@ -33,9 +33,8 @@ import os
 import re
 import sys
 import tarfile
-import tempfile
 
-from proot_distro import dirfd
+from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_replace
 from proot_distro.constants import BASE_CACHE_DIR, PROGRAM_NAME
 from proot_distro.message import C, msg, log_info, log_error, crit_error
@@ -45,6 +44,7 @@ from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.names import is_valid_name, require_valid_name
 from proot_distro.paths import (
     container_dir, container_manifest, container_rootfs,
+    container_is_installed, open_container_rootfs,
 )
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import derive_alias, pull_image
@@ -96,6 +96,28 @@ def _derive_local_name(path: str) -> str:
     base = re.sub(r"^[^a-z0-9]+", "", base)
     base = re.sub(r"-{2,}", "-", base).strip("-")
     return base
+
+
+def _cache_temp_file(prefix: str) -> str:
+    """Create an empty temporary in the download cache. Returns its path.
+
+    tempfile.mkstemp(dir=BASE_CACHE_DIR) resolved that name, and the
+    cache root is a name a guest can re-point on Termux, so the whole
+    downloaded archive landed in whatever directory it led to. The
+    directory is walked down to instead and the file created O_EXCL off
+    the descriptor the walk validated; the caller then writes through the
+    path, which is the same bargain atomic_replace makes -- the name was
+    just minted and nothing can be waiting under it.
+    """
+    dir_fd = statedir.open_state_dir(BASE_CACHE_DIR, create=True)
+    try:
+        name = dirfd.temp_name(
+            prefix, f".{os.getpid()}.{os.urandom(4).hex()}.tmp",
+        )
+        os.close(dirfd.open_new_at(dir_fd, name, 0o600)[0])
+        return os.path.join(BASE_CACHE_DIR, name)
+    finally:
+        os.close(dir_fd)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +214,13 @@ def _run_install(
     container_path = container_dir(install_name)
     rootfs_dir = container_rootfs(install_name)
 
-    if os.path.isdir(rootfs_dir):
+    # Walked down to, not named: `containers/<name>` is guest-writable on
+    # Termux, and os.path.isdir() said "no" to a symlink pointing at a
+    # host directory with no rootfs in it, after which the whole install
+    # was extracted inside that directory. A planted component stops the
+    # command in open_container_rootfs(); what reaches here is either a
+    # real rootfs (refuse, the container exists) or nothing yet.
+    if container_is_installed(install_name):
         msg()
         crit_error(f"container '{install_name}' already exists. "
                    f"Specify a different name with '--name NAME'.")
@@ -218,7 +246,9 @@ def _run_install(
         )
         log_info(f"Installing '{display_ref}' as '{install_name}'...")
 
-    os.makedirs(rootfs_dir, exist_ok=True)
+    # Made level by level off the descriptor of the level above, for the
+    # same reason it is checked that way.
+    os.close(open_container_rootfs(install_name, create=True))
 
     def _cleanup() -> None:
         # The tree being discarded is whatever the image or the archive
@@ -226,8 +256,10 @@ def _run_install(
         # can hold directories the image sealed. shutil.rmtree() managed
         # neither: it recursed, and RecursionError is not an OSError, so
         # the handler here let it past and the failed install took the
-        # command down with it instead of cleaning up.
-        dirfd.remove_tree(container_path)
+        # command down with it instead of cleaning up. The walk reaches
+        # `containers` the same way everything else here does, so a
+        # planted parent cannot aim the removal at a host directory.
+        statedir.remove_state_tree(container_path)
 
     tmp_archive = None
     try:
@@ -235,19 +267,12 @@ def _run_install(
             log_info("Extracting rootfs from archive...")
             metadata = install_from_local_file(local_path, rootfs_dir, dist_arch)
         elif url is not None:
-            os.makedirs(BASE_CACHE_DIR, exist_ok=True)
-            fd, tmp_archive = tempfile.mkstemp(
-                prefix=f"dl_install_{install_name}.",
-                suffix=".tmp",
-                dir=BASE_CACHE_DIR,
-            )
-            os.close(fd)
+            tmp_archive = _cache_temp_file(f"dl_install_{install_name}")
             log_info("Downloading archive...")
             download_file(url, tmp_archive, insecure=allow_insecure)
             log_info("Extracting rootfs from archive...")
             metadata = install_from_local_file(tmp_archive, rootfs_dir, dist_arch)
         else:
-            os.makedirs(BASE_CACHE_DIR, exist_ok=True)
             metadata = pull_image(
                 image_ref, rootfs_dir, dist_arch, insecure=allow_insecure
             )

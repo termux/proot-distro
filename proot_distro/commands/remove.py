@@ -39,7 +39,7 @@ import os
 import sys
 from contextlib import ExitStack
 
-from proot_distro import dirfd
+from proot_distro import statedir
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.message import (
@@ -72,15 +72,23 @@ def _remove_path(path: str, on_remove=None) -> bool:
     state is left on disk. The optional on_remove callback is called with the
     path of each successfully removed entry.
 
-    dirfd.remove_tree() carries its open directories on an explicit stack
-    rather than recursing — how deep a rootfs goes is the container's
-    choice, and a tree a little past the interpreter's limit ended `remove`
-    and `reset` in a RecursionError, which is not an OSError and so went
-    uncaught. It also names every entry as (directory fd, name), which
-    keeps the chmod that opens a sealed subtree off a path where os.chmod()
-    would follow a symlink standing in for the directory.
+    The walk carries its open directories on an explicit stack rather than
+    recursing — how deep a rootfs goes is the container's choice, and a
+    tree a little past the interpreter's limit ended `remove` and `reset`
+    in a RecursionError, which is not an OSError and so went uncaught. It
+    also names every entry as (directory fd, name), which keeps the chmod
+    that opens a sealed subtree off a path where os.chmod() would follow a
+    symlink standing in for the directory.
+
+    remove_state_tree() reaches the *parent* the same way, walking down
+    from the trust root instead of opening `containers` (or
+    `containers/<name>`, for the rootfs `reset` discards) by name. Those
+    are guest-writable on Termux, so naming them let a planted link aim
+    the removal at a host directory. An entry that is itself a link is
+    unlinked rather than traversed, which is how the user gets rid of one
+    a container left behind.
     """
-    return dirfd.remove_tree(
+    return statedir.remove_state_tree(
         path,
         on_remove=(
             None if on_remove is None

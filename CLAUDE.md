@@ -163,7 +163,16 @@ Top-level utilities (each owns a focused concern):
   meaning — `remove --image` wants a reference, not a container),
   `_PdArgumentParser` (per-command help on error).
 - `paths.py` — `container_dir/_rootfs/_manifest`, `[name:]path` spec
-  resolver, `container_locks_for_spec_pair`. A colon separates a container
+  resolver, `container_locks_for_spec_pair`. `open_container_dir()` /
+  `open_container_rootfs()` / `container_is_installed()` are those first
+  three paths as a **descriptor**, through `statedir`'s `O_NOFOLLOW`
+  walk: composing `containers/<name>` is not the same as trusting it,
+  since that directory is guest-writable on Termux and a session can
+  leave the name behind as a symlink. `FileNotFoundError` is left to the
+  caller — "no such container" and "no such container *yet*" are both
+  ordinary — while a component that must not be followed is fatal, since
+  every caller is about to write into that directory or remove it. A
+  colon separates a container
   from a path only when nothing before it is a `/` — scp's rule, and the
   only spelling that lets a host path hold a colon at all (`./a:b`, since
   a bare `a:b` still names a container). The container side of a spec
@@ -412,7 +421,17 @@ containers/<name>/manifest.json   ← image_ref, arch, manifest, image_config
 containers/<name>/rootfs/         ← assembled filesystem
 ```
 
-Directory name is the sole identifier. Plain-tarball installs do **not**
+Directory name is the sole identifier — composed lexically, but never
+*trusted* lexically: `install` checks and creates `containers/<name>`
+and its `rootfs` through `open_container_rootfs()`, `reset` asks
+`container_is_installed()`, and both removals go through
+`statedir.remove_state_tree()`. `os.path.isdir()` answered "not
+installed" for a `containers/<name> -> <host dir>` a guest had left
+behind and `os.makedirs(exist_ok=True)` then accepted it, so the image
+was unpacked, the sysdata stubs written and the manifest published
+inside that host directory. `remove` is the deliberate exception at the
+far end: the walk unlinks a planted entry rather than traversing it,
+which is how the user gets rid of one. Plain-tarball installs do **not**
 write `manifest.json`. Legacy `installed-rootfs/<name>` layout is
 migrated on first `login` (`commands/login/migrate.py`), which then
 rewrites l2s symlink targets.
@@ -656,12 +675,15 @@ matter and is refused outright, in `copy` for the message and in
 `open_regular_at()` against the pinned fd for the race.
 
 `remove` (and `reset`, which reuses `_remove_path`) deletes a container
-tree through `dirfd.remove_tree()`, so how deep a rootfs goes is the
-container's business: it used to recurse, and one past the interpreter's
-limit ended both commands in a `RecursionError` — not an `OSError`, so
-nothing caught it. `_remove_path` is now only the wrapper that turns the
-walk's relative names back into the full paths `remove --verbose`
-prints. `reset` no longer falls back to `shutil.rmtree()` when the walk
+tree through `statedir.remove_state_tree()`, so how deep a rootfs goes is
+the container's business: it used to recurse, and one past the
+interpreter's limit ended both commands in a `RecursionError` — not an
+`OSError`, so nothing caught it. The *parent* is walked down to rather
+than opened by name, which is what keeps a planted `containers` (or
+`containers/<name>`, for the rootfs `reset` discards) from aiming the
+removal at a host directory. `_remove_path` is now only the wrapper that
+turns the walk's relative names back into the full paths
+`remove --verbose` prints. `reset` no longer falls back to `shutil.rmtree()` when the walk
 reports a failure: rmtree does strictly less (it cannot relax a sealed
 directory), so it could only fail where the walk already had, and being
 plain recursion it reintroduced the very crash one line below the fix.

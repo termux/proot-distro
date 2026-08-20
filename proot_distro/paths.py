@@ -25,6 +25,14 @@
 #       Compose the per-container paths under CONTAINERS_DIR so no
 #       caller has to spell out the layout (containers/<name>/...).
 #
+#   open_container_dir / open_container_rootfs
+#       The same two paths as a descriptor, reached by statedir's
+#       O_NOFOLLOW walk down from the trust root. Composing the path is
+#       not the same as trusting it: CONTAINERS_DIR is guest-writable on
+#       Termux, so `containers/<name>` is a name a session can leave
+#       behind as a symlink, and every command that creates, fills or
+#       removes a container used to name it.
+#
 #   container_from_spec / resolve_container_path
 #       Decode the `[container:]path` spec format. The container side is
 #       resolved with chroot semantics (see _resolve_within_root) so a
@@ -60,9 +68,9 @@ import stat
 import sys
 from contextlib import contextmanager
 
-from proot_distro import dirfd
+from proot_distro import dirfd, statedir
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.message import crit_error
+from proot_distro.message import crit_error, quote_path
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
 
@@ -80,6 +88,64 @@ def container_rootfs(name: str) -> str:
 def container_manifest(name: str) -> str:
     """Return the absolute path to a container's manifest.json sentinel."""
     return os.path.join(container_dir(name), "manifest.json")
+
+
+def _open_container_path(path: str, name: str, create: bool) -> int:
+    """Open a directory of container *name* by descriptor. Or exit.
+
+    FileNotFoundError is left to the caller: "there is no such container"
+    and "there is no such container yet" are both ordinary answers, and
+    only the caller knows which one it asked for. Anything else this walk
+    reports is not: the components below CONTAINERS_DIR are guest content
+    on Termux, where the runtime tree sits under the $TERMUX_PREFIX bound
+    read-write into every non-isolated container, so a `containers/<name>`
+    that is not a plain directory is something a session left behind. The
+    callers are all about to write into that directory or remove it, and
+    following a link there is exactly how a container's contents end up in
+    a host directory instead -- so it stops the command rather than
+    degrading to the name.
+    """
+    try:
+        return statedir.open_state_dir(path, create=create)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        crit_error(
+            f"the storage of container '{name}' is not usable: "
+            f"'{quote_path(path)}' is not a directory this program "
+            f"created ({exc.strerror}). Refusing to follow it; remove or "
+            f"move that entry and try again."
+        )
+        sys.exit(1)
+
+
+def open_container_dir(name: str, *, create: bool = False) -> int:
+    """Open containers/<name> as a descriptor. The caller closes it."""
+    return _open_container_path(container_dir(name), name, create)
+
+
+def open_container_rootfs(name: str, *, create: bool = False) -> int:
+    """Open containers/<name>/rootfs as a descriptor. The caller closes it."""
+    return _open_container_path(container_rootfs(name), name, create)
+
+
+def container_is_installed(name: str) -> bool:
+    """True when containers/<name>/rootfs is a directory reachable as one.
+
+    os.path.isdir() on the composed path was the old spelling and it
+    followed whatever stood in the way; this walks down to it instead.
+    A planted entry never reaches here -- _open_container_path stops the
+    command first -- so False means the container is genuinely not
+    installed.
+    """
+    try:
+        fd = open_container_rootfs(name)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    os.close(fd)
+    return True
 
 
 def container_from_spec(spec: str):
