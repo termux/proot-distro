@@ -40,7 +40,8 @@ from proot_distro.constants import (
     TERMUX_PREFIX,
     PROGRAM_NAME,
 )
-from proot_distro.message import log_info
+from proot_distro import dirfd
+from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
 )
@@ -195,13 +196,19 @@ def _exec_proot(engine, stage, command, stdin_input):
         sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
         proot_args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")
         proot_args += fake_proc_bindings(rootfs)
-        tmp_dir = os.path.join(rootfs, "tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
-        try:
-            os.chmod(tmp_dir, 0o1777)
-        except OSError:
-            pass
-        proot_args.append(f"--bind={tmp_dir}:/dev/shm")
+        # The step's own /tmp, bound in as /dev/shm. Made and chmod'ed
+        # through descriptors, never by name: every component of this path
+        # is image content, os.makedirs(exist_ok=True) accepts a symlink to
+        # a directory and os.chmod() follows one, so an image shipping
+        # `tmp -> <host home>` had that host directory relaxed to 1777 and
+        # mounted into the container. `login` creates the same directory
+        # the same way (see commands/login/proot_cmd._add_termux_dev_binds).
+        tmp_dir = dirfd.makedirs_under(rootfs, ("tmp",), mode=0o1777)
+        if tmp_dir is not None:
+            proot_args.append(f"--bind={tmp_dir}:/dev/shm")
+        else:
+            warn("rootfs /tmp is not a plain directory; running this step "
+                 "without the /dev/shm bind.")
 
     if need_emu and IS_TERMUX:
         for path in (
@@ -281,8 +288,18 @@ def _build_child_env(stage):
         if v:
             env[var] = v
     if IS_TERMUX:
-        l2s_dir = os.path.join(stage.rootfs_dir, ".l2s")
-        os.makedirs(l2s_dir, exist_ok=True)
-        env["PROOT_L2S_DIR"] = l2s_dir
+        # Where proot puts the backing files --link2symlink stands in for.
+        # Through a descriptor for the same reason /tmp is: an image (or an
+        # earlier step) can leave `.l2s` behind as a symlink, and proot
+        # would then write every hard-link backing file into whatever host
+        # directory it named. Unset rather than pointed somewhere
+        # unvalidated -- proot then places each intermediate next to its
+        # original, which is what it did before the pin existed.
+        l2s_dir = dirfd.makedirs_under(stage.rootfs_dir, (".l2s",))
+        if l2s_dir is not None:
+            env["PROOT_L2S_DIR"] = l2s_dir
+        else:
+            warn("rootfs .l2s is not a plain directory; leaving "
+                 "PROOT_L2S_DIR unset for this step.")
     env.pop("LD_PRELOAD", None)
     return env

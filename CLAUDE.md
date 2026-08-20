@@ -178,7 +178,11 @@ Top-level utilities (each owns a focused concern):
   a termux-type guest's `data/data/<pkg>/cache`. `makedirs(exist_ok=True)`
   accepts a symlink to a directory and `chmod` follows one, so naming
   them was enough to have a host directory relaxed to 1777 and mounted
-  into the container. proot still resolves the bind source by name when
+  into the container. `build`'s RUN step makes the first two of those for
+  every step and needs it for the same reason, one remove closer: the
+  rootfs is assembled from an image the Dockerfile named, so the link is
+  shipped rather than left behind, and nothing has run inside it yet.
+  proot still resolves the bind source by name when
   it mounts it, so a session running against the same container can race
   the check; what this removes is the persistent case.
   Nothing here takes a path below the root, so no component can be

@@ -10,11 +10,13 @@
 
 import os
 import stat
+from types import SimpleNamespace
 
 import pytest
 
 from proot_distro import dirfd
 from proot_distro.commands.login import proot_cmd
+from proot_distro.helpers.build_engine import run_step
 
 HOST_ARCH = os.uname().machine
 
@@ -119,3 +121,91 @@ def test_plain_tmp_is_still_bound_as_dev_shm(env, tmp_path, monkeypatch):
     expected = f"--bind={rootfs / 'tmp'}:/dev/shm"
     assert expected in args
     assert stat.S_IMODE(os.stat(str(rootfs / "tmp")).st_mode) == 0o1777
+
+
+# --- the same two directories on the build side -----------------------------
+#
+# `build` creates them for every RUN step, against a rootfs assembled from
+# an image the Dockerfile named. Nothing has executed inside it yet, so the
+# symlink is the image's, not a guest's — the same hole with a shorter path
+# to it.
+
+def _run_stage(tmp_path, rootfs, monkeypatch):
+    monkeypatch.setattr(run_step, "IS_TERMUX", True)
+    monkeypatch.setattr(run_step, "setup_fake_sysdata", lambda r: None)
+    monkeypatch.setattr(run_step, "fake_proc_bindings", lambda r: [])
+    monkeypatch.setattr(run_step, "get_proot_bin", lambda: "proot")
+    monkeypatch.setattr(run_step, "get_device_cpu_arch", lambda: HOST_ARCH)
+    monkeypatch.setattr(run_step, "get_emulator_args", lambda *a: [])
+    monkeypatch.setattr(run_step, "resolve_user_for_proot", lambda *a: (0, 0))
+    return SimpleNamespace(
+        index=0, rootfs_dir=str(rootfs), layers=[], target_arch_pd=HOST_ARCH,
+        user="", workdir="/", shell=["/bin/sh", "-c"], env={},
+        declared_args=[], args={},
+    )
+
+
+def _exec_proot_args(tmp_path, rootfs, monkeypatch):
+    """Run _exec_proot with a stubbed Popen and return the proot argv."""
+    stage = _run_stage(tmp_path, rootfs, monkeypatch)
+    seen = []
+
+    class _Proc:
+        pid = 0
+
+        def wait(self):
+            return 0
+
+        returncode = 0
+
+    def _popen(args, **kw):
+        seen.append(list(args))
+        return _Proc()
+
+    monkeypatch.setattr(run_step.subprocess, "Popen", _popen)
+    engine = SimpleNamespace(quiet=True, verbose=False, emulator="")
+    run_step._exec_proot(engine, stage, ["true"], None)
+    return seen[0]
+
+
+def test_build_symlinked_tmp_is_not_bound_as_dev_shm(env, tmp_path,
+                                                     monkeypatch):
+    rootfs, outside = env
+    os.symlink(str(outside), str(rootfs / "tmp"))
+
+    args = _exec_proot_args(tmp_path, rootfs, monkeypatch)
+
+    assert not any(a.endswith(":/dev/shm") for a in args)
+    assert not any(str(outside) in a for a in args)
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o700
+
+
+def test_build_plain_tmp_is_still_bound_as_dev_shm(env, tmp_path,
+                                                   monkeypatch):
+    rootfs, _outside = env
+    args = _exec_proot_args(tmp_path, rootfs, monkeypatch)
+
+    assert f"--bind={rootfs / 'tmp'}:/dev/shm" in args
+    assert stat.S_IMODE(os.stat(str(rootfs / "tmp")).st_mode) == 0o1777
+
+
+def test_build_symlinked_l2s_leaves_proot_l2s_dir_unset(env, tmp_path,
+                                                        monkeypatch):
+    rootfs, outside = env
+    os.symlink(str(outside), str(rootfs / ".l2s"))
+    stage = _run_stage(tmp_path, rootfs, monkeypatch)
+
+    env_out = run_step._build_child_env(stage)
+
+    assert "PROOT_L2S_DIR" not in env_out
+    assert os.listdir(str(outside)) == []
+
+
+def test_build_plain_l2s_is_pinned(env, tmp_path, monkeypatch):
+    rootfs, _outside = env
+    stage = _run_stage(tmp_path, rootfs, monkeypatch)
+
+    env_out = run_step._build_child_env(stage)
+
+    assert env_out["PROOT_L2S_DIR"] == str(rootfs / ".l2s")
+    assert os.path.isdir(str(rootfs / ".l2s"))
