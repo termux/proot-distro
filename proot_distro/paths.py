@@ -294,7 +294,10 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
         crit_error(f"invalid container name '{name}' in spec '{spec}'.")
         sys.exit(1)
     rootfs = os.path.normpath(container_rootfs(name))
-    if not os.path.isdir(rootfs):
+    # The walk, not os.path.isdir(): the rootfs of a container whose
+    # directory a guest re-pointed is a host directory, and answering
+    # "it exists" is how a transfer ends up reading or writing there.
+    if not container_is_installed(name):
         crit_error(f"container '{name}' does not exist.")
         sys.exit(1)
     rel_path = rel_path.lstrip("/")
@@ -556,7 +559,12 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False,
                 rel = os.path.relpath(resolved, rootfs)
                 parts = [] if rel == os.curdir else rel.split(os.sep)
                 leaf = "" if inside else (parts.pop() if parts else "")
-                fd = os.open(rootfs, _O_DIR)
+                # The rootfs is where the O_NOFOLLOW walk starts, so it
+                # is the one directory the descent below cannot vouch
+                # for; open_container_rootfs walks down to it from the
+                # trust root for the same reason everything under it is
+                # walked from there.
+                fd = open_container_rootfs(name)
                 for part in parts:
                     fd = _descend(fd, part, create)
         except OSError as exc:

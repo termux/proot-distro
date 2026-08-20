@@ -39,7 +39,7 @@ from proot_distro.constants import (
     PROGRAM_NAME,
     RUNTIME_DIR,
 )
-from proot_distro.paths import container_rootfs
+from proot_distro.paths import container_is_installed
 from proot_distro.message import (
     C, msg, log_info, log_error, crit_error, quote_error,
 )
@@ -159,7 +159,7 @@ def command_build(args):
     if install_as:
         require_valid_name(install_as, kind="--install-as value")
 
-        if os.path.isdir(container_rootfs(install_as)):
+        if container_is_installed(install_as):
             crit_error(
                 f"container '{install_as}' defined by --install-as already "
                 f"exists. Use '{PROGRAM_NAME} remove {install_as}' first or "

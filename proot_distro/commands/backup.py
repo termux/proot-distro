@@ -59,7 +59,9 @@ from proot_distro.progress import (
 )
 from proot_distro.locking import ContainerLock
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_manifest, container_rootfs
+from proot_distro.paths import (
+    container_is_installed, container_manifest, container_rootfs,
+)
 
 
 # Maps file-extension suffixes to tarfile compression identifiers.
@@ -420,7 +422,7 @@ def command_backup(args) -> None:
     rootfs_dir = container_rootfs(container_name)
     manifest_path = container_manifest(container_name)
 
-    if not os.path.isdir(rootfs_dir):
+    if not container_is_installed(container_name):
         crit_error(f"container '{container_name}' does not exist.")
         sys.exit(1)
 

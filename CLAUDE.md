@@ -457,8 +457,12 @@ dst_dir_fd=)`. `os.path.isdir()` answered "not
 installed" for a `containers/<name> -> <host dir>` a guest had left
 behind and `os.makedirs(exist_ok=True)` then accepted it, so the image
 was unpacked, the sysdata stubs written and the manifest published
-inside that host directory. `remove` is the deliberate exception at the
-far end: the walk unlinks a planted entry rather than traversing it,
+inside that host directory. `login`, `run`, `backup`, `build --install-as` and the `[name:]path`
+spec resolver ask the same question the same way, and `pin_path()`
+starts its `O_NOFOLLOW` descent from `open_container_rootfs()` rather
+than from `os.open(rootfs)` — the rootfs is the one directory that
+descent cannot vouch for itself. `remove` is the deliberate exception at
+the far end: the walk unlinks a planted entry rather than traversing it,
 which is how the user gets rid of one. Plain-tarball installs do **not**
 write `manifest.json`. Legacy `installed-rootfs/<name>` layout is
 migrated on first `login` (`commands/login/migrate.py`), which then

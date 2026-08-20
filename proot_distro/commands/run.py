@@ -26,13 +26,12 @@
 # reused without duplication.
 
 import json
-import os
 import sys
 
 from proot_distro.message import crit_error
 from proot_distro.commands.login import command_login
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_manifest, container_rootfs
+from proot_distro.paths import container_is_installed, container_manifest
 
 
 def _read_image_config(container_name: str) -> dict:
@@ -58,8 +57,7 @@ def command_run(args) -> None:
 
     require_valid_name(container_name)
 
-    rootfs = container_rootfs(container_name)
-    if not os.path.isdir(rootfs):
+    if not container_is_installed(container_name):
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
 

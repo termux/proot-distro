@@ -183,3 +183,77 @@ def test_containers_dir_is_below_the_trust_root():
     assert root is not None
     assert parts[-2:] == ("containers", "box")
     assert os.path.join(root, *parts) == os.path.join(CONTAINERS_DIR, "box")
+
+
+# --- the rest of the commands that name a container ------------------------
+#
+# Every one of them asked os.path.isdir(container_rootfs(name)) and then
+# used the composed path: a planted `containers/<name> -> <host dir>`
+# with a rootfs inside answered "installed", and the command then ran
+# against that host directory — proot with it as the guest's root,
+# backup packing it into an archive, copy and sync reading and writing
+# through it.
+
+def _planted_with_rootfs(name, outside):
+    (outside / "rootfs").mkdir()
+    (outside / "rootfs" / "file").write_text("host content\n")
+    _plant(name, outside)
+
+
+def test_login_refuses_a_planted_container_dir(outside, capsys):
+    from proot_distro.commands.login import command_login
+
+    _planted_with_rootfs("box", outside)
+    args = SimpleNamespace(container_name="box", user="root", isolated=False)
+    with pytest.raises(SystemExit) as exc:
+        command_login(args)
+    assert exc.value.code == 1
+    assert "is not usable" in capsys.readouterr().err
+
+
+def test_backup_refuses_a_planted_container_dir(outside, capsys, tmp_path):
+    from proot_distro.commands.backup import command_backup
+
+    _planted_with_rootfs("box", outside)
+    args = SimpleNamespace(
+        container_name="box", output=str(tmp_path / "out.tar"),
+        compression=None, verbose=False,
+    )
+    with pytest.raises(SystemExit) as exc:
+        command_backup(args)
+    assert exc.value.code == 1
+    assert "is not usable" in capsys.readouterr().err
+    assert not os.path.exists(str(tmp_path / "out.tar"))
+
+
+def test_copy_refuses_a_planted_container_dir(outside, capsys, tmp_path):
+    from proot_distro.commands.copy import command_copy
+
+    _planted_with_rootfs("box", outside)
+    args = SimpleNamespace(
+        source="box:/rootfs/file", destination=str(tmp_path / "stolen"),
+        recursive=False, move=False, verbose=False,
+    )
+    with pytest.raises(SystemExit) as exc:
+        command_copy(args)
+    assert exc.value.code == 1
+    assert "is not usable" in capsys.readouterr().err
+    assert not os.path.exists(str(tmp_path / "stolen"))
+
+
+def test_sync_refuses_a_planted_container_dir(outside, capsys, tmp_path):
+    from proot_distro.commands.sync import command_sync
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "payload").write_text("payload\n")
+    _planted_with_rootfs("box", outside)
+    args = SimpleNamespace(
+        source=str(src), destination="box:/", delete=False, checksum=False,
+        dry_run=False, verbose=False,
+    )
+    with pytest.raises(SystemExit) as exc:
+        command_sync(args)
+    assert exc.value.code == 1
+    assert "is not usable" in capsys.readouterr().err
+    assert not (outside / "payload").exists()

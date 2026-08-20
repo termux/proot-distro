@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from proot_distro import paths
+from proot_distro import paths, statedir
 
 
 def test_container_dir_layout(paths_mod=paths):
@@ -306,6 +306,11 @@ def test_overlap_resolves_the_prefix_above_the_rootfs(
     aliased = tmp_path / "alias"
     os.symlink(real_containers, aliased)
     monkeypatch.setattr(paths, "CONTAINERS_DIR", str(aliased))
+    # The alias stands in for a symlinked $HOME or ~/.local/share, which
+    # in a real run sits *above* the trust root -- and a trust root is the
+    # one thing opened by name, everything below it being walked with
+    # O_NOFOLLOW. Point the walk at the alias so it plays that part.
+    monkeypatch.setattr(statedir, "STATE_ROOTS", (str(aliased),))
 
     src = paths.resolve_container_path("box:/data")
     assert str(aliased) in src              # the alias really is in play

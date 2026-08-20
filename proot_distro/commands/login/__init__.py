@@ -54,7 +54,9 @@ from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.locking import ContainerLock
 from proot_distro.session import register_session
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_dir, container_rootfs
+from proot_distro.paths import (
+    container_dir, container_is_installed, container_rootfs,
+)
 
 from proot_distro.commands.login.env import (
     ANDROID_HOST_ENV_VARS, IMAGE_ENV_BLOCKED,
@@ -311,10 +313,15 @@ def _check_shell_available(rootfs, container_path, login_shell, container_name):
 def _command_login_inner(container_name: str, args, lock) -> None:
     migrate_legacy_rootfs(container_name)
 
-    rootfs = container_rootfs(container_name)
-    if not os.path.isdir(rootfs):
+    # Asked of the O_NOFOLLOW walk, not of the composed path: a
+    # `containers/<name>` a guest re-pointed at a host directory holding
+    # a rootfs used to answer "installed", and the session then ran with
+    # that host directory as its root.
+    if not container_is_installed(container_name):
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
+
+    rootfs = container_rootfs(container_name)
 
     dist_type = _detect_dist_type(rootfs)
     container_path = container_dir(container_name)
