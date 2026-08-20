@@ -133,7 +133,7 @@ def test_plain_tmp_is_still_bound_as_dev_shm(env, tmp_path, monkeypatch):
 def _run_stage(tmp_path, rootfs, monkeypatch):
     monkeypatch.setattr(run_step, "IS_TERMUX", True)
     monkeypatch.setattr(run_step, "setup_fake_sysdata", lambda r: None)
-    monkeypatch.setattr(run_step, "fake_proc_bindings", lambda r: [])
+    monkeypatch.setattr(run_step, "fake_sysdata_bindings", lambda r: [])
     monkeypatch.setattr(run_step, "get_proot_bin", lambda: "proot")
     monkeypatch.setattr(run_step, "get_device_cpu_arch", lambda: HOST_ARCH)
     monkeypatch.setattr(run_step, "get_emulator_args", lambda *a: [])

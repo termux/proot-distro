@@ -23,9 +23,26 @@
 # files; providing static replacements ensures distro tools that read them
 # (top, htop, etc.) work correctly. The fake files live under
 # containers/<name>/sysdata/ so they are removed together with the container.
+#
+# That directory is guest-writable: on Termux it sits under $TERMUX_PREFIX,
+# which is bound read-write into every non-isolated container, so a session
+# can replace any entry here between runs. Every name below is therefore
+# addressed as (directory fd, entry name) with O_NOFOLLOW, never as a path:
+# os.path.exists() plus open(path, "w") followed a planted symlink and
+# created -- or, for a name whose target already existed, silently skipped
+# -- a host file, os.makedirs(exist_ok=True) accepted one in place of
+# sys_empty, and os.chmod() applied 0700 to whatever it led to. The bind
+# arguments are just as bad the other way round: proot mounts what the name
+# resolves to, so a symlinked `loadavg` would have handed the guest a host
+# file as /proc/loadavg. An entry that is not of the type this module wrote
+# is dropped and remade -- nothing else writes here, so nothing legitimate
+# is lost -- and one that cannot be validated is left unbound rather than
+# followed.
 
 import os
+import stat
 
+from proot_distro import dirfd
 from proot_distro.constants import (
     DEFAULT_FAKE_KERNEL_RELEASE,
     DEFAULT_FAKE_KERNEL_VERSION,
@@ -238,10 +255,110 @@ nr_unstable 0
 """
 
 
-def _write_if_missing(path: str, content: str) -> None:
-    if not os.path.exists(path):
-        with open(path, "w") as fh:
-            fh.write(content)
+# The fake /proc entries, in the order they are written and bound: the
+# name under sysdata/, the guest path it substitutes for, and the content.
+_FAKE_VERSION = (
+    f"Linux version {DEFAULT_FAKE_KERNEL_RELEASE} (proot@termux) "
+    f"(gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) "
+    f"{DEFAULT_FAKE_KERNEL_VERSION}\n"
+)
+
+_FAKE_ENTRIES = (
+    ("loadavg", "/proc/loadavg", _FAKE_LOADAVG),
+    ("stat", "/proc/stat", _FAKE_STAT),
+    ("uptime", "/proc/uptime", _FAKE_UPTIME),
+    ("version", "/proc/version", _FAKE_VERSION),
+    ("vmstat", "/proc/vmstat", _FAKE_VMSTAT),
+    ("sysctl_entry_cap_last_cap", "/proc/sys/kernel/cap_last_cap", "40\n"),
+    ("sysctl_inotify_max_user_watches",
+     "/proc/sys/fs/inotify/max_user_watches", "4096\n"),
+    ("sysctl_kernel_overflowuid", "/proc/sys/kernel/overflowuid",
+     _FAKE_OVERFLOW_ID),
+    ("sysctl_kernel_overflowgid", "/proc/sys/kernel/overflowgid",
+     _FAKE_OVERFLOW_ID),
+)
+
+
+def sysdata_dir(rootfs: str) -> str:
+    """Path of the sysdata directory belonging to *rootfs*."""
+    return os.path.join(os.path.dirname(rootfs), "sysdata")
+
+
+def _ensure_dir_at(dir_fd: int, name: str, mode: int = None):
+    """Open the subdirectory *name*, creating it. Descriptor, or None.
+
+    O_NOFOLLOW throughout, so a symlink under the name is refused rather
+    than followed. Anything that is refused is then unlinked and the
+    directory made for real: this tree is written by nothing but the code
+    below, so an entry of the wrong type was planted, and leaving it
+    would keep the fake data permanently unavailable as well as unsafe.
+    *mode* is applied to the descriptor, never to the name.
+    """
+    fd = None
+    try:
+        fd = dirfd.opendir_at(dir_fd, name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except OSError:
+            return None
+    if fd is None:
+        try:
+            os.mkdir(name, 0o755, dir_fd=dir_fd)
+        except FileExistsError:
+            pass                    # lost a race with another writer
+        except OSError:
+            return None
+        try:
+            fd = dirfd.opendir_at(dir_fd, name)
+        except OSError:
+            return None
+    if mode is not None:
+        try:
+            os.fchmod(fd, mode)
+        except OSError:
+            pass
+    return fd
+
+
+def _write_if_missing(dir_fd: int, name: str, content: str) -> None:
+    """Create *name* under dir_fd with *content*, unless already present.
+
+    "Present" means a plain file: an entry of any other type is one this
+    module did not write, so it is removed and the real file created in
+    its place. O_CREAT|O_EXCL|O_NOFOLLOW then guarantees the bytes go
+    into a new inode inside this directory and nowhere else.
+    """
+    try:
+        st = dirfd.lstat_at(dir_fd, name)
+    except FileNotFoundError:
+        st = None
+    except OSError:
+        return
+    if st is not None:
+        if stat.S_ISREG(st.st_mode):
+            return
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except OSError:
+            return
+
+    try:
+        fd = dirfd.open_file_at(
+            dir_fd, name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644,
+        )
+    except OSError:
+        return
+    try:
+        data = content.encode()
+        while data:
+            data = data[os.write(fd, data):]
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def setup_fake_sysdata(rootfs: str) -> None:
@@ -251,63 +368,64 @@ def setup_fake_sysdata(rootfs: str) -> None:
     (e.g. ``$RUNTIME_DIR/containers/<name>/rootfs``).  Fake files are
     written to a sibling ``sysdata/`` directory, not into the rootfs.
     """
-    sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
-    sys_empty = os.path.join(sysdata_dir, "sys_empty")
-    os.makedirs(sys_empty, exist_ok=True)
-    os.chmod(sysdata_dir, 0o700)
+    try:
+        parent_fd = dirfd.opendir(os.path.dirname(rootfs))
+    except OSError:
+        return
+    try:
+        dir_fd = _ensure_dir_at(parent_fd, "sysdata", mode=0o700)
+    finally:
+        os.close(parent_fd)
+    if dir_fd is None:
+        return
 
-    fake_version = (
-        f"Linux version {DEFAULT_FAKE_KERNEL_RELEASE} (proot@termux) "
-        f"(gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) "
-        f"{DEFAULT_FAKE_KERNEL_VERSION}\n"
-    )
-
-    _write_if_missing(os.path.join(sysdata_dir, "loadavg"), _FAKE_LOADAVG)
-    _write_if_missing(os.path.join(sysdata_dir, "stat"), _FAKE_STAT)
-    _write_if_missing(os.path.join(sysdata_dir, "uptime"), _FAKE_UPTIME)
-    _write_if_missing(os.path.join(sysdata_dir, "version"), fake_version)
-    _write_if_missing(os.path.join(sysdata_dir, "vmstat"), _FAKE_VMSTAT)
-    _write_if_missing(
-        os.path.join(sysdata_dir, "sysctl_entry_cap_last_cap"), "40\n"
-    )
-    _write_if_missing(
-        os.path.join(sysdata_dir, "sysctl_inotify_max_user_watches"),
-        "4096\n",
-    )
-    _write_if_missing(
-        os.path.join(sysdata_dir, "sysctl_kernel_overflowuid"),
-        _FAKE_OVERFLOW_ID,
-    )
-    _write_if_missing(
-        os.path.join(sysdata_dir, "sysctl_kernel_overflowgid"),
-        _FAKE_OVERFLOW_ID,
-    )
+    try:
+        empty_fd = _ensure_dir_at(dir_fd, "sys_empty")
+        if empty_fd is not None:
+            os.close(empty_fd)
+        for name, _real, content in _FAKE_ENTRIES:
+            _write_if_missing(dir_fd, name, content)
+    finally:
+        os.close(dir_fd)
 
 
-def fake_proc_bindings(rootfs: str) -> list:
-    """Return --bind args for fake /proc entries unreadable on Android.
+def _is_type_at(dir_fd: int, name: str, predicate) -> bool:
+    """True when *name* under dir_fd is of the type *predicate* accepts."""
+    try:
+        st = dirfd.lstat_at(dir_fd, name)
+    except OSError:
+        return False
+    return predicate(st.st_mode)
 
-    *rootfs* is the absolute path to the container's rootfs directory.
+
+def fake_sysdata_bindings(rootfs: str) -> list:
+    """Return --bind args for the fake /proc and /sys entries of *rootfs*.
+
+    Only entries this module could verify are bound: sys_empty as a real
+    directory, each /proc substitute as a plain file. proot still resolves
+    the source by name when it mounts it, so a session running against the
+    same container can re-point one in between; what the check removes is
+    the persistent case, where a guest leaves a symlink behind pointing at
+    a host file and every later session mounts that file into the guest.
     """
-    sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
+    base = sysdata_dir(rootfs)
+    dir_fd = dirfd.opendir_under(os.path.dirname(rootfs), ("sysdata",))
+    if dir_fd is None:
+        return []
+
     bindings = []
-    checks = [
-        ("/proc/loadavg",                        "loadavg"),
-        ("/proc/stat",                            "stat"),
-        ("/proc/uptime",                          "uptime"),
-        ("/proc/version",                         "version"),
-        ("/proc/vmstat",                          "vmstat"),
-        ("/proc/sys/kernel/cap_last_cap",         "sysctl_entry_cap_last_cap"),
-        ("/proc/sys/fs/inotify/max_user_watches", "sysctl_inotify_max_user_watches"),
-        ("/proc/sys/kernel/overflowuid",           "sysctl_kernel_overflowuid"),
-        ("/proc/sys/kernel/overflowgid",           "sysctl_kernel_overflowgid"),
-    ]
-    for real, fake_name in checks:
-        try:
-            with open(real, "rb") as fh:
-                fh.read(1)
-        except OSError:
-            bindings.append(
-                f"--bind={os.path.join(sysdata_dir, fake_name)}:{real}"
-            )
+    try:
+        if _is_type_at(dir_fd, "sys_empty", stat.S_ISDIR):
+            bindings.append(f"--bind={base}/sys_empty:/sys/fs/selinux")
+        for name, real, _content in _FAKE_ENTRIES:
+            try:
+                with open(real, "rb") as fh:
+                    fh.read(1)
+                continue            # the real entry is readable as it is
+            except OSError:
+                pass
+            if _is_type_at(dir_fd, name, stat.S_ISREG):
+                bindings.append(f"--bind={os.path.join(base, name)}:{real}")
+    finally:
+        os.close(dir_fd)
     return bindings

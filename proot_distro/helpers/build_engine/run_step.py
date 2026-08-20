@@ -45,7 +45,7 @@ from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
 )
-from proot_distro.sysdata import setup_fake_sysdata, fake_proc_bindings
+from proot_distro.sysdata import setup_fake_sysdata, fake_sysdata_bindings
 from proot_distro.helpers.build_cache import (
     compute_recipe_hash, lookup as cache_lookup, record as cache_record,
 )
@@ -193,9 +193,7 @@ def _exec_proot(engine, stage, command, stdin_input):
             if not os.path.lexists(f"/dev/{name}") and os.path.exists(f"/proc/self/fd/{i}"):
                 proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
         setup_fake_sysdata(rootfs)
-        sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
-        proot_args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")
-        proot_args += fake_proc_bindings(rootfs)
+        proot_args += fake_sysdata_bindings(rootfs)
         # The step's own /tmp, bound in as /dev/shm. Made and chmod'ed
         # through descriptors, never by name: every component of this path
         # is image content, os.makedirs(exist_ok=True) accepts a symlink to

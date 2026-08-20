@@ -202,7 +202,11 @@ Top-level utilities (each owns a focused concern):
   restored container.
   `makedirs_under(root, parts, mode)` is the one entry point taking a
   *path* — `os.makedirs()`'s replacement for a directory whose components
-  are guest or image content. Each level is `mkdirat`'ed off the
+  are guest or image content — and `opendir_under(root, parts, create=,
+  mode=)` is the same walk handing back the descriptor instead, for a
+  caller that must keep addressing entries under a directory the guest
+  could otherwise re-point (the lock files, the session registry, a
+  container's `sysdata/`). Each level is `mkdirat`'ed off the
   descriptor of the level above and reopened `O_NOFOLLOW`, and the mode
   goes on through `_chmod_fd`; `None` means "a component is a symlink or
   is not a directory", which callers treat as *do not use this path*
@@ -301,7 +305,18 @@ Top-level utilities (each owns a focused concern):
   timestamps) of any host file within its reach — no race required, and on
   Termux `$TERMUX_PREFIX` is bound into every non-isolated container by
   default with `RUNTIME_DIR` underneath it.
-- `sysdata.py` — `setup_fake_sysdata`, `fake_proc_bindings`.
+- `sysdata.py` — `setup_fake_sysdata`, `fake_sysdata_bindings`. The
+  container's `sysdata/` directory is guest-writable (on Termux it sits
+  under the bound `$TERMUX_PREFIX`), so every entry is made, chmod'ed
+  and type-checked as `(dir_fd, name)` with `O_NOFOLLOW`: naming them
+  let `open(path, "w")` create the host file a planted symlink pointed
+  at, and let the resulting `--bind` mount that host file into the guest
+  as `/proc/loadavg`. An entry that is not of the type this module
+  writes is dropped and remade — nothing else writes here — and one that
+  cannot be validated is left unbound rather than followed.
+  `fake_sysdata_bindings` emits the `sys_empty:/sys/fs/selinux` bind its
+  callers used to append themselves, so validating and naming happen in
+  one place.
 - `cli.py` — `main()`: SIGQUIT routing, root warn, nested-proot
   reject, proot probe, parse, dispatch.
 

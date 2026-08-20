@@ -44,7 +44,7 @@ from proot_distro.constants import (
 from proot_distro import dirfd
 from proot_distro.message import crit_error, warn
 from proot_distro.arch import ARCH_UNAME_M
-from proot_distro.sysdata import fake_proc_bindings
+from proot_distro.sysdata import fake_sysdata_bindings
 from proot_distro.commands.login.bindings import (
     storage_bindings, system_bindings,
 )
@@ -195,9 +195,7 @@ def _add_termux_dev_binds(args, rootfs):
     for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
         if not os.path.lexists(f"/dev/{name}") and os.path.exists(f"/proc/self/fd/{i}"):
             args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
-    sysdata_dir = os.path.join(os.path.dirname(rootfs), "sysdata")
-    args.append(f"--bind={sysdata_dir}/sys_empty:/sys/fs/selinux")
-    args += fake_proc_bindings(rootfs)
+    args += fake_sysdata_bindings(rootfs)
 
     # /dev/shm is the container's own /tmp. Both steps here used to take
     # that name at face value: os.makedirs(exist_ok=True) accepts a symlink

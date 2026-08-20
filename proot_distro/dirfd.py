@@ -229,6 +229,37 @@ def makedirs_under(root: str, parts, mode: int = None):
     from here; what this removes is the persistent case, where the image
     ships the link or a guest leaves one behind between sessions.
     """
+    fd = opendir_under(root, parts, create=True, mode=mode)
+    if fd is None:
+        return None
+    os.close(fd)
+    return os.path.join(root, *parts)
+
+
+def opendir_under(root: str, parts, *, create: bool = False,
+                  mode: int = None):
+    """Open the directory *parts* names under *root*. Descriptor, or None.
+
+    The descriptor form of makedirs_under(), and the walk both of them
+    are: each level is opened O_NOFOLLOW off the descriptor of the level
+    above, so a component that is a symlink is refused rather than
+    followed. What comes back names the *inode* the walk validated, so a
+    caller that keeps addressing entries as (dir_fd, name) is proof
+    against the directory being re-pointed afterwards -- which is why
+    every user of the program's own state directories (locks, sessions,
+    a container's sysdata) holds one of these instead of a path. Those
+    directories live under $TERMUX_PREFIX on Termux, bound read-write
+    into every non-isolated container, so their components are guest
+    content the same way a rootfs's are.
+
+    With create=True the missing levels are made on the way down;
+    without it a missing level is simply a refusal. None means the
+    directory is not reachable inside *root*: a component is a symlink
+    or is not a directory, is missing (create=False), or the mkdir
+    failed. *mode* is applied to the leaf through its descriptor.
+
+    The caller owns the returned descriptor and must close it.
+    """
     try:
         fd = opendir(root)
     except OSError:
@@ -238,6 +269,8 @@ def makedirs_under(root: str, parts, mode: int = None):
             try:
                 nxt = opendir_at(fd, part)
             except FileNotFoundError:
+                if not create:
+                    return None
                 try:
                     os.mkdir(part, 0o777, dir_fd=fd)
                 except FileExistsError:
@@ -256,9 +289,11 @@ def makedirs_under(root: str, parts, mode: int = None):
             fd = nxt
         if mode is not None:
             _chmod_fd(fd, mode)
-        return os.path.join(root, *parts)
+        opened, fd = fd, None
+        return opened
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
 
 
 def unlink_quietly(dir_fd: int, name: str) -> None:
