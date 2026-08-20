@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.helpers.build_engine import handlers
+from proot_distro.helpers.build_engine import copy_step, handlers
 from proot_distro.helpers.build_engine.stage import Stage
 
 
@@ -109,3 +109,64 @@ def test_workdir_plain_path_is_created_and_chmodded(engine):
     made = rootfs / "app" / "sub"
     assert os.path.isdir(str(made))
     assert stat.S_IMODE(made.stat().st_mode) == 0o755
+
+
+# --- COPY/ADD materialisation ----------------------------------------------
+
+def test_materialise_dir_over_a_symlink_does_not_chmod_the_target(tmp_path):
+    # `_safe_resolve` covers the *parents* of every entry; the final
+    # component is deliberately left alone so the entry itself is replaced
+    # rather than written through. A directory entry has to drop a link
+    # standing there for that to hold — os.makedirs(exist_ok=True) is happy
+    # with a symlink to a directory and os.chmod() follows one.
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    (outside / "keep").write_text("KEEP")
+    os.symlink(str(outside), str(rootfs / "etc"))
+
+    copy_step._materialise_files(str(rootfs), {
+        "etc": {"kind": "dir", "mode": 0o777, "uid": 0, "gid": 0, "mtime": 0},
+    })
+
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o700
+    # The link was replaced by a real directory, as the layer records it
+    # and as the tar extractor would apply it.
+    made = rootfs / "etc"
+    assert made.is_dir() and not made.is_symlink()
+    assert stat.S_IMODE(made.stat().st_mode) == 0o777
+    # The host directory's contents did not become the image's.
+    assert os.listdir(str(made)) == []
+    assert (outside / "keep").read_text() == "KEEP"
+
+
+def test_materialise_dir_keeps_an_existing_real_directory(tmp_path):
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc" / "kept").write_text("x")
+
+    copy_step._materialise_files(str(rootfs), {
+        "etc": {"kind": "dir", "mode": 0o755, "uid": 0, "gid": 0, "mtime": 0},
+    })
+
+    assert (rootfs / "etc" / "kept").read_text() == "x"
+
+
+def test_materialise_tar_dir_member_lands_inside_the_rootfs(tmp_path):
+    # The whole shape of the reported case: an ADD'd archive carrying a
+    # directory whose name the image already points outside.
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    os.symlink(str(outside), str(rootfs / "etc"))
+
+    copy_step._materialise_files(str(rootfs), {
+        "etc": {"kind": "dir", "mode": 0o755, "uid": 0, "gid": 0, "mtime": 0},
+        "etc/passwd": {"kind": "content", "data": b"pwned\n",
+                       "mode": 0o644, "uid": 0, "gid": 0, "mtime": 0},
+    })
+
+    assert (rootfs / "etc" / "passwd").read_bytes() == b"pwned\n"
+    assert not (outside / "passwd").exists()

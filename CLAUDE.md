@@ -940,6 +940,17 @@ machine: `push` uploads it, and what `..` means is then decided by
 whatever loads it. The packer's synthesised-ancestor loop goes through
 the same rule, or it invents a `..` directory entry above the bad name.
 
+`_materialise_files` resolves each entry's **parents** with
+`_safe_resolve` and leaves the final component alone on purpose, so the
+entry itself is replaced rather than written through — which means every
+kind has to drop a link standing there first. The three that write data
+already unlinked whatever was in the way; the `dir` branch did not, so an
+image shipping `etc -> <host dir>` plus an ADD'd tar carrying an `etc/`
+member had `os.makedirs(exist_ok=True)` accept the link and the chmod
+behind it land on the host directory — and the tree then disagreed with
+the layer, which records a plain directory at that name. It now drops the
+link the way `tar_extract` does when the same layer is applied.
+
 RUN under Termux uses `--link2symlink`. To keep produced layers
 portable, `layer_diff.snapshot()` skips `<rootfs>/.l2s/`, and
 `_add_entry()` follows symlinks pointing into it to pack the backing
