@@ -906,6 +906,20 @@ or `do_copy_or_add`. FROM resolves `scratch`, named stages (re-apply
 cached layers), or external images via `pull_image()`. Base image
 `OnBuild` triggers fire after FROM.
 
+`build_engine/users.py` resolves `USER` and `COPY --chown` against the
+rootfs's own `/etc/passwd` and `/etc/group` — image content, and so is
+every directory component leading to them. `_open_guest_file()` walks
+those components off a descriptor on the rootfs rather than naming the
+file: a symlink is still followed, because a legitimate image ships one
+(Nix points `/etc/passwd` at an absolute store path), but an absolute
+target restarts at the rootfs, `..` stops there, and the walk that
+resolves is the walk that opens, so there is no window in between.
+Naming the file let an image point `/etc` — or `/etc/passwd` itself — at
+a host file and have the build read it. `open_regular_at` refuses a FIFO
+under either name, which used to block the build forever, and the read
+is capped (`_MAX_ID_FILE_BYTES`) since nothing bounds how large an image
+makes the file or how long it makes a single line.
+
 Destination paths are normalised **whether or not they are absolute**
 (`do_workdir`, `_do_copy_or_add`). Only the relative branch used to be,
 so an absolute one carried its `..` onward: `WORKDIR /../../../x`
