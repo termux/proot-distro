@@ -135,8 +135,12 @@ def _walk_tree(parent_fd, name, arcname, path, visit, skip=()):
 
     Directories are carried on an explicit stack rather than by recursion:
     how deep the tree goes is the guest's choice, and one past the
-    interpreter's limit would end the backup in a RecursionError. Only the
-    fds along the current path are open at once.
+    interpreter's limit would end the backup in a RecursionError. How many
+    descriptors that costs is bounded too (dirfd.Levels): one per level
+    ran the process out of them partway down a deep rootfs, and each
+    directory the walk could then not open was skipped silently, so the
+    archive came back missing everything below that depth and said so
+    nowhere.
 
     *skip* names entries left out at the top level only — proot's `.l2s/`
     store, whose files are inlined into the symlinks that refer to them.
@@ -158,11 +162,12 @@ def _walk_tree(parent_fd, name, arcname, path, visit, skip=()):
     # Frame layout: [fd, None, arcname, path, pending, owned] — the two
     # descriptor slots first and `owned` last, so close_frames() unwinds it.
     stack = [[fd, None, arcname, path, pending, True]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             fd, _, arc_dir, dir_path, pending, _ = stack[-1]
             if not pending:
-                stack.pop()
+                levels.pop()
                 os.close(fd)
                 continue
             child = pending.pop()
@@ -181,7 +186,7 @@ def _walk_tree(parent_fd, name, arcname, path, visit, skip=()):
                 continue
             names = _listing(sub)
             names.reverse()
-            stack.append([sub, None, child_arc, child_path, names, True])
+            levels.push([sub, None, child_arc, child_path, names, True])
     except BaseException:
         dirfd.close_frames(stack)
         raise

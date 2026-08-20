@@ -249,9 +249,11 @@ def snapshot(rootfs):
     The walk carries directory descriptors rather than paths: os.scandir
     on a name descends whatever it resolves to now, and the CRC then
     opened that name a second time, so a process an earlier RUN left
-    running could have a host file's content decide a fingerprint. Only
-    the fds along the current path are open, so the rootfs's depth is
-    the image's business, not the interpreter's.
+    running could have a host file's content decide a fingerprint. How
+    many it holds is bounded (dirfd.Levels), because the rootfs's depth
+    is the image's business: one descriptor per level ran the process out
+    of them partway down, and every entry below that point was left out
+    of the snapshot -- and so out of the layer -- without a word.
     """
     state = {}
     try:
@@ -261,6 +263,7 @@ def snapshot(rootfs):
 
     # Frame layout: [fd, None, pending names, rel prefix, owned].
     stack = [[root_fd, None, None, "", True]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -271,7 +274,7 @@ def snapshot(rootfs):
                 except OSError:
                     pending = frame[2] = []
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -296,7 +299,7 @@ def snapshot(rootfs):
                     sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
-                stack.append([sub, None, None, rel + "/", True])
+                levels.push([sub, None, None, rel + "/", True])
             elif stat.S_ISREG(mode):
                 state[rel] = (
                     "file",

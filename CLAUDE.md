@@ -384,8 +384,38 @@ Top-level utilities (each owns a focused concern):
   past the interpreter's limit (~1000 levels, trivial to create) ended the
   command in a `RecursionError` traceback — not an `OSError`, so no
   caller's net caught it. Frames are laid out `[fd, second fd or None,
-  …, owned]` so one `close_frames()` unwinds any of them on the way out;
-  open fds still scale with tree *depth*, not size.
+  …, owned]` so one `close_frames()` unwinds any of them on the way out.
+  `Levels` bounds what those frames *hold*: an explicit stack fixed the
+  recursion and left one descriptor open per level, which the same tree
+  exhausts just as surely — the soft limit is 1024 on Android and on most
+  distributions. Past `MAX_OPEN_LEVELS` (64, far beyond any real tree, so
+  nothing ordinary ever pays for this) the shallowest live level is
+  **parked**: its descriptors are closed and its `(st_dev, st_ino)` kept,
+  and it is reopened through its child's `..` when the walk pops back down
+  to it. `..` is answered from the directory's own parent link rather than
+  by resolving a name, so nothing a guest *plants* can redirect it — but a
+  directory it **moves** has a different parent, so the level is checked
+  against the recorded identity and a mismatch raises `ESTALE` instead of
+  being walked. The top two levels are never parked, since a walk that
+  abandons a half-pushed frame (`copy_tree_at`'s error path,
+  `_mirror_at`'s) resumes on the one below it with no descendant left to
+  reopen it through. Every walk in the program goes through it —
+  `count_tree_at`, `copy_tree_at`, `rmtree_at`, `backup`'s `_walk_tree`,
+  sync's three passes, `clear-cache`'s `_tree_size`, `layer_diff.snapshot`,
+  `copy_step`'s context enumeration and `l2s`'s rewrite — because an
+  EMFILE partway down is not a walk that can finish and each answered
+  differently and badly: `backup` left the deepest members out of the
+  archive **without a word**, a build's layer came out missing whatever was
+  below the limit, `clear-cache` reported the space it had *not* reclaimed,
+  and `remove` could not delete the container at all. `rmtree_at` reports a
+  refused revive through `on_error` and stops (there is no directory left
+  to remove the level *from*, and nothing below it can be addressed
+  either); the read-only walks raise, and every command that runs one has
+  a net that turns it into a message.
+  `rmtree_at` takes the directory it removes a level *from* off the stack
+  rather than from a copy kept in the frame — a parked level has closed its
+  descriptors, so a copy made on the way down would name a closed fd, or,
+  once the number is reused, some other file entirely.
   `temp_name()` builds the sibling name a replacing write renames into
   place, trimming the stem so `<name>.~pd_copy` fits inside `NAME_MAX`
   — appending the suffix outright made ENAMETOOLONG out of any entry

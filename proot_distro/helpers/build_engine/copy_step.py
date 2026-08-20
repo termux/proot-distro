@@ -551,8 +551,10 @@ def _add_directory_tree(tree, parts, dest, file_map,
     level opened O_NOFOLLOW off the one above: a symlink is recorded as
     a symlink and never descended (what os.walk(followlinks=False)
     gave), and how deep the tree goes is the context's business rather
-    than the interpreter's. Only the fds along the current path are
-    open.
+    than the interpreter's — of the descriptor table's, too, which is why
+    the levels holding one at a time are bounded (dirfd.Levels): a walk
+    that runs out partway down records nothing below that point, and what
+    it records is what the instruction copies and what the layer holds.
     """
     if not dest.endswith("/"):
         dest = dest + "/"
@@ -563,6 +565,7 @@ def _add_directory_tree(tree, parts, dest, file_map,
     prefix = list(parts)
     # Frame layout: [fd, None, pending names, rel components, owned].
     stack = [[top_fd, None, None, (), True]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -573,7 +576,7 @@ def _add_directory_tree(tree, parts, dest, file_map,
                 except OSError:
                     pending = frame[2] = []
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -613,7 +616,7 @@ def _add_directory_tree(tree, parts, dest, file_map,
                     sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
-                stack.append([sub, None, None, child, True])
+                levels.push([sub, None, None, child, True])
             elif stat.S_ISREG(mode):
                 _file_entry(
                     file_map, arc, tree.root, prefix + list(child),

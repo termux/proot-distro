@@ -241,6 +241,13 @@ def command_build(args):
                 # (see copy_step._materialise_files).
                 log_error(f"Build failed: {quote_error(exc)}")
                 sys.exit(1)
+            except OSError as exc:
+                # The engine's own walks report per-entry failures and
+                # carry on; one that reaches here is the walk losing its
+                # footing — a directory moved out from under it while a
+                # step's leftovers were still running (dirfd.Levels).
+                log_error(f"Build failed: {quote_error(exc)}")
+                sys.exit(1)
 
             # ----- assemble manifest + image_config -----
             arch_docker = ARCH_TO_DOCKER.get(target_arch, (target_arch, ""))[0]

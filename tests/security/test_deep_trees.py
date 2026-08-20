@@ -26,10 +26,14 @@
 # that way. Same for its fds, which os.walk() never held.
 
 import contextlib
+import errno
 import os
+import resource
 import sys
 import tarfile
 from types import SimpleNamespace
+
+import pytest
 
 from proot_distro import dirfd
 from proot_distro.commands.backup import command_backup
@@ -38,6 +42,7 @@ from proot_distro.commands.copy import command_copy
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.sync import command_sync
 from proot_distro.constants import BASE_CACHE_DIR
+from proot_distro.helpers import layer_diff
 from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
 from proot_distro.paths import container_dir, container_rootfs
 
@@ -334,3 +339,230 @@ def test_clear_cache_removes_a_tree_deeper_than_the_stack(tmp_path):
         assert len(_open_fds() - before) == 0
     finally:
         _remove_deep(deep)
+
+
+# --- descriptors, not just stack frames ------------------------------------
+#
+# An explicit stack fixed the recursion; it left one descriptor open per
+# level, which a deep tree exhausts just as surely. The soft limit is 1024
+# on Android and on most distributions, so a tree a guest builds in a
+# second took every one of these walks past it, and each answered
+# differently and badly: `backup` left the deepest members out of the
+# archive without a word, a build's layer came out missing whatever was
+# below the limit, `clear-cache` reported the space it had *not*
+# reclaimed, and `remove` could not delete the container at all.
+#
+# dirfd.Levels parks the levels beyond a budget and reopens each through
+# its child's ".." as the walk unwinds, checked against the (device,
+# inode) taken when it was parked.
+
+# Deeper than any budget below, and deeper than the soft limits these
+# tests impose, but cheap to build and to tear down.
+FD_DEPTH = 400
+
+
+def _make_chain(base, depth=FD_DEPTH, leaf="leaf"):
+    """base/d/d/d/... with a file at the bottom, holding one fd at a time."""
+    os.makedirs(base, exist_ok=True)
+    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for _ in range(depth):
+            os.mkdir("d", 0o755, dir_fd=fd)
+            nxt = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        with open(leaf, "wb",
+                  opener=lambda p, f: os.open(p, f, 0o644, dir_fd=fd)) as fh:
+            fh.write(b"BOTTOM")
+    finally:
+        os.close(fd)
+
+
+class _fd_limit:
+    """Run with a soft descriptor limit far below the tree's depth."""
+
+    def __init__(self, soft):
+        self._soft = soft
+
+    def __enter__(self):
+        self._saved = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE,
+                           (self._soft, self._saved[1]))
+        return self
+
+    def __exit__(self, *_exc):
+        resource.setrlimit(resource.RLIMIT_NOFILE, self._saved)
+        return False
+
+
+@pytest.fixture
+def small_budget(monkeypatch):
+    """Park after a handful of levels, so the tests need no huge trees."""
+    monkeypatch.setattr(dirfd, "MAX_OPEN_LEVELS", 8)
+    return 8
+
+
+def _peak_fds(monkeypatch):
+    """Record the descriptor count after every directory the walk opens."""
+    peak = [len(os.listdir("/proc/self/fd"))]
+    real = dirfd.opendir_at
+
+    def watching(fd, name):
+        opened = real(fd, name)
+        peak[0] = max(peak[0], len(os.listdir("/proc/self/fd")))
+        return opened
+
+    monkeypatch.setattr(dirfd, "opendir_at", watching)
+    return peak
+
+
+def test_copy_of_a_deep_tree_holds_a_bounded_number_of_fds(tmp_path, builders,
+                                                           monkeypatch):
+    builders.make_container("fdcopy")
+    src = os.path.join(container_rootfs("fdcopy"), "deep")
+    _make_chain(src)
+    out = str(tmp_path / "out")
+    peak = _peak_fds(monkeypatch)
+    try:
+        _copy("fdcopy:/deep", out, recursive=True)
+        assert _depth_of(out) == FD_DEPTH
+        # Two descriptors per level, so the ceiling is the budget twice
+        # over plus the handful the process already held.
+        assert peak[0] < 2 * dirfd.MAX_OPEN_LEVELS + 40
+    finally:
+        _remove_deep(src)
+        _remove_deep(out)
+
+
+def test_sync_of_a_deep_tree_holds_a_bounded_number_of_fds(tmp_path, builders,
+                                                           monkeypatch):
+    builders.make_container("fdsync")
+    src = os.path.join(container_rootfs("fdsync"), "deep")
+    _make_chain(src)
+    out = str(tmp_path / "out")
+    peak = _peak_fds(monkeypatch)
+    try:
+        _sync("fdsync:/deep", out)
+        assert _depth_of(out) == FD_DEPTH
+        assert peak[0] < 2 * dirfd.MAX_OPEN_LEVELS + 40
+    finally:
+        _remove_deep(src)
+        _remove_deep(out)
+
+
+def test_backup_archives_every_level_under_an_fd_limit(tmp_path, builders,
+                                                       small_budget):
+    # The failure this replaces was silent: each directory the walk could
+    # not open was skipped, so the archive simply stopped at whatever
+    # depth the table ran out and reported success.
+    builders.make_container("fdbk")
+    src = os.path.join(container_rootfs("fdbk"), "deep")
+    _make_chain(src)
+    out = tmp_path / "deep.tar"
+    try:
+        with _fd_limit(96):
+            command_backup(SimpleNamespace(
+                container_name="fdbk", output=str(out),
+                compression=None, verbose=False,
+            ))
+        with tarfile.open(out) as tf:
+            names = [m.name for m in tf.getmembers()]
+        assert sum(1 for n in names if n.endswith("/d")) == FD_DEPTH
+        assert sum(1 for n in names if n.endswith("/leaf")) == 1
+    finally:
+        _remove_deep(src)
+
+
+def test_snapshot_records_every_level_under_an_fd_limit(tmp_path,
+                                                        small_budget):
+    # What snapshot() misses, the layer misses: a build would have
+    # published an image with everything below the limit missing.
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    _make_chain(str(root / "deep"))
+    try:
+        with _fd_limit(96):
+            snap = layer_diff.snapshot(str(root))
+        deepest = "deep/" + "/".join(["d"] * FD_DEPTH) + "/leaf"
+        assert deepest in snap
+    finally:
+        _remove_deep(str(root / "deep"))
+
+
+def test_clear_cache_removes_a_deep_tree_under_an_fd_limit(small_budget):
+    deep = os.path.join(BASE_CACHE_DIR, "oci_layers", "deep")
+    _make_chain(deep)
+    try:
+        with _fd_limit(96):
+            command_clear_cache(SimpleNamespace(
+                verbose=False, orphan=False, build_cache=False))
+        assert not os.path.exists(os.path.join(BASE_CACHE_DIR, "oci_layers"))
+    finally:
+        _remove_deep(deep)
+
+
+def test_remove_deletes_a_deep_tree_under_an_fd_limit(builders, small_budget):
+    # The worst of them: a container that could not be removed at all.
+    builders.make_container("fdrm")
+    deep = os.path.join(container_rootfs("fdrm"), "deep")
+    _make_chain(deep)
+    try:
+        with _fd_limit(96):
+            command_remove(SimpleNamespace(target="fdrm", verbose=False))
+        assert not os.path.exists(container_dir("fdrm"))
+    finally:
+        _remove_deep(deep)
+
+
+# --- what ".." is allowed to be -------------------------------------------
+
+def test_a_parked_level_is_refused_when_it_moved(tmp_path, monkeypatch):
+    # Reopening through ".." asks the kernel for the directory's own
+    # parent, so no name a guest plants can redirect it -- but a
+    # directory it *moves* has a different parent, and following one
+    # would take the walk out of the tree it was pointed at.
+    root = tmp_path / "root"
+    (root / "a" / "b" / "c").mkdir(parents=True)
+    (root / "a" / "b" / "c" / "f").write_text("x")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    # With a budget of one, `a` is parked as soon as the walk reaches
+    # `c`, and it is `b` the revive has to come back through.
+    monkeypatch.setattr(dirfd, "MAX_OPEN_LEVELS", 1)
+    root_fd = dirfd.opendir(str(root))
+    moved = []
+
+    real_listdir_at = dirfd.listdir_at
+
+    def moving_listdir_at(fd):
+        names = real_listdir_at(fd)
+        if names == ["f"] and not moved:
+            moved.append(True)
+            os.rename(str(root / "a" / "b"), str(elsewhere / "b"))
+        return names
+
+    monkeypatch.setattr(dirfd, "listdir_at", moving_listdir_at)
+    try:
+        with pytest.raises(OSError) as exc:
+            dirfd.count_tree_at(root_fd)
+        assert exc.value.errno == errno.ESTALE
+        assert moved
+    finally:
+        os.close(root_fd)
+
+
+def test_levels_revives_what_it_parked(tmp_path):
+    # The plain case: everything the walk parked comes back, and it counts
+    # the whole tree rather than the part that fitted.
+    root = tmp_path / "root"
+    root.mkdir()
+    _make_chain(str(root), depth=200)
+    fd = dirfd.opendir(str(root))
+    before = _open_fds()
+    try:
+        assert dirfd.count_tree_at(fd) == 1
+    finally:
+        os.close(fd)
+        _remove_deep(str(root / "d"))
+    assert len(_open_fds() - before) == 0

@@ -511,6 +511,7 @@ def _collect_rels(src_fd, rel, ctx):
     # Frame layout: [fd, None, rel, pending subdirectory names, owned] —
     # the shape dirfd.close_frames expects.
     stack = [[src_fd, None, rel, None, False]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -519,7 +520,7 @@ def _collect_rels(src_fd, rel, ctx):
                 pending = frame[3] = _record_level(fd, cur, ctx)
                 pending.reverse()       # pop() from the end, in name order
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -533,7 +534,7 @@ def _collect_rels(src_fd, rel, ctx):
                 log_error(f"Warning: directory '{ctx.src_shown(child)}' is "
                           f"not readable, skipping.")
                 continue
-            stack.append([sub, None, child, None, True])
+            levels.push([sub, None, child, None, True])
     except BaseException:
         dirfd.close_frames(stack)
         raise
@@ -658,6 +659,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
     # the shape dirfd.close_frames expects. Explicit rather than recursive
     # for the reason given in dirfd.copy_tree_at.
     stack = [[src_fd, dst_fd, rel, None, False]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -666,7 +668,7 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                 pending = frame[3] = _mirror_entries(sfd, dfd, cur, ctx)
                 pending.reverse()       # pop() from the end, in name order
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     try:
                         # Only on the way back up: writing the contents
@@ -697,11 +699,11 @@ def _mirror_at(src_fd, dst_fd, rel, ctx):
                 continue
             # Pushed before the destination is opened, so a failure there
             # leaves the source fd on the stack for close_frames.
-            stack.append([sub_src, None, child, None, True])
+            levels.push([sub_src, None, child, None, True])
             try:
                 stack[-1][1] = dirfd.opendir_at(dfd, name)
             except OSError as exc:
-                stack.pop()
+                levels.pop()
                 os.close(sub_src)
                 if dirfd.is_refusal(exc):
                     log_error(f"Warning: '{ctx.shown(child)}' changed to a "
@@ -747,6 +749,7 @@ def _collect_extras_at(dst_fd, rel, ctx, extras):
     """
     # Frame layout: [fd, None, rel, pending names, owned].
     stack = [[dst_fd, None, rel, None, False]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -754,7 +757,7 @@ def _collect_extras_at(dst_fd, rel, ctx, extras):
             if pending is None:
                 pending = frame[3] = _listing_at(fd)
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -776,7 +779,7 @@ def _collect_extras_at(dst_fd, rel, ctx, extras):
                     sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
-                stack.append([sub, None, child, None, True])
+                levels.push([sub, None, child, None, True])
     except BaseException:
         dirfd.close_frames(stack)
         raise
@@ -811,6 +814,7 @@ def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
     """Delete the entries named in *targets*, walking by fd."""
     # Frame layout: [fd, None, rel, pending names, pre-delete stat, owned].
     stack = [[dst_fd, None, rel, None, None, False]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -824,7 +828,7 @@ def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
                 except OSError:
                     saved_st = frame[4] = None
             if not pending:
-                stack.pop()
+                levels.pop()
                 # After the descendants too — removing one of those bumps
                 # this level's mtime just as removing an entry does.
                 _restore_dir_metadata(fd, saved_st)
@@ -857,7 +861,7 @@ def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
                     sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
-                stack.append([sub, None, child, None, None, True])
+                levels.push([sub, None, child, None, None, True])
     except BaseException:
         dirfd.close_frames(stack)
         raise

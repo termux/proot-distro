@@ -181,11 +181,15 @@ def _tree_size(root_fd: int) -> int:
     Directories ride an explicit stack, in the layout dirfd's own walks
     use: how deep the tree goes is not this program's choice, and one
     past the interpreter's limit must not end the command in a
-    RecursionError.
+    RecursionError. Nor may one past the *descriptor* limit, which is the
+    shallower of the two: the size this reports is what the command then
+    claims to have reclaimed, and a walk that stopped partway down
+    reported a fraction of it as the whole (dirfd.Levels).
     """
     total = 0
     # Frame layout: [fd, None, pending names, owned].
     stack = [[root_fd, None, None, False]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -196,7 +200,7 @@ def _tree_size(root_fd: int) -> int:
                 except OSError:
                     pending = frame[2] = []
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -211,7 +215,7 @@ def _tree_size(root_fd: int) -> int:
                 continue
             sub = _opendir_relaxing(fd, name, st)
             if sub is not None:
-                stack.append([sub, None, None, True])
+                levels.push([sub, None, None, True])
     except BaseException:
         dirfd.close_frames(stack)
         raise

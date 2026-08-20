@@ -182,7 +182,17 @@ def rewrite_l2s_targets(rootfs_fd: int, rootfs: str, old_prefix: str) -> None:
     old_sigint = signal.signal(signal.SIGINT, _warn_no_interrupt)
     old_sigquit = signal.signal(signal.SIGQUIT, _warn_no_interrupt)
     try:
-        _rewrite_walk(rootfs_fd, rootfs, old_prefix)
+        try:
+            _rewrite_walk(rootfs_fd, rootfs, old_prefix)
+        except OSError as exc:
+            # Every per-entry failure is stepped over inside the walk, so
+            # what reaches here is the walk itself losing its footing —
+            # a directory moved out from under it (dirfd.Levels). The
+            # move has already happened, so there is nothing to undo;
+            # what the user needs to know is that the rewrite is partial.
+            log_error(f"Warning: the container changed while its hard-link "
+                      f"stand-ins were being rewritten ({exc.strerror}); "
+                      f"some may still point at the old location.")
     finally:
         signal.signal(signal.SIGINT, old_sigint)
         signal.signal(signal.SIGQUIT, old_sigquit)
@@ -191,10 +201,13 @@ def rewrite_l2s_targets(rootfs_fd: int, rootfs: str, old_prefix: str) -> None:
 def _rewrite_walk(root_fd: int, rootfs: str, old_prefix: str) -> None:
     """Visit every entry under root_fd, rewriting the l2s symlinks."""
     # Frame layout: [fd, None, pending names, owned] — dirfd's own layout,
-    # so close_frames() unwinds an interrupted walk. Only the descriptors
-    # along the current path are open, and how deep the tree goes is the
-    # container's business rather than the interpreter's.
+    # so close_frames() unwinds an interrupted walk, and dirfd.Levels
+    # bounds the descriptors it holds. How deep the tree goes is the
+    # container's business rather than the interpreter's, and running out
+    # of descriptors partway down would leave the rest of the container's
+    # l2s symlinks pointing at the location it was moved from.
     stack = [[root_fd, None, None, False]]
+    levels = dirfd.Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -205,7 +218,7 @@ def _rewrite_walk(root_fd: int, rootfs: str, old_prefix: str) -> None:
                 except OSError:
                     pending = frame[2] = []
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -216,9 +229,10 @@ def _rewrite_walk(root_fd: int, rootfs: str, old_prefix: str) -> None:
                 continue
             if stat.S_ISDIR(st.st_mode):
                 try:
-                    stack.append([dirfd.opendir_at(fd, name), None, None, True])
+                    sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
+                levels.push([sub, None, None, True])
             elif stat.S_ISLNK(st.st_mode):
                 _rewrite_link(fd, name, rootfs, old_prefix)
     except BaseException:

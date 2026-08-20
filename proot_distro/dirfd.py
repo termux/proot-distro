@@ -711,6 +711,168 @@ def close_frames(stack) -> None:
                     pass
 
 
+# How many levels of a walk keep their descriptors open at once. Deeper
+# ancestors are parked -- closed, and reopened through ".." as the walk
+# unwinds -- so the fds a walk holds stop being the depth of the tree.
+#
+# That mattered because how deep a tree goes is guest or image content
+# like everything else in one, and a few thousand levels take a second to
+# create. An EMFILE partway down is not a walk that can finish, and every
+# one of these answered a different way, none of them well: `backup` left
+# the deepest members out of the archive without a word, a build's layer
+# came out missing whatever was below the limit, `clear-cache` reported
+# the space it had *not* reclaimed, and `remove` could not delete the
+# container at all. The soft limit is 1024 on Android and on most
+# distributions, so the tree needed is an ordinary one.
+#
+# Sixty-four is far past any real tree -- a rootfs is a dozen or so
+# levels -- so nothing ordinary ever parks a level, and a walk that does
+# pays one openat and one fstat for each level it later climbs back up.
+MAX_OPEN_LEVELS = 64
+
+
+def _dir_key(fd: int):
+    """(device, inode) of the directory *fd* refers to."""
+    st = os.fstat(fd)
+    return (st.st_dev, st.st_ino)
+
+
+class Levels:
+    """The directory levels of one walk, holding a bounded number of fds.
+
+    A walk keeps its frames in the layout close_frames() describes and
+    reads only the top of the stack, so every level between the root and
+    the deepest few is holding a descriptor open for nothing but the
+    moment the walk climbs back through it. Past MAX_OPEN_LEVELS live
+    levels the shallowest is *parked*: its descriptors are closed and its
+    identity kept, and it is reopened when the walk pops back down to it.
+
+    Reopening is `openat(child, "..")`, which the kernel answers from the
+    directory's own parent link rather than by resolving a name, so
+    nothing a guest plants can redirect it -- but a directory it *moves*
+    has a different parent, and a walk that followed one would leave the
+    tree it was pointed at. Every level is therefore checked against the
+    (device, inode) taken when it was parked, and one that does not match
+    raises ESTALE rather than being walked.
+
+    The top two levels are never parked: a walk that abandons a
+    half-pushed frame resumes on the one below it, with no descendant
+    left to reopen it through.
+
+    Frames are the caller's own lists and are mutated in place, so
+    close_frames() still unwinds an interrupted walk: a parked level
+    carries None in both descriptor slots and has nothing left to close.
+    """
+
+    __slots__ = ("stack", "_budget", "_keys", "_low")
+
+    def __init__(self, stack, budget: int = None):
+        self.stack = stack
+        self._budget = MAX_OPEN_LEVELS if budget is None else budget
+        # Per frame: None while it holds its own descriptors, or the
+        # (key0, key1) it was parked with.
+        self._keys = [None] * len(stack)
+        # Index of the shallowest level that still holds descriptors.
+        # Level 0 is the caller's and is never parked.
+        self._low = 1
+
+    def push(self, frame) -> None:
+        """Add a level, parking the shallowest ones beyond the budget."""
+        self.stack.append(frame)
+        self._keys.append(None)
+        limit = len(self.stack) - 2
+        while len(self.stack) - self._low > self._budget and self._low < limit:
+            if not self._park(self._low):
+                break               # parked levels stay a prefix
+            self._low += 1
+
+    def pop(self):
+        """Remove the top level, reviving the one below it. Returns it.
+
+        The revived descriptors come through the popped level's own, so
+        this must be called while it still holds them -- before the walk
+        does whatever it does with the level on the way out and closes
+        them.
+        """
+        frame = self.stack.pop()
+        self._keys.pop()
+        if self.stack:
+            keys = self._keys[-1]
+            if keys is not None:
+                _revive_level(self.stack[-1], keys, frame)
+                self._keys[-1] = None
+                self._low = len(self.stack) - 1
+        return frame
+
+    def truncate(self, depth: int) -> None:
+        """Drop the levels from *depth* up, closing what they hold.
+
+        For a walk that abandons a level it had only half opened. The
+        level below is live by construction -- see the class docstring --
+        so nothing has to be revived through the frames being dropped.
+        """
+        close_frames(self.stack[depth:])
+        del self.stack[depth:]
+        del self._keys[depth:]
+
+    def _park(self, index: int) -> bool:
+        """Close a level's descriptors, keeping what it takes to reopen them.
+
+        Both identities are taken before either descriptor is closed, so a
+        level that cannot answer for itself is simply left as it was
+        rather than half parked -- which would leave the walk holding one
+        descriptor of a level it can no longer reopen.
+        """
+        frame = self.stack[index]
+        keys = []
+        for slot in (0, 1):
+            fd = frame[slot]
+            if fd is None:
+                keys.append(None)
+                continue
+            try:
+                keys.append(_dir_key(fd))
+            except OSError:
+                return False
+        for slot in (0, 1):
+            fd = frame[slot]
+            if fd is None:
+                continue
+            frame[slot] = None
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self._keys[index] = tuple(keys)
+        return True
+
+
+def _revive_level(frame, keys, child) -> None:
+    """Reopen a parked level's descriptors through *child*'s."""
+    for slot in (0, 1):
+        key = keys[slot]
+        if key is None:
+            continue
+        below = child[slot]
+        if below is None:
+            raise OSError(errno.ESTALE,
+                          "the level below was closed before this one")
+        up = os.open(os.pardir, _O_RD_DIR | os.O_NOFOLLOW, dir_fd=below)
+        try:
+            if _dir_key(up) != key:
+                raise OSError(
+                    errno.ESTALE,
+                    "a directory was moved while the walk was inside it",
+                )
+        except BaseException:
+            try:
+                os.close(up)
+            except OSError:
+                pass
+            raise
+        frame[slot] = up
+
+
 def count_tree_at(dir_fd: int) -> int:
     """Count the files, symlinks and special entries under dir_fd.
 
@@ -725,6 +887,7 @@ def count_tree_at(dir_fd: int) -> int:
     total = 0
     # Frame layout: [fd, None, pending names, owned].
     stack = [[dir_fd, None, None, False]]
+    levels = Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -735,7 +898,7 @@ def count_tree_at(dir_fd: int) -> int:
                 except OSError:
                     pending = frame[2] = []
             if not pending:
-                stack.pop()
+                levels.pop()
                 if owned:
                     os.close(fd)
                 continue
@@ -748,7 +911,7 @@ def count_tree_at(dir_fd: int) -> int:
             except OSError:
                 total += 1
                 continue
-            stack.append([sub, None, None, True])
+            levels.push([sub, None, None, True])
     except BaseException:
         close_frames(stack)
         raise
@@ -801,6 +964,7 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
     # once that level's contents are in; the caller's frame carries None
     # for it and owns its own fds (see close_frames).
     stack = [[src_dir_fd, dst_dir_fd, rel, None, None, False]]
+    levels = Levels(stack)
     try:
         while stack:
             frame = stack[-1]
@@ -815,7 +979,9 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                     pending = frame[3] = []
                 pending.reverse()       # pop() from the end, in name order
             if not pending:
-                stack.pop()
+                # Popped before the level's own descriptors are used and
+                # closed: the level below is revived through them.
+                levels.pop()
                 if owned:
                     try:
                         # After the contents: writing them bumps the
@@ -856,7 +1022,7 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                     sub_src = opendir_at(src_fd, name)
                     # Pushed before the second open, so a failure there
                     # leaves the first fd on the stack for close_frames.
-                    stack.append([sub_src, None, child, None, src_st, True])
+                    levels.push([sub_src, None, child, None, src_st, True])
                     # O_NOFOLLOW, so a name the merge did not create refuses
                     # a symlink and reports a plain file as ENOTDIR — cp
                     # declines to overwrite a non-directory with one too.
@@ -881,8 +1047,7 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                 # the level this entry was found on. The directory itself
                 # stays where mkdir put it, empty — what cp -r leaves too.
                 if len(stack) > depth:
-                    close_frames(stack[depth:])
-                    del stack[depth:]
+                    levels.truncate(depth)
                 on_error(child, exc)
     except BaseException:
         close_frames(stack)
@@ -970,6 +1135,11 @@ def rmtree_at(dir_fd: int, name: str, *, force: bool = False,
     Returns True when nothing of the tree is left. A directory whose
     contents did not all go is not rmdir'ed — the ENOTEMPTY that would
     follow says nothing the failure below it has not already said.
+
+    The descriptors held are bounded (see Levels), so how deep the tree
+    goes is the guest's business rather than the descriptor table's: one
+    per level meant a tree past the soft limit could not be removed at
+    all, which for a rootfs is a container the user cannot get rid of.
     """
     try:
         st = lstat_at(dir_fd, name)
@@ -989,41 +1159,64 @@ def rmtree_at(dir_fd: int, name: str, *, force: bool = False,
         return False
 
     ok = True
-    # Frame layout: [fd, None, parent fd, own name, own rel, pending,
-    # emptied, owned]. The two descriptor slots come first and `owned`
-    # last so close_frames() unwinds an interrupted walk; `emptied` stays
-    # True only while everything below the level has gone, and it is what
+    # Frame layout: [fd, None, own name, own rel, pending, emptied,
+    # owned]. The two descriptor slots come first and `owned` last so
+    # close_frames() unwinds an interrupted walk; `emptied` stays True
+    # only while everything below the level has gone, and it is what
     # decides whether the level itself may be rmdir'ed.
-    stack = [[root_fd, None, dir_fd, name, "", None, True, True]]
+    #
+    # The directory a level is removed *from* is the level below it,
+    # taken from the stack rather than kept in the frame: a parked level
+    # has closed its descriptors, so a copy of one made on the way down
+    # would name a closed fd -- or, once the number is reused, some other
+    # file entirely -- by the time the rmdir needs it.
+    stack = [[root_fd, None, name, "", None, True, True]]
+    levels = Levels(stack)
     try:
         while stack:
             frame = stack[-1]
-            fd, _, parent_fd, entry, rel, pending, _, _ = frame
+            fd, _, entry, rel, pending, _, _ = frame
             if pending is None:
                 try:
                     pending = listdir_at(fd)
                 except OSError as exc:
                     _removal_failed(rel, exc, on_error)
-                    pending, frame[6] = [], False
+                    pending, frame[5] = [], False
                 pending.reverse()
-                frame[5] = pending
+                frame[4] = pending
 
             if not pending:
-                stack.pop()
+                # Popped first: the level below is revived through this
+                # one's descriptor, and it is what the rmdir names.
+                try:
+                    levels.pop()
+                except OSError as exc:
+                    # The level below moved out from under the walk, so
+                    # there is no directory left to remove this one
+                    # *from*. Nothing below can be addressed either, so
+                    # the walk stops here rather than stepping over it —
+                    # reported like any other entry that would not go,
+                    # and raised for a caller that asked for no reports.
+                    os.close(fd)
+                    _removal_failed(rel, exc, on_error)
+                    close_frames(stack)
+                    del stack[:]
+                    return False
+                parent_fd = stack[-1][0] if stack else dir_fd
                 os.close(fd)
-                if frame[6]:
+                if frame[5]:
                     try:
                         _unlink_at(parent_fd, entry, True, force)
                     except OSError as exc:
                         _removal_failed(rel, exc, on_error)
-                        frame[6] = False
+                        frame[5] = False
                     else:
                         if on_remove is not None:
                             on_remove(rel)
-                if not frame[6]:
+                if not frame[5]:
                     ok = False
                     if stack:
-                        stack[-1][6] = False
+                        stack[-1][5] = False
                 continue
 
             child = pending.pop()
@@ -1034,22 +1227,22 @@ def rmtree_at(dir_fd: int, name: str, *, force: bool = False,
                 continue            # went away on its own; nothing to do
             except OSError as exc:
                 _removal_failed(child_rel, exc, on_error)
-                frame[6] = False
+                frame[5] = False
                 continue
 
             if not stat.S_ISDIR(child_st.st_mode):
                 if not _unlink_reporting(fd, child, child_rel, force,
                                          on_error, on_remove):
-                    frame[6] = False
+                    frame[5] = False
                 continue
 
             try:
                 sub = _opendir_for_removal(fd, child, child_st, force)
             except OSError as exc:
                 _removal_failed(child_rel, exc, on_error)
-                frame[6] = False
+                frame[5] = False
                 continue
-            stack.append([sub, None, fd, child, child_rel, None, True, True])
+            levels.push([sub, None, child, child_rel, None, True, True])
     except BaseException:
         close_frames(stack)
         raise
@@ -1077,7 +1270,10 @@ def remove_tree(path: str, *, on_error=None, on_remove=None) -> bool:
 
     This never raises: every caller is a cleanup path, and one stubborn
     entry must not strand the rest of a partial tree. Pass on_error to
-    report what would not go; the walk steps over it either way.
+    report what would not go; the walk steps over it either way. That
+    covers the one failure rmtree_at does report by raising even with an
+    on_error to hand -- a level that moved out from under the walk, which
+    is not an entry it can step over but the walk losing its footing.
     """
     if on_error is None:
         def on_error(_rel, _exc):
@@ -1097,5 +1293,8 @@ def remove_tree(path: str, *, on_error=None, on_remove=None) -> bool:
     try:
         return rmtree_at(parent_fd, name, force=True,
                          on_error=on_error, on_remove=on_remove)
+    except OSError as exc:
+        on_error("", exc)
+        return False
     finally:
         os.close(parent_fd)
