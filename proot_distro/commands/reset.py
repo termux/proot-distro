@@ -24,8 +24,6 @@
 # without a manifest (plain tarball installs, legacy rootfs) are rejected —
 # reset requires an OCI image_ref to know what to pull.
 
-import json
-import os
 import sys
 from types import SimpleNamespace
 
@@ -35,7 +33,7 @@ from proot_distro.commands.install import command_install
 from proot_distro.locking import ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_is_installed, container_manifest, container_rootfs,
+    container_is_installed, container_rootfs, read_container_manifest,
 )
 
 
@@ -46,7 +44,6 @@ def command_reset(args) -> None:
     require_valid_name(container_name)
 
     rootfs_dir = container_rootfs(container_name)
-    manifest_path = container_manifest(container_name)
 
     # Walked down to rather than named: os.path.isdir() followed a
     # `containers/<name>` a guest had re-pointed, and reset would then
@@ -55,17 +52,18 @@ def command_reset(args) -> None:
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
 
-    # Read original image_ref and arch from the stored manifest.
+    # Read original image_ref and arch from the stored manifest, through
+    # the container directory's own descriptor: what gets reinstalled
+    # comes out of this file, and the name is a guest-writable one
+    # (see paths.open_container_manifest).
     image_ref = None
     override_arch = None
-    if os.path.isfile(manifest_path):
-        try:
-            with open(manifest_path) as fh:
-                manifest_data = json.load(fh)
-            image_ref = manifest_data.get("image_ref")
-            override_arch = manifest_data.get("arch")
-        except (OSError, json.JSONDecodeError):
-            pass
+    try:
+        manifest_data = read_container_manifest(container_name)
+        image_ref = manifest_data.get("image_ref")
+        override_arch = manifest_data.get("arch")
+    except (OSError, ValueError):
+        pass
 
     if not image_ref:
         crit_error(f"container '{container_name}' has no OCI "

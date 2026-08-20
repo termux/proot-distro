@@ -25,29 +25,34 @@
 # command injected via args._run_inner so that login's proot setup is
 # reused without duplication.
 
-import json
 import sys
 
-from proot_distro.message import crit_error
+from proot_distro.message import crit_error, quote_error
 from proot_distro.commands.login import command_login
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_is_installed, container_manifest
+from proot_distro.paths import container_is_installed, read_container_manifest
 
 
 def _read_image_config(container_name: str) -> dict:
-    """Return the image_config.config dict from manifest.json, or {}."""
-    manifest_path = container_manifest(container_name)
+    """Return the image_config.config dict from manifest.json, or {}.
+
+    Read through the container directory's own descriptor: what `run`
+    executes comes out of this file, so a symlink left under the name
+    would decide it, and a FIFO would hang the command outright (see
+    paths.open_container_manifest).
+    """
     try:
-        with open(manifest_path) as fh:
-            data = json.load(fh)
+        data = read_container_manifest(container_name)
     except FileNotFoundError:
         crit_error(f"no image manifest found for container '{container_name}' "
                    f"which is required for command 'run'.")
         sys.exit(1)
-    except (OSError, json.JSONDecodeError) as exc:
-        crit_error(f"cannot read manifest.json for '{container_name}': {exc}")
+    except (OSError, ValueError) as exc:
+        crit_error(f"cannot read manifest.json for '{container_name}': "
+                   f"{quote_error(exc)}")
         sys.exit(1)
-    return data.get("image_config", {}).get("config") or {}
+    config = data.get("image_config", {}).get("config")
+    return config if isinstance(config, dict) else {}
 
 
 def command_run(args) -> None:

@@ -29,7 +29,6 @@
 #   migrate.py   — legacy installed-rootfs migration.
 #   quoting.py   — POSIX double-quoting for --get-proot-cmd.
 
-import json
 import os
 import shlex
 import sys
@@ -55,7 +54,7 @@ from proot_distro.locking import ContainerLock
 from proot_distro.session import register_session
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_dir, container_is_installed, container_rootfs,
+    container_image_config, container_is_installed, container_rootfs,
 )
 
 from proot_distro.commands.login.env import (
@@ -197,7 +196,7 @@ def _resolve_login_user(rootfs: str, container_name: str, user_arg: str) -> dict
     }
 
 
-def _build_termux_env(container_path, extra_env, minimal, isolated):
+def _build_termux_env(container_name, extra_env, minimal, isolated):
     """Env dict for termux-type containers."""
     env: dict = {}
     if not minimal:
@@ -208,7 +207,7 @@ def _build_termux_env(container_path, extra_env, minimal, isolated):
 
     # Image manifest Env applies in every mode (including isolated and
     # minimal). IMAGE_ENV_BLOCKED still guards host-controlled vars.
-    for entry in read_manifest_env(container_path):
+    for entry in read_manifest_env(container_name):
         key, _, val = entry.partition("=")
         if key and key not in IMAGE_ENV_BLOCKED:
             env[key] = val
@@ -234,7 +233,7 @@ def _build_termux_env(container_path, extra_env, minimal, isolated):
     return env
 
 
-def _build_normal_env(container_path, login_user, login_home,
+def _build_normal_env(container_name, login_user, login_home,
                       extra_env, minimal, isolated):
     """Env dict for normal-type containers."""
     env: dict = {}
@@ -249,7 +248,7 @@ def _build_normal_env(container_path, login_user, login_home,
 
     # Image manifest Env applies in every mode (including isolated and
     # minimal). IMAGE_ENV_BLOCKED still guards host-controlled vars.
-    for entry in read_manifest_env(container_path):
+    for entry in read_manifest_env(container_name):
         key, _, val = entry.partition("=")
         if key and key not in IMAGE_ENV_BLOCKED:
             env[key] = val
@@ -277,7 +276,7 @@ def _build_normal_env(container_path, login_user, login_home,
     return env
 
 
-def _check_shell_available(rootfs, container_path, login_shell, container_name):
+def _check_shell_available(rootfs, login_shell, container_name):
     """Exit with a helpful error when the shell can't be resolved in the rootfs."""
     try:
         shell_found = os.path.isfile(
@@ -288,16 +287,10 @@ def _check_shell_available(rootfs, container_path, login_shell, container_name):
     if shell_found:
         return
 
-    has_ep_or_cmd = False
-    try:
-        with open(os.path.join(container_path, "manifest.json")) as fh:
-            data = json.load(fh)
-        cfg = (data.get("image_config") or {}).get("config", {})
-        has_ep_or_cmd = bool(
-            (cfg.get("Entrypoint") or []) or (cfg.get("Cmd") or [])
-        )
-    except (OSError, ValueError):
-        pass
+    cfg = container_image_config(container_name)
+    has_ep_or_cmd = bool(
+        (cfg.get("Entrypoint") or []) or (cfg.get("Cmd") or [])
+    )
 
     if has_ep_or_cmd:
         crit_error(f"shell '{login_shell}' is not available in container "
@@ -324,7 +317,6 @@ def _command_login_inner(container_name: str, args, lock) -> None:
     rootfs = container_rootfs(container_name)
 
     dist_type = _detect_dist_type(rootfs)
-    container_path = container_dir(container_name)
 
     login_user = getattr(args, "user", "root") or "root"
     kernel_release = (
@@ -352,7 +344,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         if not login_wd:
             login_wd = TERMUX_HOME
         child_env = _build_termux_env(
-            container_path, extra_env, minimal, isolated
+            container_name, extra_env, minimal, isolated
         )
 
         if run_inner is not None:
@@ -375,14 +367,14 @@ def _command_login_inner(container_name: str, args, lock) -> None:
             login_wd = login_home
 
         child_env = _build_normal_env(
-            container_path, login_user, login_home,
+            container_name, login_user, login_home,
             extra_env, minimal, isolated,
         )
 
         if run_inner is not None:
             inner = run_inner
         else:
-            _check_shell_available(rootfs, container_path, login_shell, container_name)
+            _check_shell_available(rootfs, login_shell, container_name)
             if login_cmd:
                 inner = [login_shell, "-c", shlex.join(login_cmd)]
             else:

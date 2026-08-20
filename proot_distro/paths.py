@@ -63,6 +63,7 @@
 #       shared on the source, exclusive on the destination, with
 #       same-container same-lock dedup and deterministic ordering.
 
+import json
 import os
 import stat
 import sys
@@ -144,6 +145,68 @@ def container_is_installed(name: str) -> bool:
         return False
     os.close(fd)
     return True
+
+
+def open_container_manifest(name: str):
+    """Open containers/<name>/manifest.json. Returns (fd, stat).
+
+    The sentinel is read at every `login` and `run`: its Env goes into
+    the child environment and its Entrypoint/Cmd is what `run` executes.
+    It was opened by its composed path, and the container directory is
+    guest-writable on Termux -- it sits under the $TERMUX_PREFIX bound
+    read-write into every non-isolated container -- so a session could
+    leave the name behind as a symlink and have the image config come
+    out of any file the user can read, or as a FIFO, where the open
+    waits for a peer that never arrives. open_regular_at refuses both,
+    off the descriptor the container directory is walked down to.
+
+    Raises like the walk does: FileNotFoundError when there is no
+    manifest (a plain-tarball install writes none, and neither does a
+    legacy container), ENOTDIR when a component must not be followed,
+    EINVAL when the name holds something other than a regular file.
+    Nothing here exits the command -- the callers that must refuse a
+    re-pointed container directory outright have already asked
+    container_is_installed(), which does.
+    """
+    dir_fd = statedir.open_state_dir(container_dir(name))
+    try:
+        return dirfd.open_regular_at(dir_fd, "manifest.json", os.O_RDONLY)
+    finally:
+        os.close(dir_fd)
+
+
+def read_container_manifest(name: str) -> dict:
+    """Return a container's manifest.json as a dict.
+
+    Raises whatever open_container_manifest() raises, plus ValueError
+    for a payload that is not a JSON object -- callers decide which of
+    those is fatal and which is just "no image config".
+    """
+    fd, _st = open_container_manifest(name)
+    try:
+        with open(fd, "r", closefd=False) as fh:
+            data = json.load(fh)
+    finally:
+        os.close(fd)
+    if not isinstance(data, dict):
+        raise ValueError("manifest.json does not hold an object")
+    return data
+
+
+def container_image_config(name: str) -> dict:
+    """Return the image_config.config mapping, or {} for anything else.
+
+    The forgiving form, for a caller to whom a missing or unreadable
+    manifest simply means "no image config": `login` applying the
+    image's Env, and its check for an Entrypoint before it complains
+    about a missing shell.
+    """
+    try:
+        data = read_container_manifest(name)
+    except (OSError, ValueError):
+        return {}
+    config = (data.get("image_config") or {}).get("config")
+    return config if isinstance(config, dict) else {}
 
 
 def container_from_spec(spec: str):

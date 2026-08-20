@@ -463,7 +463,21 @@ starts its `O_NOFOLLOW` descent from `open_container_rootfs()` rather
 than from `os.open(rootfs)` — the rootfs is the one directory that
 descent cannot vouch for itself. `remove` is the deliberate exception at
 the far end: the walk unlinks a planted entry rather than traversing it,
-which is how the user gets rid of one. Plain-tarball installs do **not**
+which is how the user gets rid of one.
+
+The `manifest.json` sentinel inside that directory is read the same
+way. `paths.open_container_manifest()` walks down to the container
+directory and opens the entry with `dirfd.open_regular_at`, so a
+symlink left under the name is refused (`login` takes the image's Env
+from this file and `run` takes the Entrypoint/Cmd it executes, so one
+would decide both) and so is a FIFO, which used to hang the command
+waiting for a writer that never comes. `read_container_manifest()` is
+that plus the JSON parse, raising for a caller that must report the
+difference (`run`), and `container_image_config()` is the forgiving
+form — `{}` for anything unreadable — for `login`'s Env and its
+Entrypoint check. Nothing there exits the command on a re-pointed
+container directory, because every caller has already asked
+`container_is_installed()`, which does. Plain-tarball installs do **not**
 write `manifest.json`. Legacy `installed-rootfs/<name>` layout is
 migrated on first `login` (`commands/login/migrate.py`), which then
 rewrites l2s symlink targets through the descriptor of the tree it just

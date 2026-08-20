@@ -25,12 +25,12 @@
 #   - inject_termux_profile: drop a profile.d snippet that re-exports
 #     proot-distro-set vars when a login shell re-sources /etc/profile.
 
-import json
 import os
 import re
 
 from proot_distro import dirfd
 from proot_distro.constants import TERMUX_PREFIX
+from proot_distro.paths import container_image_config
 
 
 # Conservative identifier syntax for env var names: a leading letter or
@@ -80,16 +80,19 @@ _PROFILE_INJECT_SKIP = frozenset({
 })
 
 
-def read_manifest_env(container_dir: str) -> list:
-    """Return image Env entries from manifest.json, or [] if absent/invalid."""
-    manifest_path = os.path.join(container_dir, "manifest.json")
-    try:
-        with open(manifest_path) as fh:
-            data = json.load(fh)
-        env = (data.get("image_config") or {}).get("config", {}).get("Env") or []
-        return [e for e in env if isinstance(e, str) and "=" in e]
-    except (OSError, ValueError):
+def read_manifest_env(container_name: str) -> list:
+    """Return image Env entries from manifest.json, or [] if absent/invalid.
+
+    Named by container rather than by path, because the read goes
+    through the container directory's own descriptor: these values are
+    exported into the session, so a symlink left under manifest.json
+    would decide them and a FIFO would hang the login (see
+    paths.open_container_manifest).
+    """
+    env = container_image_config(container_name).get("Env") or []
+    if not isinstance(env, list):
         return []
+    return [e for e in env if isinstance(e, str) and "=" in e]
 
 
 def inject_termux_profile(rootfs: str, env: dict) -> None:
