@@ -26,7 +26,6 @@
 
 import json
 import os
-import shutil
 import sys
 from types import SimpleNamespace
 
@@ -71,13 +70,16 @@ def command_reset(args) -> None:
     with ContainerLock(container_name, exclusive=True, command="reset"):
         log_info(f"Removing rootfs of '{container_name}'...")
 
+        # No shutil.rmtree() fallback behind this. It could only ever fail
+        # where _remove_path already had — it does not chmod a sealed
+        # subtree, so it does strictly less — and being plain recursion it
+        # would turn a rootfs deeper than the interpreter's stack into a
+        # RecursionError right where the iterative walk had just avoided
+        # one. install() refuses a rootfs that is still there, which is the
+        # report the user gets.
         if not _remove_path(rootfs_dir):
             log_error("Finished with errors. Some files could not be deleted. "
                       "Proceeding anyway.")
-            try:
-                shutil.rmtree(rootfs_dir, ignore_errors=True)
-            except OSError:
-                pass
 
         # Rebuild args for install: reuse dist name and the stored image/arch.
         command_install(

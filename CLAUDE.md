@@ -556,6 +556,19 @@ destination, empty. Such a file *named as an endpoint* is a different
 matter and is refused outright, in `copy` for the message and in
 `open_regular_at()` against the pinned fd for the race.
 
+`remove` (and `reset`, which reuses `_remove_path`) deletes a container
+tree with an **explicit stack** of directory fds, not recursion: how deep
+a rootfs goes is the container's choice, and one past the interpreter's
+limit ended both commands in a `RecursionError` — which is not an
+`OSError`, so nothing caught it. Entries are named as `(dir_fd, name)`
+throughout, which also keeps the chmod that opens a `chmod 000` subtree
+off a path (`dirfd.chmod_at`). `reset` no longer falls back to
+`shutil.rmtree()` when that walk reports a failure: rmtree does strictly
+less (it cannot relax a sealed directory), so it could only fail where
+the walk already had, and being plain recursion it reintroduced the very
+crash one line below the fix. `install` refusing a rootfs that is still
+there is the report the user gets.
+
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`
 renders an IMAGE/ARCH/ID/SIZE/CREATED table that falls back to a

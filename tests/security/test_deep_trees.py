@@ -11,6 +11,9 @@
 # closed again — the stack has to unwind its own fds, which recursion got
 # from `finally` for free.
 #
+# `remove` (and `reset`, which shares its walk) recursed the same way, on a
+# tree it deletes rather than reads.
+#
 # `backup` is here as a guard rather than a fix: it walked with os.walk(),
 # which is iterative, and now walks with its own fd stack, which has to stay
 # that way. Same for its fds, which os.walk() never held.
@@ -24,8 +27,9 @@ from types import SimpleNamespace
 from proot_distro import dirfd
 from proot_distro.commands.backup import command_backup
 from proot_distro.commands.copy import command_copy
+from proot_distro.commands.remove import command_remove
 from proot_distro.commands.sync import command_sync
-from proot_distro.paths import container_rootfs
+from proot_distro.paths import container_dir, container_rootfs
 
 # Comfortably past sys.getrecursionlimit()'s default of 1000, and past the
 # two frames per level that copy_tree_at and _mirror_at each used to take.
@@ -239,3 +243,32 @@ def test_backup_survives_a_tree_deeper_than_the_stack(tmp_path, builders):
         assert sum(1 for n in names if n.endswith("/d")) == DEPTH
     finally:
         _remove_deep(src)
+
+
+def test_remove_deletes_a_tree_deeper_than_the_stack(builders):
+    builders.make_container("deeprm")
+    deep = os.path.join(container_rootfs("deeprm"), "deep")
+    _make_deep(deep)
+    before = _open_fds()
+    try:
+        command_remove(SimpleNamespace(target="deeprm", verbose=False))
+        assert not os.path.exists(container_dir("deeprm"))
+        assert len(_open_fds() - before) == 0
+    finally:
+        _remove_deep(deep)
+
+
+def test_remove_deletes_a_deep_tree_sealed_partway_down(builders):
+    """The chmod that opens a sealed level has to work at depth too."""
+    builders.make_container("deeprm2")
+    deep = os.path.join(container_rootfs("deeprm2"), "deep")
+    _make_deep(deep, depth=40)
+    sealed = os.path.join(deep, *(["d"] * 20))
+    os.chmod(sealed, 0o000)
+    try:
+        command_remove(SimpleNamespace(target="deeprm2", verbose=False))
+        assert not os.path.exists(container_dir("deeprm2"))
+    finally:
+        if os.path.isdir(sealed):
+            os.chmod(sealed, 0o755)
+        _remove_deep(deep)
