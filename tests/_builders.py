@@ -335,6 +335,31 @@ def simple_image_manifest(image_ref="test:latest", arch="x86_64",
 
 
 # ---------------------------------------------------------------------------
+# COPY/ADD file_map entries
+# ---------------------------------------------------------------------------
+
+def file_map_entry(src, *, mode=0o644, uid=0, gid=0, mtime=0):
+    """A COPY/ADD file_map "file" entry for the file at *src*.
+
+    An entry names the tree its bytes come from and the components below
+    it, never a path to open: both consumers re-walk those components
+    from the root with O_NOFOLLOW before reading (layer_diff.MapSources),
+    so a component swapped after the enumeration is refused rather than
+    followed.
+    """
+    src = str(src)
+    root, name = os.path.split(src)
+    try:
+        size = os.stat(src).st_size
+    except OSError:
+        size = 0
+    return {
+        "kind": "file", "root": root, "rel": (name,), "src": src,
+        "mode": mode, "uid": uid, "gid": gid, "mtime": mtime, "size": size,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Filesystem assertions
 # ---------------------------------------------------------------------------
 

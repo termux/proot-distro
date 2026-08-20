@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from _builders import file_map_entry
 from proot_distro.helpers.build_engine import copy_step, handlers
 from proot_distro.helpers.build_engine.stage import Stage
 
@@ -166,8 +167,7 @@ def test_materialise_tar_dir_member_lands_inside_the_rootfs(tmp_path):
     payload.write_bytes(b"pwned\n")
     copy_step._materialise_files(str(rootfs), {
         "etc": {"kind": "dir", "mode": 0o755, "uid": 0, "gid": 0, "mtime": 0},
-        "etc/passwd": {"kind": "file", "src": str(payload),
-                       "mode": 0o644, "uid": 0, "gid": 0, "mtime": 0},
+        "etc/passwd": file_map_entry(payload),
     })
 
     assert (rootfs / "etc" / "passwd").read_bytes() == b"pwned\n"

@@ -1182,6 +1182,50 @@ ValueError)`, since the value comes out of an archive header and
 `os.utime()` raises `OverflowError`, not `OSError`, on one `time_t`
 cannot hold.
 
+Where a COPY/ADD's sources may come *from* is decided by the same kind
+of walk, and read through descriptors for the same reason.
+`copy_step._SourceTree` wraps the tree one instruction reads out of —
+the build context, another stage's rootfs, an image pulled for
+`--from` — and resolves each source spec beneath it with
+`tar_extract.safe_resolve_parts`: a symlink component is followed but an
+absolute target re-anchors at the tree's root and `..` can never climb
+out of it, which is both the confinement and what a path means inside an
+image (`/usr/bin/python -> /usr/local/bin/python` still resolves). A
+`..` written in the spec itself is refused outright rather than clamped,
+the way the `[name:]path` resolver refuses one and the way Docker
+refuses a source outside the context. The **final** component is left
+unresolved, since COPY copies a symlink as a symlink instead of reading
+through it. What this replaces is a lexical `normpath` + prefix check,
+which decided containment on the spelling of the composed path and so
+said nothing about the links standing in it: a context holding `escape
+-> /` let `COPY escape/etc/passwd /leaked` read the host's file, and a
+source image shipping the same link let `COPY --from` do it with nothing
+unusual in the Dockerfile or the context at all — in both cases the
+bytes went into the layer `push` uploads. `simple_glob()`'s matches go
+through the walk too, since `glob` answers on spelling the same way; a
+source whose every match resolves outside the tree is reported missing
+rather than silently copying nothing.
+
+Nothing that walk finds is recorded as a path to open. A `file` entry
+carries the `root` it was found under and the `rel` components below it
+(`src` is the joined form, for a message), and **both** consumers open
+it through `layer_diff.MapSources`, which re-walks those components from
+the root with `O_NOFOLLOW` and hands back a descriptor — a one-entry
+directory cache, so a whole directory's worth of sorted entries costs
+about one `openat` apiece. Enumerating a whole instruction and consuming
+the map afterwards, twice, leaves a long window in which a component can
+be replaced with a symlink; resolving the name again then reads whatever
+it leads to now. The enumeration itself is descriptor-borne for the same
+reason (`_add_directory_tree` walks an explicit stack of `O_NOFOLLOW`
+directory fds, recording a symlink as a symlink and never descending
+one, which is what `os.walk(followlinks=False)` gave minus the name
+resolution), ADD's auto-extract sniffs and unpacks the archive through
+one descriptor on the file (`parsing.is_tar_header` takes the bytes, not
+a name), and the progress denominator is the size the enumeration
+measured rather than a `getsize` of a name. A `file` entry without
+`root`/`rel` is a programming error and raises `KeyError` rather than
+falling back to a path.
+
 `layer_diff.layer_path_parts()` is the one rule for what a name may be,
 applied by both halves of a COPY/ADD — `_materialise_files` (the tree)
 and `write_files_layer` (the tar), which used to filter separately, so

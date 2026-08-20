@@ -4,7 +4,7 @@
 import os
 import tarfile
 
-from _builders import apply_layer_file
+from _builders import apply_layer_file, file_map_entry
 from proot_distro.helpers import layer_diff
 
 
@@ -80,8 +80,7 @@ def test_write_files_layer_honors_chown(tmp_path):
     src = str(tmp_path / "conf")
     _write(src, b"cfg")
     file_map = {
-        "etc/conf": {"kind": "file", "src": src, "mode": 0o600,
-                     "uid": 1000, "gid": 1000, "mtime": 0},
+        "etc/conf": file_map_entry(src, mode=0o600, uid=1000, gid=1000),
         "etc/link": {"kind": "symlink", "target": "conf", "uid": 1000,
                      "gid": 1000, "mtime": 0},
     }
@@ -115,7 +114,7 @@ def test_write_files_layer_roundtrip(tmp_path):
     src = str(tmp_path / "conf")
     _write(src, b"cfg")
     file_map = {
-        "etc/conf": {"kind": "file", "src": src, "mode": 0o644},
+        "etc/conf": file_map_entry(src),
         "etc/link": {"kind": "symlink", "target": "conf"},
     }
     out = str(tmp_path / "files.tar.gz")

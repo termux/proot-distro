@@ -59,13 +59,19 @@ def test_looks_like_url(s, expected):
     assert parsing.looks_like_url(s) is expected
 
 
-def test_is_tar_archive_ustar(tmp_path, builders):
+def _head(path):
+    """The bytes ADD's auto-extract sniffs, read the way it reads them."""
+    with open(str(path), "rb") as fh:
+        return fh.read(parsing.TAR_HEADER_BYTES)
+
+
+def test_is_tar_header_ustar(tmp_path, builders):
     p = tmp_path / "a.tar"
     builders.make_tar(str(p), [{"name": "x", "type": "file", "data": b"hi"}])
-    assert parsing.is_tar_archive(str(p)) is True
+    assert parsing.is_tar_header(_head(p)) is True
 
 
-def test_is_tar_archive_gzip(tmp_path, builders):
+def test_is_tar_header_gzip(tmp_path, builders):
     p = tmp_path / "a.tar.gz"
     # Incompressible payload so the gzip header lands well past the 265-byte
     # minimum the signature probe requires.
@@ -74,20 +80,18 @@ def test_is_tar_archive_gzip(tmp_path, builders):
         [{"name": "x", "type": "file", "data": os.urandom(4096)}],
         compression="gz",
     )
-    assert parsing.is_tar_archive(str(p)) is True
+    assert parsing.is_tar_header(_head(p)) is True
 
 
-def test_is_tar_archive_rejects_non_tar(tmp_path):
+def test_is_tar_header_rejects_non_tar(tmp_path):
     p = tmp_path / "not.tar"
     p.write_bytes(b"this is just text, definitely not a tar archive" * 10)
-    assert parsing.is_tar_archive(str(p)) is False
+    assert parsing.is_tar_header(_head(p)) is False
 
 
-def test_is_tar_archive_short_file(tmp_path):
+def test_is_tar_header_short_file(tmp_path):
+    # Too few bytes to hold the ustar magic at all — not an archive.
     p = tmp_path / "tiny"
     p.write_bytes(b"abc")
-    assert parsing.is_tar_archive(str(p)) is False
-
-
-def test_is_tar_archive_missing(tmp_path):
-    assert parsing.is_tar_archive(str(tmp_path / "nope")) is False
+    assert parsing.is_tar_header(_head(p)) is False
+    assert parsing.is_tar_header(b"") is False

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from _builders import file_map_entry
 from proot_distro.helpers.build_engine import handlers
 from proot_distro.helpers.build_engine.copy_step import (
     _dest_arcname, _materialise_files,
@@ -90,10 +91,8 @@ def test_materialise_and_packer_agree_on_a_traversal_arcname(tmp_path):
     payload = tmp_path / "payload"
     payload.write_bytes(b"P")
     file_map = {
-        "../foo": {"kind": "file", "src": str(payload), "mode": 0o644,
-                   "uid": 0, "gid": 0, "mtime": 0},
-        "ok/f": {"kind": "file", "src": str(payload), "mode": 0o644,
-                 "uid": 0, "gid": 0, "mtime": 0},
+        "../foo": file_map_entry(payload),
+        "ok/f": file_map_entry(payload),
     }
 
     _materialise_files(str(rootfs), file_map)

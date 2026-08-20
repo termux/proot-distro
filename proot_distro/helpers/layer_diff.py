@@ -36,6 +36,7 @@
 # which avoids the previous three-pass (write tmp -> hash uncompressed
 # -> gzip-stream -> hash compressed) dance and halves disk traffic.
 
+import errno
 import gzip
 import hashlib
 import os
@@ -85,6 +86,75 @@ def _file_crc32(dir_fd, name):
     finally:
         os.close(fd)
     return crc & 0xFFFFFFFF
+
+
+class MapSources:
+    """The directories a file_map's "file" entries are read out of.
+
+    An entry does not name a path to open. It names the *tree* it was
+    found in -- the build context, another stage's rootfs, an image
+    pulled for COPY --from, the build's own spool -- and the components
+    below it, and both consumers (copy_step's materialiser and the
+    packer below) re-walk those components from the root with
+    O_NOFOLLOW before reading a byte.
+
+    That is the difference between deciding where a source is and
+    reading it. COPY/ADD enumerates a whole instruction first and
+    consumes the map afterwards, twice, so between the lstat that
+    recorded an entry and the read that packs it a component can be
+    replaced with a symlink -- by a process an earlier RUN left running,
+    which off Termux nothing kills, or simply by whoever else can write
+    the tree. Resolving the name again then reads whatever it leads to
+    now, and a layer is the worst place for a host file to turn up:
+    `push` uploads it to a registry.
+
+    One directory at a time is cached, which covers a whole directory's
+    worth of entries: both consumers walk the map in sorted-arcname
+    order and an arcname follows the layout of the source it came from.
+    """
+
+    def __init__(self):
+        self._key = None
+        self._fd = None
+
+    def open(self, entry):
+        """Open *entry*'s source as a regular file. Returns (fd, stat).
+
+        Raises OSError when the walk refuses a component or the entry is
+        no longer a regular file; the caller owns the descriptor. A
+        "file" entry without a root and rel is a programming error, not
+        a filesystem one, and raises KeyError rather than quietly
+        reading a path.
+        """
+        root = entry["root"]
+        rel = tuple(entry["rel"])
+        if not rel:
+            raise OSError(errno.EINVAL, "source entry names no file", root)
+        key = (root, rel[:-1])
+        if key != self._key:
+            self.close()
+            root_fd = dirfd.opendir(root)
+            try:
+                fd = dirfd.descend_at(root_fd, rel[:-1])
+            finally:
+                os.close(root_fd)
+            self._fd, self._key = fd, key
+        return dirfd.open_regular_at(self._fd, rel[-1], os.O_RDONLY)
+
+    def close(self):
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+        self._fd, self._key = None, None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+        return False
 
 
 class _ParentFds:
@@ -444,25 +514,22 @@ def layer_path_parts(arcname):
 
 
 def write_files_layer(file_map, out_path):
-    """Pack a {arcname → entry} mapping into a gzipped OCI layer."""
+    """Pack a {arcname → entry} mapping into a gzipped OCI layer.
+
+    Every entry is a dict describing what to write: a "dir", a
+    "symlink", or a "file" naming the tree its bytes come from (see
+    MapSources). The progress denominator is the size each "file" entry
+    recorded when it was enumerated, so the pack stats nothing by name
+    on the way in either.
+    """
     sorted_items = sorted(file_map.items())
 
-    # Pre-compute total content bytes for the progress bar.
-    total = 0
-    for arcname, entry in sorted_items:
-        if isinstance(entry, dict):
-            if entry.get("kind") == "file":
-                try:
-                    total += os.path.getsize(entry["src"])
-                except OSError:
-                    pass
-        else:
-            try:
-                st = os.lstat(entry)
-                if stat.S_ISREG(st.st_mode):
-                    total += st.st_size
-            except OSError:
-                pass
+    # Pre-computed for the progress bar from what the enumeration saw.
+    total = sum(
+        entry.get("size", 0)
+        for _arcname, entry in sorted_items
+        if entry.get("kind") == "file"
+    )
 
     def _populate(tf):
         # Synthesise parent directory entries so the layer applies
@@ -483,10 +550,11 @@ def write_files_layer(file_map, out_path):
                     dinfo.mode = 0o755
                     dinfo.mtime = 0
                     tf.addfile(dinfo)
-        for arcname, entry in sorted_items:
-            if layer_path_parts(arcname) is None:
-                continue
-            _add_file_map_entry(tf, arcname, entry)
+        with MapSources() as sources:
+            for arcname, entry in sorted_items:
+                if layer_path_parts(arcname) is None:
+                    continue
+                _add_file_map_entry(tf, arcname, entry, sources)
 
     return _pack_stream(out_path, total, _populate)
 
@@ -603,101 +671,56 @@ def _add_whiteout(tf, arcname):
     tf.addfile(tinfo)
 
 
-def _add_file_map_entry(tf, arcname, entry):
-    if isinstance(entry, dict):
-        kind = entry.get("kind")
-        if kind == "symlink":
-            tinfo = tarfile.TarInfo(arcname)
-            tinfo.type = tarfile.SYMTYPE
-            tinfo.linkname = entry["target"]
-            tinfo.size = 0
-            tinfo.mode = entry.get("mode", 0o777)
-            tinfo.mtime = entry.get("mtime", 0)
-            tinfo.uid = entry.get("uid", 0)
-            tinfo.gid = entry.get("gid", 0)
-            tf.addfile(tinfo)
-            return
-        if kind == "dir":
-            tinfo = tarfile.TarInfo(arcname)
-            tinfo.type = tarfile.DIRTYPE
-            tinfo.mode = entry.get("mode", 0o755)
-            tinfo.mtime = entry.get("mtime", 0)
-            tinfo.uid = entry.get("uid", 0)
-            tinfo.gid = entry.get("gid", 0)
-            tf.addfile(tinfo)
-            return
-        # There is deliberately no in-memory "content" kind: a file_map
-        # covers a whole instruction, so every entry's bytes would be live
-        # at once. Content that is not already a file is spooled to one
-        # (see build_engine.copy_step._spool_entry).
-        if kind == "file":
-            src_path = entry["src"]
-        else:
-            return
-    else:
-        src_path = entry
+def _add_file_map_entry(tf, arcname, entry, sources):
+    """Add one file_map entry to the tar under *arcname*.
 
-    try:
-        st = os.lstat(src_path)
-    except OSError:
-        return
-
-    if stat.S_ISDIR(st.st_mode):
-        tinfo = tarfile.TarInfo(arcname)
-        tinfo.type = tarfile.DIRTYPE
-        tinfo.mode = (
-            entry.get("mode", stat.S_IMODE(st.st_mode))
-            if isinstance(entry, dict) else stat.S_IMODE(st.st_mode)
-        )
-        tinfo.mtime = int(st.st_mtime)
-        tinfo.uid = (entry.get("uid", 0) if isinstance(entry, dict) else 0)
-        tinfo.gid = (entry.get("gid", 0) if isinstance(entry, dict) else 0)
-        tf.addfile(tinfo)
-    elif stat.S_ISLNK(st.st_mode):
+    A "file" entry's bytes come out of the descriptor *sources* opens
+    for it, and its size off that descriptor's own fstat -- never off an
+    lstat of a name that is opened again afterwards. Its mode, uid and
+    gid come from the entry (that is how COPY --chown and --chmod reach
+    the layer) while its timestamp comes from the file, which is where
+    ADD parks a spooled member's mtime.
+    """
+    kind = entry.get("kind")
+    if kind == "symlink":
         tinfo = tarfile.TarInfo(arcname)
         tinfo.type = tarfile.SYMTYPE
-        tinfo.linkname = os.readlink(src_path)
+        tinfo.linkname = entry["target"]
         tinfo.size = 0
-        tinfo.mode = stat.S_IMODE(st.st_mode)
-        tinfo.mtime = int(st.st_mtime)
+        tinfo.mode = entry.get("mode", 0o777)
+        tinfo.mtime = entry.get("mtime", 0)
+        tinfo.uid = entry.get("uid", 0)
+        tinfo.gid = entry.get("gid", 0)
         tf.addfile(tinfo)
-    elif stat.S_ISREG(st.st_mode):
-        # Opened before it is measured, and never followed: the lstat
-        # above named the file, and a source spooled into the build's own
-        # tmp_root is reachable by anything running with this user's
-        # rights -- a process an earlier RUN left behind included. What
-        # gets packed is the inode this descriptor holds, or nothing.
-        opened = _open_source(src_path)
-        if opened is None:
-            return
-        fd, fst = opened
-        try:
-            tinfo = tarfile.TarInfo(arcname)
-            tinfo.type = tarfile.REGTYPE
-            tinfo.size = fst.st_size
-            tinfo.mode = (
-                entry.get("mode", stat.S_IMODE(fst.st_mode))
-                if isinstance(entry, dict) else stat.S_IMODE(fst.st_mode)
-            )
-            tinfo.mtime = int(fst.st_mtime)
-            tinfo.uid = (entry.get("uid", 0) if isinstance(entry, dict) else 0)
-            tinfo.gid = (entry.get("gid", 0) if isinstance(entry, dict) else 0)
-            tf.addfile(tinfo, open(fd, "rb", closefd=False))
-        finally:
-            os.close(fd)
+        return
+    if kind == "dir":
+        tinfo = tarfile.TarInfo(arcname)
+        tinfo.type = tarfile.DIRTYPE
+        tinfo.mode = entry.get("mode", 0o755)
+        tinfo.mtime = entry.get("mtime", 0)
+        tinfo.uid = entry.get("uid", 0)
+        tinfo.gid = entry.get("gid", 0)
+        tf.addfile(tinfo)
+        return
+    # There is deliberately no in-memory "content" kind: a file_map
+    # covers a whole instruction, so every entry's bytes would be live
+    # at once. Content that is not already a file is spooled to one
+    # (see build_engine.copy_step._spool_entry).
+    if kind != "file":
+        return
 
-
-def _open_source(src_path):
-    """Open a file_map source as a regular file. (fd, stat), or None."""
     try:
-        fd = os.open(src_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd, fst = sources.open(entry)
     except OSError:
-        return None
+        return
     try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError("not a regular file")
-    except OSError:
+        tinfo = tarfile.TarInfo(arcname)
+        tinfo.type = tarfile.REGTYPE
+        tinfo.size = fst.st_size
+        tinfo.mode = entry.get("mode", stat.S_IMODE(fst.st_mode))
+        tinfo.mtime = int(fst.st_mtime)
+        tinfo.uid = entry.get("uid", 0)
+        tinfo.gid = entry.get("gid", 0)
+        tf.addfile(tinfo, open(fd, "rb", closefd=False))
+    finally:
         os.close(fd)
-        return None
-    return fd, st

@@ -81,14 +81,20 @@ def looks_like_url(s):
     return s.startswith(("http://", "https://"))
 
 
-def is_tar_archive(path):
-    """Cheap signature-only check for tar / tar.gz / tar.bz2 / tar.xz."""
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(265)
-    except OSError:
-        return False
-    if len(head) < 265:
+# How much of a file the signature check below needs: the ustar magic
+# sits at offset 257 and runs to 265.
+TAR_HEADER_BYTES = 265
+
+
+def is_tar_header(head):
+    """True when *head* opens a tar / tar.gz / tar.bz2 / tar.xz stream.
+
+    A signature-only check, and it takes the bytes rather than a name:
+    the one caller (ADD's auto-extract) already holds a descriptor on
+    the file, so it sniffs the very inode it is about to read instead
+    of resolving the path a second time and hoping for the same file.
+    """
+    if len(head) < TAR_HEADER_BYTES:
         return False
     if head[257:263] == b"ustar\x00" or head[257:265] == b"ustar  \x00":
         return True

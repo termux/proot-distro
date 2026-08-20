@@ -32,6 +32,17 @@
 # spooled into engine.tmp_root and referenced by path, which is where it
 # was headed anyway: the instruction both materialises it into the rootfs
 # and packs it into a layer, and tmp_root is removed when the build ends.
+#
+# No entry names a path to read, either. A source is resolved beneath the
+# tree it came from and recorded as (root, components); every read walks
+# those components back down from the root with O_NOFOLLOW — see
+# _SourceTree here and layer_diff.MapSources on the consuming side. The
+# lexical prefix check that came before decided containment on the
+# spelling of a path, which says nothing about the symlinks in it: a
+# build context holding `escape -> /` let `COPY escape/etc/passwd
+# /leaked` read the host's file, and a source image shipping the same
+# link let `COPY --from` do it without the context containing anything
+# at all. Both ended up in the layer `push` uploads.
 
 import hashlib
 import os
@@ -52,14 +63,14 @@ from proot_distro.helpers.build_engine.dockerignore import (
 )
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.parsing import (
-    is_tar_archive, looks_like_url,
+    TAR_HEADER_BYTES, is_tar_header, looks_like_url,
 )
 from proot_distro.helpers.build_engine.users import resolve_chown
 from proot_distro.helpers.docker import (
     AuthStrippingRedirectHandler, layer_cache_path, pull_image,
 )
 from proot_distro.helpers.layer_diff import (
-    layer_path_parts, write_files_layer,
+    MapSources, layer_path_parts, write_files_layer,
 )
 from proot_distro.helpers.tar_extract import safe_resolve_parts
 from proot_distro import dirfd
@@ -68,6 +79,102 @@ from proot_distro.atomic import publish_file
 
 # Chunk size for spooling, the same one tar_extract streams with.
 _SPOOL_CHUNK = 1 << 17
+
+
+class _SourceTree:
+    """The tree one COPY/ADD reads its sources out of.
+
+    The build context, another stage's rootfs, or an image pulled for
+    COPY --from — trees this program did not write, whose symlinks are
+    therefore whoever wrote them's choice.
+
+    `resolve()` answers where a source spec lands with tar_extract's
+    clamped walk: existing symlink components are followed, but an
+    absolute target re-anchors at the root and `..` can never climb out
+    of it. That is both the confinement and the meaning a path has
+    inside an image, where the guest's `/` *is* the rootfs, so an
+    absolute link an image legitimately ships (`/usr/bin/python ->
+    /usr/local/bin/python`) still resolves to the right file. The final
+    component is deliberately left unresolved: COPY copies a symlink as
+    a symlink rather than reading through it.
+
+    Nothing here hands a path back to open. Resolving decides each
+    component by name, so a component swapped afterwards would be
+    followed by whatever acted on the answer; every descriptor this
+    class returns is walked down from the root with O_NOFOLLOW instead,
+    and the entries recorded in a file_map carry (root, components) so
+    the reads that come later can do the same.
+    """
+
+    def __init__(self, root):
+        self.root = os.path.abspath(root)
+
+    def resolve(self, parts):
+        """Where *parts* lands beneath the root, as components, or None.
+
+        None means a symlink loop or chain long enough to look like one.
+        """
+        parts = [p for p in parts if p not in ("", os.curdir)]
+        if not parts:
+            return []
+        resolved = safe_resolve_parts(self.root, parts[:-1])
+        if resolved is None:
+            return None
+        return resolved + [parts[-1]]
+
+    def opendir(self, parts):
+        """A descriptor on the directory *parts* names. Raises OSError."""
+        root_fd = dirfd.opendir(self.root)
+        try:
+            return dirfd.descend_at(root_fd, parts)
+        finally:
+            os.close(root_fd)
+
+    def lstat(self, parts):
+        """What *parts* names, without following it. stat, or None."""
+        if not parts:
+            try:
+                return os.stat(self.root)
+            except OSError:
+                return None
+        try:
+            fd = self.opendir(parts[:-1])
+        except OSError:
+            return None
+        try:
+            return dirfd.lstat_at(fd, parts[-1])
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+
+    def open_file(self, parts):
+        """Open *parts* as a regular file. (fd, stat); raises OSError."""
+        fd = self.opendir(parts[:-1])
+        try:
+            return dirfd.open_regular_at(fd, parts[-1], os.O_RDONLY)
+        finally:
+            os.close(fd)
+
+
+def _spec_parts(src):
+    """The components of a COPY/ADD source spec, or None for a `..` in it.
+
+    A leading '/' is dropped: Docker reads both spellings as relative to
+    the source tree's own root. A `..` written in the spec is refused
+    rather than clamped — the same rule the [name:]path resolver applies
+    to a container path, and the same answer Docker gives for a source
+    outside the build context.
+    """
+    parts = [p for p in src.lstrip("/").split("/") if p not in ("", os.curdir)]
+    if os.pardir in parts:
+        return None
+    return parts
+
+
+def _rel_name(parts):
+    """The '/'-joined form of *parts*, as .dockerignore matches names."""
+    return "/".join(parts) if parts else os.curdir
 
 
 def _spool_dir(engine):
@@ -92,6 +199,23 @@ def _spool_stream(fobj, spool):
     return path
 
 
+def _file_entry(file_map, arcname, root, parts, mode, uid, gid, mtime, size):
+    """Record a regular file in *file_map* as (root, components).
+
+    `src` is the joined form, for a message that has to name the source;
+    nothing reads through it. The bytes come from a walk of `rel` down
+    from `root` (layer_diff.MapSources), and `size` is what the
+    enumeration measured, which is all the progress bar's denominator
+    needs — the pack sizes each file off the descriptor it reads.
+    """
+    file_map[arcname] = {
+        "kind": "file",
+        "root": root, "rel": tuple(parts),
+        "src": os.path.join(root, *parts),
+        "mode": mode, "uid": uid, "gid": gid, "mtime": mtime, "size": size,
+    }
+
+
 def _spool_entry(file_map, arcname, path, mode, uid, gid, mtime):
     """Record a spooled file in *file_map* as an ordinary file entry.
 
@@ -106,10 +230,12 @@ def _spool_entry(file_map, arcname, path, mode, uid, gid, mtime):
         os.utime(path, (mtime, mtime))
     except (OSError, OverflowError, ValueError):
         pass
-    file_map[arcname] = {
-        "kind": "file", "src": path,
-        "mode": mode, "uid": uid, "gid": gid, "mtime": mtime,
-    }
+    try:
+        size = os.stat(path).st_size
+    except OSError:
+        size = 0
+    root, name = os.path.split(path)
+    _file_entry(file_map, arcname, root, [name], mode, uid, gid, mtime, size)
 
 
 def do_copy(engine, instr):
@@ -241,38 +367,58 @@ def _pull_throwaway_image(engine, image_ref):
 
 def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
                        uid, gid, mode_override, auto_extract, spool=None):
-    # Per Docker semantics, a leading '/' on a COPY/ADD source is
-    # equivalent to no leading slash: both forms resolve relative
-    # to the build context root.
-    src_rel_raw = src.lstrip("/")
+    """COPY/ADD from the build context, confined to it.
 
-    full = os.path.normpath(os.path.join(engine.build_dir, src_rel_raw))
-    if (full != engine.build_dir
-            and not full.startswith(engine.build_dir + os.sep)):
+    A source that resolves outside the context does not exist as far as
+    this is concerned: `..` in the spec is refused outright, and a
+    symlink leading out of the context re-anchors at its root, so what
+    was `escape/secret` with `escape -> /` becomes plain `secret` and is
+    reported missing if the context holds no such file. That is what the
+    daemon makes of a context symlink too — it only ever sees the
+    unpacked context, never the host tree the link named.
+    """
+    tree = _SourceTree(engine.build_dir)
+    raw = _spec_parts(src)
+    if raw is None:
         raise BuildError(
             f"COPY source '{src}' escapes the build context."
         )
-    if not os.path.exists(full):
-        matches = sorted(simple_glob(engine.build_dir, src_rel_raw))
+    parts = tree.resolve(raw)
+    st = tree.lstat(parts) if parts is not None else None
+    if st is None:
+        # A wildcard, or a name that is not there. glob() answers on the
+        # spelling of a path the same way the old containment check did,
+        # so every match is put through the walk as well and one that
+        # only exists outside the context counts for nothing: with no
+        # match left the source is not in the context, which is what the
+        # user is told rather than the instruction quietly copying
+        # nothing.
+        matches = sorted(simple_glob(engine.build_dir, src.lstrip("/")))
         matches = [m for m in matches if not is_ignored(m, engine.ignore_patterns)]
-        if not matches:
+        found = []
+        for m in matches:
+            m_raw = _spec_parts(m)
+            m_parts = tree.resolve(m_raw) if m_raw is not None else None
+            m_st = tree.lstat(m_parts) if m_parts is not None else None
+            if m_st is not None:
+                found.append((m_parts, m_st))
+        if not found:
             raise BuildError(
                 f"COPY/ADD source '{src}' not found in build context."
             )
-        for m in matches:
-            full_m = os.path.join(engine.build_dir, m)
+        for m_parts, m_st in found:
             _add_to_file_map(
-                full_m, dest, is_dir_dest=True, file_map=file_map,
+                tree, m_parts, m_st, dest, is_dir_dest=True, file_map=file_map,
                 uid=uid, gid=gid, mode_override=mode_override,
-                auto_extract=auto_extract, src_rel=m,
+                auto_extract=auto_extract, src_rel=_rel_name(m_parts),
                 ignore_patterns=engine.ignore_patterns, spool=spool,
             )
         return
-    rel = os.path.relpath(full, engine.build_dir)
+    rel = _rel_name(parts)
     if is_ignored(rel, engine.ignore_patterns):
         return
     _add_to_file_map(
-        full, dest, is_dir_dest=is_dir_dest, file_map=file_map,
+        tree, parts, st, dest, is_dir_dest=is_dir_dest, file_map=file_map,
         uid=uid, gid=gid, mode_override=mode_override,
         auto_extract=auto_extract, src_rel=rel,
         ignore_patterns=engine.ignore_patterns, spool=spool,
@@ -281,20 +427,31 @@ def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
 
 def _copy_from_rootfs(from_rootfs, src, dest, is_dir_dest,
                       file_map, uid, gid, mode_override):
-    abs_rootfs = os.path.abspath(from_rootfs)
-    full = os.path.normpath(os.path.join(abs_rootfs, src.lstrip("/")))
-    if full != abs_rootfs and not full.startswith(abs_rootfs + os.sep):
+    """COPY --from a stage or image rootfs, confined to that rootfs.
+
+    The source tree here is image content outright, so the walk matters
+    twice over: `/escape/file` with `escape -> /some/host/path` shipped
+    in the image used to read the host's file and pack it into the
+    layer, without the Dockerfile or the build context saying anything
+    unusual. Clamped, the link means inside the image the way it does
+    to the guest.
+    """
+    tree = _SourceTree(from_rootfs)
+    raw = _spec_parts(src)
+    if raw is None:
         raise BuildError(
             f"COPY --from source '{src}' escapes the source rootfs."
         )
-    if not os.path.lexists(full):
+    parts = tree.resolve(raw)
+    st = tree.lstat(parts) if parts is not None else None
+    if st is None:
         raise BuildError(
             f"COPY --from source '{src}' not found in stage."
         )
     _add_to_file_map(
-        full, dest, is_dir_dest=is_dir_dest, file_map=file_map,
+        tree, parts, st, dest, is_dir_dest=is_dir_dest, file_map=file_map,
         uid=uid, gid=gid, mode_override=mode_override,
-        auto_extract=False, src_rel=src,
+        auto_extract=False, src_rel=_rel_name(parts),
         ignore_patterns=(),
     )
 
@@ -326,125 +483,148 @@ def _copy_url(url, dest, file_map, uid, gid, mode_override, spool):
     )
 
 
-def _add_to_file_map(src_full, dest, is_dir_dest, file_map,
+def _add_to_file_map(tree, parts, st, dest, is_dir_dest, file_map,
                      uid, gid, mode_override, auto_extract, src_rel,
                      ignore_patterns, spool=None):
-    if os.path.islink(src_full):
-        _add_symlink(src_full, dest, is_dir_dest, file_map, uid, gid)
+    """Record the source *parts* names in *tree*, by what the lstat says.
+
+    A symlink is copied as a symlink (never read through), a directory
+    is walked, and a regular file is recorded — or, for ADD, unpacked
+    when it turns out to be an archive. Devices, FIFOs and sockets are
+    skipped, as they are everywhere else in the program.
+    """
+    if stat.S_ISLNK(st.st_mode):
+        _add_symlink(tree, parts, st, dest, is_dir_dest, file_map, uid, gid)
         return
-    if os.path.isdir(src_full):
+    if stat.S_ISDIR(st.st_mode):
         _add_directory_tree(
-            src_full, dest, file_map, uid, gid, mode_override, src_rel,
+            tree, parts, dest, file_map, uid, gid, mode_override, src_rel,
             ignore_patterns,
         )
         return
-    if os.path.isfile(src_full):
-        # Auto-extract tar archives for ADD.
-        if auto_extract and is_tar_archive(src_full):
-            _extract_tar_into_dest(src_full, dest, file_map, uid, gid, spool)
+    if stat.S_ISREG(st.st_mode):
+        if auto_extract and _extract_archive(
+                tree, parts, dest, file_map, uid, gid, spool):
             return
-        _add_regular(src_full, dest, is_dir_dest, file_map,
-                     uid, gid, mode_override, src_rel)
-        return
+        _add_regular(tree, parts, st, dest, is_dir_dest, file_map,
+                     uid, gid, mode_override)
 
 
-def _add_regular(src_full, dest, is_dir_dest, file_map,
-                 uid, gid, mode_override, src_rel):
-    arcname = _dest_arcname(src_full, dest, is_dir_dest)
-    try:
-        mode = stat.S_IMODE(os.lstat(src_full).st_mode)
-    except OSError:
-        mode = 0o644
+def _add_regular(tree, parts, st, dest, is_dir_dest, file_map,
+                 uid, gid, mode_override):
+    arcname = _dest_arcname(parts[-1], dest, is_dir_dest)
+    mode = stat.S_IMODE(st.st_mode)
     if mode_override is not None:
         mode = mode_override
-    file_map[arcname] = {
-        "kind": "file", "src": src_full,
-        "mode": mode, "uid": uid, "gid": gid,
-        "mtime": int(os.lstat(src_full).st_mtime),
-    }
+    _file_entry(file_map, arcname, tree.root, parts,
+                mode, uid, gid, int(st.st_mtime), st.st_size)
 
 
-def _add_symlink(src_full, dest, is_dir_dest, file_map, uid, gid):
-    arcname = _dest_arcname(src_full, dest, is_dir_dest)
+def _add_symlink(tree, parts, st, dest, is_dir_dest, file_map, uid, gid):
+    arcname = _dest_arcname(parts[-1], dest, is_dir_dest)
     try:
-        target = os.readlink(src_full)
+        fd = tree.opendir(parts[:-1])
     except OSError:
         return
+    try:
+        target = os.readlink(parts[-1], dir_fd=fd)
+    except OSError:
+        return
+    finally:
+        os.close(fd)
     file_map[arcname] = {
         "kind": "symlink", "target": target,
         "mode": 0o777, "uid": uid, "gid": gid,
-        "mtime": int(os.lstat(src_full).st_mtime),
+        "mtime": int(st.st_mtime),
     }
 
 
-def _add_directory_tree(src_full, dest, file_map,
+def _add_directory_tree(tree, parts, dest, file_map,
                         uid, gid, mode_override, src_rel,
                         ignore_patterns):
-    # When source is a directory, the entries themselves go into
-    # dest. The destination is treated as a directory.
+    """Record everything under the directory *parts* names.
+
+    When the source is a directory its entries themselves go into dest,
+    so the destination is treated as a directory.
+
+    The walk carries directory descriptors on an explicit stack, one
+    level opened O_NOFOLLOW off the one above: a symlink is recorded as
+    a symlink and never descended (what os.walk(followlinks=False)
+    gave), and how deep the tree goes is the context's business rather
+    than the interpreter's. Only the fds along the current path are
+    open.
+    """
     if not dest.endswith("/"):
         dest = dest + "/"
-    for dirpath, dirnames, filenames in os.walk(src_full, followlinks=False):
-        rel = os.path.relpath(dirpath, src_full)
-        for d in list(dirnames):
-            full = os.path.join(dirpath, d)
-            if os.path.islink(full):
-                arc = _make_subpath(dest, rel, d).lstrip("/")
+    try:
+        top_fd = tree.opendir(parts)
+    except OSError:
+        return
+    prefix = list(parts)
+    # Frame layout: [fd, None, pending names, rel components, owned].
+    stack = [[top_fd, None, None, (), True]]
+    try:
+        while stack:
+            frame = stack[-1]
+            fd, _, pending, rel_parts, owned = frame
+            if pending is None:
                 try:
-                    tgt = os.readlink(full)
+                    pending = frame[2] = dirfd.listdir_at(fd)
+                except OSError:
+                    pending = frame[2] = []
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
+
+            name = pending.pop()
+            try:
+                st = dirfd.lstat_at(fd, name)
+            except OSError:
+                continue
+            child = rel_parts + (name,)
+            combined = (
+                src_rel + "/" + "/".join(child)
+                if src_rel and src_rel != os.curdir else "/".join(child)
+            )
+            if is_ignored(combined, ignore_patterns):
+                continue
+            arc = _make_subpath(dest, "/".join(rel_parts), name).lstrip("/")
+            mode = st.st_mode
+            if stat.S_ISLNK(mode):
+                try:
+                    target = os.readlink(name, dir_fd=fd)
                 except OSError:
                     continue
                 file_map[arc] = {
-                    "kind": "symlink", "target": tgt,
+                    "kind": "symlink", "target": target,
                     "mode": 0o777, "uid": uid, "gid": gid,
-                    "mtime": 0,
+                    "mtime": int(st.st_mtime),
                 }
-                dirnames.remove(d)
-        # Add the directory itself (except the root).
-        if rel != ".":
-            arc = _make_subpath(dest, rel, "").rstrip("/").lstrip("/")
-            if arc:
-                try:
-                    mode = stat.S_IMODE(os.lstat(dirpath).st_mode)
-                except OSError:
-                    mode = 0o755
+            elif stat.S_ISDIR(mode):
                 file_map[arc] = {
                     "kind": "dir",
-                    "mode": mode_override if mode_override is not None else mode,
+                    "mode": (mode_override if mode_override is not None
+                             else stat.S_IMODE(mode)),
                     "uid": uid, "gid": gid, "mtime": 0,
                 }
-        for f in filenames:
-            full = os.path.join(dirpath, f)
-            src_relpath = os.path.relpath(full, src_full)
-            combined_rel = (
-                (src_rel + "/" + src_relpath)
-                if src_rel and src_rel != "." else src_relpath
-            )
-            if is_ignored(combined_rel, ignore_patterns):
-                continue
-            arc = _make_subpath(dest, rel, f).lstrip("/")
-            if os.path.islink(full):
                 try:
-                    tgt = os.readlink(full)
+                    sub = dirfd.opendir_at(fd, name)
                 except OSError:
                     continue
-                file_map[arc] = {
-                    "kind": "symlink", "target": tgt,
-                    "mode": 0o777, "uid": uid, "gid": gid,
-                    "mtime": int(os.lstat(full).st_mtime),
-                }
-            else:
-                try:
-                    mode = stat.S_IMODE(os.lstat(full).st_mode)
-                except OSError:
-                    mode = 0o644
-                if mode_override is not None:
-                    mode = mode_override
-                file_map[arc] = {
-                    "kind": "file", "src": full,
-                    "mode": mode, "uid": uid, "gid": gid,
-                    "mtime": int(os.lstat(full).st_mtime),
-                }
+                stack.append([sub, None, None, child, True])
+            elif stat.S_ISREG(mode):
+                _file_entry(
+                    file_map, arc, tree.root, prefix + list(child),
+                    (mode_override if mode_override is not None
+                     else stat.S_IMODE(mode)),
+                    uid, gid, int(st.st_mtime), st.st_size,
+                )
+            # Other types intentionally skipped (devices, FIFOs, sockets).
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
 
 
 def _make_subpath(dest, rel, name):
@@ -463,8 +643,31 @@ def _dest_arcname(src_full, dest, is_dir_dest):
     return dest.lstrip("/")
 
 
-def _extract_tar_into_dest(src_full, dest, file_map, uid, gid, spool):
-    """ADD auto-extract: stream the tar into dest as a tree.
+def _extract_archive(tree, parts, dest, file_map, uid, gid, spool):
+    """ADD auto-extract: unpack *parts* into dest when it is a tar.
+
+    True when it was one and the members were recorded. Sniffed and read
+    through a single descriptor on the file, so the archive that gets
+    unpacked is the inode the walk found and not whatever the name leads
+    to by the time tarfile opens it.
+    """
+    try:
+        fd, _st = tree.open_file(parts)
+    except OSError:
+        return False
+    try:
+        with open(fd, "rb", closefd=False) as fh:
+            if not is_tar_header(fh.read(TAR_HEADER_BYTES)):
+                return False
+            fh.seek(0)
+            _extract_tar_into_dest(fh, dest, file_map, uid, gid, spool)
+            return True
+    finally:
+        os.close(fd)
+
+
+def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool):
+    """ADD auto-extract: stream the tar in *fobj* into dest as a tree.
 
     Every regular member is spooled to its own file. Reading them into the
     file_map instead meant the archive's entire uncompressed content sat in
@@ -473,7 +676,7 @@ def _extract_tar_into_dest(src_full, dest, file_map, uid, gid, spool):
     """
     if not dest.endswith("/"):
         dest = dest + "/"
-    with tarfile.open(src_full, "r|*") as tf:
+    with tarfile.open(fileobj=fobj, mode="r|*") as tf:
         for m in tf:
             if m.isblk() or m.ischr() or m.isfifo():
                 continue
@@ -500,10 +703,10 @@ def _extract_tar_into_dest(src_full, dest, file_map, uid, gid, spool):
                     "mtime": int(m.mtime),
                 }
             elif m.isreg():
-                fobj = tf.extractfile(m)
-                if fobj is None:
+                fobj_m = tf.extractfile(m)
+                if fobj_m is None:
                     continue
-                path = _spool_stream(fobj, spool)
+                path = _spool_stream(fobj_m, spool)
                 _spool_entry(
                     file_map, arc, path,
                     stat.S_IMODE(m.mode) or 0o644, uid, gid, int(m.mtime),
@@ -536,32 +739,38 @@ def _materialise_files(rootfs_dir, file_map):
     entry itself and never a same-named symlink's target — which means
     every kind has to drop a link standing there first, the directory
     branch included.
-    """
-    for arcname in sorted(file_map.keys()):
-        entry = file_map[arcname]
-        # Same rule the layer is packed by, so the tree and the tar agree
-        # on what the instruction produced (see layer_diff.layer_path_parts).
-        parts = layer_path_parts(arcname)
-        if parts is None:
-            continue
-        resolved = safe_resolve_parts(rootfs_dir, parts[:-1])
-        if resolved is None:
-            continue
 
-        dir_fd = dirfd.opendir_under(rootfs_dir, resolved, create=True)
-        if dir_fd is None:
-            raise BuildError(
-                f"Failed to write '{arcname}' into rootfs: "
-                f"'{'/'.join(resolved)}' is not a directory inside it"
-            )
-        try:
-            _materialise_entry(dir_fd, parts[-1], entry)
-        except OSError as exc:
-            raise BuildError(
-                f"Failed to write '{arcname}' into rootfs: {exc}"
-            ) from exc
-        finally:
-            os.close(dir_fd)
+    The reading half is the same bargain: a file entry's bytes come out
+    of a descriptor MapSources walks down from the tree the source was
+    found in, never out of a path composed from it.
+    """
+    with MapSources() as sources:
+        for arcname in sorted(file_map.keys()):
+            entry = file_map[arcname]
+            # Same rule the layer is packed by, so the tree and the tar
+            # agree on what the instruction produced (see
+            # layer_diff.layer_path_parts).
+            parts = layer_path_parts(arcname)
+            if parts is None:
+                continue
+            resolved = safe_resolve_parts(rootfs_dir, parts[:-1])
+            if resolved is None:
+                continue
+
+            dir_fd = dirfd.opendir_under(rootfs_dir, resolved, create=True)
+            if dir_fd is None:
+                raise BuildError(
+                    f"Failed to write '{arcname}' into rootfs: "
+                    f"'{'/'.join(resolved)}' is not a directory inside it"
+                )
+            try:
+                _materialise_entry(dir_fd, parts[-1], entry, sources)
+            except OSError as exc:
+                raise BuildError(
+                    f"Failed to write '{arcname}' into rootfs: {exc}"
+                ) from exc
+            finally:
+                os.close(dir_fd)
 
 
 def _drop_entry_at(dir_fd, name):
@@ -572,7 +781,7 @@ def _drop_entry_at(dir_fd, name):
         pass
 
 
-def _materialise_entry(dir_fd, name, entry):
+def _materialise_entry(dir_fd, name, entry, sources):
     """Write one file_map entry into the directory dir_fd refers to."""
     kind = entry["kind"]
     if kind == "dir":
@@ -604,20 +813,24 @@ def _materialise_entry(dir_fd, name, entry):
         _drop_entry_at(dir_fd, name)
         os.symlink(entry["target"], name, dir_fd=dir_fd)
     elif kind == "file":
-        # open_new_at is O_EXCL and drops a leftover rather than adopting
-        # it, so the bytes always land in a new inode inside this
-        # directory -- never through a hardlink to somewhere else, which
-        # is the one thing O_NOFOLLOW cannot refuse.
-        fd, _st = dirfd.open_new_at(dir_fd, name, entry.get("mode", 0o644))
+        src_fd, _src_st = sources.open(entry)
         try:
-            with open(entry["src"], "rb") as src, \
-                    os.fdopen(fd, "wb", closefd=False) as dst:
-                shutil.copyfileobj(src, dst, _SPOOL_CHUNK)
-            # Explicitly, because the mode open_new_at created the file
-            # with went through the umask.
+            # open_new_at is O_EXCL and drops a leftover rather than
+            # adopting it, so the bytes always land in a new inode inside
+            # this directory -- never through a hardlink to somewhere
+            # else, which is the one thing O_NOFOLLOW cannot refuse.
+            fd, _st = dirfd.open_new_at(dir_fd, name, entry.get("mode", 0o644))
             try:
-                os.fchmod(fd, entry.get("mode", 0o644))
-            except OSError:
-                pass
+                with open(src_fd, "rb", closefd=False) as src, \
+                        os.fdopen(fd, "wb", closefd=False) as dst:
+                    shutil.copyfileobj(src, dst, _SPOOL_CHUNK)
+                # Explicitly, because the mode open_new_at created the
+                # file with went through the umask.
+                try:
+                    os.fchmod(fd, entry.get("mode", 0o644))
+                except OSError:
+                    pass
+            finally:
+                os.close(fd)
         finally:
-            os.close(fd)
+            os.close(src_fd)

@@ -17,6 +17,7 @@ import tarfile
 
 import pytest
 
+from _builders import file_map_entry
 from proot_distro import dirfd
 from proot_distro.helpers import layer_diff
 from proot_distro.helpers.build_engine import copy_step
@@ -34,8 +35,7 @@ def tree(tmp_path):
 
 
 def _file_entry(src, mode=0o644):
-    return {"kind": "file", "src": str(src), "mode": mode,
-            "uid": 0, "gid": 0, "mtime": 0}
+    return file_map_entry(src, mode=mode)
 
 
 # --- COPY/ADD materialisation ----------------------------------------------
