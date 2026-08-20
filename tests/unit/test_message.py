@@ -83,3 +83,31 @@ def test_quote_path_escapes_backslash_so_escapes_are_unambiguous():
     """`a\\e[0m` typed into a name must not read as an ESC we escaped."""
     assert message.quote_path("a\\e[0m") == "a\\\\e[0m"
     assert message.quote_path("a\x1b[0m") == "a\\e[0m"
+
+
+# ----- quote_error --------------------------------------------------------
+
+def test_quote_error_uses_strerror_which_carries_no_filename():
+    # OSError's own str() reprs the filename, which would come out
+    # double-escaped once quote_path escaped the backslashes again. The
+    # caller names the entry itself; this is only the reason.
+    try:
+        open("/nonexistent\x1b[31m/x")
+    except OSError as exc:
+        assert message.quote_error(exc) == "No such file or directory"
+
+
+def test_quote_error_escapes_an_exception_that_interpolated_a_name():
+    # A TarError, a BuildError or a RuntimeError raised while an image was
+    # unpacked has no strerror and builds its message by interpolation, so
+    # the whole string is untrusted.
+    import tarfile
+
+    exc = tarfile.TarError("bad member 'a\x1b[31mRED\x1b[0m'")
+    assert message.quote_error(exc) == "bad member 'a\\e[31mRED\\e[0m'"
+    assert "\x1b" not in message.quote_error(exc)
+
+
+def test_quote_error_falls_back_when_strerror_is_none():
+    exc = OSError()
+    assert "\x1b" not in message.quote_error(exc)

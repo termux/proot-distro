@@ -40,7 +40,9 @@ from proot_distro.constants import (
     RUNTIME_DIR,
 )
 from proot_distro.paths import container_rootfs
-from proot_distro.message import C, msg, log_info, log_error, crit_error
+from proot_distro.message import (
+    C, msg, log_info, log_error, crit_error, quote_error,
+)
 from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.helpers.dockerfile import (
@@ -239,7 +241,10 @@ def command_build(args):
             try:
                 final_stage = engine.run(instructions)
             except BuildError as exc:
-                log_error(f"Build failed: {exc}")
+                # A BuildError interpolates names raw, and the ones it
+                # reports on come from the image or from an ADD'd archive
+                # (see copy_step._materialise_files).
+                log_error(f"Build failed: {quote_error(exc)}")
                 sys.exit(1)
 
             # ----- assemble manifest + image_config -----

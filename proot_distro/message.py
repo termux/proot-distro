@@ -265,3 +265,17 @@ def quote_path(text: str) -> str:
         else:
             out.append(ch)
     return "".join(out)
+
+
+def quote_error(exc: BaseException) -> str:
+    """The reason *exc* gives, safe to print next to a name of our own.
+
+    An OSError's `strerror` is the message alone — "No such file or
+    directory" — with no filename in it, which is what callers want: they
+    name the entry themselves, through quote_path, and adding str(exc)
+    would repeat it. Everything else here has only str(): a TarError, a
+    BuildError, a RuntimeError raised while an image was unpacked. Those
+    interpolate names into their message raw, so the whole string is
+    untrusted and goes through quote_path.
+    """
+    return quote_path(getattr(exc, "strerror", None) or str(exc))

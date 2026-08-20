@@ -83,7 +83,9 @@ from proot_distro.helpers.docker import (
 )
 from proot_distro.locking import busy_locks
 from proot_distro import dirfd
-from proot_distro.message import crit_error, log_info, log_error, quote_path
+from proot_distro.message import (
+    crit_error, log_info, log_error, quote_error, quote_path,
+)
 from proot_distro.progress import fmt_size
 
 
@@ -147,7 +149,7 @@ def command_clear_cache(args) -> None:
 
                 def _failed(rel, exc, top=entry.path):
                     log_error(f"Cannot remove '{_under(rel, top)}': "
-                              f"{quote_path(exc.strerror or str(exc))}")
+                              f"{quote_error(exc)}")
 
                 def _removed(rel, top=entry.path):
                     log_info(f"Removing: '{_under(rel, top)}'")
@@ -162,7 +164,7 @@ def command_clear_cache(args) -> None:
                 os.remove(entry.path)
         except OSError as exc:
             log_error(f"Cannot remove '{quote_path(entry.path)}': "
-                      f"{quote_path(exc.strerror or str(exc))}")
+                      f"{quote_error(exc)}")
 
     log_info(f"Reclaimed {fmt_size(total)} of disk space.")
 
@@ -225,7 +227,7 @@ def _drop_build_index(verbose: bool) -> tuple:
         crit_error(
             f"cannot remove the build cache index "
             f"'{quote_path(index_path())}': "
-            f"{quote_path(exc.strerror or str(exc))}. Nothing was removed."
+            f"{quote_error(exc)}. Nothing was removed."
         )
         sys.exit(1)
 
@@ -245,7 +247,7 @@ def _collect_orphans(keep: set) -> tuple:
         names = []
     except OSError as exc:
         crit_error(f"cannot read the layer cache: "
-                   f"{quote_path(exc.strerror or str(exc))}")
+                   f"{quote_error(exc)}")
         sys.exit(1)
 
     orphans = []
@@ -317,7 +319,7 @@ def _sweep_layers(args, drop_build_index: bool) -> None:
             os.remove(path)
         except OSError as exc:
             log_error(f"Cannot remove '{quote_path(path)}': "
-                      f"{quote_path(exc.strerror or str(exc))}")
+                      f"{quote_error(exc)}")
             failed = True
             continue
         reclaimed += size

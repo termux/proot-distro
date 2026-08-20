@@ -48,7 +48,7 @@ from proot_distro.compress import (
 )
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.message import (
-    C, msg, log_info, log_error, crit_error,
+    C, msg, log_info, log_error, crit_error, quote_error, quote_path,
 )
 from proot_distro.progress import (
     ByteCounter, clear_bar, draw_bytes_bar, progress_active,
@@ -304,7 +304,9 @@ def command_restore(args) -> None:
         nonlocal done_size
         done_size += member_size
         if verbose:
-            log_info(f"Extracting: '{member_name}'")
+            # Straight off the archive, which is whatever the user was
+            # handed: a member named with ESC repaints the terminal.
+            log_info(f"Extracting: '{quote_path(member_name)}'")
         if counter is not None and total_size:
             draw_bytes_bar(counter.count, total_size)
         else:
@@ -581,7 +583,7 @@ def command_restore(args) -> None:
         sys.exit(1)
     except (EOFError, OSError, tarfile.TarError) as exc:
         clear_bar()
-        log_error(f"Failed to restore container: {exc}")
+        log_error(f"Failed to restore container: {quote_error(exc)}")
         log_error(f"{C['BRED']}The archive either was corrupted or has "
                   f"unexpected structure.{C['RST']}")
         sys.exit(1)

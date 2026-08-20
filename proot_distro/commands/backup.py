@@ -51,7 +51,9 @@ from proot_distro.compress import (
     ZSTD_AVAILABLE, open_tar_writer, unavailable_msg, unsupported_msg,
 )
 from proot_distro.l2s import open_l2s_backing, resolve_l2s_target
-from proot_distro.message import log_info, log_error, crit_error
+from proot_distro.message import (
+    log_info, log_error, crit_error, quote_error, quote_path,
+)
 from proot_distro.progress import (
     REDRAW_THRESHOLD_BYTES, clear_bar, draw_bytes_bar,
 )
@@ -535,7 +537,9 @@ def _run_backup(
 
     def _on_entry(arc: str) -> None:
         if verbose:
-            log_info(f"Adding: '{arc}'")
+            # The arcname carries the rootfs entry's own name, which the
+            # guest chose; an ESC in one repaints the terminal.
+            log_info(f"Adding: '{quote_path(arc)}'")
         _draw_bar()
 
     def _open_archive():
@@ -579,7 +583,7 @@ def _run_backup(
         sys.exit(1)
     except (OSError, tarfile.TarError) as exc:
         clear_bar()
-        log_error(f"Failed to create backup archive: {exc}")
+        log_error(f"Failed to create backup archive: {quote_error(exc)}")
         if output_path:
             try:
                 os.remove(output_path)

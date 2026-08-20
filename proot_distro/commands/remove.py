@@ -42,7 +42,9 @@ from contextlib import ExitStack
 from proot_distro import dirfd
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
-from proot_distro.message import C, msg, log_info, log_error, crit_error
+from proot_distro.message import (
+    C, msg, log_info, log_error, crit_error, quote_error, quote_path,
+)
 from proot_distro.locking import BuildLock, ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import container_dir, container_manifest, container_rootfs
@@ -124,8 +126,10 @@ def _remove_container(args) -> None:
 
         on_remove = None
         if verbose:
+            # Every component below the container directory is a name the
+            # guest chose, and an ESC in one repaints the terminal.
             def on_remove(path):
-                log_info(f"Removed: '{path}'")
+                log_info(f"Removed: '{quote_path(path)}'")
 
         if not _remove_path(container_dir(container_name), on_remove):
             log_error("Finished with errors. Some files probably were not "
@@ -242,12 +246,13 @@ def _delete_images(targets: list, verbose: bool) -> None:
         try:
             os.remove(record["path"])
         except OSError as exc:
-            log_error(f"Cannot remove '{record['path']}': {exc}")
+            log_error(f"Cannot remove '{quote_path(record['path'])}': "
+                      f"{quote_error(exc)}")
             failed = True
             continue
         reclaimed += size
         if verbose:
-            log_info(f"Removed: '{record['path']}'")
+            log_info(f"Removed: '{quote_path(record['path'])}'")
 
     # Layers are shared between images, so a blob may only go once no
     # surviving manifest lists it. The inventory is re-read here, after
@@ -273,12 +278,13 @@ def _delete_images(targets: list, verbose: bool) -> None:
             except FileNotFoundError:
                 continue
             except OSError as exc:
-                log_error(f"Cannot remove '{path}': {exc}")
+                log_error(f"Cannot remove '{quote_path(path)}': "
+                          f"{quote_error(exc)}")
                 failed = True
                 continue
             reclaimed += size
             if verbose:
-                log_info(f"Removed: '{path}'")
+                log_info(f"Removed: '{quote_path(path)}'")
 
     dependents = _containers_from_images(targets)
     if dependents:

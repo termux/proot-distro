@@ -36,12 +36,25 @@ Top-level utilities (each owns a focused concern):
 - `message.py` — color dict `C`, `msg`, `log_info/error`, `warn`,
   `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`,
   `terminal_width` (column count for the `ps` / `list --image` tables),
-  `quote_path` (C-style escapes for control characters). Names inside a
-  rootfs are the guest's to choose and `copy`/`sync` print them, so every
-  filesystem-derived name — and every `OSError` string, which carries
-  one — passes through `quote_path` before it reaches the terminal. Only
-  the untrusted text, never a whole message: the log helpers' own colour
-  codes are control characters by definition.
+  `quote_path` (C-style escapes for control characters) and
+  `quote_error`. Names inside a rootfs are the guest's to choose, and a
+  name inside a **backup archive** is whoever built the archive's, so
+  every filesystem-derived name passes through `quote_path` before it
+  reaches the terminal. Only the untrusted text, never a whole message:
+  the log helpers' own colour codes are control characters by definition.
+  That covers every `--verbose` path — `copy`/`sync` (which log an entry
+  each), `backup` (`Adding:`), `remove` (`Removed:`), `restore`
+  (`Extracting:`, the worst of them, since the name is off an archive the
+  user was handed and no container need exist yet) and `clear-cache`.
+  `quote_error(exc)` is the reason half: an `OSError`'s `strerror` is the
+  message *without* the filename, which is what a caller naming the entry
+  itself wants — `str()` on one already `repr`s the path, so quoting that
+  would double-escape it — while a `TarError`, a `BuildError` or a
+  `RuntimeError` raised mid-unpack has no `strerror` and interpolates
+  names into its message raw, so the whole string is untrusted.
+  `build` reports through it because `copy_step._materialise_files` names
+  the arcname it could not write, and for an ADD'd archive that name is
+  the archive's to choose.
 - `progress.py` — `fmt_size`, `ByteCounter`, `draw_bytes_bar`,
   `draw_count_bar`, `clear_bar`, `progress_active`.
 - `arch.py` — `get_device_cpu_arch`, `detect_installed_arch` (ELF
