@@ -7,9 +7,7 @@ import pytest
 
 from proot_distro.commands import restore
 from proot_distro.constants import CONTAINERS_DIR
-from proot_distro.paths import (
-    container_dir, container_manifest, container_rootfs,
-)
+from proot_distro.paths import container_dir, container_rootfs
 
 
 # The mapper answers in components *below* containers/<name>, which is

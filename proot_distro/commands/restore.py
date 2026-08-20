@@ -49,10 +49,10 @@
 # after the writes. And a member's own parents are archive content: the
 # name is resolved through them with tar_extract.safe_resolve_parts,
 # which follows a symlink an earlier member shipped but re-anchors it at
-# the container directory, and the resolved components are then re-walked
-# with O_NOFOLLOW, so a name that was validated is the name that is
-# written. os.makedirs/os.symlink/shutil.copy2/open(dest, 'wb') each
-# resolved the whole path afresh, which is one resolution too many.
+# the rootfs, and the resolved components are then re-walked with
+# O_NOFOLLOW, so a name that was validated is the name that is written.
+# os.makedirs/os.symlink/shutil.copy2/open(dest, 'wb') each resolved the
+# whole path afresh, which is one resolution too many.
 
 import os
 import stat
