@@ -172,6 +172,44 @@ Top-level utilities (each owns a focused concern):
   Entries open through `open_regular_at`, so a planted symlink or FIFO
   is not a record and is pruned by name only; the publishing
   `os.replace` runs `src_dir_fd`/`dst_dir_fd` on the same descriptor.
+- `guestfile.py` — reading a file out of a container the way the *guest*
+  sees it: `open_guest_file`, `read_guest_file` (capped),
+  `guest_file_exists`, `MAX_ID_FILE_BYTES`. Two commands need it and
+  both read the same kind of file — `login` takes a user's uid, gid,
+  home and shell out of `/etc/passwd` and `/etc/group` before it exec's
+  proot, `build` resolves `USER` and `COPY --chown` against a stage
+  rootfs's copies — and in both the file *and every directory component
+  leading to it* are image or guest content. The rule is a chroot's: an
+  existing symlink is followed, because a legitimate image ships one
+  (Nix points `/etc/passwd` at an absolute store path), but an absolute
+  target restarts at the rootfs, a relative one continues from the
+  directory holding the link, and `..` stops at the rootfs. The one
+  target *not* re-anchored is an l2s stand-in (`_l2s_parts`), whose
+  target is a host path into `<rootfs>/.l2s` by construction — followed
+  to the file holding the content, and only when the whole chain lands
+  back inside the rootfs.
+  The walk that resolves is the walk that opens. Composing
+  `<rootfs><guest path>` and handing the string to `open()` was wrong
+  twice over: the host kernel resolves the *middle* of that name, so an
+  image (or a guest, between sessions) shipping `etc -> /etc` had
+  `login` read the **host's** passwd file and take a host user's uid,
+  gid, home and shell from it — persistent, not a race — and `login`
+  holds only a shared lock, so even with every component checked a live
+  session of the same container could swap one between the check and the
+  open. `open_regular_at` refuses a FIFO planted under either name,
+  which used to block the command for as long as no peer turned up, and
+  `read_capped` bounds the read, since nothing bounds how large an image
+  makes the file or how long it makes a single line.
+  Two descriptors are open at a time however deep the path goes — the
+  rootfs and the level being looked at — because how many components a
+  *symlink target* names is the image's choice: one fd per level made
+  that decide how many the process holds. `..` is therefore reopened
+  through the current level rather than held, and the level it lands on
+  is checked against the `(st_dev, st_ino)` recorded on the way down: a
+  directory a guest moves elsewhere mid-walk has a different parent, and
+  following one would leave the rootfs. `_MAX_PATH_COMPONENTS` bounds
+  the total walk, since forty hops of an image's own symlinks can name
+  any number of components between them.
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes
@@ -1183,18 +1221,8 @@ cached layers), or external images via `pull_image()`. Base image
 `OnBuild` triggers fire after FROM.
 
 `build_engine/users.py` resolves `USER` and `COPY --chown` against the
-rootfs's own `/etc/passwd` and `/etc/group` — image content, and so is
-every directory component leading to them. `_open_guest_file()` walks
-those components off a descriptor on the rootfs rather than naming the
-file: a symlink is still followed, because a legitimate image ships one
-(Nix points `/etc/passwd` at an absolute store path), but an absolute
-target restarts at the rootfs, `..` stops there, and the walk that
-resolves is the walk that opens, so there is no window in between.
-Naming the file let an image point `/etc` — or `/etc/passwd` itself — at
-a host file and have the build read it. `open_regular_at` refuses a FIFO
-under either name, which used to block the build forever, and the read
-is capped (`_MAX_ID_FILE_BYTES`) since nothing bounds how large an image
-makes the file or how long it makes a single line.
+rootfs's own `/etc/passwd` and `/etc/group` through `guestfile`, the
+same walk `login` reads those two files with.
 
 Destination paths are normalised **whether or not they are absolute**
 (`do_workdir`, `_do_copy_or_add`). Only the relative branch used to be,

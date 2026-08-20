@@ -18,104 +18,90 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: passwd/group lookups against the container's own files,
-# plus the path-resolution helper that follows guest symlinks within
-# the rootfs namespace. Absolute symlink targets are re-rooted under
-# *rootfs* so images like Nix that point /etc/passwd at an absolute
-# store path inside the guest still resolve correctly.
+# Architecture: passwd/group lookups against the container's own files.
+#
+# The files and every directory component leading to them are guest
+# content, so the lookup goes through guestfile.open_guest_file(), the
+# same clamped, fd-borne, capped walk the build engine resolves USER and
+# COPY --chown with. This module used to compose `<rootfs><guest path>`
+# and hand the string to open(): the host kernel then resolved the middle
+# components, so an image (or a guest between sessions) shipping
+# `etc -> /etc` had `login` read the *host's* passwd file and take a host
+# user's uid, gid, home and shell from it — and `login` holds only a
+# shared lock, so even with every component checked a live session of the
+# same container could swap one between the check and the open. A FIFO
+# under either name blocked the login for as long as no peer turned up,
+# and a file with no newline in it was read into memory whole.
+#
+# Absolute symlink targets are re-rooted under *rootfs* so images like Nix
+# that point /etc/passwd at an absolute store path still resolve, and an
+# l2s stand-in — proot's hard-link replacement, whose target is a host
+# path into <rootfs>/.l2s — is followed to the file holding the content
+# instead. Both are the shared walk's doing; see guestfile.
 
-import errno
-import os
-import stat
-
-from proot_distro.l2s import resolve_l2s_target
+from proot_distro.guestfile import guest_file_exists, read_guest_file
 
 
-def resolve_rootfs_path(rootfs: str, guest_path: str) -> str:
-    """Resolve an absolute guest path to its real host path.
+def _entries(rootfs: str, guest_path: str):
+    """Yield the colon-split fields of each line of a passwd-shaped file."""
+    data = read_guest_file(rootfs, guest_path)
+    if data is None:
+        return
+    for line in data.splitlines():
+        yield line.strip().split(":")
 
-    Follows symlinks within the rootfs namespace, at most 40 hops
-    before raising OSError(ELOOP). Absolute targets are re-rooted
-    under *rootfs* via os.path.normpath, which both prevents .. escape
-    and handles Nix-style images where /etc/passwd is a symlink to an
-    absolute store path that only exists inside the guest.
 
-    proot's --link2symlink extension stores hard-link backing files
-    under <rootfs>/.l2s/ and replaces the original paths with symlinks
-    whose targets are host-absolute paths into that directory. These
-    must NOT be re-rooted under rootfs the way ordinary guest-absolute
-    symlinks are; instead the rootfs prefix is stripped to recover the
-    guest-relative path and the loop continues normally.
+def passwd_available(rootfs: str) -> bool:
+    """True when the container has an /etc/passwd to look users up in."""
+    return guest_file_exists(rootfs, "/etc/passwd")
+
+
+def shell_available(rootfs: str, guest_path: str) -> bool:
+    """True when *guest_path* is a regular file inside the container."""
+    return guest_file_exists(rootfs, guest_path)
+
+
+def read_passwd_entry(rootfs: str, user: str) -> list:
+    """Return the fields of *user*'s /etc/passwd line, or [] if absent.
+
+    One read for the whole entry: the fields are wanted together, and
+    re-opening the file per field gave four chances for it to change
+    underneath the login instead of one.
     """
-    rootfs_abs = os.path.abspath(rootfs)
-    for _ in range(40):
-        host_path = rootfs_abs + guest_path
-        try:
-            st = os.lstat(host_path)
-        except OSError:
-            raise
-        if not stat.S_ISLNK(st.st_mode):
-            return host_path
-        target = os.readlink(host_path)
-        l2s_abs = resolve_l2s_target(host_path, target, rootfs_abs)
-        if l2s_abs is not None:
-            guest_path = l2s_abs[len(rootfs_abs):]
-            continue
-        if os.path.isabs(target):
-            guest_path = os.path.normpath(target)
-        else:
-            guest_path = os.path.normpath(
-                os.path.join(os.path.dirname(guest_path), target)
-            )
-    raise OSError(errno.ELOOP, "Too many levels of symbolic links", guest_path)
+    for parts in _entries(rootfs, "/etc/passwd"):
+        if parts and parts[0] == user:
+            return parts
+    return []
 
 
-def read_passwd_field(rootfs: str, user: str, field_index: int) -> str:
-    """Return a single colon-delimited field for *user* from /etc/passwd."""
-    try:
-        passwd = resolve_rootfs_path(rootfs, "/etc/passwd")
-    except OSError:
-        return ""
-    try:
-        with open(passwd) as fh:
-            for line in fh:
-                parts = line.strip().split(":")
-                if parts and parts[0] == user and len(parts) > field_index:
-                    return parts[field_index]
-    except OSError:
-        pass
+def passwd_field(parts: list, field_index: int) -> str:
+    """One field of a /etc/passwd entry, or '' when the line is short."""
+    if len(parts) > field_index:
+        return parts[field_index]
     return ""
 
 
 def find_passwd_by_uid(rootfs: str, uid: str) -> tuple:
     """Return (home, shell, primary_gid) for the given UID, or ('','','')."""
-    try:
-        passwd = resolve_rootfs_path(rootfs, "/etc/passwd")
-    except OSError:
-        return ("", "", "")
-    try:
-        with open(passwd) as fh:
-            for line in fh:
-                parts = line.strip().split(":")
-                if len(parts) >= 7 and parts[2] == uid:
-                    return (parts[5], parts[6], parts[3])
-    except OSError:
-        pass
+    for parts in _entries(rootfs, "/etc/passwd"):
+        if len(parts) >= 7 and parts[2] == uid:
+            return (parts[5], parts[6], parts[3])
     return ("", "", "")
 
 
 def read_group_gid(rootfs: str, group: str) -> str:
     """Return the GID string for the named group from /etc/group, or ''."""
-    try:
-        group_file = resolve_rootfs_path(rootfs, "/etc/group")
-    except OSError:
-        return ""
-    try:
-        with open(group_file) as fh:
-            for line in fh:
-                parts = line.strip().split(":")
-                if parts and parts[0] == group and len(parts) > 2:
-                    return parts[2]
-    except OSError:
-        pass
+    for parts in _entries(rootfs, "/etc/group"):
+        if parts and parts[0] == group and len(parts) > 2:
+            return parts[2]
     return ""
+
+
+__all__ = (
+    "find_passwd_by_uid",
+    "passwd_available",
+    "passwd_field",
+    "read_group_gid",
+    "read_passwd_entry",
+    "shell_available",
+)

@@ -42,6 +42,7 @@ from proot_distro.constants import (
     PROGRAM_NAME,
 )
 from proot_distro import dirfd
+from proot_distro.guestfile import guest_file_exists
 from proot_distro.message import C, msg, crit_error, warn
 from proot_distro.arch import (
     detect_installed_arch,
@@ -65,9 +66,11 @@ from proot_distro.commands.login.detach import spawn_detached
 from proot_distro.commands.login.migrate import migrate_legacy_rootfs
 from proot_distro.commands.login.passwd import (
     find_passwd_by_uid,
+    passwd_available,
+    passwd_field,
     read_group_gid,
-    read_passwd_field,
-    resolve_rootfs_path,
+    read_passwd_entry,
+    shell_available,
 )
 from proot_distro.commands.login.proot_cmd import build_proot_args
 from proot_distro.commands.login.quoting import dq
@@ -97,11 +100,17 @@ def _detect_dist_type(rootfs: str) -> str:
     (not directory). When a concurrent proot session is running it can
     materialise the bind-mount target directory on the host filesystem;
     a directory check would then misidentify a normal container as termux.
+
+    Asked of the guest walk rather than of a composed path, since every
+    component of that path is the container's own: os.path.isfile() on
+    `<rootfs>/data/...` followed a guest-planted `data -> /` straight to
+    the *host's* Termux login binary, and the answer decides the whole
+    shape of the session — its environment, its bindings, and whether
+    --change-id is passed at all.
     """
-    termux_usr = rootfs + TERMUX_PREFIX
-    if os.path.isfile(os.path.join(termux_usr, "bin", "login")):
-        return "termux"
-    return "normal"
+    return "termux" if guest_file_exists(
+        rootfs, f"{TERMUX_PREFIX}/bin/login"
+    ) else "normal"
 
 
 def _resolve_login_user(rootfs: str, container_name: str, user_arg: str) -> dict:
@@ -121,35 +130,22 @@ def _resolve_login_user(rootfs: str, container_name: str, user_arg: str) -> dict
         user_spec = user_arg
         group_spec = None
 
-    passwd_available = False
-    try:
-        passwd_path = resolve_rootfs_path(rootfs, "/etc/passwd")
-        passwd_available = os.path.isfile(passwd_path)
-    except OSError:
-        pass
-
-    if passwd_available:
+    if passwd_available(rootfs):
         if user_spec.isdigit():
             uid = user_spec
             home, shell, primary_gid = find_passwd_by_uid(rootfs, user_spec)
             home = home or "/"
             shell = shell or "/bin/sh"
         else:
-            try:
-                with open(passwd_path) as fh:
-                    user_found = any(
-                        line.startswith(f"{user_spec}:") for line in fh
-                    )
-            except OSError:
-                user_found = False
-            if not user_found:
+            entry = read_passwd_entry(rootfs, user_spec)
+            if not entry:
                 crit_error(f"no user '{user_spec}' defined in /etc/passwd.")
                 sys.exit(1)
 
-            uid = read_passwd_field(rootfs, user_spec, 2)
-            primary_gid = read_passwd_field(rootfs, user_spec, 3)
-            home = read_passwd_field(rootfs, user_spec, 5) or "/"
-            shell = read_passwd_field(rootfs, user_spec, 6) or "/bin/sh"
+            uid = passwd_field(entry, 2)
+            primary_gid = passwd_field(entry, 3)
+            home = passwd_field(entry, 5) or "/"
+            shell = passwd_field(entry, 6) or "/bin/sh"
 
             if not uid:
                 crit_error(f"failed to retrieve UID for user '{user_spec}'.")
@@ -278,13 +274,7 @@ def _build_normal_env(container_name, login_user, login_home,
 
 def _check_shell_available(rootfs, login_shell, container_name):
     """Exit with a helpful error when the shell can't be resolved in the rootfs."""
-    try:
-        shell_found = os.path.isfile(
-            resolve_rootfs_path(rootfs, login_shell)
-        )
-    except OSError:
-        shell_found = False
-    if shell_found:
+    if shell_available(rootfs, login_shell):
         return
 
     cfg = container_image_config(container_name)

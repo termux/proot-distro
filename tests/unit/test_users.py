@@ -4,6 +4,7 @@
 import os
 import shutil
 
+from proot_distro import guestfile
 from proot_distro.helpers.build_engine import users
 
 
@@ -147,7 +148,7 @@ def test_an_enormous_passwd_is_read_only_up_to_the_cap(tmp_path, builders):
     passwd = os.path.join(root, "etc", "passwd")
     with open(passwd, "w") as fh:
         fh.write("root:x:0:0::/root:/bin/sh\n")
-        fh.write("x" * (users._MAX_ID_FILE_BYTES * 2))
+        fh.write("x" * (guestfile.MAX_ID_FILE_BYTES * 2))
 
     # The entry before the padding still resolves; the padding never
     # becomes a single multi-megabyte line in memory.
