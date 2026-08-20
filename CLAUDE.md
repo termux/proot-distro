@@ -59,8 +59,18 @@ Top-level utilities (each owns a focused concern):
   `draw_count_bar`, `clear_bar`, `progress_active`.
 - `arch.py` — `get_device_cpu_arch`, `detect_installed_arch` (ELF
   magic), `normalize_arch`, `get_emulator_args`, `ARCH_UNAME_M`.
-- `atomic.py` — `atomic_replace()`: mkstemp + `os.replace`; cleans up
-  on `BaseException` (Ctrl-C never leaves half-written sentinels).
+- `atomic.py` — `atomic_replace()`: temp file + `os.replace`; cleans up
+  on `BaseException` (Ctrl-C never leaves half-written sentinels). A
+  destination inside `RUNTIME_DIR`/`BASE_CACHE_DIR` is reached by an
+  `O_NOFOLLOW` walk from that root (the outer one, so Termux's
+  `cache` is inside the walk rather than taken on trust), the temp is
+  `open_new_at`'d off the descriptor it validated, and the rename runs
+  `src_dir_fd`/`dst_dir_fd` on it — `os.makedirs(exist_ok=True)` plus
+  `mkstemp(dir=…)` both resolve the name, so a planted
+  `oci_layers -> <host dir>` had every blob written *and published*
+  there. A component that is not a plain directory raises `ENOTDIR`
+  rather than being followed. A path outside those roots is the user's
+  own (`build --output`, `backup -o`) and keeps the plain behaviour.
 - `compress.py` — everything the program knows about zstd, which needs
   Python 3.14 (PEP 784) *and* an interpreter built against libzstd:
   `ZSTD_AVAILABLE` (both halves — `TarFile.zstopen` exists without
@@ -1188,7 +1198,9 @@ maps each name to a zero-arg renderer the CLI dispatches.
 - `--bind`: source ⇒ `os.path.abspath`; destination must be absolute
   (or omitted). Overlap with an existing dest ⇒ yellow warning, still
   added.
-- Every cache writer must use `atomic.atomic_replace()`.
+- Every cache writer must use `atomic.atomic_replace()`, which is also
+  what keeps a write inside the state tree from being redirected by a
+  planted symlink — see its entry above.
 - New commands plug into `cli._COMMAND_HANDLERS`, `parser` (with
   `_pd_command` stamped), `REQUIRED_ARGS` if positional,
   `commands/help/pages.HELP_PAGES`, and `ALIAS_TO_CANONICAL` for aliases.
