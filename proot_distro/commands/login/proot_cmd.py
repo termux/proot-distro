@@ -44,6 +44,7 @@ from proot_distro.constants import (
 from proot_distro import dirfd
 from proot_distro.message import crit_error, warn
 from proot_distro.arch import ARCH_UNAME_M
+from proot_distro.shm import make_guest_tmp, make_shm_dir
 from proot_distro.sysdata import fake_sysdata_bindings
 from proot_distro.commands.login.bindings import (
     storage_bindings, system_bindings,
@@ -197,21 +198,21 @@ def _add_termux_dev_binds(args, rootfs):
             args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
     args += fake_sysdata_bindings(rootfs)
 
-    # /dev/shm is the container's own /tmp. Both steps here used to take
-    # that name at face value: os.makedirs(exist_ok=True) accepts a symlink
-    # to a directory, os.chmod() follows it, and the bind then handed proot
-    # whatever it led to. An image shipping `tmp -> <host home>` — or a
-    # guest leaving one behind from an earlier session — got that directory
-    # chmod'ed 1777 and mounted inside the container, and this runs even
-    # under --isolated, which is the one mode meant to bind nothing of the
-    # host at all. Made and chmod'ed through descriptors instead; a name
-    # that will not validate is left unbound rather than followed.
-    tmp_dir = dirfd.makedirs_under(rootfs, ("tmp",), mode=0o1777)
-    if tmp_dir is not None:
-        args.append(f"--bind={tmp_dir}:/dev/shm")
+    # /dev/shm comes from the container's own directory, not from a name
+    # inside the rootfs: proot resolves a bind source when it mounts it,
+    # long after this check, and every session of the container can write
+    # to the rootfs root. Binding `<rootfs>/tmp` therefore let a guest
+    # flip that name to a symlink in the window before the exec and have
+    # the next session mount a host directory of its choosing — under
+    # --isolated too, which is the one mode meant to bind nothing of the
+    # host at all. See proot_distro.shm.
+    make_guest_tmp(rootfs)
+    shm = make_shm_dir(rootfs)
+    if shm is not None:
+        args.append(f"--bind={shm}:/dev/shm")
     else:
-        warn("container's /tmp is not a plain directory; starting without "
-             "the /dev/shm bind.")
+        warn("container's shm directory is not a plain directory; starting "
+             "without the /dev/shm bind.")
 
 
 def _add_dalvik_cache_binds(args):

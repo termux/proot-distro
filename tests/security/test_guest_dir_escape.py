@@ -1,12 +1,18 @@
-# Containment tests for the directories proot-distro creates inside a
-# rootfs on the *host* side, before proot is exec'd: /tmp (bound in as
-# /dev/shm), .l2s (handed to proot as PROOT_L2S_DIR), and the termux-type
-# guest's own cache dir.
+# Containment tests for the directories proot-distro creates on the *host*
+# side before proot is exec'd: the shm store bound in as /dev/shm, the
+# guest's own /tmp, .l2s (handed to proot as PROOT_L2S_DIR), and the
+# termux-type guest's own cache dir.
 #
-# Every component of those paths is guest- or image-controlled, and
-# os.makedirs(exist_ok=True) accepts a symlink to a directory while
-# os.chmod() follows one — so naming them was enough to have a host
-# directory chmod'ed and mounted into the container.
+# Every component of the paths inside the rootfs is guest- or
+# image-controlled, and os.makedirs(exist_ok=True) accepts a symlink to a
+# directory while os.chmod() follows one — so naming them was enough to
+# have a host directory chmod'ed and mounted into the container.
+#
+# For /dev/shm the descriptor walk is not the whole answer, because proot
+# resolves a bind source by name when it mounts it, after every check
+# here has run. That is why the store is a sibling of the rootfs and not
+# a name inside it: reaching it means writing to the container's own
+# directory, which no session confined to the rootfs can do.
 
 import os
 import stat
@@ -101,25 +107,61 @@ def _proot_args(tmp_path, monkeypatch, rootfs, **over):
     return proot_cmd.build_proot_args(**base)
 
 
-def test_symlinked_tmp_is_not_bound_as_dev_shm(env, tmp_path, monkeypatch):
-    # --isolated is deliberate: _add_termux_dev_binds runs regardless of it,
-    # so this was a way back in through the mode that binds nothing else.
+def _shm_source(args):
+    """The path proot is told to mount at /dev/shm, or None."""
+    for arg in args:
+        if arg.startswith("--bind=") and arg.endswith(":/dev/shm"):
+            return arg[len("--bind="):-len(":/dev/shm")]
+    return None
+
+
+def test_shm_store_is_a_sibling_of_the_rootfs(env, tmp_path, monkeypatch):
+    # --isolated is deliberate throughout: _add_termux_dev_binds runs
+    # regardless of it, so the /dev/shm source was a way back in through
+    # the mode that binds nothing else of the host.
+    rootfs, _outside = env
+    args = _proot_args(tmp_path, monkeypatch, rootfs)
+
+    assert _shm_source(args) == str(tmp_path / "shm")
+    assert stat.S_IMODE(os.stat(str(tmp_path / "shm")).st_mode) == 0o1777
+
+
+def test_no_name_inside_the_rootfs_decides_the_shm_bind(env, tmp_path,
+                                                        monkeypatch):
+    # The source used to be <rootfs>/tmp, a name every session of the
+    # container can write. proot resolves a bind source when it mounts
+    # it, so flipping that name to a symlink after the check and before
+    # the exec handed the next session a host directory at /dev/shm.
     rootfs, outside = env
     os.symlink(str(outside), str(rootfs / "tmp"))
 
     args = _proot_args(tmp_path, monkeypatch, rootfs)
 
-    assert not any(a.endswith(":/dev/shm") for a in args)
+    source = _shm_source(args)
+    assert source == str(tmp_path / "shm")
+    assert not source.startswith(str(rootfs) + os.sep)
     assert not any(str(outside) in a for a in args)
     assert stat.S_IMODE(outside.stat().st_mode) == 0o700
 
 
-def test_plain_tmp_is_still_bound_as_dev_shm(env, tmp_path, monkeypatch):
-    rootfs, _outside = env
+def test_symlinked_shm_store_is_not_bound(env, tmp_path, monkeypatch):
+    # Reaching the store means writing to the container's own directory,
+    # which only a session that already has $TERMUX_PREFIX bound can do.
+    # The persistent case is still refused rather than followed.
+    rootfs, outside = env
+    os.symlink(str(outside), str(tmp_path / "shm"))
+
     args = _proot_args(tmp_path, monkeypatch, rootfs)
 
-    expected = f"--bind={rootfs / 'tmp'}:/dev/shm"
-    assert expected in args
+    assert _shm_source(args) is None
+    assert not any(str(outside) in a for a in args)
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o700
+
+
+def test_the_guest_still_gets_a_tmp(env, tmp_path, monkeypatch):
+    rootfs, _outside = env
+    _proot_args(tmp_path, monkeypatch, rootfs)
+
     assert stat.S_IMODE(os.stat(str(rootfs / "tmp")).st_mode) == 0o1777
 
 
@@ -168,25 +210,37 @@ def _exec_proot_args(tmp_path, rootfs, monkeypatch):
     return seen[0]
 
 
-def test_build_symlinked_tmp_is_not_bound_as_dev_shm(env, tmp_path,
-                                                     monkeypatch):
+def test_build_shm_store_is_a_sibling_of_the_rootfs(env, tmp_path,
+                                                    monkeypatch):
+    rootfs, _outside = env
+    args = _exec_proot_args(tmp_path, rootfs, monkeypatch)
+
+    assert _shm_source(args) == str(tmp_path / "shm")
+    assert stat.S_IMODE(os.stat(str(tmp_path / "shm")).st_mode) == 0o1777
+    assert stat.S_IMODE(os.stat(str(rootfs / "tmp")).st_mode) == 0o1777
+
+
+def test_build_no_name_inside_the_rootfs_decides_the_shm_bind(env, tmp_path,
+                                                              monkeypatch):
     rootfs, outside = env
     os.symlink(str(outside), str(rootfs / "tmp"))
 
     args = _exec_proot_args(tmp_path, rootfs, monkeypatch)
 
-    assert not any(a.endswith(":/dev/shm") for a in args)
+    assert _shm_source(args) == str(tmp_path / "shm")
     assert not any(str(outside) in a for a in args)
     assert stat.S_IMODE(outside.stat().st_mode) == 0o700
 
 
-def test_build_plain_tmp_is_still_bound_as_dev_shm(env, tmp_path,
-                                                   monkeypatch):
-    rootfs, _outside = env
+def test_build_symlinked_shm_store_is_not_bound(env, tmp_path, monkeypatch):
+    rootfs, outside = env
+    os.symlink(str(outside), str(tmp_path / "shm"))
+
     args = _exec_proot_args(tmp_path, rootfs, monkeypatch)
 
-    assert f"--bind={rootfs / 'tmp'}:/dev/shm" in args
-    assert stat.S_IMODE(os.stat(str(rootfs / "tmp")).st_mode) == 0o1777
+    assert _shm_source(args) is None
+    assert not any(str(outside) in a for a in args)
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o700
 
 
 def test_build_symlinked_l2s_leaves_proot_l2s_dir_unset(env, tmp_path,

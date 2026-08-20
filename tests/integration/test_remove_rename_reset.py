@@ -12,6 +12,7 @@ from proot_distro.commands.reset import command_reset
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
 from proot_distro.paths import container_dir, container_rootfs
+from proot_distro.shm import shm_dir
 
 
 # ----- remove -------------------------------------------------------------
@@ -117,6 +118,34 @@ def test_reset_rebuilds_from_cached_image(builders):
 
     rebuilt = os.path.join(container_rootfs("rb"), "etc", "hostname")
     assert open(rebuilt, "rb").read() == b"reset-built\n"
+
+
+def test_reset_clears_the_shm_store(builders):
+    # /dev/shm is a sibling of the rootfs, so clearing the rootfs does not
+    # take it; a container reset to its image must not come back carrying
+    # what the guests before it left in shared memory.
+    arch = "x86_64"
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "etc/hostname", "type": "file", "data": b"reset-built\n"}]
+    )
+    manifest = {"schemaVersion": 2,
+                "layers": [{"digest": digest, "size": size,
+                            "mediaType": OCI_LAYER_MEDIA}]}
+    save_manifest_cache("img:2", arch, manifest, "library/img",
+                        {"config": {}, "rootfs": {"diff_ids": [diff_id]}})
+    builders.make_container("shmbox", manifest={
+        "image_ref": "img:2", "arch": arch,
+        "manifest": manifest, "image_config": {"config": {}},
+    })
+    store = shm_dir(container_rootfs("shmbox"))
+    os.makedirs(os.path.join(store, "sub"))
+    with open(os.path.join(store, "sub", "stale"), "wb") as fh:
+        fh.write(b"old session")
+
+    command_reset(SimpleNamespace(container_name="shmbox"))
+
+    assert not os.path.exists(store)
+    assert os.path.isdir(container_rootfs("shmbox"))
 
 
 def test_reset_missing_container_errors(capsys):

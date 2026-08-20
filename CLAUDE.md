@@ -210,6 +210,37 @@ Top-level utilities (each owns a focused concern):
   following one would leave the rootfs. `_MAX_PATH_COMPONENTS` bounds
   the total walk, since forty hops of an image's own symlinks can name
   any number of components between them.
+- `shm.py` — the directory proot binds into the guest as `/dev/shm`:
+  `SHM_DIR_NAME`, `shm_dir`, `make_shm_dir`, `make_guest_tmp`. It used to
+  be `<rootfs>/tmp`, and that is the one place it must not be. A bind
+  source is a **name**, resolved by proot when it mounts it — long after
+  every check here has run — and the rootfs root is writable by every
+  session of the container, so a guest need only flip `/tmp` from a
+  directory to a symlink in the window before the `execvpe` to have the
+  *next* session mount a host directory of its choosing, read-write,
+  inside the container. Under `--isolated` that undoes the whole of the
+  mode's promise, since nothing else of the host is bound there at all —
+  and `login` holds a **shared** lock on purpose, so a session of the
+  same container really can be running while the argv is assembled.
+  The store is therefore a sibling of the rootfs — `containers/<name>/
+  shm`, or a build stage's own directory next to its rootfs, the same
+  place `sysdata/` sits. Swapping it means writing to its *parent*, and
+  no session confined to the rootfs can reach that: the guest sees the
+  directory only through the bind, which gives no way up (proot
+  canonicalises the guest path first, so `/dev/shm/..` is `/dev`). What
+  is left is a session that already has `$TERMUX_PREFIX` bound
+  read-write — one that is already outside the container and can rewrite
+  this program itself. The persistent case is still refused: a planted
+  `shm` symlink means no bind at all rather than a followed one.
+  `make_guest_tmp()` keeps making `<rootfs>/tmp`, since containers have
+  always had one made for them; it is simply no longer what `/dev/shm`
+  is. The two being one directory is also why shared-memory files showed
+  up in the guest's `/tmp` — and, during a build, in the layer the step
+  produced, which Docker's tmpfs never does. `reset` and `restore` clear
+  the store along with the rootfs, so a container wiped back to its image
+  does not come back carrying the scratch of the one before it; `remove`
+  and `rename` take it with the container directory, and `backup` never
+  sees it (it archives `manifest.json` and `rootfs/` only).
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes
@@ -328,20 +359,22 @@ Top-level utilities (each owns a focused concern):
   goes on through `_chmod_fd`; `None` means "a component is a symlink or
   is not a directory", which callers treat as *do not use this path*
   rather than falling back to the name. `login` needs it because it makes
-  three such directories on the **host** side, before proot is exec'd and
-  so with nothing confining the write: `<rootfs>/tmp` (chmod 1777 and
-  bound in as `/dev/shm` — and `_add_termux_dev_binds` runs even under
-  `--isolated`), `<rootfs>/.l2s` (handed to proot as `PROOT_L2S_DIR`) and
-  a termux-type guest's `data/data/<pkg>/cache`. `makedirs(exist_ok=True)`
-  accepts a symlink to a directory and `chmod` follows one, so naming
-  them was enough to have a host directory relaxed to 1777 and mounted
-  into the container. `build`'s RUN step makes the first two of those for
-  every step and needs it for the same reason, one remove closer: the
-  rootfs is assembled from an image the Dockerfile named, so the link is
-  shipped rather than left behind, and nothing has run inside it yet.
+  several directories on the **host** side, before proot is exec'd and so
+  with nothing confining the write: the container's `shm` store (chmod
+  1777 and bound in as `/dev/shm`), `<rootfs>/tmp` (the guest's own),
+  `<rootfs>/.l2s` (handed to proot as `PROOT_L2S_DIR`) and a termux-type
+  guest's `data/data/<pkg>/cache`. `makedirs(exist_ok=True)` accepts a
+  symlink to a directory and `chmod` follows one, so naming them was
+  enough to have a host directory relaxed to 1777 and mounted into the
+  container. `build`'s RUN step makes the same ones for every step and
+  needs it for the same reason, one remove closer: the rootfs is
+  assembled from an image the Dockerfile named, so the link is shipped
+  rather than left behind, and nothing has run inside it yet.
   proot still resolves the bind source by name when
   it mounts it, so a session running against the same container can race
-  the check; what this removes is the persistent case.
+  the check; what this removes is the persistent case. For a name a
+  guest can *write*, that is not enough on its own, which is why the
+  `/dev/shm` source lives outside the rootfs — see `shm.py`.
   Nothing here takes a path below the root, so no component can be
   re-pointed mid-walk. `REFUSED` / `is_refusal()` cover both errnos a
   refused descent can raise — Linux reports `O_NOFOLLOW|O_DIRECTORY` on a
@@ -487,6 +520,8 @@ proot extensions + Android bindings on non-Termux hosts.
 ```
 containers/<name>/manifest.json   ← image_ref, arch, manifest, image_config
 containers/<name>/rootfs/         ← assembled filesystem
+containers/<name>/sysdata/        ← fake /proc and /sys content to bind
+containers/<name>/shm/            ← what the guest's /dev/shm is (see shm.py)
 ```
 
 Directory name is the sole identifier — composed lexically, but never

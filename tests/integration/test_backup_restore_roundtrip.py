@@ -13,6 +13,7 @@ from proot_distro.commands import backup as backup_mod
 from proot_distro.commands.backup import command_backup
 from proot_distro.commands.restore import command_restore
 from proot_distro.paths import container_dir, container_manifest, container_rootfs
+from proot_distro.shm import shm_dir
 
 
 def _backup(name, out, compression=None):
@@ -206,6 +207,35 @@ def test_restore_clears_a_sealed_subtree_of_the_old_rootfs(tmp_path, builders):
             os.chmod(sealed, 0o755)
 
     assert not os.path.exists(sealed)
+
+
+def test_restore_clears_the_shm_store(tmp_path, builders):
+    # No archive carries one — it is the container's own scratch, next to
+    # the rootfs rather than inside it — so restoring over a container
+    # must not leave the previous one's /dev/shm content behind.
+    builders.make_container("shmrst")
+    out = tmp_path / "shmrst.tar"
+    _backup("shmrst", out)
+
+    store = shm_dir(container_rootfs("shmrst"))
+    os.makedirs(store, exist_ok=True)
+    with open(os.path.join(store, "stale"), "wb") as fh:
+        fh.write(b"OLD")
+
+    _restore(out)
+
+    assert not os.path.exists(store)
+    assert os.path.isdir(container_rootfs("shmrst"))
+
+
+def test_restore_leaves_no_shm_store_when_there_was_none(tmp_path, builders):
+    builders.make_container("shmrst2")
+    out = tmp_path / "shmrst2.tar"
+    _backup("shmrst2", out)
+
+    _restore(out)
+
+    assert not os.path.exists(shm_dir(container_rootfs("shmrst2")))
 
 
 def test_restore_rootfs_less_archive_preserves_existing(tmp_path, builders):

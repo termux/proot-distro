@@ -71,6 +71,7 @@ from proot_distro.message import (
 from proot_distro.progress import (
     ByteCounter, clear_bar, draw_bytes_bar, progress_active,
 )
+from proot_distro.shm import SHM_DIR_NAME
 from proot_distro.commands.help import HELP_COMMANDS
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
@@ -139,6 +140,10 @@ def _clear_existing_rootfs(root_fd: int) -> None:
 
     dirfd.rmtree_at(root_fd, "rootfs", force=True, on_error=_ignore,
                     on_remove=_counted)
+    # The shm store is the *old* container's scratch — what its guests
+    # left in /dev/shm — and no archive carries one, so it goes with the
+    # rootfs rather than being inherited by what replaces it.
+    dirfd.rmtree_at(root_fd, SHM_DIR_NAME, force=True, on_error=_ignore)
     clear_bar()
 
 

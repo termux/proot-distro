@@ -60,6 +60,7 @@ from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
 )
+from proot_distro.shm import make_guest_tmp, make_shm_dir
 from proot_distro.sysdata import setup_fake_sysdata, fake_sysdata_bindings
 from proot_distro.helpers.build_cache import (
     compute_recipe_hash, lookup as cache_lookup, record as cache_record,
@@ -211,19 +212,22 @@ def _exec_proot(engine, stage, command, stdin_input):
                 proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
         setup_fake_sysdata(rootfs)
         proot_args += fake_sysdata_bindings(rootfs)
-        # The step's own /tmp, bound in as /dev/shm. Made and chmod'ed
-        # through descriptors, never by name: every component of this path
-        # is image content, os.makedirs(exist_ok=True) accepts a symlink to
-        # a directory and os.chmod() follows one, so an image shipping
-        # `tmp -> <host home>` had that host directory relaxed to 1777 and
-        # mounted into the container. `login` creates the same directory
-        # the same way (see commands/login/proot_cmd._add_termux_dev_binds).
-        tmp_dir = dirfd.makedirs_under(rootfs, ("tmp",), mode=0o1777)
-        if tmp_dir is not None:
-            proot_args.append(f"--bind={tmp_dir}:/dev/shm")
+        # /dev/shm comes from the stage's own directory, next to the
+        # rootfs rather than inside it: a bind source is a name proot
+        # resolves when it mounts it, and a process an earlier RUN step
+        # left running can re-point one inside the rootfs in between —
+        # nothing kills such a process off Termux, --kill-on-exit being a
+        # Termux-only extension. It also keeps what a step writes to
+        # /dev/shm out of the layer the step produces, which is what
+        # Docker does with its tmpfs. `login` gives a container the same
+        # two directories the same way; see proot_distro.shm.
+        make_guest_tmp(rootfs)
+        shm = make_shm_dir(rootfs)
+        if shm is not None:
+            proot_args.append(f"--bind={shm}:/dev/shm")
         else:
-            warn("rootfs /tmp is not a plain directory; running this step "
-                 "without the /dev/shm bind.")
+            warn("the stage's shm directory is not a plain directory; "
+                 "running this step without the /dev/shm bind.")
 
     if need_emu and IS_TERMUX:
         for path in (

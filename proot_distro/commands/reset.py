@@ -19,8 +19,9 @@
 #
 
 # Architecture: Rebuilds a container rootfs from the image reference stored
-# in containers/<name>/manifest.json. Only the rootfs/ subdirectory is
-# removed; manifest.json is preserved and re-used by install. Containers
+# in containers/<name>/manifest.json. The rootfs/ subdirectory and the
+# shm/ scratch store are removed; manifest.json is preserved and re-used
+# by install. Containers
 # without a manifest (plain tarball installs, legacy rootfs) are rejected —
 # reset requires an OCI image_ref to know what to pull.
 
@@ -35,6 +36,8 @@ from proot_distro.names import require_valid_name
 from proot_distro.paths import (
     container_is_installed, container_rootfs, read_container_manifest,
 )
+from proot_distro.shm import shm_dir
+from proot_distro.statedir import remove_state_tree
 
 
 def command_reset(args) -> None:
@@ -83,6 +86,14 @@ def command_reset(args) -> None:
         if not _remove_path(rootfs_dir):
             log_error("Finished with errors. Some files could not be deleted. "
                       "Proceeding anyway.")
+
+        # The shm store holds what the old container's guests left in
+        # /dev/shm. It is next to the rootfs rather than inside it (see
+        # proot_distro.shm), so clearing the rootfs does not take it, and
+        # a container reset to its image must not come back carrying the
+        # scratch of the one before it. Failure is not worth a second
+        # report: install() is about to refuse if anything real is left.
+        remove_state_tree(shm_dir(rootfs_dir))
 
         # Rebuild args for install: reuse dist name and the stored image/arch.
         command_install(
