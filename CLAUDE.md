@@ -736,6 +736,25 @@ bytes, and names containers installed from that image (unaffected —
 only their `reset` needs it back). `-a` without `--image` is an error,
 not a silent no-op.
 
+Neither cache directory is reached by name for any of that.
+`oci_manifests` and `oci_layers` sit below `BASE_CACHE_DIR`, which on
+Termux is under the bound `$TERMUX_PREFIX`, so both names are guest
+content — and `os.listdir()`, `open()` and `os.remove()` all follow a
+symlink. With `oci_manifests -> <host dir>` planted, `list --image`
+inventoried that directory's JSON files and `remove --image` unlinked
+the one it matched. Every read now goes through
+`cache.open_manifest_cache_dir()` / `open_layer_cache_dir()`
+(`statedir.open_state_dir`'s `O_NOFOLLOW` walk) and every entry is
+opened or unlinked as `(dir_fd, name)`; `_load_entry()` uses
+`open_regular_at`, so a symlink or FIFO left under an entry's name is
+not an entry (nothing but this program writes here) and a blob's size
+comes from an `lstat` of the name rather than of its target. A
+component that must not be followed is an error, never an empty cache:
+`remove --image` refuses before deleting anything, and
+`clear-cache --orphan` already treated an unreadable reference set as a
+reason to stop — which it could not do while the walk was answering
+with a host directory's contents instead.
+
 A plain `clear-cache` measures the tree before emptying it, and both
 passes address entries as `(dir_fd, name)`. The cache root is walked
 down to (`statedir.open_state_dir`), not named: on Termux it *is* a
@@ -1004,7 +1023,8 @@ falls back to naming the rest from installed containers'
 `manifest.json` (same key derivation). Records expose `image_ref`,
 `arch`, `image_id` (config digest hex), on-disk `size`, `missing` layer
 count, `created`, `cached_at` — consumed by `list --image` /
-`remove --image`. `refs.py` owns the string forms: `canonical_ref()`
+`remove --image`, plus the `name` the entry was read under, which is
+what a deletion addresses it by. `refs.py` owns the string forms: `canonical_ref()`
 (cache-key input), `with_explicit_tag()` (`:latest` default, shared by
 `build`/`push`/`remove`), `DOCKER_TO_ARCH`.
 

@@ -41,6 +41,19 @@
 #         "manifest": ..., "repo": ..., "image_config": ... }
 #       Key is the first 16 hex chars of sha256("<canonical_ref>_<arch>").
 #
+# Neither directory is reached by name. Both sit below BASE_CACHE_DIR,
+# which on Termux is under the $TERMUX_PREFIX bound read-write into
+# every non-isolated container, so `oci_manifests` (or `cache` one level
+# above it) is a name a guest can leave behind as a symlink -- and
+# os.listdir()/open() follow one. The manifest inventory that
+# `list --image` prints, that `remove --image` deletes from, and that
+# `clear-cache --orphan` computes its keep set from was doing exactly
+# that: with `oci_manifests -> <host dir>` planted, resolving an image
+# read the JSON out of that directory and the removal unlinked the file
+# it found there. Every entry is now opened as (dir_fd, name) off a
+# statedir.open_state_dir() walk, and a component that is not a plain
+# directory is an error rather than something to follow.
+#
 # A manifest-cache entry plus its layer blobs is what the user-facing
 # commands call an *image*: the unit `install <ref>` resolves offline,
 # `push <ref>` uploads, and `list --image` / `remove --image` manage.
@@ -56,6 +69,7 @@ import os
 import re
 import stat
 
+from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_replace
 from proot_distro.constants import (
     CONTAINERS_DIR, LAYER_CACHE_DIR, MANIFEST_CACHE_DIR,
@@ -87,22 +101,92 @@ def validate_digest(digest: str) -> str:
     return digest
 
 
+def layer_cache_name(digest: str) -> str:
+    """Return the cached blob's file name for *digest*.
+
+    The name on its own, for a caller addressing the blob as
+    (dir_fd, name) off the layer cache's own descriptor.
+    """
+    validate_digest(digest)
+    return digest.replace(":", "_")
+
+
 def layer_cache_path(digest: str) -> str:
     """Return the on-disk path of the cached blob for *digest*.
 
     Refuses malformed digests so callers cannot accidentally route a
     crafted value past LAYER_CACHE_DIR via path traversal.
     """
-    validate_digest(digest)
-    return os.path.join(LAYER_CACHE_DIR, digest.replace(":", "_"))
+    return os.path.join(LAYER_CACHE_DIR, layer_cache_name(digest))
+
+
+def manifest_cache_key(image_ref: str, arch: str) -> str:
+    """Return the manifest-cache key for (*image_ref*, *arch*)."""
+    return hashlib.sha256(
+        f"{canonical_ref(image_ref)}_{arch}".encode()
+    ).hexdigest()[:16]
+
+
+def manifest_cache_name(image_ref: str, arch: str) -> str:
+    """Return the manifest-cache file name for (*image_ref*, *arch*)."""
+    return manifest_cache_key(image_ref, arch) + ".json"
 
 
 def manifest_cache_path(image_ref: str, arch: str) -> str:
     """Return the manifest-cache path for (*image_ref*, *arch*)."""
-    key = hashlib.sha256(
-        f"{canonical_ref(image_ref)}_{arch}".encode()
-    ).hexdigest()[:16]
-    return os.path.join(MANIFEST_CACHE_DIR, key + ".json")
+    return os.path.join(
+        MANIFEST_CACHE_DIR, manifest_cache_name(image_ref, arch)
+    )
+
+
+def open_manifest_cache_dir() -> int:
+    """Open MANIFEST_CACHE_DIR as a descriptor. Raises OSError.
+
+    The walk statedir performs, one component at a time from the trust
+    root with O_NOFOLLOW: the entries below it are this program's own
+    files, but the directory holding them is guest-writable on Termux
+    and its name is entirely predictable. FileNotFoundError means
+    nothing has been cached yet; ENOTDIR means a component must not be
+    followed, which is a reason to stop rather than to carry on as if
+    the cache were empty. The caller owns the descriptor.
+    """
+    return statedir.open_state_dir(MANIFEST_CACHE_DIR)
+
+
+def open_layer_cache_dir() -> int:
+    """Open LAYER_CACHE_DIR as a descriptor. Raises OSError.
+
+    open_manifest_cache_dir()'s counterpart for the blobs, and the same
+    walk `clear-cache` reaches them by.
+    """
+    return statedir.open_state_dir(LAYER_CACHE_DIR)
+
+
+def _load_entry(dir_fd: int, name: str):
+    """Return the JSON payload of manifest-cache entry *name*, or None.
+
+    Opened through open_regular_at, so a symlink or a FIFO left under an
+    entry's name is not a cache entry: nothing but this program writes
+    here, and one of those was planted. A payload that is not a JSON
+    object is no entry either.
+    """
+    try:
+        fd, st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        with open(fd, "r", closefd=False) as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        # ValueError covers both a malformed document and a file that is
+        # not text at all (UnicodeDecodeError), which used to escape as
+        # a traceback out of `list --image`.
+        return None
+    finally:
+        os.close(fd)
+    if not isinstance(payload, dict):
+        return None
+    return payload, st
 
 
 def save_manifest_cache(
@@ -129,6 +213,19 @@ def save_manifest_cache(
     return path
 
 
+def _read_entry(image_ref: str, arch: str):
+    """Return the payload of the entry for (*image_ref*, *arch*), or None."""
+    try:
+        dir_fd = open_manifest_cache_dir()
+    except OSError:
+        return None
+    try:
+        loaded = _load_entry(dir_fd, manifest_cache_name(image_ref, arch))
+    finally:
+        os.close(dir_fd)
+    return loaded[0] if loaded is not None else None
+
+
 def annotate_manifest_cache(image_ref: str, arch: str) -> None:
     """Backfill ref/arch metadata onto an entry written by an older version.
 
@@ -137,20 +234,18 @@ def annotate_manifest_cache(image_ref: str, arch: str) -> None:
     read or rewritten) are left untouched, so this costs one small JSON
     read per cached pull and never invalidates anything.
     """
-    path = manifest_cache_path(image_ref, arch)
-    try:
-        with open(path) as fh:
-            payload = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return
-    if not isinstance(payload, dict) or "manifest" not in payload:
+    payload = _read_entry(image_ref, arch)
+    if payload is None or "manifest" not in payload:
         return
     if payload.get("image_ref") and payload.get("arch"):
         return
     payload["image_ref"] = image_ref
     payload["arch"] = arch
     try:
-        with atomic_replace(path) as tmp:
+        # atomic_replace reaches a destination inside the state tree by
+        # the same walk, so the rewrite lands in the directory the read
+        # came out of.
+        with atomic_replace(manifest_cache_path(image_ref, arch)) as tmp:
             with open(tmp, "w") as fh:
                 json.dump(payload, fh)
     except OSError:
@@ -163,11 +258,13 @@ def load_manifest_cache(image_ref: str, arch: str):
     On a cache miss (or read/parse error) returns ``(None, None, {})`` —
     callers check ``manifest is None`` to detect the miss.
     """
+    payload = _read_entry(image_ref, arch)
+    if payload is None:
+        return None, None, {}
     try:
-        with open(manifest_cache_path(image_ref, arch)) as fh:
-            data = json.load(fh)
-        return data["manifest"], data["repo"], data.get("image_config", {})
-    except (OSError, json.JSONDecodeError, KeyError):
+        return payload["manifest"], payload["repo"], \
+            payload.get("image_config", {})
+    except KeyError:
         return None, None, {}
 
 
@@ -330,31 +427,41 @@ def open_required_layer(digest: str, *, what: str = "Layer blob") -> int:
 # Image inventory — what `list --image` and `remove --image` operate on
 # ---------------------------------------------------------------------------
 
-def _blob_size(digest: str):
-    """Return the on-disk size of a layer blob, or None when unavailable."""
-    try:
-        return os.path.getsize(layer_cache_path(digest))
-    except (OSError, RuntimeError):
-        # Missing blob, or a digest too malformed to map to a path at
-        # all — either way this layer occupies no cache space.
+def _blob_size(layer_fd, digest: str):
+    """Return the on-disk size of a layer blob, or None when unavailable.
+
+    Named off the layer cache's own descriptor and lstat'ed, so a
+    symlink planted under a blob's name measures the link rather than
+    whatever host file it points at — and, not being a regular file,
+    counts as no blob at all. A missing cache directory, a missing blob
+    or a digest too malformed to map to a name are all the same answer:
+    this layer occupies no cache space.
+    """
+    if layer_fd is None:
         return None
+    try:
+        st = dirfd.lstat_at(layer_fd, layer_cache_name(digest))
+    except (OSError, RuntimeError):
+        return None
+    return st.st_size if stat.S_ISREG(st.st_mode) else None
 
 
-def _read_record(path: str, image_ref: str = "", arch: str = ""):
-    """Build the cached-image record for one manifest-cache file.
+def _read_record(dir_fd: int, name: str, layer_fd=None,
+                 image_ref: str = "", arch: str = ""):
+    """Build the cached-image record for manifest-cache entry *name*.
 
     *image_ref* / *arch* are fallbacks used when the entry predates
-    those fields (see the module header). Returns None when the file
+    those fields (see the module header). Returns None when the entry
     isn't a readable manifest-cache entry.
     """
-    try:
-        with open(path) as fh:
-            payload = json.load(fh)
-        manifest = payload["manifest"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+    loaded = _load_entry(dir_fd, name)
+    if loaded is None:
         return None
-    if not isinstance(payload, dict) or not isinstance(manifest, dict):
+    payload, st = loaded
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
         return None
+    path = os.path.join(MANIFEST_CACHE_DIR, name)
 
     image_config = payload.get("image_config")
     if not isinstance(image_config, dict):
@@ -367,20 +474,16 @@ def _read_record(path: str, image_ref: str = "", arch: str = ""):
     size = 0
     missing = 0
     for layer in layers:
-        blob_size = _blob_size(layer["digest"])
+        blob_size = _blob_size(layer_fd, layer["digest"])
         if blob_size is None:
             missing += 1
         else:
             size += blob_size
 
-    try:
-        cached_at = os.path.getmtime(path)
-    except OSError:
-        cached_at = 0.0
-
     return {
         "path": path,
-        "key": os.path.splitext(os.path.basename(path))[0],
+        "name": name,
+        "key": os.path.splitext(name)[0],
         "image_ref": payload.get("image_ref") or image_ref or "",
         "repo": payload.get("repo") or "",
         "arch": (
@@ -394,7 +497,7 @@ def _read_record(path: str, image_ref: str = "", arch: str = ""):
         "size": size,
         "missing": missing,
         "created": image_config.get("created") or "",
-        "cached_at": cached_at,
+        "cached_at": st.st_mtime,
     }
 
 
@@ -414,37 +517,44 @@ def referenced_blob_digests():
     """
     digests, unreadable = set(), []
     try:
-        names = sorted(os.listdir(MANIFEST_CACHE_DIR))
+        dir_fd = open_manifest_cache_dir()
     except FileNotFoundError:
         return digests, unreadable
     except OSError:
-        # The directory itself is unreadable: every entry in it is
-        # unaccounted for, so report the directory as the blocker.
+        # The directory itself cannot be read, or is not a directory the
+        # walk will follow: every entry in it is unaccounted for, so
+        # report the directory as the blocker.
         return digests, [MANIFEST_CACHE_DIR]
 
-    for fname in names:
-        # Entries are '<key>.json'; atomic_replace's in-flight temporary
-        # files carry a '.tmp' suffix and are deliberately not read.
-        if not fname.endswith(".json"):
-            continue
-        path = os.path.join(MANIFEST_CACHE_DIR, fname)
-        try:
-            with open(path) as fh:
-                payload = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            unreadable.append(path)
-            continue
-        manifest = (
-            payload.get("manifest") if isinstance(payload, dict) else None
-        )
-        if not isinstance(manifest, dict):
-            unreadable.append(path)
-            continue
-        descriptors = list(manifest.get("layers") or [])
-        descriptors.append(manifest.get("config"))
-        for descriptor in descriptors:
-            if isinstance(descriptor, dict) and descriptor.get("digest"):
-                digests.add(descriptor["digest"])
+    try:
+        names = dirfd.listdir_at(dir_fd)
+    except OSError:
+        os.close(dir_fd)
+        return digests, [MANIFEST_CACHE_DIR]
+
+    try:
+        for fname in names:
+            # Entries are '<key>.json'; atomic_replace's in-flight
+            # temporary files carry a '.tmp' suffix and are deliberately
+            # not read.
+            if not fname.endswith(".json"):
+                continue
+            path = os.path.join(MANIFEST_CACHE_DIR, fname)
+            loaded = _load_entry(dir_fd, fname)
+            if loaded is None:
+                unreadable.append(path)
+                continue
+            manifest = loaded[0].get("manifest")
+            if not isinstance(manifest, dict):
+                unreadable.append(path)
+                continue
+            descriptors = list(manifest.get("layers") or [])
+            descriptors.append(manifest.get("config"))
+            for descriptor in descriptors:
+                if isinstance(descriptor, dict) and descriptor.get("digest"):
+                    digests.add(descriptor["digest"])
+    finally:
+        os.close(dir_fd)
     return digests, unreadable
 
 
@@ -487,10 +597,34 @@ def image_cache_entry(image_ref: str, arch: str):
     Resolution goes through the cache key, so it finds legacy entries
     that carry no reference of their own just as reliably.
     """
-    path = manifest_cache_path(image_ref, arch)
-    if not os.path.isfile(path):
+    try:
+        dir_fd = open_manifest_cache_dir()
+    except OSError:
         return None
-    return _read_record(path, image_ref=canonical_ref(image_ref), arch=arch)
+    layer_fd = _open_layers_quietly()
+    try:
+        return _read_record(
+            dir_fd, manifest_cache_name(image_ref, arch), layer_fd,
+            image_ref=canonical_ref(image_ref), arch=arch,
+        )
+    finally:
+        os.close(dir_fd)
+        if layer_fd is not None:
+            os.close(layer_fd)
+
+
+def _open_layers_quietly():
+    """The layer cache's descriptor, or None when it cannot be walked.
+
+    Only the blob *sizes* depend on it, and a cache that is not there
+    yet is ordinary, so this is the one place the walk answers None
+    instead of raising: an image with no blobs on disk is reported with
+    every layer missing, which is what the user sees anyway.
+    """
+    try:
+        return open_layer_cache_dir()
+    except OSError:
+        return None
 
 
 def iter_cached_images() -> list:
@@ -500,25 +634,34 @@ def iter_cached_images() -> list:
     determined sort last and carry an empty 'image_ref'.
     """
     try:
-        names = sorted(os.listdir(MANIFEST_CACHE_DIR))
+        dir_fd = open_manifest_cache_dir()
     except OSError:
         return []
-
+    layer_fd = _open_layers_quietly()
     hints = None
     records = []
-    for fname in names:
-        if not fname.endswith(".json"):
-            continue
-        record = _read_record(os.path.join(MANIFEST_CACHE_DIR, fname))
-        if record is None:
-            continue
-        if not record["image_ref"]:
-            if hints is None:
-                hints = _ref_hints()
-            ref, arch = hints.get(record["key"], ("", ""))
-            record["image_ref"] = ref
-            record["arch"] = record["arch"] or arch
-        records.append(record)
+    try:
+        names = sorted(dirfd.listdir_at(dir_fd))
+    except OSError:
+        names = []
+    try:
+        for fname in names:
+            if not fname.endswith(".json"):
+                continue
+            record = _read_record(dir_fd, fname, layer_fd)
+            if record is None:
+                continue
+            if not record["image_ref"]:
+                if hints is None:
+                    hints = _ref_hints()
+                ref, arch = hints.get(record["key"], ("", ""))
+                record["image_ref"] = ref
+                record["arch"] = record["arch"] or arch
+            records.append(record)
+    finally:
+        os.close(dir_fd)
+        if layer_fd is not None:
+            os.close(layer_fd)
 
     records.sort(
         key=lambda r: (not r["image_ref"], r["image_ref"], r["arch"], r["key"])

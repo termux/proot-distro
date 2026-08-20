@@ -39,7 +39,7 @@ import os
 import sys
 from contextlib import ExitStack
 
-from proot_distro import statedir
+from proot_distro import dirfd, statedir
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.message import (
@@ -54,7 +54,10 @@ from proot_distro.helpers.docker import (
     canonical_ref,
     image_cache_entry,
     iter_cached_images,
+    layer_cache_name,
     layer_cache_path,
+    open_layer_cache_dir,
+    open_manifest_cache_dir,
     parse_image_ref,
     with_explicit_tag,
 )
@@ -242,25 +245,75 @@ def _image_locks(identifier: str, targets: list) -> list:
 
 
 def _delete_images(targets: list, verbose: bool) -> None:
-    """Delete the manifest entries in *targets* plus their orphan layers."""
+    """Delete the manifest entries in *targets* plus their orphan layers.
+
+    Both caches are opened as descriptors and every entry is unlinked as
+    (dir_fd, name). Naming them was enough to have this command delete
+    files outside the cache entirely: both directories sit below
+    BASE_CACHE_DIR, which on Termux is under the $TERMUX_PREFIX bound
+    read-write into every non-isolated container, so `oci_manifests`
+    (or `cache` above it) is a name a guest can leave behind as a
+    symlink -- and os.remove() follows one.
+    """
     for record in targets:
         log_info(f"Removing image '{_display(record)}' "
                  f"({record['arch'] or 'unknown arch'})...")
 
+    try:
+        manifest_fd = open_manifest_cache_dir()
+    except OSError as exc:
+        crit_error(f"cannot read the manifest cache: {quote_error(exc)}")
+        sys.exit(1)
+    try:
+        layer_fd = open_layer_cache_dir()
+    except FileNotFoundError:
+        layer_fd = None
+    except OSError as exc:
+        os.close(manifest_fd)
+        crit_error(f"cannot read the layer cache: {quote_error(exc)}")
+        sys.exit(1)
+
+    try:
+        failed, reclaimed = _unlink_targets(
+            manifest_fd, layer_fd, targets, verbose,
+        )
+    finally:
+        os.close(manifest_fd)
+        if layer_fd is not None:
+            os.close(layer_fd)
+
+    dependents = _containers_from_images(targets)
+    if dependents:
+        names = ", ".join(f"'{name}'" for name in dependents)
+        log_info(f"Container(s) {names} were installed from this image and "
+                 f"keep working.")
+
+    if failed:
+        log_error("Finished with errors. Some files probably were not "
+                  "deleted.")
+        sys.exit(1)
+
+    log_info(f"Reclaimed {fmt_size(reclaimed)} of disk space.")
+
+
+def _unlink_targets(manifest_fd, layer_fd, targets: list,
+                    verbose: bool) -> tuple:
+    """Unlink the entries and their orphan blobs. (failed, reclaimed)."""
     failed = False
     reclaimed = 0
     for record in targets:
-        size = _file_size(record["path"])
+        path = record["path"]
+        size = _entry_size(manifest_fd, record["name"])
         try:
-            os.remove(record["path"])
+            os.unlink(record["name"], dir_fd=manifest_fd)
         except OSError as exc:
-            log_error(f"Cannot remove '{quote_path(record['path'])}': "
+            log_error(f"Cannot remove '{quote_path(path)}': "
                       f"{quote_error(exc)}")
             failed = True
             continue
         reclaimed += size
         if verbose:
-            log_info(f"Removed: '{quote_path(record['path'])}'")
+            log_info(f"Removed: '{quote_path(path)}'")
 
     # Layers are shared between images, so a blob may only go once no
     # surviving manifest lists it. The inventory is re-read here, after
@@ -277,12 +330,15 @@ def _delete_images(targets: list, verbose: bool) -> None:
                 continue
             dropped.add(digest)
             try:
-                path = layer_cache_path(digest)
+                name = layer_cache_name(digest)
             except RuntimeError:
                 continue
-            size = _file_size(path)
+            if layer_fd is None:
+                continue
+            path = layer_cache_path(digest)
+            size = _entry_size(layer_fd, name)
             try:
-                os.remove(path)
+                os.unlink(name, dir_fd=layer_fd)
             except FileNotFoundError:
                 continue
             except OSError as exc:
@@ -293,19 +349,7 @@ def _delete_images(targets: list, verbose: bool) -> None:
             reclaimed += size
             if verbose:
                 log_info(f"Removed: '{quote_path(path)}'")
-
-    dependents = _containers_from_images(targets)
-    if dependents:
-        names = ", ".join(f"'{name}'" for name in dependents)
-        log_info(f"Container(s) {names} were installed from this image and "
-                 f"keep working.")
-
-    if failed:
-        log_error("Finished with errors. Some files probably were not "
-                  "deleted.")
-        sys.exit(1)
-
-    log_info(f"Reclaimed {fmt_size(reclaimed)} of disk space.")
+    return failed, reclaimed
 
 
 def _containers_from_images(targets: list) -> list:
@@ -388,9 +432,13 @@ def _display(record: dict) -> str:
     return f"{record['repo']}:<none>" if record["repo"] else record["key"]
 
 
-def _file_size(path: str) -> int:
-    """Return the size of *path*, or 0 when it cannot be determined."""
+def _entry_size(dir_fd: int, name: str) -> int:
+    """Return the size of *name* under dir_fd, or 0 when unavailable.
+
+    lstat, so what is measured is the entry about to be unlinked rather
+    than whatever a symlink under its name leads to.
+    """
     try:
-        return os.path.getsize(path)
+        return dirfd.lstat_at(dir_fd, name).st_size
     except OSError:
         return 0
