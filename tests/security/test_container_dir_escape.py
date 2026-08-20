@@ -19,7 +19,9 @@ from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.reset import command_reset
 from proot_distro.constants import BASE_CACHE_DIR, CONTAINERS_DIR
-from proot_distro.paths import container_dir, container_rootfs
+from proot_distro.paths import (
+    container_dir, container_rootfs, installed_container_names,
+)
 
 
 def _install_args(image_ref, name=None):
@@ -142,6 +144,45 @@ def test_remove_unlinks_a_planted_entry_without_following_it(outside):
     assert not os.path.lexists(container_dir("box"))
     assert (outside / "keepsake").exists()
     assert (outside / "rootfs").exists()
+
+
+# --- the inventory ---------------------------------------------------------
+
+def test_list_does_not_count_a_planted_entry_as_installed(outside, builders):
+    # os.listdir() plus os.path.isdir(container_rootfs(name)) followed
+    # the link, so a host directory that happened to hold a `rootfs`
+    # listed as an installed container -- one every other command then
+    # refuses to touch.
+    (outside / "rootfs").mkdir()
+    builders.make_container("real")
+    _plant("fake", outside)
+
+    assert installed_container_names() == ["real"]
+
+
+def test_list_skips_a_name_this_program_would_not_accept(builders):
+    # Nothing it creates carries one, so such an entry was planted -- and
+    # the listing goes to a terminal that reads control characters as
+    # commands.
+    builders.make_container("real")
+    os.makedirs(os.path.join(CONTAINERS_DIR, "-\x1b[31mred", "rootfs"))
+
+    assert installed_container_names() == ["real"]
+
+
+def test_list_skips_a_container_dir_with_no_rootfs(builders):
+    builders.make_container("real")
+    os.makedirs(os.path.join(CONTAINERS_DIR, "half-installed"))
+
+    assert installed_container_names() == ["real"]
+
+
+def test_list_skips_a_rootfs_that_is_a_symlink(outside, builders):
+    builders.make_container("real")
+    os.makedirs(container_dir("linked"))
+    os.symlink(str(outside), container_rootfs("linked"))
+
+    assert installed_container_names() == ["real"]
 
 
 # --- the download cache ----------------------------------------------------

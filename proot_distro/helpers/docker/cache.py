@@ -71,9 +71,7 @@ import stat
 
 from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_replace
-from proot_distro.constants import (
-    CONTAINERS_DIR, LAYER_CACHE_DIR, MANIFEST_CACHE_DIR,
-)
+from proot_distro.constants import LAYER_CACHE_DIR, MANIFEST_CACHE_DIR
 from proot_distro.message import warn
 from proot_distro.helpers.docker.refs import DOCKER_TO_ARCH, canonical_ref
 
@@ -566,28 +564,20 @@ def _ref_hints() -> dict:
     was installed from, and the cache key is a pure function of those
     two, so any still-installed container identifies its own image.
     """
-    from proot_distro.paths import container_manifest
+    from proot_distro.paths import (
+        installed_container_names, read_container_manifest,
+    )
 
     hints = {}
-    try:
-        names = sorted(os.listdir(CONTAINERS_DIR))
-    except OSError:
-        return hints
-    for name in names:
+    for name in installed_container_names():
         try:
-            with open(container_manifest(name)) as fh:
-                data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict):
+            data = read_container_manifest(name)
+        except (OSError, ValueError):
             continue
         ref, arch = data.get("image_ref"), data.get("arch")
         if not ref or not arch:
             continue
-        key = os.path.splitext(
-            os.path.basename(manifest_cache_path(ref, arch))
-        )[0]
-        hints.setdefault(key, (ref, arch))
+        hints.setdefault(manifest_cache_key(ref, arch), (ref, arch))
     return hints
 
 

@@ -147,6 +147,56 @@ def container_is_installed(name: str) -> bool:
     return True
 
 
+def _has_rootfs(root_fd: int, name: str) -> bool:
+    """True when containers/<name>/rootfs is reachable as a directory."""
+    try:
+        sub = dirfd.opendir_at(root_fd, name)
+    except OSError:
+        return False
+    try:
+        os.close(dirfd.opendir_at(sub, "rootfs"))
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(sub)
+
+
+def installed_container_names() -> list:
+    """The names of the installed containers, sorted.
+
+    A container is a plain directory under CONTAINERS_DIR holding a
+    plain `rootfs` directory, and both halves are decided by descriptor.
+    os.listdir() plus os.path.isdir(container_rootfs(name)) followed
+    whatever stood in the way, so a `containers/<name> -> <host dir>`
+    that happened to hold a `rootfs` was listed as installed -- and
+    every command that then names it refuses, which makes for a
+    confusing inventory rather than a dangerous one.
+
+    A name this program would not accept is skipped too: nothing it
+    creates carries one, so such an entry was planted, and the listing
+    is printed to a terminal that reads control characters as commands.
+
+    An entry that cannot be walked is skipped rather than fatal. An
+    inventory is the one place a planted entry must not stop the
+    command, since listing it is how the user finds out it is there --
+    and `remove` is what gets rid of it.
+    """
+    try:
+        root_fd = statedir.open_state_dir(CONTAINERS_DIR)
+    except OSError:
+        return []
+    try:
+        return sorted(
+            name for name in dirfd.listdir_at(root_fd)
+            if is_valid_name(name) and _has_rootfs(root_fd, name)
+        )
+    except OSError:
+        return []
+    finally:
+        os.close(root_fd)
+
+
 def open_container_manifest(name: str):
     """Open containers/<name>/manifest.json. Returns (fd, stat).
 

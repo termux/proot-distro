@@ -31,13 +31,12 @@
 # names, or image references for piping into `remove --image`.
 
 import calendar
-import os
 import re
 import time
 
-from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
+from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import C, msg, terminal_width
-from proot_distro.paths import container_rootfs
+from proot_distro.paths import installed_container_names
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.docker import iter_cached_images
 
@@ -68,14 +67,16 @@ def command_list(args) -> None:
 # ---------------------------------------------------------------------------
 
 def _list_containers(quiet: bool) -> None:
-    """List every container directory that contains a rootfs/."""
-    try:
-        entries = sorted(
-            e for e in os.listdir(CONTAINERS_DIR)
-            if os.path.isdir(container_rootfs(e))
-        )
-    except OSError:
-        entries = []
+    """List every container directory that contains a rootfs/.
+
+    Both halves of that question are decided by descriptor
+    (paths.installed_container_names): os.listdir() plus
+    os.path.isdir(container_rootfs(name)) followed whatever stood in the
+    way, so a planted `containers/<name> -> <host dir>` holding a
+    `rootfs` was listed as an installed container that every other
+    command then refuses to touch.
+    """
+    entries = installed_container_names()
 
     if quiet:
         for name in entries:

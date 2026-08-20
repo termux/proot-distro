@@ -737,6 +737,21 @@ plain recursion it reintroduced the very crash one line below the fix.
 `install` refusing a rootfs that is still there is the report the user
 gets.
 
+Enumerating containers asks the walk the same way.
+`paths.installed_container_names()` lists `CONTAINERS_DIR` off its own
+descriptor and decides each entry by opening `<name>/rootfs`
+`O_NOFOLLOW`; `os.listdir()` plus `os.path.isdir(container_rootfs(e))`
+followed whatever stood in the way, so a planted `containers/<name> ->
+<host dir>` holding a `rootfs` listed as installed — a container every
+other command then refuses to touch. A name this program would not
+accept is skipped as well, since nothing it creates carries one and the
+listing goes to a terminal. Unlike the other walks this one **skips**
+rather than stops: listing is how the user finds out a planted entry is
+there, and `remove` is what gets rid of it. `list`, `remove --image`'s
+"installed from this image" note and the manifest cache's
+`_ref_hints()` all go through it, each reading the container's
+`manifest.json` with `read_container_manifest()`.
+
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`
 renders an IMAGE/ARCH/ID/SIZE/CREATED table that falls back to a

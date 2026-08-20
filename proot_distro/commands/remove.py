@@ -34,20 +34,22 @@
 # key. A reference matches every architecture variant cached under it
 # unless --architecture narrows the selection.
 
-import json
 import os
 import sys
 from contextlib import ExitStack
 
 from proot_distro import dirfd, statedir
 from proot_distro.arch import normalize_arch
-from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
+from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import (
     C, msg, log_info, log_error, crit_error, quote_error, quote_path,
 )
 from proot_distro.locking import BuildLock, ContainerLock
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_dir, container_manifest, container_rootfs
+from proot_distro.paths import (
+    container_dir, container_rootfs, installed_container_names,
+    read_container_manifest,
+)
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER,
@@ -362,17 +364,10 @@ def _containers_from_images(targets: list) -> list:
         return []
 
     found = []
-    try:
-        names = sorted(os.listdir(CONTAINERS_DIR))
-    except OSError:
-        return found
-    for name in names:
+    for name in installed_container_names():
         try:
-            with open(container_manifest(name)) as fh:
-                data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict):
+            data = read_container_manifest(name)
+        except (OSError, ValueError):
             continue
         ref, arch = data.get("image_ref"), data.get("arch")
         if ref and (canonical_ref(ref), arch) in wanted:
