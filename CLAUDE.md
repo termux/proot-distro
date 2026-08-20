@@ -163,7 +163,8 @@ Top-level utilities (each owns a focused concern):
   (always `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
   `copy_file_at`/`copy_symlink_at`/`copy_tree_at`/`count_tree_at`,
   `rmtree_at`/`unlink_quietly`, `temp_name`, `close_frames`, and fd-based
-  metadata (`copy_metadata`, `set_times_at`, `make_writable`).
+  metadata (`copy_metadata`, `set_times_at`, `make_writable`,
+  `chmod_at`).
   `makedirs_under(root, parts, mode)` is the one entry point taking a
   *path* — `os.makedirs()`'s replacement for a directory whose components
   are guest or image content. Each level is `mkdirat`'ed off the
@@ -986,6 +987,35 @@ compress alike, and refused *by name* where it cannot, on both the
 extension and the flag, so nothing surfaces as a corrupt archive.
 Traversal blocked (`..`/`.`/empty dropped; container name must match
 `_NAME_RE`). First entry per container triggers rootfs clear + lock.
+
+Backup walks the rootfs through **directory descriptors** (`_walk_tree`,
+over `dirfd`), never by path, and every one of its three passes — relax
+permissions, measure, archive — is driven by the same walk. It holds only
+a *shared* lock, deliberately, so a `login` session can be running while
+the archive is written; every path-based step was therefore two acts on
+two possibly-different files. `_fix_permissions` stat'ed a name and then
+`chmod`'ed it, and the archiver `lstat`'ed a name and then `open`'ed it,
+so a guest swapping either for a symlink had the mode change land on a
+host file and the host file's bytes packed into the archive under an
+innocent name. Each entry is now named as `(dir_fd, name)`: the chmod
+goes through `dirfd.chmod_at` (O_PATH|O_NOFOLLOW plus `_chmod_fd`, since
+`fchmodat` has no `AT_SYMLINK_NOFOLLOW`) and the read through
+`open_regular_at`, which also refuses a FIFO planted under the name
+rather than blocking on a peer that never comes.
+`_walk_tree` visits an entry **before** descending into it, which is what
+makes `_fix_permissions` work at all: `os.walk()` lists a directory
+before handing it over, so a chmod-000 one was skipped outright and its
+whole subtree stayed out of the archive despite the pass that exists to
+prevent exactly that. Directories ride an explicit stack, so only the
+fds along the current path are open and tree depth is the guest's
+business. `_add_path` takes the walk's `lstat` as the member's type and
+builds the `TarInfo` itself for a directory, a symlink and an l2s
+inline; a regular file goes through `tf.gettarinfo(fileobj=…)`, off the
+open descriptor, which keeps tarfile's `(dev, ino)` table so a second
+name for a file already in the archive stays a hard-link member instead
+of a second copy. A hardlink to a host file is still the file itself
+under a second name and no descriptor can tell it apart — the one thing
+the walk does not close.
 
 Both gate every stderr write on `tty_safe_for_writes()` — when a
 sibling pinentry/curses holds the TTY (ECHO or ICANON cleared in

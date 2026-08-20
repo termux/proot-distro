@@ -10,13 +10,19 @@
 # pass finishes, and that the descriptors it opened on the way are all
 # closed again — the stack has to unwind its own fds, which recursion got
 # from `finally` for free.
+#
+# `backup` is here as a guard rather than a fix: it walked with os.walk(),
+# which is iterative, and now walks with its own fd stack, which has to stay
+# that way. Same for its fds, which os.walk() never held.
 
 import contextlib
 import os
 import sys
+import tarfile
 from types import SimpleNamespace
 
 from proot_distro import dirfd
+from proot_distro.commands.backup import command_backup
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs
@@ -213,3 +219,23 @@ def test_copy_tree_at_closes_its_fds_when_a_walk_fails(tmp_path):
     # The two fds closed above are the caller's; everything copy_tree_at
     # opened for itself must already be gone.
     assert len(_open_fds() - before) == 0
+
+
+def test_backup_survives_a_tree_deeper_than_the_stack(tmp_path, builders):
+    builders.make_container("deepbk")
+    src = os.path.join(container_rootfs("deepbk"), "deep")
+    _make_deep(src)
+    out = tmp_path / "deep.tar"
+    before = _open_fds()
+    try:
+        command_backup(SimpleNamespace(
+            container_name="deepbk", output=str(out),
+            compression=None, verbose=False,
+        ))
+        assert len(_open_fds() - before) == 0
+        with tarfile.open(out) as tf:
+            names = [m.name for m in tf.getmembers()]
+        assert sum(1 for n in names if n.endswith("/leaf")) == 1
+        assert sum(1 for n in names if n.endswith("/d")) == DEPTH
+    finally:
+        _remove_deep(src)

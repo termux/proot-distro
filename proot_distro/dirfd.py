@@ -66,10 +66,11 @@ import stat
 # surfaces as PermissionError, which callers report and skip.
 _O_RD_DIR = os.O_RDONLY | os.O_DIRECTORY
 
-# O_PATH opens a directory whatever its permission bits say, which is what
-# lets _make_readable_at() chmod a directory it cannot otherwise open. Such
+# O_PATH opens an entry whatever its permission bits say, which is what
+# lets chmod_at() relax a file or directory it cannot otherwise open. Such
 # an fd cannot be read or fchmod'ed, only pointed at (see _chmod_fd).
-_O_PATH_DIR = (getattr(os, "O_PATH", 0) or os.O_RDONLY) | os.O_DIRECTORY
+_O_PATH_ANY = getattr(os, "O_PATH", 0) or os.O_RDONLY
+_O_PATH_DIR = _O_PATH_ANY | os.O_DIRECTORY
 
 # openat() declining to follow a symlink reports one of these.
 REFUSED = frozenset((errno.ELOOP, errno.ENOTDIR))
@@ -372,26 +373,43 @@ def make_writable(dir_fd: int) -> None:
     _chmod_fd(dir_fd, stat.S_IMODE(st.st_mode) | stat.S_IRWXU)
 
 
-def _make_readable_at(dir_fd: int, name: str, mode: int) -> None:
-    """Add u+rwx to the directory *name* under dir_fd, best effort.
+def chmod_at(dir_fd: int, name: str, mode: int, *,
+             only_dir: bool = False) -> None:
+    """Set *mode* on *name* under dir_fd, best effort, never following a link.
 
     The mode is applied to a descriptor, never to the name: os.chmod() on
     the name follows a symlink (Linux has no AT_SYMLINK_NOFOLLOW for
-    fchmodat), so an entry the caller lstat'ed as a directory and that a
-    guest then replaced with a link would have its target chmod'ed — an
-    arbitrary host file, with bits the guest chose by picking the mode of
-    the directory it planted. Opening O_PATH|O_NOFOLLOW instead refuses the
-    link outright and needs no permission on the directory itself, which is
+    fchmodat), so an entry the caller lstat'ed as a file or a directory and
+    that a guest then replaced with a link would have its target chmod'ed —
+    an arbitrary host file, with bits the guest chose by picking the mode of
+    what it planted. Opening O_PATH|O_NOFOLLOW instead refuses the link
+    outright and needs no permission on the entry itself, which is usually
     the whole reason this is reached.
+
+    O_PATH says nothing about the file *type*, so a caller that has already
+    decided the entry is a directory passes only_dir=True to have the open
+    refuse anything else as well.
+
+    A hardlink is still the file itself under a second name and cannot be
+    told from an ordinary entry, so this reaches whatever inode the guest
+    linked in. That is not something a descriptor can fix; writes avoid it
+    by creating a new inode (see open_new_at), but a chmod that exists to
+    relax an entry the caller must then read has no such alternative.
     """
+    flags = (_O_PATH_DIR if only_dir else _O_PATH_ANY) | os.O_NOFOLLOW
     try:
-        fd = os.open(name, _O_PATH_DIR | os.O_NOFOLLOW, dir_fd=dir_fd)
+        fd = os.open(name, flags, dir_fd=dir_fd)
     except OSError:
         return
     try:
         _chmod_fd(fd, mode)
     finally:
         os.close(fd)
+
+
+def _make_readable_at(dir_fd: int, name: str, mode: int) -> None:
+    """Add u+rwx to the directory *name* under dir_fd, best effort."""
+    chmod_at(dir_fd, name, mode, only_dir=True)
 
 
 # ---------------------------------------------------------------------------

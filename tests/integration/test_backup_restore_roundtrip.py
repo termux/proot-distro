@@ -4,6 +4,7 @@ import os
 import shutil
 import stat
 import sys
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -99,6 +100,62 @@ def test_roundtrip_restrictive_dir_mode_preserved(tmp_path, builders):
         restored = os.path.join(container_rootfs("rd"), "ro")
         if os.path.isdir(restored):
             os.chmod(restored, 0o755)
+
+
+def test_roundtrip_sealed_subtree_is_archived(tmp_path, builders):
+    # _fix_permissions relaxes a chmod-000 directory so its contents can be
+    # read. os.walk() listed a directory before handing it over, so it gave
+    # up on one silently and the whole subtree stayed out of the archive;
+    # the fd walk visits an entry before descending, so the chmod lands
+    # first and the descent then succeeds.
+    builders.make_container("sealed")
+    root = container_rootfs("sealed")
+    inner = os.path.join(root, "sealed")
+    os.makedirs(inner)
+    with open(os.path.join(inner, "inside.txt"), "wb") as fh:
+        fh.write(b"hidden")
+    os.chmod(inner, 0o000)
+
+    out = tmp_path / "sealed.tar"
+    try:
+        _backup("sealed", out)
+    finally:
+        os.chmod(inner, 0o755)
+
+    with tarfile.open(out) as tf:
+        names = {m.name for m in tf.getmembers()}
+    assert "sealed/rootfs/sealed" in names
+    assert "sealed/rootfs/sealed/inside.txt" in names
+
+
+def test_roundtrip_hardlinked_files_share_one_copy(tmp_path, builders):
+    # tarfile's (dev, ino) table is what turns a second name for a file
+    # already in the archive into a link member instead of a second copy,
+    # and it is kept by gettarinfo() — which the archiver now calls off the
+    # open descriptor rather than off the name.
+    builders.make_container("hl")
+    root = container_rootfs("hl")
+    first = os.path.join(root, "etc", "a.txt")
+    with open(first, "wb") as fh:
+        fh.write(b"shared")
+    os.link(first, os.path.join(root, "etc", "b.txt"))
+
+    out = tmp_path / "hl.tar"
+    _backup("hl", out)
+
+    with tarfile.open(out) as tf:
+        members = {m.name: m for m in tf.getmembers()}
+    links = [m for m in members.values() if m.islnk()]
+    assert len(links) == 1
+    assert links[0].linkname in ("hl/rootfs/etc/a.txt", "hl/rootfs/etc/b.txt")
+
+    shutil.rmtree(container_dir("hl"))
+    _restore(out)
+    restored = container_rootfs("hl")
+    # restore copies the content rather than recreating the link.
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(restored, "etc", name), "rb") as fh:
+            assert fh.read() == b"shared"
 
 
 def test_restore_rootfs_less_archive_preserves_existing(tmp_path, builders):

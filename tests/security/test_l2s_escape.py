@@ -41,8 +41,19 @@ def _pack(fn):
 
 
 def _backup_member(root, rel):
-    return _pack(lambda tf: _add_path(
-        tf, os.path.join(root, rel), f"box/rootfs/{rel}", root))
+    # _add_path is addressed as (dir_fd, name) now; the walk normally
+    # supplies both along with the lstat it already took.
+    parent = os.path.join(root, os.path.dirname(rel)) if os.path.dirname(rel) \
+        else root
+    name = os.path.basename(rel)
+    fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        return _pack(lambda tf: _add_path(
+            tf, fd, name, f"box/rootfs/{rel}",
+            os.path.join(root, rel), st, root))
+    finally:
+        os.close(fd)
 
 
 def _layer_member(root, rel):
