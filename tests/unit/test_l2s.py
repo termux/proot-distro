@@ -55,7 +55,11 @@ def test_rewrite_l2s_targets(tmp_path):
     os.symlink("/somewhere/else", str(other))
 
     before_int = signal.getsignal(signal.SIGINT)
-    l2s.rewrite_l2s_targets(str(root), old_prefix)
+    fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        l2s.rewrite_l2s_targets(fd, str(root), old_prefix)
+    finally:
+        os.close(fd)
     after_int = signal.getsignal(signal.SIGINT)
 
     # Matching target re-rooted; non-matching untouched.

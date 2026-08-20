@@ -26,31 +26,82 @@
 # the user cannot leave the container half-rewritten via Ctrl-C.
 
 import os
+import stat
 
+from proot_distro import dirfd, statedir
 from proot_distro.constants import LEGACY_ROOTFS_DIR
 from proot_distro.message import log_info, log_error
 from proot_distro.l2s import rewrite_l2s_targets
-from proot_distro.paths import container_dir, container_rootfs
+from proot_distro.paths import (
+    container_is_installed, container_rootfs, open_container_dir,
+)
+
+
+def _legacy_dir_fd(container_name: str):
+    """Open installed-rootfs if it holds a real directory for *name*. Or None.
+
+    Both ends of the move are entries of the runtime tree, which is
+    guest-writable on Termux, so neither is composed into a path:
+    os.path.isdir() answered "yes" for a
+    `installed-rootfs/<name> -> <host dir>` a container had left behind
+    and os.rename() then moved the link into place as the container's
+    rootfs, after which everything -- the l2s rewrite here, and every
+    session afterwards -- worked inside that host directory.
+    """
+    try:
+        legacy_fd = statedir.open_state_dir(LEGACY_ROOTFS_DIR)
+    except OSError:
+        return None
+    try:
+        st = dirfd.lstat_at(legacy_fd, container_name)
+    except OSError:
+        os.close(legacy_fd)
+        return None
+    if not stat.S_ISDIR(st.st_mode):
+        os.close(legacy_fd)
+        return None
+    return legacy_fd
 
 
 def migrate_legacy_rootfs(container_name: str) -> None:
     """Move legacy installed-rootfs/<name> to containers/<name>/rootfs."""
-    legacy_path = os.path.join(LEGACY_ROOTFS_DIR, container_name)
-    if not os.path.isdir(legacy_path):
+    legacy_fd = _legacy_dir_fd(container_name)
+    if legacy_fd is None:
         return
 
-    new_rootfs = container_rootfs(container_name)
-
-    if os.path.isdir(new_rootfs):
-        return  # already migrated
-
-    log_info(f"Migrating legacy container '{container_name}'...")
     try:
-        os.makedirs(container_dir(container_name), exist_ok=True)
-        os.rename(legacy_path, new_rootfs)
-    except OSError as exc:
-        log_error(f"Error: {exc}")
-        return
+        if container_is_installed(container_name):
+            return              # already migrated
 
-    rewrite_l2s_targets(new_rootfs, legacy_path)
+        log_info(f"Migrating legacy container '{container_name}'...")
+        try:
+            new_fd = open_container_dir(container_name, create=True)
+        except OSError as exc:
+            log_error(f"Error: {exc}")
+            return
+        try:
+            try:
+                os.rename(container_name, "rootfs",
+                          src_dir_fd=legacy_fd, dst_dir_fd=new_fd)
+            except OSError as exc:
+                log_error(f"Error: {exc}")
+                return
+            try:
+                rootfs_fd = dirfd.descend_at(new_fd, ("rootfs",))
+            except OSError as exc:
+                log_error(f"Error: {exc}")
+                return
+        finally:
+            os.close(new_fd)
+    finally:
+        os.close(legacy_fd)
+
+    try:
+        rewrite_l2s_targets(
+            rootfs_fd,
+            container_rootfs(container_name),
+            os.path.join(LEGACY_ROOTFS_DIR, container_name),
+        )
+    finally:
+        os.close(rootfs_fd)
     log_info("Migration complete.")

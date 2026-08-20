@@ -33,6 +33,7 @@
 
 import os
 import signal
+import stat
 
 from proot_distro import dirfd
 from proot_distro.message import log_info, log_error
@@ -146,12 +147,25 @@ def open_l2s_backing(rootfs: str, l2s_path: str):
                 pass
 
 
-def rewrite_l2s_targets(rootfs: str, old_prefix: str) -> None:
-    """Rewrite every symlink in *rootfs* whose target starts with *old_prefix*.
+def rewrite_l2s_targets(rootfs_fd: int, rootfs: str, old_prefix: str) -> None:
+    """Rewrite every symlink under *rootfs_fd* whose target starts with
+    *old_prefix*.
 
-    The new prefix is the absolute path of *rootfs* itself. Errors on
-    individual symlinks (e.g. read-only fs) are swallowed so a single
-    bad entry doesn't abort the rewrite.
+    The new prefix is *rootfs*, the path that descriptor was opened as.
+    Errors on individual symlinks (e.g. read-only fs) are swallowed so a
+    single bad entry doesn't abort the rewrite.
+
+    The caller passes a descriptor rather than a path because it has one:
+    both callers have just moved the tree and validated where it landed.
+    Walking the path again would resolve `containers/<name>` afresh --
+    guest-writable on Termux -- and this walk *writes*, unlinking an entry
+    and creating a symlink in its place. Every entry is therefore named as
+    (dir_fd, name), and a directory is descended into with O_NOFOLLOW, so
+    a link met on the way is rewritten rather than followed.
+
+    os.walk() also classified a symlink pointing at a directory as a
+    directory, which left it out of the filenames it yielded and so out of
+    the rewrite entirely; lstat is what decides here.
 
     SIGINT and SIGQUIT are intercepted for the duration of the walk:
     aborting partway through would leave dangling symlinks that point
@@ -168,20 +182,61 @@ def rewrite_l2s_targets(rootfs: str, old_prefix: str) -> None:
     old_sigint = signal.signal(signal.SIGINT, _warn_no_interrupt)
     old_sigquit = signal.signal(signal.SIGQUIT, _warn_no_interrupt)
     try:
-        for dirpath, _dirs, filenames in os.walk(rootfs):
-            for fname in filenames:
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    if not os.path.islink(fpath):
-                        continue
-                    target = os.readlink(fpath)
-                    if not target.startswith(old_prefix):
-                        continue
-                    new_target = rootfs + target[len(old_prefix):]
-                    os.unlink(fpath)
-                    os.symlink(new_target, fpath)
-                except OSError:
-                    pass
+        _rewrite_walk(rootfs_fd, rootfs, old_prefix)
     finally:
         signal.signal(signal.SIGINT, old_sigint)
         signal.signal(signal.SIGQUIT, old_sigquit)
+
+
+def _rewrite_walk(root_fd: int, rootfs: str, old_prefix: str) -> None:
+    """Visit every entry under root_fd, rewriting the l2s symlinks."""
+    # Frame layout: [fd, None, pending names, owned] — dirfd's own layout,
+    # so close_frames() unwinds an interrupted walk. Only the descriptors
+    # along the current path are open, and how deep the tree goes is the
+    # container's business rather than the interpreter's.
+    stack = [[root_fd, None, None, False]]
+    try:
+        while stack:
+            frame = stack[-1]
+            fd, _, pending, owned = frame
+            if pending is None:
+                try:
+                    pending = frame[2] = dirfd.listdir_at(fd)
+                except OSError:
+                    pending = frame[2] = []
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
+            name = pending.pop()
+            try:
+                st = dirfd.lstat_at(fd, name)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                try:
+                    stack.append([dirfd.opendir_at(fd, name), None, None, True])
+                except OSError:
+                    continue
+            elif stat.S_ISLNK(st.st_mode):
+                _rewrite_link(fd, name, rootfs, old_prefix)
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
+
+
+def _rewrite_link(dir_fd: int, name: str, rootfs: str,
+                  old_prefix: str) -> None:
+    """Re-root one symlink's target at *rootfs*, best effort."""
+    try:
+        target = os.readlink(name, dir_fd=dir_fd)
+    except OSError:
+        return
+    if not target.startswith(old_prefix):
+        return
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+        os.symlink(rootfs + target[len(old_prefix):], name, dir_fd=dir_fd)
+    except OSError:
+        pass

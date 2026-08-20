@@ -142,8 +142,6 @@ def container_is_installed(name: str) -> bool:
         fd = open_container_rootfs(name)
     except FileNotFoundError:
         return False
-    except OSError:
-        return False
     os.close(fd)
     return True
 

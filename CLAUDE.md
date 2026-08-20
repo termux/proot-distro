@@ -125,6 +125,15 @@ Top-level utilities (each owns a focused concern):
   `ZstdFile` itself and hands tarfile a plain `w|` stream, so both
   spellings produce byte-identical archives at `ZSTD_LEVEL`.
 - `l2s.py` — `--link2symlink` helpers (SIGINT/SIGQUIT shielded).
+  `rewrite_l2s_targets(rootfs_fd, rootfs, old_prefix)` takes the
+  **descriptor** of the tree that has just moved, not its path: both
+  callers (`rename`, the legacy migration) have one, and this walk
+  *writes* — it unlinks an entry and creates a symlink in its place — so
+  re-resolving `containers/<name>` would hand those writes to whatever a
+  planted name led to. It walks on an explicit stack with `O_NOFOLLOW`
+  per directory, and decides by `lstat`: `os.walk()` classified a symlink
+  to a directory *as* a directory, so one was neither descended nor
+  listed among the filenames, and its stale target was never rewritten.
   `resolve_l2s_target()` decides whether a symlink is one of proot's
   hard-link stand-ins and where its content really is. An l2s chain is
   two hops — the entry points at an intermediate, the intermediate at the
@@ -436,8 +445,15 @@ containers/<name>/rootfs/         ← assembled filesystem
 Directory name is the sole identifier — composed lexically, but never
 *trusted* lexically: `install` checks and creates `containers/<name>`
 and its `rootfs` through `open_container_rootfs()`, `reset` asks
-`container_is_installed()`, and both removals go through
-`statedir.remove_state_tree()`. `os.path.isdir()` answered "not
+`container_is_installed()`, both removals go through
+`statedir.remove_state_tree()`, and `rename` opens `CONTAINERS_DIR`
+once and moves the entry with `src_dir_fd`/`dst_dir_fd` (a planted
+`containers/<old>` used to be moved *as the link*, after which the l2s
+rewrite wrote into whatever it pointed at). The legacy migration does
+the same across the two directories: `installed-rootfs/<name>` is only
+a legacy rootfs when `lstat` under that directory's descriptor says
+directory, and the move is `rename(name, "rootfs", src_dir_fd=,
+dst_dir_fd=)`. `os.path.isdir()` answered "not
 installed" for a `containers/<name> -> <host dir>` a guest had left
 behind and `os.makedirs(exist_ok=True)` then accepted it, so the image
 was unpacked, the sysdata stubs written and the manifest published
@@ -446,7 +462,8 @@ far end: the walk unlinks a planted entry rather than traversing it,
 which is how the user gets rid of one. Plain-tarball installs do **not**
 write `manifest.json`. Legacy `installed-rootfs/<name>` layout is
 migrated on first `login` (`commands/login/migrate.py`), which then
-rewrites l2s symlink targets.
+rewrites l2s symlink targets through the descriptor of the tree it just
+moved.
 
 Distribution type is detected at login:
 `rootfs/data/data/com.termux/files/usr/bin/login` existing **as a file**
