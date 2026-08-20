@@ -30,6 +30,7 @@ import os
 import shlex
 
 from proot_distro import dirfd
+from proot_distro.atomic import publish_file
 from proot_distro.helpers.build_engine.copy_step import do_add, do_copy
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.constants import PREDEFINED_ARGS
@@ -196,9 +197,8 @@ def do_workdir(engine, instr):
         f"layer-{engine.current.index}-{len(engine.current.layers)}.tar.gz",
     )
     digest, size, diff_id = write_files_layer(file_map, tmp_layer_path)
-    final_path = layer_cache_path(digest)
-    os.makedirs(os.path.dirname(final_path), exist_ok=True)
-    os.replace(tmp_layer_path, final_path)
+    # See run_step: the layer cache is walked down to, not named.
+    publish_file(tmp_layer_path, layer_cache_path(digest))
     engine.current.layers.append(
         {"digest": digest, "size": size, "diff_id": diff_id}
     )

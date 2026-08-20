@@ -88,7 +88,8 @@ Top-level utilities (each owns a focused concern):
   back to composing paths — an extractor, proot resolving a bind source
   — is proof against the persistent case, which is the one a guest can
   arrange at leisure.
-- `atomic.py` — `atomic_replace()`: temp file + `os.replace`; cleans up
+- `atomic.py` — `atomic_replace()` and `publish_file()`: temp file +
+  `os.replace`; cleans up
   on `BaseException` (Ctrl-C never leaves half-written sentinels). A
   destination inside `RUNTIME_DIR`/`BASE_CACHE_DIR` is reached by
   `statedir.open_state_dir()`'s `O_NOFOLLOW` walk, the temp is
@@ -99,6 +100,11 @@ Top-level utilities (each owns a focused concern):
   there. A component that is not a plain directory raises `ENOTDIR`
   rather than being followed. A path outside those roots is the user's
   own (`build --output`, `backup -o`) and keeps the plain behaviour.
+  `publish_file(src, dest)` is that ending without the beginning, for a
+  writer whose destination name is not known until its bytes exist — a
+  build's layer blob, named by the digest of its own content — and it is
+  what the three layer-publishing sites use instead of
+  `os.makedirs(dirname)` + `os.replace`.
 - `compress.py` — everything the program knows about zstd, which needs
   Python 3.14 (PEP 784) *and* an interpreter built against libzstd:
   `ZSTD_AVAILABLE` (both halves — `TarFile.zstopen` exists without
@@ -1213,6 +1219,17 @@ portable, `layer_diff.snapshot()` skips `<rootfs>/.l2s/`, and
 file's content as a regular file (hard-link semantics lost, content
 preserved). Build steps run isolated and non-interactive
 (`stdin=/dev/null` unless here-doc).
+
+A build's scratch root is made the same way: `RUNTIME_DIR/build-tmp` is
+a predictable name and `mkdtemp(dir=…)` resolved it, so a planted
+`build-tmp -> <host dir>` had every stage rootfs, spooled ADD and packed
+layer assembled inside that host directory — and the cleanup at the end
+remove what it found there. `_make_build_tmp()` walks down to it and
+creates the run's directory with `mkdirat` off the validated descriptor
+(falling back to the system temp dir, as it always did when the runtime
+tree could not hold one); `statedir.remove_state_tree()` discards it.
+Everything *inside* is this process's own — a fresh 0700 name — so the
+stage trees below it need no walk of their own.
 
 Build cache: `compute_recipe_hash(parent_digest, instr, extra)` keys
 into `build_cache_index.json`. Hit ⇒ apply cached layer, skip proot.

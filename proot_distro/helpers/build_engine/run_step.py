@@ -41,6 +41,7 @@ from proot_distro.constants import (
     PROGRAM_NAME,
 )
 from proot_distro import dirfd
+from proot_distro.atomic import publish_file
 from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
@@ -139,9 +140,11 @@ def do_run(engine, instr):
     digest, size, diff_id = write_layer_tar(
         stage.rootfs_dir, paths_to_pack, deleted, tmp_layer_path,
     )
-    final_path = layer_cache_path(digest)
-    os.makedirs(os.path.dirname(final_path), exist_ok=True)
-    os.replace(tmp_layer_path, final_path)
+    # Published through the same walk every other cache writer uses:
+    # os.makedirs(dirname) plus os.replace(tmp, final) resolved the layer
+    # cache by name, so a planted `oci_layers -> <host dir>` collected
+    # what a build produced.
+    publish_file(tmp_layer_path, layer_cache_path(digest))
 
     stage.layers.append(
         {"digest": digest, "size": size, "diff_id": diff_id}

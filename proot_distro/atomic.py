@@ -43,6 +43,12 @@
 # keeps the plain behaviour: it is not this program's business where the
 # user points it.
 #
+# publish_file() is the same ending without the beginning, for a file
+# whose final name cannot be known until its bytes exist -- a build's
+# layer blob is named by the digest of its own content, so it is written
+# to the build's scratch directory first and renamed into the cache
+# afterwards. The destination directory is reached the same way.
+#
 # The tmp *path* is still what the caller writes through, since it opens
 # the file itself in whatever way suits it. That name is unpredictable
 # and was just created, so nothing can be waiting under it; a directory
@@ -101,6 +107,40 @@ def atomic_replace(path: str, *, suffix: str = ".tmp"):
     try:
         yield from _replace_at(dir_fd, os.path.dirname(path),
                                parts[-1], suffix)
+    finally:
+        os.close(dir_fd)
+
+
+def publish_file(src_path: str, dest_path: str) -> None:
+    """Rename an already-written file onto *dest_path*.
+
+    For a writer that cannot name its destination up front: a layer blob
+    is named by the digest of its own bytes, so it is packed into the
+    build's scratch directory and published once the digest is known.
+    os.makedirs(os.path.dirname(dest)) followed by os.replace(tmp, dest)
+    resolved the destination directory by name twice, so a guest that
+    left `cache/oci_layers -> <host dir>` behind collected every layer a
+    build produced. The directory is walked down to with O_NOFOLLOW
+    instead and the rename runs dst_dir_fd on the descriptor that walk
+    validated. rename(2) follows no symlink at the destination name
+    either, so a link planted *as* the blob is replaced, not written
+    through.
+
+    A destination outside the state tree is the user's own and keeps the
+    plain behaviour.
+    """
+    root, parts = _state_location(dest_path)
+    if root is None:
+        dest_dir = os.path.dirname(dest_path) or "."
+        os.makedirs(dest_dir, exist_ok=True)
+        os.replace(src_path, dest_path)
+        return
+
+    dir_fd = statedir.open_state_dir(
+        os.path.join(root, *parts[:-1]), create=True,
+    )
+    try:
+        os.replace(src_path, parts[-1], dst_dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
 

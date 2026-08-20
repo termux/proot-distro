@@ -63,6 +63,7 @@ from proot_distro.helpers.layer_diff import (
 )
 from proot_distro.helpers.tar_extract import safe_resolve_parts
 from proot_distro import dirfd
+from proot_distro.atomic import publish_file
 
 
 # Chunk size for spooling, the same one tar_extract streams with.
@@ -214,9 +215,8 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
         f"layer-{stage.index}-{len(stage.layers)}.tar.gz",
     )
     digest, size, diff_id = write_files_layer(file_map, tmp_layer_path)
-    final_path = layer_cache_path(digest)
-    os.makedirs(os.path.dirname(final_path), exist_ok=True)
-    os.replace(tmp_layer_path, final_path)
+    # See run_step: the layer cache is walked down to, not named.
+    publish_file(tmp_layer_path, layer_cache_path(digest))
     stage.layers.append(
         {"digest": digest, "size": size, "diff_id": diff_id}
     )

@@ -32,7 +32,7 @@ import tempfile
 from contextlib import ExitStack
 from types import SimpleNamespace
 
-from proot_distro import dirfd
+from proot_distro import statedir
 from proot_distro.commands.install import command_install
 
 from proot_distro.constants import (
@@ -214,12 +214,7 @@ def command_build(args):
             lock_stack.enter_context(lock)
 
         # ----- run the build -----
-        build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
-        try:
-            os.makedirs(build_tmp, exist_ok=True)
-        except OSError:
-            build_tmp = None
-        tmp_root = tempfile.mkdtemp(prefix="pd-build-", dir=build_tmp)
+        tmp_root = _make_build_tmp()
 
         engine = BuildEngine(
             build_dir=build_dir,
@@ -309,12 +304,47 @@ def command_build(args):
             # assume. shutil.rmtree(ignore_errors=True) swallowed an
             # OSError but not the RecursionError a deep one raised, and
             # could not chmod its way into a sealed directory either.
-            dirfd.remove_tree(tmp_root)
+            # The parent is walked down to for the same reason it was
+            # walked down to when the scratch root was created.
+            statedir.remove_state_tree(tmp_root)
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+def _make_build_tmp() -> str:
+    """Create the scratch root a build assembles its stages in.
+
+    RUNTIME_DIR/build-tmp is a predictable name inside the state tree, and
+    tempfile.mkdtemp(dir=...) resolves it: a guest that left
+    `build-tmp -> <host dir>` behind -- the runtime tree is under the
+    $TERMUX_PREFIX bound read-write into every non-isolated container --
+    had every stage rootfs, every spooled ADD and every packed layer
+    assembled inside that host directory, and the cleanup at the end of
+    the build remove what it found there. The directory is walked down to
+    with O_NOFOLLOW and the scratch root created with mkdirat off the
+    descriptor that walk validated; what is made *inside* it is this
+    process's own, since the name is fresh and the mode is 0700.
+
+    A runtime tree that cannot hold one falls back to the system
+    temporary directory, which is what the previous `build_tmp = None`
+    did.
+    """
+    build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
+    try:
+        dir_fd = statedir.open_state_dir(build_tmp, create=True)
+    except OSError:
+        return tempfile.mkdtemp(prefix="pd-build-")
+    try:
+        name = f"pd-build-{os.getpid()}.{os.urandom(4).hex()}"
+        os.mkdir(name, 0o700, dir_fd=dir_fd)
+    except OSError:
+        return tempfile.mkdtemp(prefix="pd-build-")
+    finally:
+        os.close(dir_fd)
+    return os.path.join(build_tmp, name)
+
 
 def _parse_build_args(raw):
     out = {}
