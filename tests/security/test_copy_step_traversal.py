@@ -58,7 +58,10 @@ def test_add_tar_extract_drops_traversal(tmp_path, builders):
         {"name": "/abs", "type": "file", "data": b"A"},
     ])
     file_map = {}
-    copy_step._extract_tar_into_dest(str(arc), "extracted", file_map, 0, 0)
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    copy_step._extract_tar_into_dest(
+        str(arc), "extracted", file_map, 0, 0, str(spool))
 
     keys = set(file_map.keys())
     # No key escapes via ".." and every key is confined under the dest prefix.

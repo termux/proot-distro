@@ -23,6 +23,15 @@
 # that is also materialised onto the rootfs at the same time. Sources
 # may be the build context, another stage (--from=<stage>), an external
 # image (--from=<image:tag>), or — for ADD — an HTTP/HTTPS URL.
+#
+# No entry ever holds content in memory. A file_map covers a whole
+# instruction at once, so ADD used to read an entire URL response — and
+# then every regular member of an auto-extracted archive, all of them live
+# at the same time — into RAM, and a single instruction could take the
+# build process out. Content that does not already exist as a file is
+# spooled into engine.tmp_root and referenced by path, which is where it
+# was headed anyway: the instruction both materialises it into the rootfs
+# and packs it into a layer, and tmp_root is removed when the build ends.
 
 import hashlib
 import os
@@ -31,6 +40,7 @@ import shlex
 import shutil
 import stat
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -52,6 +62,52 @@ from proot_distro.helpers.layer_diff import (
     layer_path_parts, write_files_layer,
 )
 from proot_distro.helpers.tar_extract import _safe_resolve
+
+
+# Chunk size for spooling, the same one tar_extract streams with.
+_SPOOL_CHUNK = 1 << 17
+
+
+def _spool_dir(engine):
+    """The build's scratch directory for ADD content, created on demand."""
+    path = os.path.join(engine.tmp_root, "add-spool")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _spool_stream(fobj, spool):
+    """Copy *fobj* into a fresh file under *spool*; return its path."""
+    fd, path = tempfile.mkstemp(dir=spool, prefix="add-")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            shutil.copyfileobj(fobj, out, _SPOOL_CHUNK)
+    except BaseException:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def _spool_entry(file_map, arcname, path, mode, uid, gid, mtime):
+    """Record a spooled file in *file_map* as an ordinary file entry.
+
+    The timestamp goes on the spool file itself because that is where both
+    consumers read it from: layer_diff's "file" kind takes an entry's mode,
+    uid and gid from the dict but its mtime from the file on disk. The
+    value came out of an archive header or off the clock, so it can be any
+    number at all -- os.utime() raises OverflowError, not OSError, on one
+    the platform cannot store.
+    """
+    try:
+        os.utime(path, (mtime, mtime))
+    except (OSError, OverflowError, ValueError):
+        pass
+    file_map[arcname] = {
+        "kind": "file", "src": path,
+        "mode": mode, "uid": uid, "gid": gid, "mtime": mtime,
+    }
 
 
 def do_copy(engine, instr):
@@ -132,13 +188,14 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
     )
 
     file_map = {}
+    spool = _spool_dir(engine) if allow_url or auto_extract else None
     for kind, src in resolved:
         if kind == "url":
-            _copy_url(src, dest, file_map, uid, gid, mode_override)
+            _copy_url(src, dest, file_map, uid, gid, mode_override, spool)
         elif kind == "ctx":
             _copy_from_context(
                 engine, src, dest, is_dir_dest, file_map,
-                uid, gid, mode_override, auto_extract,
+                uid, gid, mode_override, auto_extract, spool,
             )
         elif kind == "rootfs":
             _copy_from_rootfs(
@@ -182,7 +239,7 @@ def _pull_throwaway_image(engine, image_ref):
 
 
 def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
-                       uid, gid, mode_override, auto_extract):
+                       uid, gid, mode_override, auto_extract, spool=None):
     # Per Docker semantics, a leading '/' on a COPY/ADD source is
     # equivalent to no leading slash: both forms resolve relative
     # to the build context root.
@@ -207,7 +264,7 @@ def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
                 full_m, dest, is_dir_dest=True, file_map=file_map,
                 uid=uid, gid=gid, mode_override=mode_override,
                 auto_extract=auto_extract, src_rel=m,
-                ignore_patterns=engine.ignore_patterns,
+                ignore_patterns=engine.ignore_patterns, spool=spool,
             )
         return
     rel = os.path.relpath(full, engine.build_dir)
@@ -217,7 +274,7 @@ def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
         full, dest, is_dir_dest=is_dir_dest, file_map=file_map,
         uid=uid, gid=gid, mode_override=mode_override,
         auto_extract=auto_extract, src_rel=rel,
-        ignore_patterns=engine.ignore_patterns,
+        ignore_patterns=engine.ignore_patterns, spool=spool,
     )
 
 
@@ -241,8 +298,13 @@ def _copy_from_rootfs(from_rootfs, src, dest, is_dir_dest,
     )
 
 
-def _copy_url(url, dest, file_map, uid, gid, mode_override):
-    """ADD URL: download the file to dest."""
+def _copy_url(url, dest, file_map, uid, gid, mode_override, spool):
+    """ADD URL: download the file to dest.
+
+    Streamed onto disk rather than read whole: how much a URL answers with
+    is the remote's choice, and the response used to be held in memory
+    until the whole instruction was packed.
+    """
     if dest.endswith("/"):
         name = os.path.basename(
             urllib.parse.urlparse(url).path
@@ -253,20 +315,19 @@ def _copy_url(url, dest, file_map, uid, gid, mode_override):
     opener = urllib.request.build_opener(AuthStrippingRedirectHandler)
     try:
         with opener.open(url) as resp:
-            data = resp.read()
+            path = _spool_stream(resp, spool)
     except (urllib.error.URLError, OSError) as exc:
         raise BuildError(f"ADD {url}: {exc}") from exc
-    file_map[arcname] = {
-        "kind": "content",
-        "data": data,
-        "mode": mode_override if mode_override is not None else 0o644,
-        "uid": uid, "gid": gid, "mtime": int(time.time()),
-    }
+    _spool_entry(
+        file_map, arcname, path,
+        mode_override if mode_override is not None else 0o644,
+        uid, gid, int(time.time()),
+    )
 
 
 def _add_to_file_map(src_full, dest, is_dir_dest, file_map,
                      uid, gid, mode_override, auto_extract, src_rel,
-                     ignore_patterns):
+                     ignore_patterns, spool=None):
     if os.path.islink(src_full):
         _add_symlink(src_full, dest, is_dir_dest, file_map, uid, gid)
         return
@@ -279,7 +340,7 @@ def _add_to_file_map(src_full, dest, is_dir_dest, file_map,
     if os.path.isfile(src_full):
         # Auto-extract tar archives for ADD.
         if auto_extract and is_tar_archive(src_full):
-            _extract_tar_into_dest(src_full, dest, file_map, uid, gid)
+            _extract_tar_into_dest(src_full, dest, file_map, uid, gid, spool)
             return
         _add_regular(src_full, dest, is_dir_dest, file_map,
                      uid, gid, mode_override, src_rel)
@@ -401,8 +462,14 @@ def _dest_arcname(src_full, dest, is_dir_dest):
     return dest.lstrip("/")
 
 
-def _extract_tar_into_dest(src_full, dest, file_map, uid, gid):
-    """ADD auto-extract: stream the tar into dest as a tree."""
+def _extract_tar_into_dest(src_full, dest, file_map, uid, gid, spool):
+    """ADD auto-extract: stream the tar into dest as a tree.
+
+    Every regular member is spooled to its own file. Reading them into the
+    file_map instead meant the archive's entire uncompressed content sat in
+    memory at once -- and the archive is whatever the Dockerfile pointed
+    ADD at, which for a URL source is not even local.
+    """
     if not dest.endswith("/"):
         dest = dest + "/"
     with tarfile.open(src_full, "r|*") as tf:
@@ -435,12 +502,11 @@ def _extract_tar_into_dest(src_full, dest, file_map, uid, gid):
                 fobj = tf.extractfile(m)
                 if fobj is None:
                     continue
-                data = fobj.read()
-                file_map[arc] = {
-                    "kind": "content", "data": data,
-                    "mode": stat.S_IMODE(m.mode) or 0o644,
-                    "uid": uid, "gid": gid, "mtime": int(m.mtime),
-                }
+                path = _spool_stream(fobj, spool)
+                _spool_entry(
+                    file_map, arc, path,
+                    stat.S_IMODE(m.mode) or 0o644, uid, gid, int(m.mtime),
+                )
 
 
 def _materialise_files(rootfs_dir, file_map):
@@ -504,18 +570,6 @@ def _materialise_files(rootfs_dir, file_map):
                     except OSError:
                         pass
                 os.symlink(entry["target"], host)
-            elif kind == "content":
-                if os.path.lexists(host):
-                    try:
-                        os.remove(host)
-                    except OSError:
-                        pass
-                with open(host, "wb") as fh:
-                    fh.write(entry["data"])
-                try:
-                    os.chmod(host, entry.get("mode", 0o644))
-                except OSError:
-                    pass
             elif kind == "file":
                 if os.path.lexists(host):
                     try:

@@ -959,6 +959,24 @@ the result off a descriptor per level, refusing a component planted
 after the resolve. The layer's arcnames come from the **resolved** path,
 which is where the directories really landed.
 
+A COPY/ADD's `file_map` covers the **whole instruction** and is consumed
+only once it ends — the tree is materialised from it, then the layer is
+packed from it — so an entry that carries bytes carries them that long,
+and every entry of an auto-extracted archive carries them at the same
+time. ADD read an entire URL response, and then every regular tar member,
+straight into that dict, so one instruction pointed at a large archive
+took the build process out. There is deliberately no in-memory `content`
+kind left: `_spool_stream()` parks such content in
+`<tmp_root>/add-spool/` and `_spool_entry()` records an ordinary `file`
+entry naming it. The bytes were headed for disk anyway (the instruction
+writes them into the rootfs *and* into a layer) and `tmp_root` goes when
+the build ends. The timestamp is stamped onto the spool file rather than
+kept in the entry, because that is where `_add_file_map_entry` reads a
+`file`'s mtime from — through an `except (OSError, OverflowError,
+ValueError)`, since the value comes out of an archive header and
+`os.utime()` raises `OverflowError`, not `OSError`, on one `time_t`
+cannot hold.
+
 `layer_diff.layer_path_parts()` is the one rule for what a name may be,
 applied by both halves of a COPY/ADD — `_materialise_files` (the tree)
 and `write_files_layer` (the tar), which used to filter separately, so

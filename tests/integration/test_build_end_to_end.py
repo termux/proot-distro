@@ -75,6 +75,76 @@ def test_build_to_cache_archive_and_install(tmp_path, builders):
     assert os.path.isdir(os.path.join(root, "app"))
 
 
+def test_build_add_auto_extract_spools_to_disk(tmp_path, builders):
+    # ADD used to hold every regular member of an auto-extracted archive in
+    # memory at once, since one file_map covers a whole instruction. The
+    # members are spooled to files now; what has to stay true is that the
+    # tree and the layer still carry the content.
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    payload = ctx / "payload.tar"
+    builders.make_tar(str(payload), [
+        {"name": "etc", "type": "dir"},
+        {"name": "etc/hostname", "type": "file", "data": b"built\n"},
+        {"name": "etc/big", "type": "file", "data": b"Z" * (1 << 20)},
+        {"name": "etc/alias", "type": "symlink", "linkname": "hostname"},
+    ])
+    (ctx / "Dockerfile").write_text(
+        "FROM scratch\n"
+        "ADD payload.tar /\n"
+        'CMD ["/bin/sh"]\n'
+    )
+
+    command_build(_build_args(ctx, tags=["addimg:1"], install_as="addbox"))
+
+    root = container_rootfs("addbox")
+    with open(os.path.join(root, "etc", "hostname"), "rb") as fh:
+        assert fh.read() == b"built\n"
+    with open(os.path.join(root, "etc", "big"), "rb") as fh:
+        assert fh.read() == b"Z" * (1 << 20)
+    assert os.readlink(os.path.join(root, "etc", "alias")) == "hostname"
+
+    # The spool directory lives in the build's tmp_root, which is removed
+    # when the build ends — nothing of it is left next to the context.
+    assert sorted(os.listdir(str(ctx))) == ["Dockerfile", "payload.tar"]
+
+
+def test_build_add_url_spools_to_disk(tmp_path, builders, monkeypatch):
+    import io
+    from proot_distro.helpers.build_engine import copy_step
+
+    body = b"N" * (1 << 20)
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    class _Opener:
+        def open(self, url):
+            return _Resp(body)
+
+    monkeypatch.setattr(copy_step.urllib.request, "build_opener",
+                        lambda *a: _Opener())
+
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    (ctx / "Dockerfile").write_text(
+        "FROM scratch\n"
+        "ADD https://example.invalid/blob.bin /opt/blob.bin\n"
+        'CMD ["/bin/sh"]\n'
+    )
+
+    command_build(_build_args(ctx, tags=["urlimg:1"], install_as="urlbox"))
+
+    with open(os.path.join(container_rootfs("urlbox"), "opt", "blob.bin"),
+              "rb") as fh:
+        assert fh.read() == body
+
+
 def test_build_refuses_existing_output(tmp_path):
     ctx = _make_context(tmp_path)
     out = tmp_path / "exists.oci.tar"

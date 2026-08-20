@@ -77,8 +77,10 @@ def test_write_files_layer_honors_chown(tmp_path):
     # write_files_layer preserves the entry's uid/gid — that is how
     # COPY --chown lands ownership in the layer (contrast with _add_entry,
     # which zeroes ownership for disk-snapshot layers).
+    src = str(tmp_path / "conf")
+    _write(src, b"cfg")
     file_map = {
-        "etc/conf": {"kind": "content", "data": b"cfg", "mode": 0o600,
+        "etc/conf": {"kind": "file", "src": src, "mode": 0o600,
                      "uid": 1000, "gid": 1000, "mtime": 0},
         "etc/link": {"kind": "symlink", "target": "conf", "uid": 1000,
                      "gid": 1000, "mtime": 0},
@@ -110,8 +112,10 @@ def test_write_layer_tar_zeroes_ownership(tmp_path):
 
 
 def test_write_files_layer_roundtrip(tmp_path):
+    src = str(tmp_path / "conf")
+    _write(src, b"cfg")
     file_map = {
-        "etc/conf": {"kind": "content", "data": b"cfg", "mode": 0o644},
+        "etc/conf": {"kind": "file", "src": src, "mode": 0o644},
         "etc/link": {"kind": "symlink", "target": "conf"},
     }
     out = str(tmp_path / "files.tar.gz")

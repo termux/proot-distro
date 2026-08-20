@@ -162,9 +162,11 @@ def test_materialise_tar_dir_member_lands_inside_the_rootfs(tmp_path):
     outside.mkdir(mode=0o700)
     os.symlink(str(outside), str(rootfs / "etc"))
 
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"pwned\n")
     copy_step._materialise_files(str(rootfs), {
         "etc": {"kind": "dir", "mode": 0o755, "uid": 0, "gid": 0, "mtime": 0},
-        "etc/passwd": {"kind": "content", "data": b"pwned\n",
+        "etc/passwd": {"kind": "file", "src": str(payload),
                        "mode": 0o644, "uid": 0, "gid": 0, "mtime": 0},
     })
 

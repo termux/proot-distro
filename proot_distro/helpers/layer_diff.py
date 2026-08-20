@@ -38,7 +38,6 @@
 
 import gzip
 import hashlib
-import io
 import os
 import stat
 import tarfile
@@ -345,10 +344,7 @@ def write_files_layer(file_map, out_path):
     total = 0
     for arcname, entry in sorted_items:
         if isinstance(entry, dict):
-            kind = entry.get("kind")
-            if kind == "content":
-                total += len(entry.get("data", b""))
-            elif kind == "file":
+            if entry.get("kind") == "file":
                 try:
                     total += os.path.getsize(entry["src"])
                 except OSError:
@@ -502,17 +498,10 @@ def _add_file_map_entry(tf, arcname, entry):
             tinfo.gid = entry.get("gid", 0)
             tf.addfile(tinfo)
             return
-        if kind == "content":
-            data = entry["data"]
-            tinfo = tarfile.TarInfo(arcname)
-            tinfo.type = tarfile.REGTYPE
-            tinfo.size = len(data)
-            tinfo.mode = entry.get("mode", 0o644)
-            tinfo.mtime = entry.get("mtime", 0)
-            tinfo.uid = entry.get("uid", 0)
-            tinfo.gid = entry.get("gid", 0)
-            tf.addfile(tinfo, io.BytesIO(data))
-            return
+        # There is deliberately no in-memory "content" kind: a file_map
+        # covers a whole instruction, so every entry's bytes would be live
+        # at once. Content that is not already a file is spooled to one
+        # (see build_engine.copy_step._spool_entry).
         if kind == "file":
             src_path = entry["src"]
         else:

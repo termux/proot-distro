@@ -87,10 +87,12 @@ def test_materialise_and_packer_agree_on_a_traversal_arcname(tmp_path):
     rootfs.mkdir()
     sibling = tmp_path / "sibling"
     sibling.write_text("KEEP")
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"P")
     file_map = {
-        "../foo": {"kind": "content", "data": b"P", "mode": 0o644,
+        "../foo": {"kind": "file", "src": str(payload), "mode": 0o644,
                    "uid": 0, "gid": 0, "mtime": 0},
-        "ok/f": {"kind": "content", "data": b"K", "mode": 0o644,
+        "ok/f": {"kind": "file", "src": str(payload), "mode": 0o644,
                  "uid": 0, "gid": 0, "mtime": 0},
     }
 
@@ -100,8 +102,8 @@ def test_materialise_and_packer_agree_on_a_traversal_arcname(tmp_path):
 
     # Neither half acted on it, and the packer did not invent a ".."
     # ancestor for it either.
-    assert sorted(os.listdir(str(tmp_path))) == ["layer.tar.gz", "rootfs",
-                                                 "sibling"]
+    assert sorted(os.listdir(str(tmp_path))) == ["layer.tar.gz", "payload",
+                                                 "rootfs", "sibling"]
     assert sibling.read_text() == "KEEP"
     with tarfile.open(str(out)) as tf:
         assert [m.name for m in tf.getmembers()] == ["ok", "ok/f"]
