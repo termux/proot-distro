@@ -918,6 +918,19 @@ restores the **trailing slash** `normpath` strips, since `_copy_url` /
 `_dest_arcname` / `_add_directory_tree` read it back and `COPY x
 /opt/app/` would otherwise change meaning.
 
+Normalising is lexical, so it says nothing about a **symlink** standing
+in the path, and `do_workdir` then created and chmod'ed every level by
+name: an image shipping `/x -> /tmp/victim` had `WORKDIR /x/sub` make —
+and `chmod 0755` — a host directory, again reachable through a base
+image's `ONBUILD WORKDIR`. Refusing links is not an option (`/var/run
+-> /run` is in nearly every distro image), so the path goes through
+`tar_extract._safe_resolve` first — the same clamped walk the extractor
+resolves a member's parent with, following each link but re-anchoring an
+absolute target at the rootfs — and `dirfd.makedirs_under()` then builds
+the result off a descriptor per level, refusing a component planted
+after the resolve. The layer's arcnames come from the **resolved** path,
+which is where the directories really landed.
+
 `layer_diff.layer_path_parts()` is the one rule for what a name may be,
 applied by both halves of a COPY/ADD — `_materialise_files` (the tree)
 and `write_files_layer` (the tar), which used to filter separately, so

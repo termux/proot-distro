@@ -29,6 +29,7 @@ import json
 import os
 import shlex
 
+from proot_distro import dirfd
 from proot_distro.helpers.build_engine.copy_step import do_add, do_copy
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.constants import PREDEFINED_ARGS
@@ -38,6 +39,7 @@ from proot_distro.helpers.build_engine.parsing import (
 from proot_distro.helpers.build_engine.run_step import do_run
 from proot_distro.helpers.docker import layer_cache_path
 from proot_distro.helpers.layer_diff import write_files_layer
+from proot_distro.helpers.tar_extract import _safe_resolve
 
 
 def do_arg(engine, instr):
@@ -151,25 +153,40 @@ def do_workdir(engine, instr):
     # Create the directory inside the rootfs and emit a thin layer that
     # captures every newly-created ancestor, so the path also exists
     # when the image is applied to a fresh rootfs by `install`.
-    host_path = os.path.join(engine.current.rootfs_dir, path.lstrip("/"))
-    new_dirs = []
-    cur = host_path
-    while cur and cur != engine.current.rootfs_dir:
-        if not os.path.lexists(cur):
-            new_dirs.append(cur)
-        cur = os.path.dirname(cur)
-    try:
-        os.makedirs(host_path, exist_ok=True)
-        os.chmod(host_path, 0o755)
-    except OSError:
+    #
+    # The path is resolved before anything is created and then created off
+    # a descriptor per level. os.makedirs() and os.chmod() address every
+    # level by name, so an image shipping `/x -> /tmp/victim` had
+    # `WORKDIR /x/sub` create -- and chmod 0755 -- a directory on the
+    # *host*, outside the rootfs entirely; a base image's `ONBUILD WORKDIR`
+    # reaches that without the Dockerfile containing the line at all.
+    # _safe_resolve still follows the symlinks a legitimate image ships
+    # (`/var/run -> /run` is in nearly every distro image), it just
+    # re-anchors each hop at the rootfs the way proot's own view of the
+    # guest does; makedirs_under then refuses a component planted after
+    # the resolve rather than following it. The arcnames come from the
+    # resolved path, which is where the directories really landed.
+    rootfs = engine.current.rootfs_dir
+    resolved = _safe_resolve(rootfs, path.strip("/").split("/"))
+    if resolved is None:
+        return
+    rel = os.path.relpath(resolved, rootfs)
+    parts = [] if rel == os.curdir else rel.split(os.sep)
+
+    new_dirs = [
+        "/".join(parts[:depth])
+        for depth in range(1, len(parts) + 1)
+        if not os.path.lexists(os.path.join(rootfs, *parts[:depth]))
+    ]
+
+    if dirfd.makedirs_under(rootfs, parts, mode=0o755) is None:
         return
 
     if not new_dirs:
         return
 
     file_map = {}
-    for d in sorted(new_dirs):
-        arc = os.path.relpath(d, engine.current.rootfs_dir)
+    for arc in new_dirs:
         file_map[arc] = {
             "kind": "dir", "mode": 0o755, "uid": 0, "gid": 0, "mtime": 0,
         }
