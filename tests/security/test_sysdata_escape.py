@@ -110,6 +110,40 @@ def test_setup_refuses_a_symlinked_sys_empty(env):
     assert os.listdir(str(outside)) == []
 
 
+def test_setup_drops_a_hardlink_to_a_host_file(env):
+    # A hardlink is a regular file, so the type test alone kept it and
+    # every later session treated the victim's inode as its own fake
+    # /proc content -- the persistent case this module rules out.
+    container, rootfs, outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    victim = outside / "secret"
+    victim.write_text("host secret\n")
+
+    (sd / "loadavg").unlink()
+    os.link(str(victim), str(sd / "loadavg"))
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert (sd / "loadavg").read_text() == sysdata._FAKE_LOADAVG
+    assert (sd / "loadavg").stat().st_nlink == 1
+    # Unlinking the planted name never touches the file it was linked to.
+    assert victim.read_text() == "host secret\n"
+    assert victim.stat().st_nlink == 1
+
+
+def test_setup_keeps_a_file_it_wrote_itself(env):
+    # The link-count test must not turn "already there" into "rewrite it
+    # every time": a single-link file is this module's own.
+    container, rootfs, _outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    before = (sd / "loadavg").stat().st_ino
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+    assert (sd / "loadavg").stat().st_ino == before
+
+
 def test_setup_steps_over_a_directory_in_the_way(env):
     container, rootfs, _outside = env
     sd = _sysdata(container)
@@ -161,6 +195,25 @@ def test_bindings_skip_a_planted_symlink(env, monkeypatch):
     sources = _sources(sysdata.fake_sysdata_bindings(str(rootfs)))
     assert str(sd / "loadavg") not in sources
     assert str(sd / "sys_empty") not in sources
+    assert str(sd / "stat") in sources
+
+
+def test_bindings_skip_a_planted_hardlink(env, monkeypatch):
+    # setup_fake_sysdata() is what normally drops one, but the binding
+    # list is the half that decides what proot mounts, so it makes the
+    # same judgement itself rather than trusting the pass before it.
+    container, rootfs, outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    monkeypatch.setattr(sysdata, "open", _unreadable, raising=False)
+
+    sd = _sysdata(container)
+    victim = outside / "secret"
+    victim.write_text("host secret\n")
+    (sd / "loadavg").unlink()
+    os.link(str(victim), str(sd / "loadavg"))
+
+    sources = _sources(sysdata.fake_sysdata_bindings(str(rootfs)))
+    assert str(sd / "loadavg") not in sources
     assert str(sd / "stat") in sources
 
 

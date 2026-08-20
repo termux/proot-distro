@@ -392,7 +392,16 @@ Top-level utilities (each owns a focused concern):
   at, and let the resulting `--bind` mount that host file into the guest
   as `/proc/loadavg`. An entry that is not of the type this module
   writes is dropped and remade — nothing else writes here — and one that
-  cannot be validated is left unbound rather than followed.
+  cannot be validated is left unbound rather than followed. "Of the
+  type this module writes" counts the **links**: a hardlink is a regular
+  file, so `S_ISREG` alone accepted one a session had made to a host
+  file, `setup_fake_sysdata` then kept it and `fake_sysdata_bindings`
+  named it as the source proot mounts at `/proc/loadavg` — readable
+  *and* writable, proot having no read-only bind. Nothing here ever
+  makes a second link to what it writes, so `st_nlink != 1` means the
+  entry was planted, and both halves judge it that way rather than the
+  second trusting the first. A directory needs no such test: it cannot
+  be hardlinked.
   `fake_sysdata_bindings` emits the `sys_empty:/sys/fs/selinux` bind its
   callers used to append themselves, so validating and naming happen in
   one place.

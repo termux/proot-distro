@@ -38,6 +38,17 @@
 # is dropped and remade -- nothing else writes here, so nothing legitimate
 # is lost -- and one that cannot be validated is left unbound rather than
 # followed.
+#
+# "The type this module wrote" has to include the link count, because a
+# hardlink is a regular file: it *is* another file, under a second name,
+# and O_NOFOLLOW has nothing to refuse. A session that unlinks sysdata/
+# loadavg and links a host file into its place leaves an entry every later
+# session accepts as its own -- setup_fake_sysdata() keeps it, and
+# fake_sysdata_bindings() names it as the source proot mounts at
+# /proc/loadavg, where the guest can read *and write* it, since proot has
+# no read-only bind. That is the persistent case this module exists to
+# rule out, so a file this module wrote is one with exactly one link, and
+# anything else is dropped and written again.
 
 import os
 import stat
@@ -323,13 +334,30 @@ def _ensure_dir_at(dir_fd: int, name: str, mode: int = None):
     return fd
 
 
+def _is_own_file(st) -> bool:
+    """True when *st* describes a file this module could have written.
+
+    A plain file with exactly one link. The link count is half the test
+    because a hardlink is not a distinct kind of entry -- it is the file
+    itself under a second name, so S_ISREG alone accepts one a guest made
+    to a host file and every later session then treats that inode as its
+    own fake /proc content. Nothing here ever creates a second link to
+    anything it writes, so st_nlink != 1 means the entry was planted.
+    """
+    return stat.S_ISREG(st.st_mode) and st.st_nlink == 1
+
+
 def _write_if_missing(dir_fd: int, name: str, content: str) -> None:
     """Create *name* under dir_fd with *content*, unless already present.
 
-    "Present" means a plain file: an entry of any other type is one this
-    module did not write, so it is removed and the real file created in
-    its place. O_CREAT|O_EXCL|O_NOFOLLOW then guarantees the bytes go
-    into a new inode inside this directory and nowhere else.
+    "Present" means a plain file with one link: an entry of any other
+    type -- or one that is also linked from somewhere else -- is not one
+    this module wrote, so it is removed and the real file created in its
+    place. O_CREAT|O_EXCL|O_NOFOLLOW then guarantees the bytes go into a
+    new inode inside this directory and nowhere else. Unlinking the name
+    leaves whatever else the inode is linked from untouched, which is the
+    point: a host file that was linked here keeps its content and simply
+    stops being this container's /proc/loadavg.
     """
     try:
         st = dirfd.lstat_at(dir_fd, name)
@@ -338,7 +366,7 @@ def _write_if_missing(dir_fd: int, name: str, content: str) -> None:
     except OSError:
         return
     if st is not None:
-        if stat.S_ISREG(st.st_mode):
+        if _is_own_file(st):
             return
         try:
             os.unlink(name, dir_fd=dir_fd)
@@ -389,24 +417,37 @@ def setup_fake_sysdata(rootfs: str) -> None:
         os.close(dir_fd)
 
 
-def _is_type_at(dir_fd: int, name: str, predicate) -> bool:
-    """True when *name* under dir_fd is of the type *predicate* accepts."""
+def _is_own_dir(st) -> bool:
+    """True when *st* describes a plain directory.
+
+    No link-count test: a directory cannot be hardlinked, so the type is
+    the whole of it.
+    """
+    return stat.S_ISDIR(st.st_mode)
+
+
+def _accepts_at(dir_fd: int, name: str, predicate) -> bool:
+    """True when *name* under dir_fd is an entry *predicate* accepts."""
     try:
         st = dirfd.lstat_at(dir_fd, name)
     except OSError:
         return False
-    return predicate(st.st_mode)
+    return predicate(st)
 
 
 def fake_sysdata_bindings(rootfs: str) -> list:
     """Return --bind args for the fake /proc and /sys entries of *rootfs*.
 
     Only entries this module could verify are bound: sys_empty as a real
-    directory, each /proc substitute as a plain file. proot still resolves
-    the source by name when it mounts it, so a session running against the
-    same container can re-point one in between; what the check removes is
-    the persistent case, where a guest leaves a symlink behind pointing at
-    a host file and every later session mounts that file into the guest.
+    directory, each /proc substitute as a plain file with one link -- a
+    second link means the inode is reachable under some other name too,
+    which is exactly how a guest hands a host file to the next session as
+    its /proc/loadavg (see _is_own_file). A directory needs no such test:
+    it cannot be hardlinked. proot still resolves the source by name when
+    it mounts it, so a session running against the same container can
+    re-point one in between; what the checks remove is the persistent
+    case, where a guest leaves a symlink or a link to a host file behind
+    and every later session mounts it into the guest.
     """
     base = sysdata_dir(rootfs)
     dir_fd = dirfd.opendir_under(os.path.dirname(rootfs), ("sysdata",))
@@ -415,7 +456,7 @@ def fake_sysdata_bindings(rootfs: str) -> list:
 
     bindings = []
     try:
-        if _is_type_at(dir_fd, "sys_empty", stat.S_ISDIR):
+        if _accepts_at(dir_fd, "sys_empty", _is_own_dir):
             bindings.append(f"--bind={base}/sys_empty:/sys/fs/selinux")
         for name, real, _content in _FAKE_ENTRIES:
             try:
@@ -424,7 +465,7 @@ def fake_sysdata_bindings(rootfs: str) -> list:
                 continue            # the real entry is readable as it is
             except OSError:
                 pass
-            if _is_type_at(dir_fd, name, stat.S_ISREG):
+            if _accepts_at(dir_fd, name, _is_own_file):
                 bindings.append(f"--bind={os.path.join(base, name)}:{real}")
     finally:
         os.close(dir_fd)
