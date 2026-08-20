@@ -1243,6 +1243,22 @@ the other, the same reason `lookup()` takes no lock);
 unlocked, since an unlink is not a read-modify-write — and leaves the
 `.lock` file, which is empty and recreated on demand.
 
+The index and its lock are named as `(dir_fd, entry)` like every other
+file this program keeps, through `statedir.open_state_parent()`. Both
+names sit in the guest-writable download cache and both are entirely
+predictable: `os.makedirs(dirname)` + `os.open(O_RDWR|O_CREAT)` created
+whatever a planted `build_cache_index.json.lock -> <host path>` named,
+or opened an existing host file and held a lock on it, and a FIFO under
+either name blocked the build until a peer that never comes. The lock
+goes through `locking.open_lock_file_at()` — `_open_lock_file`'s public
+form, same rules (`O_NOFOLLOW` + type check, a planted entry dropped and
+remade), different policy: a name that cannot be cleared here means
+"carry on unlocked", which is what a filesystem without flock already
+gives, while a container lock fails closed. `_read_index()` reads
+through `open_regular_at`, so an unreadable index stays distinguishable
+from an absent one — `recorded_layer_digests()` answers `readable=False`
+and the layer sweep stops rather than collecting.
+
 ## Backup / restore
 
 Pure `tarfile`. Archive shape: `<name>/manifest.json` +

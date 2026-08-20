@@ -34,12 +34,44 @@ import json
 import os
 import time
 
+from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_replace
 from proot_distro.constants import BASE_CACHE_DIR
+from proot_distro.locking import open_lock_file_at
 
 
 _INDEX_PATH = os.path.join(BASE_CACHE_DIR, "build_cache_index.json")
 _INDEX_LOCK_PATH = _INDEX_PATH + ".lock"
+
+
+def _open_lock_fd():
+    """Open the index's lock file. Descriptor, or None to proceed unlocked.
+
+    Both halves used to name the file: os.makedirs() on the cache
+    directory, which accepts a symlink to a directory, and then
+    os.open(O_RDWR | O_CREAT) on the lock file itself, which follows one.
+    The cache is guest-writable on Termux -- it sits under the
+    $TERMUX_PREFIX bound read-write into every non-isolated container --
+    and this name is as predictable as they come, so a planted
+    `build_cache_index.json.lock -> <host path>` had this program create
+    that file, or open an existing one and hold a lock on it. A FIFO under
+    the same name was worse: the open blocked until a peer appeared, which
+    a hostile guest simply never provides, and the build stopped there.
+
+    The directory is walked down to with O_NOFOLLOW and the entry opened
+    through locking.open_lock_file_at(), which refuses anything that is
+    not a plain file and replaces it -- nothing but this module writes
+    here.
+    """
+    try:
+        dir_fd, name = statedir.open_state_parent(_INDEX_LOCK_PATH,
+                                                  create=True)
+    except OSError:
+        return None
+    try:
+        return open_lock_file_at(dir_fd, name, _INDEX_LOCK_PATH)
+    finally:
+        os.close(dir_fd)
 
 
 @contextlib.contextmanager
@@ -50,17 +82,12 @@ def _index_lock():
     concurrent `record()` calls would otherwise read-modify-write
     independently and the last writer would silently drop the other's
     entry. The flock serialises updates; on filesystems that don't
-    support flock the call proceeds unlocked (last-writer-wins, same
-    behaviour as before).
+    support flock -- or where the lock file cannot be created at all --
+    the call proceeds unlocked (last-writer-wins, same behaviour as
+    before).
     """
-    try:
-        os.makedirs(os.path.dirname(_INDEX_LOCK_PATH), exist_ok=True)
-    except OSError:
-        yield
-        return
-    try:
-        fd = os.open(_INDEX_LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o644)
-    except OSError:
+    fd = _open_lock_fd()
+    if fd is None:
         yield
         return
     try:
@@ -77,10 +104,36 @@ def _index_lock():
         os.close(fd)
 
 
+def _read_index() -> bytes:
+    """Return the index file's raw content.
+
+    Named as (directory fd, entry) rather than as a path, for the reason
+    the lock file is: open(_INDEX_PATH) followed a planted symlink -- it
+    could only ever read, since every write goes through atomic_replace(),
+    but a FIFO left under the name blocked the read until a peer came,
+    and none does. open_regular_at() refuses every type but a regular
+    file.
+
+    FileNotFoundError means there is no index, which each caller reads
+    differently: a fresh one for lookup(), "the index pins nothing" for
+    the layer sweep. Anything else is a read failure and must not pass
+    for either.
+    """
+    dir_fd, name = statedir.open_state_parent(_INDEX_PATH)
+    try:
+        fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
+    finally:
+        os.close(dir_fd)
+    try:
+        with open(fd, "rb", closefd=False) as fh:
+            return fh.read()
+    finally:
+        os.close(fd)
+
+
 def _load_index():
     try:
-        with open(_INDEX_PATH) as fh:
-            data = json.load(fh)
+        data = json.loads(_read_index())
     except (OSError, ValueError):
         return {"version": 1, "entries": {}}
     if not isinstance(data, dict):
@@ -123,8 +176,7 @@ def recorded_layer_digests():
     one — the same reason lookup() runs unlocked.
     """
     try:
-        with open(_INDEX_PATH) as fh:
-            data = json.load(fh)
+        data = json.loads(_read_index())
     except FileNotFoundError:
         return set(), True
     except (OSError, ValueError):
@@ -162,17 +214,24 @@ def discard_index():
     read unlocked.
     """
     try:
-        size = os.stat(_INDEX_PATH).st_size
+        dir_fd, name = statedir.open_state_parent(_INDEX_PATH)
     except FileNotFoundError:
         return False, 0
-    except OSError:
-        # Present but not stat'able; the unlink below is what decides
-        # the outcome, and the size is only the report.
-        size = 0
     try:
-        os.unlink(_INDEX_PATH)
-    except FileNotFoundError:
-        return False, 0
+        try:
+            size = dirfd.lstat_at(dir_fd, name).st_size
+        except FileNotFoundError:
+            return False, 0
+        except OSError:
+            # Present but not stat'able; the unlink below is what decides
+            # the outcome, and the size is only the report.
+            size = 0
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            return False, 0
+    finally:
+        os.close(dir_fd)
     return True, size
 
 

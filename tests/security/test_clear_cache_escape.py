@@ -179,8 +179,9 @@ def test_symlinked_cache_root_is_refused(cache_inside_a_root, tmp_path,
     assert (outside / "keepsake").exists()
 
 
-def test_symlinked_cache_root_is_refused_by_the_orphan_sweep(
-        cache_inside_a_root, tmp_path, capsys):
+@pytest.mark.parametrize("flag", ["orphan", "build_cache"])
+def test_symlinked_cache_root_is_refused_by_the_sweep(
+        flag, cache_inside_a_root, tmp_path, capsys):
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "sha256_something").write_text("host blob\n")
@@ -188,9 +189,12 @@ def test_symlinked_cache_root_is_refused_by_the_orphan_sweep(
     os.symlink(str(outside), BASE_CACHE_DIR)
 
     with pytest.raises(SystemExit) as exc:
-        command_clear_cache(_args(orphan=True))
+        command_clear_cache(_args(**{flag: True}))
     assert exc.value.code == 1
-    assert "layer cache" in capsys.readouterr().err
+    # Whichever guard is reached first — the build index cannot be read
+    # under --orphan, and cannot be removed under --build-cache — the
+    # sweep stops before deleting anything.
+    assert "Nothing was removed" in capsys.readouterr().err
     assert (outside / "sha256_something").exists()
 
 

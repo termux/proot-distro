@@ -319,6 +319,30 @@ def _open_lock_file(dir_fd: int, name: str, path: str):
         return None
 
 
+def open_lock_file_at(dir_fd: int, name: str, path: str = ""):
+    """Open (creating) a lock file under dir_fd. Descriptor, or None.
+
+    The public form of _open_lock_file, for a lock file this module does
+    not own: the build-cache index keeps its own next to the index, which
+    lives in the download cache rather than in RUNTIME_DIR/locks. The
+    opening rules are the same -- O_NOFOLLOW plus a type check, and an
+    entry that is not a plain file was planted, so it is dropped and the
+    real lock file made in its place.
+
+    The *policy* differs at one point. Here a name that cannot be cleared
+    comes back as None, "carry on without a lock", because that is what
+    the caller already does on a filesystem that ignores flock and what
+    losing the lock costs there is a concurrent record()'s entry, not a
+    corrupt file -- the index itself is published through
+    atomic_replace(). A container lock is the other way round and fails
+    closed; see acquire().
+    """
+    try:
+        return _open_lock_file(dir_fd, name, path or name)
+    except _HostileLockPath:
+        return None
+
+
 # What opening an existing entry that is not a plain file reports:
 # ELOOP/ENOTDIR for a symlink (is_refusal), EISDIR for a directory, EINVAL
 # from open_regular_at()'s own type check, ENXIO for a FIFO with no reader.
