@@ -261,32 +261,58 @@ def opendir_under(root: str, parts, *, create: bool = False,
     The caller owns the returned descriptor and must close it.
     """
     try:
-        fd = opendir(root)
+        root_fd = opendir(root)
     except OSError:
         return None
     try:
+        return descend_at(root_fd, parts, create=create, mode=mode)
+    except OSError:
+        return None
+    finally:
+        os.close(root_fd)
+
+
+def descend_at(dir_fd: int, parts, *, create: bool = False,
+               mode: int = None) -> int:
+    """Open the directory *parts* names under dir_fd. Descriptor, or raises.
+
+    The walk opendir_under() performs, starting from a descriptor the
+    caller already holds rather than from a path. A caller that has
+    pinned a directory -- a container's own directory, a rootfs -- keeps
+    the guarantee that pin gives it only by descending from the
+    descriptor: going back to the path re-resolves every component above,
+    which is the part that was validated in the first place.
+
+    Each level is opened O_NOFOLLOW off the level above, so a component
+    that is a symlink (ELOOP, or ENOTDIR for O_NOFOLLOW|O_DIRECTORY on
+    Linux) or a plain file raises rather than being followed. A missing
+    level raises FileNotFoundError unless create=True, which makes it
+    with mkdirat off the same validated descriptor. *mode* is applied to
+    the leaf through its descriptor.
+
+    dir_fd itself is left open; with no parts the answer is a fresh
+    descriptor on the same directory, so the caller owns and closes what
+    comes back either way.
+    """
+    fd = None
+    try:
         for part in parts:
+            src = dir_fd if fd is None else fd
             try:
-                nxt = opendir_at(fd, part)
+                nxt = opendir_at(src, part)
             except FileNotFoundError:
                 if not create:
-                    return None
+                    raise
                 try:
-                    os.mkdir(part, 0o777, dir_fd=fd)
+                    os.mkdir(part, 0o777, dir_fd=src)
                 except FileExistsError:
                     pass            # lost a race with another writer
-                except OSError:
-                    return None
-                try:
-                    nxt = opendir_at(fd, part)
-                except OSError:
-                    return None
-            except OSError:
-                # A symlink (ELOOP, or ENOTDIR for O_NOFOLLOW|O_DIRECTORY
-                # on Linux), or a plain file standing in the way.
-                return None
-            os.close(fd)
+                nxt = opendir_at(src, part)
+            if fd is not None:
+                os.close(fd)
             fd = nxt
+        if fd is None:
+            fd = reopen(dir_fd)
         if mode is not None:
             _chmod_fd(fd, mode)
         opened, fd = fd, None

@@ -264,7 +264,13 @@ Top-level utilities (each owns a focused concern):
   mode=)` is the same walk handing back the descriptor instead, for a
   caller that must keep addressing entries under a directory the guest
   could otherwise re-point (the lock files, the session registry, a
-  container's `sysdata/`). Each level is `mkdirat`'ed off the
+  container's `sysdata/`). `descend_at(dir_fd, parts, create=)` is that
+  walk starting from a descriptor the caller already holds — what
+  `opendir_under` is built on, and what a caller with a *pinned*
+  directory (`restore`'s container directory) must use, since going back
+  to the path re-resolves the very components the pin validated. It
+  raises rather than answering `None`, so a missing level and a refused
+  one stay distinguishable. Each level is `mkdirat`'ed off the
   descriptor of the level above and reopened `O_NOFOLLOW`, and the mode
   goes on through `_chmod_fd`; `None` means "a component is a symlink or
   is not a directory", which callers treat as *do not use this path*
@@ -1229,6 +1235,9 @@ uid/gid/uname/gname; refuses to write to a TTY without `--output`.
 Restore auto-detects compression (`tarfile r|*` files; magic-byte peek
 for stdin), routes members through `_dest_path()` into
 `containers/<name>/...`, re-rooting legacy `installed-rootfs/<name>`.
+`_dest_path()` answers in **components below the container directory**
+(`("rootfs", "etc", …)`), never a composed path, because that directory
+is what the extraction descends from.
 Both ends speak zstd (`.tar.zst`/`.tzst`, `--compress zstd`) where
 `compress.ZSTD_AVAILABLE` says the interpreter can — written through
 `compress.open_tar_writer` so `-o file.tar.zst` and a piped backup
@@ -1265,6 +1274,32 @@ name for a file already in the archive stays a hard-link member instead
 of a second copy. A hardlink to a host file is still the file itself
 under a second name and no descriptor can tell it apart — the one thing
 the walk does not close.
+
+Restore writes nothing by path either. `containers/<name>` is opened
+once — at the **commit point**, so an archive that never produces a
+rootfs member still leaves no trace — through
+`paths.open_container_dir()`, and every member goes in as
+`(dir_fd, name)` under that descriptor (`_Destinations`, a one-entry
+parent cache, since a backup's members arrive in walk order). Two
+separate things needed it. The container directory is guest-writable on
+Termux, and `_safe_dest()` clamped every member "inside the container
+directory" — which is exactly where a planted
+`containers/<name> -> <host dir>` led, with the rootfs-is-not-a-symlink
+check running only *after* the writes. And a member's parents are
+archive content: they are resolved with
+`tar_extract.safe_resolve_parts` — which follows a symlink an earlier
+member shipped but re-anchors it, now at the **rootfs** rather than at
+the container directory, so a `lib -> /usr/lib` no longer lands members
+in `containers/<name>/usr/lib` beside the rootfs — and the resolved
+components are then re-walked with `O_NOFOLLOW` (`dirfd.descend_at`),
+since resolving by name and writing by name are two acts and the member
+after the resolve can be the one that plants the link. The writers are
+`open_new_at` (O_EXCL, so a hardlinked name is never written through),
+`mkdir`+`chmod_at`, `os.symlink(…, dir_fd=)` and `copy_data` for a
+hard-link member; the old rootfs is cleared with
+`rmtree_at(root_fd, "rootfs")`, the deferred directory modes are
+replayed through the same walk, and the manifest is published with
+`atomic_replace` instead of `open(path, 'wb')`.
 
 Both gate every stderr write on `tty_safe_for_writes()` — when a
 sibling pinentry/curses holds the TTY (ECHO or ICANON cleared in

@@ -158,6 +158,30 @@ def test_roundtrip_hardlinked_files_share_one_copy(tmp_path, builders):
             assert fh.read() == b"shared"
 
 
+def test_restore_writes_into_a_sealed_directory_member(tmp_path):
+    # A directory member whose archived mode has no owner rwx has to be
+    # widened while its own children are written and sealed again at the
+    # end — the deferred-mode machinery, now replayed through the
+    # descriptor walk rather than by path.
+    from _builders import make_tar
+
+    arc = tmp_path / "sealed.tar"
+    make_tar(str(arc), [
+        {"name": "box/rootfs/sealed", "type": "dir", "mode": 0o000},
+        {"name": "box/rootfs/sealed/inside", "type": "file", "data": b"hidden"},
+    ])
+    _restore(arc)
+
+    sealed = os.path.join(container_rootfs("box"), "sealed")
+    try:
+        assert stat.S_IMODE(os.lstat(sealed).st_mode) == 0o000
+        os.chmod(sealed, 0o700)
+        with open(os.path.join(sealed, "inside"), "rb") as fh:
+            assert fh.read() == b"hidden"
+    finally:
+        os.chmod(sealed, 0o755)
+
+
 def test_restore_clears_a_sealed_subtree_of_the_old_rootfs(tmp_path, builders):
     # The old rootfs is cleared before the archive is unpacked. That pass
     # used to be an os.walk() bottom-up loop with a shutil.rmtree() behind

@@ -12,28 +12,37 @@ from proot_distro.paths import (
 )
 
 
+# The mapper answers in components *below* containers/<name>, which is
+# the descriptor the extraction descends from — never a composed path.
+
 def test_new_format_rootfs_member():
-    name, dest = restore._dest_path("ubuntu/rootfs/etc/hostname")
+    name, parts = restore._dest_path("ubuntu/rootfs/etc/hostname")
     assert name == "ubuntu"
-    assert dest == os.path.join(container_rootfs("ubuntu"), "etc", "hostname")
+    assert parts == ("rootfs", "etc", "hostname")
 
 
 def test_new_format_manifest_member():
-    name, dest = restore._dest_path("ubuntu/manifest.json")
+    name, parts = restore._dest_path("ubuntu/manifest.json")
     assert name == "ubuntu"
-    assert dest == container_manifest("ubuntu")
+    assert parts == ("manifest.json",)
 
 
 def test_new_format_rootfs_root():
-    name, dest = restore._dest_path("ubuntu/rootfs")
+    name, parts = restore._dest_path("ubuntu/rootfs")
     assert name == "ubuntu"
-    assert dest == container_rootfs("ubuntu")
+    assert parts == ("rootfs",)
 
 
 def test_legacy_format_rerooted():
-    name, dest = restore._dest_path("installed-rootfs/ubuntu/etc/x")
+    name, parts = restore._dest_path("installed-rootfs/ubuntu/etc/x")
     assert name == "ubuntu"
-    assert dest == os.path.join(container_rootfs("ubuntu"), "etc", "x")
+    assert parts == ("rootfs", "etc", "x")
+
+
+def test_old_layout_member_lands_in_the_rootfs():
+    name, parts = restore._dest_path("ubuntu/etc/x")
+    assert name == "ubuntu"
+    assert parts == ("rootfs", "etc", "x")
 
 
 @pytest.mark.parametrize("member", [
@@ -63,9 +72,12 @@ def test_bare_single_component_skipped():
 
 def test_leading_slash_stays_within_containers_dir():
     # Absolute-looking members are re-rooted under containers/, never escape.
-    name, dest = restore._dest_path("/abs/path")
+    name, parts = restore._dest_path("/abs/path")
     assert name == "abs"
-    assert os.path.abspath(dest).startswith(os.path.abspath(CONTAINERS_DIR) + os.sep)
+    assert parts == ("rootfs", "path")
+    joined = os.path.join(container_dir(name), *parts)
+    assert os.path.abspath(joined).startswith(
+        os.path.abspath(CONTAINERS_DIR) + os.sep)
 
 
 # ----- full restore of a hostile archive ----------------------------------
@@ -173,6 +185,67 @@ def test_restore_rootfs_as_symlink_rejected(tmp_path):
         ])
     assert exc.value.code == 1
     assert not os.path.exists(container_dir("box"))
+
+
+def test_restore_will_not_write_through_a_planted_container_dir(tmp_path):
+    # containers/<name> is guest-writable on Termux. _safe_dest clamped
+    # every member "inside the container directory", which is exactly
+    # where a planted link led, and the rootfs check ran after the writes.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keepsake").write_text("host content\n")
+    os.symlink(str(outside), container_dir("box"))
+
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/manifest.json", "type": "file", "data": b"{}"},
+            {"name": "box/rootfs/etc/hostname", "type": "file", "data": b"g"},
+        ])
+    assert exc.value.code == 1
+    assert sorted(os.listdir(str(outside))) == ["keepsake"]
+
+
+def test_restore_reanchors_a_symlink_the_archive_shipped(tmp_path):
+    # An archive can ship `rootfs/etc -> <host dir>` and then a member
+    # underneath it. The link is followed -- that is what a rootfs looks
+    # like -- but re-anchored at the container directory, so the member
+    # lands inside the container.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    _run_restore(tmp_path, [
+        {"name": "box/rootfs/keep", "type": "file", "data": b"real"},
+        {"name": "box/rootfs/etc", "type": "symlink", "linkname": str(outside)},
+        {"name": "box/rootfs/etc/passwd", "type": "file", "data": b"stolen"},
+    ])
+
+    assert os.listdir(str(outside)) == []
+    # Re-anchored at the container root: <rootfs>/<outside-as-relative>.
+    landed = os.path.join(
+        container_rootfs("box"), str(outside).lstrip(os.sep), "passwd")
+    assert open(landed, "rb").read() == b"stolen"
+    # The link itself is restored verbatim, as a link — it is just never
+    # written *through*.
+    assert os.readlink(os.path.join(container_rootfs("box"), "etc")) == \
+        str(outside)
+
+
+def test_restore_replaces_a_symlink_standing_at_a_member_name(tmp_path):
+    # The final component is never followed: a member replaces the entry
+    # itself, so an earlier `x -> <host file>` does not turn the next
+    # member into a write through it.
+    victim = tmp_path / "victim"
+    victim.write_text("host content\n")
+
+    _run_restore(tmp_path, [
+        {"name": "box/rootfs/x", "type": "symlink", "linkname": str(victim)},
+        {"name": "box/rootfs/x", "type": "file", "data": b"member"},
+    ])
+
+    assert victim.read_text() == "host content\n"
+    dest = os.path.join(container_rootfs("box"), "x")
+    assert not os.path.islink(dest)
+    assert open(dest, "rb").read() == b"member"
 
 
 def test_restore_dangling_rootfs_member_rejected(tmp_path):
