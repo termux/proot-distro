@@ -31,11 +31,11 @@
 import json
 import os
 import re
-import shutil
 import sys
 import tarfile
 import tempfile
 
+from proot_distro import dirfd
 from proot_distro.atomic import atomic_replace
 from proot_distro.constants import BASE_CACHE_DIR, PROGRAM_NAME
 from proot_distro.message import C, msg, log_info, log_error, crit_error
@@ -221,10 +221,13 @@ def _run_install(
     os.makedirs(rootfs_dir, exist_ok=True)
 
     def _cleanup() -> None:
-        try:
-            shutil.rmtree(container_path)
-        except OSError:
-            pass
+        # The tree being discarded is whatever the image or the archive
+        # produced, so it can be deeper than the interpreter's stack and
+        # can hold directories the image sealed. shutil.rmtree() managed
+        # neither: it recursed, and RecursionError is not an OSError, so
+        # the handler here let it past and the failed install took the
+        # command down with it instead of cleaning up.
+        dirfd.remove_tree(container_path)
 
     tmp_archive = None
     try:

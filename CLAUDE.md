@@ -162,9 +162,31 @@ Top-level utilities (each owns a focused concern):
   `opendir_at`/`reopen`/`open_file_at`/`open_regular_at`/`open_new_at`
   (always `O_NOFOLLOW`), `listdir_at`/`lstat_at`/`exists_at`,
   `copy_file_at`/`copy_symlink_at`/`copy_tree_at`/`count_tree_at`,
-  `rmtree_at`/`unlink_quietly`, `temp_name`, `close_frames`, and fd-based
-  metadata (`copy_metadata`, `set_times_at`, `make_writable`,
-  `chmod_at`).
+  `rmtree_at`/`remove_tree`/`unlink_quietly`, `temp_name`,
+  `close_frames`, and fd-based metadata (`copy_metadata`, `set_times_at`,
+  `make_writable`, `chmod_at`).
+  `rmtree_at` is the **only** tree removal in the program. It takes the
+  same `on_error(rel, exc)` bargain `copy_tree_at` does — with a callback
+  an entry that will not go is reported and stepped over so the rest of
+  the tree still goes, without one the `OSError` propagates and the walk
+  stops where it stands — plus an `on_remove(rel)` for a caller counting
+  or listing what went, and it returns whether anything is left. A
+  directory whose contents did not all go is not `rmdir`'ed, since the
+  `ENOTEMPTY` says nothing the failure below it has not.
+  `remove_tree(path)` is its path-taking front door for the cleanup paths
+  that hold a path rather than a descriptor: it names only the *parent* —
+  a directory this program owns — walks everything below as
+  `(dir_fd, name)`, forces the chmod, and never raises. Every
+  `shutil.rmtree()` in the program is gone in its favour, because rmtree
+  was wrong twice over on a tree an image or a guest wrote: it **recurses**,
+  and a `RecursionError` is not an `OSError`, so neither the
+  `except OSError` nor the `ignore_errors=True` those calls all sat behind
+  caught one — `install`'s failed-install cleanup, `build`'s `tmp_root`,
+  `restore`'s old-rootfs clear and its abort path, `clear-cache`, and the
+  tar extractor's whiteout handling each died on a traceback instead. And
+  it cannot chmod its way into a directory the image sealed, so a
+  `chmod 000` subtree of a *previous* rootfs survived `restore` into the
+  restored container.
   `makedirs_under(root, parts, mode)` is the one entry point taking a
   *path* — `os.makedirs()`'s replacement for a directory whose components
   are guest or image content. Each level is `mkdirat`'ed off the
@@ -557,17 +579,17 @@ matter and is refused outright, in `copy` for the message and in
 `open_regular_at()` against the pinned fd for the race.
 
 `remove` (and `reset`, which reuses `_remove_path`) deletes a container
-tree with an **explicit stack** of directory fds, not recursion: how deep
-a rootfs goes is the container's choice, and one past the interpreter's
-limit ended both commands in a `RecursionError` — which is not an
-`OSError`, so nothing caught it. Entries are named as `(dir_fd, name)`
-throughout, which also keeps the chmod that opens a `chmod 000` subtree
-off a path (`dirfd.chmod_at`). `reset` no longer falls back to
-`shutil.rmtree()` when that walk reports a failure: rmtree does strictly
-less (it cannot relax a sealed directory), so it could only fail where
-the walk already had, and being plain recursion it reintroduced the very
-crash one line below the fix. `install` refusing a rootfs that is still
-there is the report the user gets.
+tree through `dirfd.remove_tree()`, so how deep a rootfs goes is the
+container's business: it used to recurse, and one past the interpreter's
+limit ended both commands in a `RecursionError` — not an `OSError`, so
+nothing caught it. `_remove_path` is now only the wrapper that turns the
+walk's relative names back into the full paths `remove --verbose`
+prints. `reset` no longer falls back to `shutil.rmtree()` when the walk
+reports a failure: rmtree does strictly less (it cannot relax a sealed
+directory), so it could only fail where the walk already had, and being
+plain recursion it reintroduced the very crash one line below the fix.
+`install` refusing a rootfs that is still there is the report the user
+gets.
 
 `-i`/`--image` switches `list` and `remove` from containers to **cached
 images** (manifest-cache entry + its layer blobs). `list --image`

@@ -6,6 +6,7 @@ import errno
 import os
 import signal
 import stat
+import sys
 
 import pytest
 
@@ -488,3 +489,157 @@ def test_rmtree_at_force_removes_unreadable_dir(tmp_path):
     finally:
         os.close(fd)
     assert not tree.exists()
+
+
+# --- rmtree_at's reporting callbacks ---------------------------------------
+
+def test_rmtree_at_reports_and_steps_over_an_entry_that_will_not_go(tmp_path,
+                                                                    monkeypatch):
+    # Without on_error the OSError propagates and the walk stops where it
+    # stands; with one it is reported and the rest of the tree still goes.
+    root = tmp_path / "root"
+    (root / "keep").mkdir(parents=True)
+    (root / "keep" / "a").write_text("a")
+    (root / "b").write_text("b")
+
+    real_unlink = os.unlink
+
+    def _refuse(name, *a, **kw):
+        if name == "a":
+            raise PermissionError(errno.EACCES, "nope", name)
+        return real_unlink(name, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", _refuse)
+
+    seen = []
+    fd = dirfd.opendir(str(tmp_path))
+    try:
+        ok = dirfd.rmtree_at(fd, "root", force=True,
+                             on_error=lambda rel, exc: seen.append(rel))
+    finally:
+        os.close(fd)
+
+    assert ok is False
+    assert seen == ["keep/a"]
+    # The sibling went, and the directory holding the refused entry stayed —
+    # rmdir'ing it would only have raised ENOTEMPTY.
+    monkeypatch.undo()
+    assert not (root / "b").exists()
+    assert (root / "keep" / "a").exists()
+
+
+def test_rmtree_at_without_on_error_still_raises(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a").write_text("a")
+
+    def _refuse(name, *a, **kw):
+        raise PermissionError(errno.EACCES, "nope", name)
+
+    monkeypatch.setattr(os, "unlink", _refuse)
+
+    fd = dirfd.opendir(str(tmp_path))
+    try:
+        with pytest.raises(PermissionError):
+            dirfd.rmtree_at(fd, "root", force=True)
+    finally:
+        os.close(fd)
+
+
+def test_rmtree_at_reports_every_removal(tmp_path):
+    root = tmp_path / "root"
+    (root / "d").mkdir(parents=True)
+    (root / "d" / "f").write_text("f")
+    (root / "g").write_text("g")
+
+    seen = []
+    fd = dirfd.opendir(str(tmp_path))
+    try:
+        assert dirfd.rmtree_at(fd, "root", on_remove=seen.append) is True
+    finally:
+        os.close(fd)
+
+    # The root reports as "", and a directory only after its contents.
+    assert sorted(seen) == ["", "d", "d/f", "g"]
+    assert seen.index("d/f") < seen.index("d")
+
+
+# --- remove_tree, the path-taking front door -------------------------------
+
+def test_remove_tree_clears_a_sealed_subtree(tmp_path):
+    root = tmp_path / "root"
+    sealed = root / "sealed"
+    sealed.mkdir(parents=True)
+    (sealed / "inside").write_text("x")
+    sealed.chmod(0o000)
+
+    try:
+        assert dirfd.remove_tree(str(root)) is True
+    finally:
+        if sealed.is_dir():
+            sealed.chmod(0o755)
+    assert not root.exists()
+
+
+def test_remove_tree_unlinks_a_symlink_without_following_it(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("KEEP")
+    root = tmp_path / "root"
+    root.mkdir()
+    os.symlink(str(outside), str(root / "link"))
+
+    assert dirfd.remove_tree(str(root)) is True
+    assert not root.exists()
+    assert (outside / "keep").read_text() == "KEEP"
+
+
+def test_remove_tree_on_a_missing_path_is_true(tmp_path):
+    assert dirfd.remove_tree(str(tmp_path / "ghost")) is True
+
+
+def test_remove_tree_removes_a_plain_file(tmp_path):
+    f = tmp_path / "f"
+    f.write_text("x")
+    assert dirfd.remove_tree(str(f)) is True
+    assert not f.exists()
+
+
+def test_remove_tree_never_raises(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a").write_text("a")
+
+    def _refuse(name, *a, **kw):
+        raise PermissionError(errno.EACCES, "nope", name)
+
+    monkeypatch.setattr(os, "unlink", _refuse)
+    assert dirfd.remove_tree(str(root)) is False
+
+
+def test_remove_tree_survives_a_tree_deeper_than_the_stack(tmp_path):
+    root = tmp_path / "deep"
+    depth = 1200
+    assert depth > sys.getrecursionlimit()
+    os.mkdir(str(root))
+    fds = [os.open(str(root), os.O_RDONLY | os.O_DIRECTORY)]
+    try:
+        for _ in range(depth):
+            os.mkdir("d", 0o755, dir_fd=fds[-1])
+            fds.append(os.open("d", os.O_RDONLY | os.O_DIRECTORY,
+                               dir_fd=fds[-1]))
+        os.close(os.open("leaf", os.O_WRONLY | os.O_CREAT, 0o644,
+                         dir_fd=fds[-1]))
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+    before = set(os.listdir("/proc/self/fd"))
+    try:
+        assert dirfd.remove_tree(str(root)) is True
+        assert not root.exists()
+        assert len(set(os.listdir("/proc/self/fd")) - before) == 0
+    finally:
+        # Never leave one behind: pytest's own tmp_path cleanup is
+        # shutil.rmtree, which is exactly what cannot remove it.
+        dirfd.remove_tree(str(root))

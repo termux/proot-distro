@@ -36,7 +36,6 @@
 
 import json
 import os
-import stat
 import sys
 from contextlib import ExitStack
 
@@ -64,41 +63,6 @@ from proot_distro.helpers.docker import (
 _MIN_ID_PREFIX = 4
 
 
-def _unlink_entry(dir_fd, name, path, st, on_remove) -> bool:
-    """Remove the non-directory *name* under dir_fd. True when it is gone."""
-    if not stat.S_ISLNK(st.st_mode):
-        needed = stat.S_IRUSR | stat.S_IWUSR
-        mode = stat.S_IMODE(st.st_mode)
-        if mode | needed != mode:
-            dirfd.chmod_at(dir_fd, name, mode | needed)
-    try:
-        os.unlink(name, dir_fd=dir_fd)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    if on_remove:
-        on_remove(path)
-    return True
-
-
-def _open_for_removal(dir_fd, name, st):
-    """Open the directory *name* under dir_fd so its contents can go.
-
-    A subtree the container chmod'ed 000 is relaxed first, through a
-    descriptor rather than through its name (dirfd.chmod_at). Returns the
-    fd, or None when the directory still cannot be listed.
-    """
-    needed = stat.S_IRWXU
-    mode = stat.S_IMODE(st.st_mode)
-    if mode | needed != mode:
-        dirfd.chmod_at(dir_fd, name, mode | needed, only_dir=True)
-    try:
-        return dirfd.opendir_at(dir_fd, name)
-    except OSError:
-        return None
-
-
 def _remove_path(path: str, on_remove=None) -> bool:
     """Remove path recursively, fixing permissions on the fly.
 
@@ -106,107 +70,22 @@ def _remove_path(path: str, on_remove=None) -> bool:
     state is left on disk. The optional on_remove callback is called with the
     path of each successfully removed entry.
 
-    The descent carries its open directories on an explicit stack rather
-    than recursing: how deep a rootfs goes is the container's choice, and a
-    tree a little past the interpreter's limit — which a guest can build in
-    a second — ended `remove` and `reset` in a RecursionError traceback.
-    That is not an OSError, so nothing here caught it.
-
-    Entries are named as (directory fd, name) throughout, which also keeps
-    the chmod that relaxes a sealed subtree off a path: os.chmod() follows
-    a symlink, and the mode change would land on whatever it pointed at.
+    dirfd.remove_tree() carries its open directories on an explicit stack
+    rather than recursing — how deep a rootfs goes is the container's
+    choice, and a tree a little past the interpreter's limit ended `remove`
+    and `reset` in a RecursionError, which is not an OSError and so went
+    uncaught. It also names every entry as (directory fd, name), which
+    keeps the chmod that opens a sealed subtree off a path where os.chmod()
+    would follow a symlink standing in for the directory.
     """
-    path = os.path.abspath(path)
-    name = os.path.basename(path)
-    if not name:
-        return False                    # "/" — not something to remove
-    try:
-        parent_fd = dirfd.opendir(os.path.dirname(path))
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    try:
-        return _remove_at(parent_fd, name, path, on_remove)
-    finally:
-        os.close(parent_fd)
-
-
-def _remove_at(parent_fd, name, path, on_remove) -> bool:
-    """Remove *name* under parent_fd, descending into it if it is a directory."""
-    try:
-        st = dirfd.lstat_at(parent_fd, name)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-
-    if not stat.S_ISDIR(st.st_mode):
-        return _unlink_entry(parent_fd, name, path, st, on_remove)
-
-    fd = _open_for_removal(parent_fd, name, st)
-    if fd is None:
-        return False
-
-    ok = True
-    # Frame layout: [fd, None, parent fd, own name, own path, pending,
-    # emptied, owned] — the two descriptor slots first and `owned` last, so
-    # close_frames() unwinds an interrupted walk. `emptied` stays True only
-    # while every entry below this level has gone; a directory that still
-    # holds something is not rmdir'ed, exactly as before.
-    stack = [[fd, None, parent_fd, name, path, None, True, True]]
-    try:
-        while stack:
-            frame = stack[-1]
-            fd, _, pfd, entry, epath, pending, _, _ = frame
-            if pending is None:
-                try:
-                    pending = dirfd.listdir_at(fd)
-                except OSError:
-                    pending = []
-                    frame[6] = False
-                pending.reverse()
-                frame[5] = pending
-            if not pending:
-                stack.pop()
-                os.close(fd)
-                if frame[6]:
-                    try:
-                        os.rmdir(entry, dir_fd=pfd)
-                        if on_remove:
-                            on_remove(epath)
-                    except OSError:
-                        frame[6] = False
-                if not frame[6]:
-                    ok = False
-                    if stack:
-                        stack[-1][6] = False
-                continue
-
-            child = pending.pop()
-            child_path = os.path.join(epath, child)
-            try:
-                child_st = dirfd.lstat_at(fd, child)
-            except FileNotFoundError:
-                continue                # went away on its own
-            except OSError:
-                frame[6] = False
-                continue
-            if not stat.S_ISDIR(child_st.st_mode):
-                if not _unlink_entry(fd, child, child_path, child_st,
-                                     on_remove):
-                    frame[6] = False
-                continue
-            sub = _open_for_removal(fd, child, child_st)
-            if sub is None:
-                frame[6] = False
-                continue
-            stack.append([sub, None, fd, child, child_path, None, True, True])
-    except BaseException:
-        dirfd.close_frames(stack)
-        raise
-
-    return ok
+    return dirfd.remove_tree(
+        path,
+        on_remove=(
+            None if on_remove is None
+            else lambda rel: on_remove(os.path.join(path, rel) if rel
+                                       else path)
+        ),
+    )
 
 
 def command_remove(args) -> None:

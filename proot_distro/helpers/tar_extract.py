@@ -75,6 +75,7 @@ import shutil
 import stat
 import tarfile
 
+from proot_distro import dirfd
 from proot_distro.compress import (
     require_read_support, require_read_support_fd,
 )
@@ -342,14 +343,17 @@ def _apply_whiteout(rel_parts, parent) -> bool:
 
 
 def _remove_fstree(path: str) -> None:
-    """Remove a file, symlink, or directory tree; ignore all errors."""
-    try:
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path, ignore_errors=True)
-        else:
-            os.remove(path)
-    except OSError:
-        pass
+    """Remove a file, symlink, or directory tree; ignore all errors.
+
+    Reached from both whiteout forms and from a member that replaces one,
+    so what it is pointed at is a directory an *earlier layer* wrote — as
+    deep and as sealed as the image chose. shutil.rmtree() recursed, and
+    RecursionError is not an OSError, so a crafted image that put a deep
+    tree in one layer and a whiteout in the next took `install` down with
+    a traceback. remove_tree() also unlinks a symlink rather than
+    traversing it, which is the type test this used to make by hand.
+    """
+    dirfd.remove_tree(path)
 
 
 def _write_symlink(dest: str, member) -> None:

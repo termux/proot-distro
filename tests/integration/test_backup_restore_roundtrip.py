@@ -158,6 +158,32 @@ def test_roundtrip_hardlinked_files_share_one_copy(tmp_path, builders):
             assert fh.read() == b"shared"
 
 
+def test_restore_clears_a_sealed_subtree_of_the_old_rootfs(tmp_path, builders):
+    # The old rootfs is cleared before the archive is unpacked. That pass
+    # used to be an os.walk() bottom-up loop with a shutil.rmtree() behind
+    # it, and neither can get into a directory the guest chmod-000'ed: the
+    # walk lists a directory before handing it over, and rmtree cannot
+    # chmod. So a sealed subtree of the *previous* container survived into
+    # the "restored" one, mixing stale content into it.
+    builders.make_container("stale")
+    out = tmp_path / "stale.tar"
+    _backup("stale", out)
+
+    sealed = os.path.join(container_rootfs("stale"), "sealed")
+    os.makedirs(sealed)
+    with open(os.path.join(sealed, "leftover"), "wb") as fh:
+        fh.write(b"STALE")
+    os.chmod(sealed, 0o000)
+
+    try:
+        _restore(out)
+    finally:
+        if os.path.isdir(sealed):
+            os.chmod(sealed, 0o755)
+
+    assert not os.path.exists(sealed)
+
+
 def test_restore_rootfs_less_archive_preserves_existing(tmp_path, builders):
     # A rootfs-less archive (manifest only) naming an installed container
     # must be rejected without disturbing what is already on disk — the

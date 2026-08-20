@@ -14,6 +14,13 @@
 # `remove` (and `reset`, which shares its walk) recursed the same way, on a
 # tree it deletes rather than reads.
 #
+# So did every shutil.rmtree() in the program — the cleanup paths in
+# `install`, `build`, `restore`, `clear-cache` and the tar extractor's
+# whiteout handling. Those all ran under an `except OSError` or an
+# ignore_errors=True, neither of which catches a RecursionError, so a tree
+# an image can ship in a second took the command down with a traceback
+# rather than being cleaned up. They share dirfd.remove_tree() now.
+#
 # `backup` is here as a guard rather than a fix: it walked with os.walk(),
 # which is iterative, and now walks with its own fd stack, which has to stay
 # that way. Same for its fds, which os.walk() never held.
@@ -26,9 +33,12 @@ from types import SimpleNamespace
 
 from proot_distro import dirfd
 from proot_distro.commands.backup import command_backup
+from proot_distro.commands.clear_cache import command_clear_cache
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.sync import command_sync
+from proot_distro.constants import BASE_CACHE_DIR
+from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
 from proot_distro.paths import container_dir, container_rootfs
 
 # Comfortably past sys.getrecursionlimit()'s default of 1000, and past the
@@ -271,4 +281,56 @@ def test_remove_deletes_a_deep_tree_sealed_partway_down(builders):
     finally:
         if os.path.isdir(sealed):
             os.chmod(sealed, 0o755)
+        _remove_deep(deep)
+
+
+def test_whiteout_clears_a_tree_deeper_than_the_stack(tmp_path, builders):
+    """A crafted image: a deep tree in one layer, a whiteout in the next."""
+    root = tmp_path / "root"
+    root.mkdir()
+    _make_deep(str(root / "deep"))
+
+    arc = tmp_path / "layer.tar"
+    builders.make_tar(str(arc), [
+        {"name": ".wh.deep", "type": "file", "data": b""},
+        {"name": "after", "type": "file", "data": b"OK"},
+    ])
+    try:
+        extract_tar_to_rootfs(str(arc), str(root), handle_whiteouts=True)
+        assert not (root / "deep").exists()
+        # The layer kept being applied after the whiteout.
+        assert (root / "after").read_bytes() == b"OK"
+    finally:
+        _remove_deep(str(root / "deep"))
+
+
+def test_whiteout_clears_a_sealed_tree(tmp_path, builders):
+    root = tmp_path / "root"
+    sealed = root / "deep" / "sealed"
+    sealed.mkdir(parents=True)
+    (sealed / "inside").write_text("stale")
+    sealed.chmod(0o000)
+
+    arc = tmp_path / "layer.tar"
+    builders.make_tar(str(arc), [
+        {"name": ".wh.deep", "type": "file", "data": b""},
+    ])
+    try:
+        extract_tar_to_rootfs(str(arc), str(root), handle_whiteouts=True)
+        assert not (root / "deep").exists()
+    finally:
+        if sealed.is_dir():
+            sealed.chmod(0o755)
+
+
+def test_clear_cache_removes_a_tree_deeper_than_the_stack(tmp_path):
+    deep = os.path.join(BASE_CACHE_DIR, "oci_layers", "deep")
+    _make_deep(deep)
+    before = _open_fds()
+    try:
+        command_clear_cache(SimpleNamespace(
+            verbose=False, orphan=False, build_cache=False))
+        assert not os.path.exists(os.path.join(BASE_CACHE_DIR, "oci_layers"))
+        assert len(_open_fds() - before) == 0
+    finally:
         _remove_deep(deep)

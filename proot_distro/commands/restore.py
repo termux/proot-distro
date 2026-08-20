@@ -42,6 +42,7 @@ import stat
 import sys
 import tarfile
 
+from proot_distro import dirfd
 from proot_distro.compress import (
     ZSTD_AVAILABLE, ZSTD_MAGIC, file_is_zstd, header_is_zstd, unsupported_msg,
 )
@@ -90,6 +91,15 @@ def _clear_existing_rootfs(container_name: str) -> None:
     Streams a `Removing old rootfs... N files` counter to stderr so
     the user gets feedback during long-running clears (multi-GB rootfs
     on slow flash).
+
+    One fd walk does the whole job now. The hand-rolled os.walk() pass
+    that used to run first could not enter a directory the guest had
+    sealed — os.walk() lists a directory before handing it over — and the
+    shutil.rmtree() behind it could neither chmod its way in nor survive a
+    tree deeper than the interpreter's stack. So a chmod-000 subtree of
+    the *old* rootfs stayed on disk and the restored container came back
+    carrying it. dirfd.remove_tree() relaxes each directory as it descends
+    and carries the descent on an explicit stack.
     """
     rootfs_dir = container_rootfs(container_name)
     if not os.path.isdir(rootfs_dir):
@@ -97,35 +107,35 @@ def _clear_existing_rootfs(container_name: str) -> None:
     pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
     count = 0
     clear_bar()
-    for dp, dns, fns in os.walk(rootfs_dir, topdown=False, followlinks=False):
-        for fname in fns:
-            try:
-                os.unlink(os.path.join(dp, fname))
-            except OSError:
-                pass
-            count += 1
-            if progress_active():
-                sys.stderr.write(
-                    f"\r{pfx}Removing old rootfs..."
-                    f" {count} files{C['RST']}"
-                )
-                sys.stderr.flush()
-        for dname in dns:
-            try:
-                os.rmdir(os.path.join(dp, dname))
-            except OSError:
-                pass
-    shutil.rmtree(rootfs_dir, ignore_errors=True)
+
+    def _counted(_rel) -> None:
+        nonlocal count
+        count += 1
+        if progress_active():
+            sys.stderr.write(
+                f"\r{pfx}Removing old rootfs..."
+                f" {count} files{C['RST']}"
+            )
+            sys.stderr.flush()
+
+    dirfd.remove_tree(rootfs_dir, on_remove=_counted)
     clear_bar()
 
 
 def _remove_existing(dest: str, member: tarfile.TarInfo) -> None:
-    """Remove any existing filesystem entry at *dest* before extraction."""
+    """Remove any existing filesystem entry at *dest* before extraction.
+
+    The directory branch is reached when the archive puts a non-directory
+    where the container already holds a tree, so what is being discarded
+    is the *previous* content — as deep and as sealed as it was left.
+    shutil.rmtree() recursed, and RecursionError is not an OSError, so
+    the handler here would not have caught it.
+    """
     try:
         if os.path.islink(dest) or os.path.isfile(dest):
             os.remove(dest)
         elif os.path.isdir(dest) and not member.isdir():
-            shutil.rmtree(dest)
+            dirfd.remove_tree(dest)
     except OSError:
         pass
 
@@ -542,7 +552,7 @@ def command_restore(args) -> None:
             # rootfs (which would also escape the container). Remove the broken
             # result so no rootfs-less container is left behind.
             clear_bar()
-            shutil.rmtree(container_dir(restore_name), ignore_errors=True)
+            dirfd.remove_tree(container_dir(restore_name))
             log_error(f"Cannot restore: archive did not produce a valid "
                       f"container rootfs. Only archives created by "
                       f"'{PROGRAM_NAME} backup' are supported.")

@@ -68,7 +68,6 @@
 #     stopped by it.
 
 import os
-import shutil
 import stat
 import sys
 
@@ -83,6 +82,7 @@ from proot_distro.helpers.docker import (
     referenced_blob_digests,
 )
 from proot_distro.locking import busy_locks
+from proot_distro import dirfd
 from proot_distro.message import crit_error, log_info, log_error, quote_path
 from proot_distro.progress import fmt_size
 
@@ -135,19 +135,34 @@ def command_clear_cache(args) -> None:
     for entry in os.scandir(BASE_CACHE_DIR):
         try:
             if entry.is_dir(follow_symlinks=False):
-                if verbose:
-                    for dirpath, _dirs, filenames in os.walk(entry.path):
-                        for fname in filenames:
-                            log_info(
-                                f"Removing: '{os.path.join(dirpath, fname)}'"
-                            )
-                shutil.rmtree(entry.path)
+                # Through descriptors, and iteratively. On Termux this
+                # directory sits under the bound $TERMUX_PREFIX, so a guest
+                # can build a tree here deeper than the interpreter's stack
+                # — and shutil.rmtree() answered that with a RecursionError,
+                # which the handler below does not catch. Reporting moves
+                # to the walk's own callbacks, which name the entry that
+                # actually would not go rather than the directory above it.
+                def _under(rel, top):
+                    return quote_path(os.path.join(top, rel) if rel else top)
+
+                def _failed(rel, exc, top=entry.path):
+                    log_error(f"Cannot remove '{_under(rel, top)}': "
+                              f"{quote_path(exc.strerror or str(exc))}")
+
+                def _removed(rel, top=entry.path):
+                    log_info(f"Removing: '{_under(rel, top)}'")
+
+                dirfd.remove_tree(
+                    entry.path, on_error=_failed,
+                    on_remove=_removed if verbose else None,
+                )
             else:
                 if verbose:
-                    log_info(f"Removing: '{entry.path}'")
+                    log_info(f"Removing: '{quote_path(entry.path)}'")
                 os.remove(entry.path)
         except OSError as exc:
-            log_error(f"Cannot remove '{entry.path}': {exc}")
+            log_error(f"Cannot remove '{quote_path(entry.path)}': "
+                      f"{quote_path(exc.strerror or str(exc))}")
 
     log_info(f"Reclaimed {fmt_size(total)} of disk space.")
 

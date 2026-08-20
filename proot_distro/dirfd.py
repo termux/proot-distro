@@ -841,6 +841,8 @@ def _unlink_at(dir_fd: int, name: str, is_dir: bool, force: bool) -> None:
     except PermissionError:
         if not force:
             raise
+        # Only the *containing* directory's mode governs an unlink; the
+        # entry's own is irrelevant, so there is nothing to relax on it.
         make_writable(dir_fd)
         if is_dir:
             os.rmdir(name, dir_fd=dir_fd)
@@ -862,7 +864,30 @@ def _opendir_for_removal(dir_fd: int, name: str, st, force: bool) -> int:
         return opendir_at(dir_fd, name)
 
 
-def rmtree_at(dir_fd: int, name: str, *, force: bool = False) -> None:
+def _removal_failed(rel: str, exc: OSError, on_error) -> None:
+    """Report *exc* against *rel*, or re-raise when nobody is listening."""
+    if on_error is None:
+        raise exc
+    on_error(rel, exc)
+
+
+def _unlink_reporting(dir_fd: int, name: str, rel: str, force: bool,
+                      on_error, on_remove) -> bool:
+    """Unlink one non-directory, reporting through the walk's callbacks."""
+    try:
+        _unlink_at(dir_fd, name, False, force)
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        _removal_failed(rel, exc, on_error)
+        return False
+    if on_remove is not None:
+        on_remove(rel)
+    return True
+
+
+def rmtree_at(dir_fd: int, name: str, *, force: bool = False,
+              on_error=None, on_remove=None) -> bool:
     """Remove *name* under dir_fd, descending without following symlinks.
 
     A symlink is unlinked, never traversed, so this cannot reach outside
@@ -872,44 +897,144 @@ def rmtree_at(dir_fd: int, name: str, *, force: bool = False) -> None:
     The descent is an explicit stack for the reason copy_tree_at's is: the
     tree is guest content, and one deeper than the interpreter's recursion
     limit used to end `sync --delete` in a traceback rather than a message.
+
+    on_error(rel, exc) is called for an entry that would not go, which is
+    then stepped over so the rest of the tree still goes — the same bargain
+    copy_tree_at offers, and the one every cleanup path wants, since a
+    single stubborn entry must not strand a whole partial rootfs. A caller
+    with no on_error still gets the exception, and the walk stops where it
+    stands. on_remove(rel) is called for each entry that did go. Both name
+    the entry relative to *name*, which is "" for the root itself.
+
+    Returns True when nothing of the tree is left. A directory whose
+    contents did not all go is not rmdir'ed — the ENOTEMPTY that would
+    follow says nothing the failure below it has not already said.
     """
     try:
         st = lstat_at(dir_fd, name)
     except FileNotFoundError:
-        return
+        return True
+    except OSError as exc:
+        _removal_failed("", exc, on_error)
+        return False
 
     if not stat.S_ISDIR(st.st_mode):
-        _unlink_at(dir_fd, name, False, force)
-        return
+        return _unlink_reporting(dir_fd, name, "", force, on_error, on_remove)
 
-    # Frame layout: [fd, None, parent fd, own name, pending names, owned].
-    # Every frame here opened its own fd; the parent fd and name are what
-    # the level is removed by once it has been emptied.
-    stack = [[_opendir_for_removal(dir_fd, name, st, force), None,
-              dir_fd, name, None, True]]
+    try:
+        root_fd = _opendir_for_removal(dir_fd, name, st, force)
+    except OSError as exc:
+        _removal_failed("", exc, on_error)
+        return False
+
+    ok = True
+    # Frame layout: [fd, None, parent fd, own name, own rel, pending,
+    # emptied, owned]. The two descriptor slots come first and `owned`
+    # last so close_frames() unwinds an interrupted walk; `emptied` stays
+    # True only while everything below the level has gone, and it is what
+    # decides whether the level itself may be rmdir'ed.
+    stack = [[root_fd, None, dir_fd, name, "", None, True, True]]
     try:
         while stack:
             frame = stack[-1]
-            fd, _, parent_fd, entry, pending, _ = frame
+            fd, _, parent_fd, entry, rel, pending, _, _ = frame
             if pending is None:
-                pending = frame[4] = listdir_at(fd)
+                try:
+                    pending = listdir_at(fd)
+                except OSError as exc:
+                    _removal_failed(rel, exc, on_error)
+                    pending, frame[6] = [], False
                 pending.reverse()
+                frame[5] = pending
+
             if not pending:
                 stack.pop()
                 os.close(fd)
-                _unlink_at(parent_fd, entry, True, force)
+                if frame[6]:
+                    try:
+                        _unlink_at(parent_fd, entry, True, force)
+                    except OSError as exc:
+                        _removal_failed(rel, exc, on_error)
+                        frame[6] = False
+                    else:
+                        if on_remove is not None:
+                            on_remove(rel)
+                if not frame[6]:
+                    ok = False
+                    if stack:
+                        stack[-1][6] = False
                 continue
 
             child = pending.pop()
+            child_rel = f"{rel}/{child}" if rel else child
             try:
                 child_st = lstat_at(fd, child)
             except FileNotFoundError:
                 continue            # went away on its own; nothing to do
-            if not stat.S_ISDIR(child_st.st_mode):
-                _unlink_at(fd, child, False, force)
+            except OSError as exc:
+                _removal_failed(child_rel, exc, on_error)
+                frame[6] = False
                 continue
-            sub = _opendir_for_removal(fd, child, child_st, force)
-            stack.append([sub, None, fd, child, None, True])
+
+            if not stat.S_ISDIR(child_st.st_mode):
+                if not _unlink_reporting(fd, child, child_rel, force,
+                                         on_error, on_remove):
+                    frame[6] = False
+                continue
+
+            try:
+                sub = _opendir_for_removal(fd, child, child_st, force)
+            except OSError as exc:
+                _removal_failed(child_rel, exc, on_error)
+                frame[6] = False
+                continue
+            stack.append([sub, None, fd, child, child_rel, None, True, True])
     except BaseException:
         close_frames(stack)
         raise
+
+    return ok
+
+
+def remove_tree(path: str, *, on_error=None, on_remove=None) -> bool:
+    """Remove *path* and everything under it, best effort. True when gone.
+
+    The path-taking front door to rmtree_at, for the cleanup paths that
+    hold a path rather than a descriptor: a half-extracted container, a
+    build's scratch directory, a rootfs about to be replaced. Only the
+    *parent* is named — a directory this program owns — and everything
+    below it is walked as (dir_fd, name), so a tree of image or guest
+    content cannot redirect the removal.
+
+    shutil.rmtree() is what this replaces, and it was wrong here twice
+    over. It recurses, so a tree deeper than the interpreter's limit —
+    which an image ships in a second — raised RecursionError instead of
+    removing anything, and RecursionError is not an OSError, so neither
+    the `except OSError` nor the ignore_errors=True around those calls
+    caught it. And it cannot chmod its way into a directory the image
+    sealed, so whatever was under one stayed there.
+
+    This never raises: every caller is a cleanup path, and one stubborn
+    entry must not strand the rest of a partial tree. Pass on_error to
+    report what would not go; the walk steps over it either way.
+    """
+    if on_error is None:
+        def on_error(_rel, _exc):
+            return None
+
+    path = os.path.abspath(path)
+    name = os.path.basename(path)
+    if not name:                    # "/" — nothing any caller should pass
+        return False
+    try:
+        parent_fd = opendir(os.path.dirname(path))
+    except FileNotFoundError:
+        return True                 # already gone, along with its parent
+    except OSError as exc:
+        on_error("", exc)
+        return False
+    try:
+        return rmtree_at(parent_fd, name, force=True,
+                         on_error=on_error, on_remove=on_remove)
+    finally:
+        os.close(parent_fd)

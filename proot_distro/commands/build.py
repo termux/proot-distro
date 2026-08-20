@@ -27,12 +27,12 @@
 
 import os
 import re
-import shutil
 import sys
 import tempfile
 from contextlib import ExitStack
 from types import SimpleNamespace
 
+from proot_distro import dirfd
 from proot_distro.commands.install import command_install
 
 from proot_distro.constants import (
@@ -299,7 +299,12 @@ def command_build(args):
             log_error("Aborted by user.")
             sys.exit(1)
         finally:
-            shutil.rmtree(tmp_root, ignore_errors=True)
+            # Stage rootfs trees are assembled from images and mutated by
+            # RUN steps, so their depth and their modes are not ours to
+            # assume. shutil.rmtree(ignore_errors=True) swallowed an
+            # OSError but not the RecursionError a deep one raised, and
+            # could not chmod its way into a sealed directory either.
+            dirfd.remove_tree(tmp_root)
 
 
 # ---------------------------------------------------------------------------
