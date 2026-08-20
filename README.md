@@ -457,7 +457,9 @@ stored alongside registry-pulled blobs in `$BASE_CACHE_DIR/oci_layers/`.
 [`clear-cache --orphan`](#clear-cache--delete-the-download-cache) keeps
 the build cache and collects only the blobs it no longer pins — the
 layers of a build that failed, or the previous output of a step that
-has been rebuilt since.
+has been rebuilt since. `clear-cache --build-cache` is the opposite
+target: it drops the index and the layers only it was holding, leaving
+the downloaded base images alone.
 
 **Examples:**
 
@@ -1266,6 +1268,7 @@ reported after the operation in human-readable units.
 | Option | Description |
 |---|---|
 | `--orphan` | Remove only unreferenced layer blobs; keep the rest of the cache. |
+| `--build-cache` | Drop the build cache index and the layer blobs only it was pinning. |
 | `-v`, `--verbose` | Log each deleted file. |
 | `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
@@ -1295,8 +1298,8 @@ proot-distro clear-cache --orphan --verbose
 A blob counts as **referenced** while either a cached image lists it
 (`list --image` shows those) or a build-cache entry pins it. The build
 cache is a reference on purpose — its layers appear in no manifest, so
-collecting them would silently empty it; a plain `clear-cache` is what
-drops the build cache too.
+collecting them would silently empty it; `--build-cache` is what drops
+it deliberately.
 
 Orphans are what is left over when a reference disappears without its
 blobs:
@@ -1320,6 +1323,40 @@ references yet, and from the outside those are indistinguishable from
 orphans. And a manifest entry or a build index it **cannot parse**
 aborts the sweep with nothing deleted, because an unreadable reference
 is not an absent one.
+
+**Build cache**
+
+Every `RUN` a build executes is recorded in `build_cache_index.json`
+against the layer it produced, so a later build with the same parent,
+instruction and inputs applies that layer instead of running the step
+again. Nothing evicts those entries, and every edit to a Dockerfile
+strands the ones before it, which makes the index and its layers the
+one part of the cache that only grows — and the one part `--orphan` is
+required to preserve.
+
+```sh
+# Reclaim the build cache, keep the downloaded images
+proot-distro clear-cache --build-cache
+```
+
+It removes the index and then runs the same layer sweep with the index
+no longer counted as a reference. Layers that a cached image lists are
+kept — including every layer of an image a build produced — so what
+actually goes is the build's own bookkeeping and the intermediates no
+image held on to: multi-stage stages, and the output of steps that have
+been rebuilt since. The next `build` re-runs every instruction.
+
+The flag never reads the index, only deletes it, so it works on one too
+corrupt to parse — which is among the reasons to reach for it. The
+index is removed first: if that fails, the command stops before
+deleting a blob the index still pins. The same lock refusal applies,
+for a sharper reason — a build in progress has recorded steps whose
+layers the finished image will list.
+
+To skip cache lookups for a single build without discarding anything,
+use [`build --no-cache`](#build--build-an-image-from-a-dockerfile)
+instead. Note that it still *records* what it builds, so it grows the
+cache rather than replacing it.
 
 ---
 

@@ -86,7 +86,8 @@ Top-level utilities (each owns a focused concern):
   a FIFO planted under the name.
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock), and
   `busy_locks()` (shared-flock probe over both namespaces, naming the
-  exclusive holders — what `clear-cache --orphan` asks before sweeping).
+  exclusive holders — what `clear-cache --orphan`/`--build-cache` ask
+  before sweeping).
 - `session.py` — active-session registry for `ps`: `register_session`
   (inheritable flock survives `execvpe`, like the container lock; records
   a `detach` flag among the per-session metadata), `active_sessions`
@@ -342,7 +343,7 @@ would shadow the container's.
 | `kill` | — | none (reads session registry, signals PIDs) |
 | `backup` | `bak`, `bkp` | container shared |
 | `restore` | — | container exclusive, lazy per first TarInfo |
-| `clear-cache` | `clear`, `cl` | none (`--orphan` refuses while any lock is held) |
+| `clear-cache` | `clear`, `cl` | none (`--orphan`/`--build-cache` refuse while any lock is held) |
 | `copy` | `cp` | shared src, exclusive dest |
 | `sync` | — | shared src, exclusive dest |
 | `build`, `push` | — | `BuildLock` keyed on `(image_ref, arch)` |
@@ -582,7 +583,7 @@ have created a file for it).
 The build index is a root **on purpose**: its layers appear in no
 manifest (a multi-stage intermediate, or a step whose image was rebuilt
 under another tag), so collecting them would silently empty the build
-cache — a plain `clear-cache` is the way to drop that too. Note
+cache — `--build-cache` is the way to drop that deliberately. Note
 `remove --image` answers this differently, computing its keep set from
 `iter_cached_images()` alone and so unlinking blobs the index still
 pins; that is deliberate (an explicitly named image is not an automatic
@@ -595,7 +596,29 @@ holder: a build in progress has already written its COPY/ADD layers
 them last of all, so mid-build those blobs are indistinguishable from
 orphans. It is a snapshot, not a lock — it cannot see a build that
 starts a moment later — and shared holders (`login`, `backup`) are
-deliberately ignored, since they never write to the cache. Names read
+deliberately ignored, since they never write to the cache.
+
+`clear-cache --build-cache` is that same sweep with the build index no
+longer a root (`_sweep_layers(drop_build_index=True)`; `--orphan`
+alongside it is redundant, not a conflict). It is the only way to
+reclaim the index and its layers without also discarding the downloaded
+base images, which matters because nothing evicts a build-cache entry —
+every Dockerfile edit strands the ones before it, and `--orphan` is
+*required* to keep them all. It **never reads** the index, only unlinks
+it (`build_cache.discard_index()`), and computes the keep set from
+`referenced_blob_digests()` alone: an index too corrupt to parse is one
+of the reasons to reach for the flag, so deriving the delete set from
+`recorded_layer_digests()` would fail exactly where it is needed. What
+survives is what a cached image lists — including every layer of an
+image a build produced — so the collection is the build's bookkeeping
+plus intermediates no image kept. The index goes **first** and a failure
+to remove it exits before any blob is deleted, since unpinned-then-kept
+is a broken promise while pinned-then-deleted would be the reverse. The
+lock refusal is the same call with a sharper reason (a build's recorded
+steps name blobs its finished image will list) and so carries its own
+message. `build --no-cache` is not a substitute in either direction: it
+skips lookups for one invocation and still calls `cache_record()`, so it
+grows the index rather than replacing it. Names read
 back out of the layer cache go through `quote_path`: on Termux
 `RUNTIME_DIR` sits under the bound `$TERMUX_PREFIX`, so a guest can
 create a file there and `--verbose` prints it.
@@ -914,7 +937,10 @@ into `build_cache_index.json`. Hit ⇒ apply cached layer, skip proot.
 the index; `clear-cache --orphan` keeps it and treats
 `recorded_layer_digests()` as roots (unlocked read — `_save_index`
 publishes through `atomic_replace`, so a reader sees one whole index or
-the other, the same reason `lookup()` takes no lock).
+the other, the same reason `lookup()` takes no lock);
+`clear-cache --build-cache` unlinks it via `discard_index()` — also
+unlocked, since an unlink is not a read-modify-write — and leaves the
+`.lock` file, which is empty and recreated on demand.
 
 ## Backup / restore
 

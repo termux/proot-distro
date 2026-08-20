@@ -24,7 +24,8 @@
 # inputs) combination — apply the cached blob instead of re-executing
 # the instruction." Stored under BASE_CACHE_DIR alongside layers/ and
 # manifests/ so a single `clear-cache` removes all build artefacts
-# together.
+# together; `clear-cache --build-cache` drops this index alone and lets
+# the layer sweep collect what it was pinning.
 
 import contextlib
 import fcntl
@@ -138,6 +139,41 @@ def recorded_layer_digests():
         if isinstance(entry, dict) and entry.get("layer_digest"):
             digests.add(entry["layer_digest"])
     return digests, True
+
+
+def index_path():
+    """Return the on-disk location of the build-cache index."""
+    return _INDEX_PATH
+
+
+def discard_index():
+    """Delete the index, returning (removed, the bytes it occupied).
+
+    *removed* is False when there was nothing there to delete. An
+    OSError is deliberately left to propagate: a caller dropping the
+    index in order to collect the layers it pinned must not go on to
+    delete them while the entries naming them are still on disk.
+
+    No lock is taken. record() serialises the read-modify-write cycle it
+    performs, but an unlink is not one — a concurrent record() either
+    wrote before it and loses its entry, which is the point of the call,
+    or writes afterwards and starts a fresh index. Neither outcome is a
+    torn file, the same reason lookup() and recorded_layer_digests()
+    read unlocked.
+    """
+    try:
+        size = os.stat(_INDEX_PATH).st_size
+    except FileNotFoundError:
+        return False, 0
+    except OSError:
+        # Present but not stat'able; the unlink below is what decides
+        # the outcome, and the size is only the report.
+        size = 0
+    try:
+        os.unlink(_INDEX_PATH)
+    except FileNotFoundError:
+        return False, 0
+    return True, size
 
 
 def record(recipe_hash, layer_digest, diff_id, size, image_config_patch=None):

@@ -273,6 +273,8 @@ complete -c proot-distro -n '__fish_seen_subcommand_from restore' \
 complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
     -l orphan          -d 'Remove only unreferenced layer blobs'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
+    -l build-cache     -d 'Drop the build cache index and the layers it pinned'
+complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
     -s v -l verbose    -d 'List removed files'
 complete -c proot-distro -f -n '__fish_seen_subcommand_from clear-cache' \
     -s q -l quiet      -d 'Suppress non-error output'
@@ -498,6 +500,7 @@ complete -c pd -n '__fish_seen_subcommand_from restore' -s q -l quiet   -d 'Supp
 complete -c pd -n '__fish_seen_subcommand_from restore' -s h -l help    -d 'Show help'
 
 complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -l orphan -d 'Remove only unreferenced layer blobs'
+complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -l build-cache -d 'Drop the build cache index and the layers it pinned'
 complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -s v -l verbose -d 'Verbose output'
 complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -s q -l quiet   -d 'Suppress non-error output'
 complete -c pd -f -n '__fish_seen_subcommand_from clear-cache' -s h -l help    -d 'Show help'

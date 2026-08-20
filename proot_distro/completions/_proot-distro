@@ -234,6 +234,7 @@ _proot_distro() {
                     _arguments \
                         '(-h --help)'{-h,--help}'[show help]' \
                         '--orphan[remove only unreferenced layer blobs]' \
+                        '--build-cache[drop the build cache index and the layers it pinned]' \
                         '(-v --verbose -q --quiet)'{-v,--verbose}'[list removed files]' \
                         '(-v --verbose -q --quiet)'{-q,--quiet}'[suppress non-error output]'
                     ;;

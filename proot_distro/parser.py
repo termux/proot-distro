@@ -306,6 +306,7 @@ def _clear_cache(sub):
     )
     p._pd_command = "clear-cache"
     p.add_argument("--orphan", action="store_true")
+    p.add_argument("--build-cache", dest="build_cache", action="store_true")
     vq = p.add_mutually_exclusive_group()
     vq.add_argument("-v", "--verbose", action="store_true")
     vq.add_argument("-q", "--quiet", action="store_true")

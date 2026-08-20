@@ -181,6 +181,178 @@ def test_orphan_verbose_names_each_removed_blob(builders, capsys):
     assert digest.replace(":", "_") in capsys.readouterr().err
 
 
+# ---------------------------------------------------------------------------
+# clear-cache --build-cache
+# ---------------------------------------------------------------------------
+
+def _build_cache(verbose=False, orphan=False):
+    return SimpleNamespace(orphan=orphan, build_cache=True, verbose=verbose)
+
+
+def test_build_cache_drops_the_index_and_the_layers_it_pinned(
+    builders, capsys,
+):
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+
+    command_clear_cache(_build_cache())
+
+    assert not os.path.exists(build_cache._INDEX_PATH)
+    assert not os.path.exists(layer_cache_path(digest))
+    err = capsys.readouterr().err
+    assert "build cache index" in err
+    assert "Reclaimed" in err
+
+
+def test_build_cache_keeps_layers_a_cached_image_lists(builders):
+    """A build's output image still names its layers; only the index goes."""
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+    save_manifest_cache(
+        "built:1", "x86_64", {"layers": [{"digest": digest}]},
+        "library/built", {},
+    )
+
+    command_clear_cache(_build_cache())
+
+    assert not os.path.exists(build_cache._INDEX_PATH)
+    assert os.path.isfile(layer_cache_path(digest))
+
+
+def test_build_cache_leaves_the_manifest_cache_alone(builders):
+    digest, _, _ = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    save_manifest_cache(
+        "img:1", "x86_64", {"layers": [{"digest": digest}]}, "library/img", {},
+    )
+
+    command_clear_cache(_build_cache())
+
+    assert os.listdir(MANIFEST_CACHE_DIR)
+    assert os.path.isfile(layer_cache_path(digest))
+
+
+def test_build_cache_works_on_an_index_too_corrupt_to_parse(builders, capsys):
+    """The flag unlinks the index, never reads it - which is the point."""
+    digest, _, _ = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    with open(build_cache._INDEX_PATH, "w") as fh:
+        fh.write("{ not json either")
+
+    command_clear_cache(_build_cache())
+
+    assert not os.path.exists(build_cache._INDEX_PATH)
+    assert not os.path.exists(layer_cache_path(digest))
+
+
+def test_build_cache_still_aborts_on_an_unreadable_manifest_entry(
+    builders, capsys,
+):
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+    with open(os.path.join(MANIFEST_CACHE_DIR, "broken.json"), "w") as fh:
+        fh.write("{ this is not json")
+
+    with pytest.raises(SystemExit) as exc:
+        command_clear_cache(_build_cache())
+
+    assert exc.value.code == 1
+    # The keep set is computed before anything is deleted.
+    assert os.path.exists(build_cache._INDEX_PATH)
+    assert os.path.isfile(layer_cache_path(digest))
+    assert "broken.json" in capsys.readouterr().err
+
+
+def test_build_cache_refuses_while_another_command_holds_a_lock(
+    builders, capsys,
+):
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+
+    with ContainerLock("busybox", exclusive=True, command="build"):
+        with pytest.raises(SystemExit) as exc:
+            command_clear_cache(_build_cache())
+
+    assert exc.value.code == 1
+    assert os.path.exists(build_cache._INDEX_PATH)
+    assert os.path.isfile(layer_cache_path(digest))
+    assert "is running" in capsys.readouterr().err
+
+
+def test_build_cache_on_an_empty_cache_says_so(capsys):
+    command_clear_cache(_build_cache())
+    assert "build cache is already empty" in capsys.readouterr().err.lower()
+
+
+def test_build_cache_reports_the_index_alone_when_nothing_is_collectable(
+    builders, capsys,
+):
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+    save_manifest_cache(
+        "built:1", "x86_64", {"layers": [{"digest": digest}]},
+        "library/built", {},
+    )
+
+    command_clear_cache(_build_cache())
+
+    err = capsys.readouterr().err
+    assert "orphan layer" not in err
+    assert "Reclaimed" in err
+
+
+def test_build_cache_alongside_orphan_is_the_same_sweep(builders):
+    """--orphan adds a root that --build-cache removes; passing both is fine."""
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+
+    command_clear_cache(_build_cache(orphan=True))
+
+    assert not os.path.exists(build_cache._INDEX_PATH)
+    assert not os.path.exists(layer_cache_path(digest))
+
+
+def test_build_cache_verbose_names_the_index_and_each_blob(builders, capsys):
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    build_cache.record("hash1", digest, diff_id, size)
+
+    command_clear_cache(_build_cache(verbose=True))
+
+    err = capsys.readouterr().err
+    assert "build_cache_index.json" in err
+    assert digest.replace(":", "_") in err
+
+
+def test_orphan_names_build_cache_when_the_index_cannot_be_read(
+    builders, capsys,
+):
+    """The remedy for a corrupt index is the new flag, so the error says so."""
+    builders.seed_cached_layer([{"name": "x", "type": "file", "data": b"1"}])
+    with open(build_cache._INDEX_PATH, "w") as fh:
+        fh.write("{ not json")
+
+    with pytest.raises(SystemExit):
+        command_clear_cache(_orphan())
+
+    assert "--build-cache" in capsys.readouterr().err
+
+
 def test_list_empty(capsys):
     command_list(SimpleNamespace(quiet=False))
     assert "No containers" in capsys.readouterr().err

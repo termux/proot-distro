@@ -89,6 +89,22 @@ def test_each_subcommand_parses():
         assert args.command == cmd
 
 
+def test_clear_cache_flags():
+    p = parser.build_parser()
+    args, unknown = p.parse_known_args(["clear-cache", "--build-cache"])
+    assert args.build_cache is True
+    assert args.orphan is False
+    assert unknown == []
+
+    # Not mutually exclusive: --build-cache is the same sweep with one
+    # root fewer, so asking for both is redundant rather than wrong.
+    args, _ = p.parse_known_args(["cl", "--orphan", "--build-cache"])
+    assert (args.orphan, args.build_cache) == (True, True)
+
+    args, _ = p.parse_known_args(["clear-cache"])
+    assert (args.orphan, args.build_cache) == (False, False)
+
+
 @pytest.mark.parametrize("flag", ["-l", "--limit"])
 def test_search_limit_flag(flag):
     p = parser.build_parser()

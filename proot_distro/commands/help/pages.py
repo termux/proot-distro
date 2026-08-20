@@ -263,6 +263,9 @@ HELP_PAGES = {
             ("--orphan",
              "Remove only the layer blobs nothing references any "
              "more, keeping the rest of the cache intact."),
+            ("--build-cache",
+             "Drop the build cache: the per-instruction index and "
+             "the layer blobs only it was holding on to."),
             ("-v, --verbose", "Log each removed file."),
             ("-q, --quiet",
              "Suppress non-error output. Mutually exclusive "
@@ -270,6 +273,7 @@ HELP_PAGES = {
         ],
         "examples": [
             f"{PROGRAM_NAME} clear-cache --orphan",
+            f"{PROGRAM_NAME} clear-cache --build-cache",
         ],
         "footer": [
             {
@@ -283,12 +287,34 @@ HELP_PAGES = {
                     "archive. Installed containers hold no layers - "
                     "their rootfs is a separate copy - so they are "
                     "never affected. Because the build cache counts as "
-                    "a reference, --orphan never shrinks it; plain "
-                    "clear-cache is what drops the build cache too. "
-                    "The sweep refuses to run while another "
-                    f"{PROGRAM_NAME} command holds a lock, since a "
-                    "build in progress has layers on disk that nothing "
-                    "references yet."
+                    "a reference, --orphan never shrinks it; that is "
+                    "what --build-cache is for. The sweep refuses to "
+                    f"run while another {PROGRAM_NAME} command holds a "
+                    "lock, since a build in progress has layers on disk "
+                    "that nothing references yet."
+                ),
+            },
+            {
+                "title": "BUILD CACHE",
+                "intro": (
+                    "Each RUN a build executes is recorded in "
+                    "build_cache_index.json against the layer it "
+                    "produced, so a later build with the same parent, "
+                    "instruction and inputs applies that layer instead "
+                    "of running the step again. Nothing ever evicts "
+                    "those entries, and every edit to a Dockerfile "
+                    "strands the ones before it, so the index and its "
+                    "layers are the part of the cache that only grows. "
+                    "--build-cache is the way to reclaim them without "
+                    "also throwing away the downloaded base images a "
+                    "plain clear-cache would take with them. It removes "
+                    "the index and then sweeps the layer cache with the "
+                    "index no longer counted as a reference, so the "
+                    "layers of images you still have are kept and the "
+                    "build's own intermediates go. The next build "
+                    "re-runs every step. To skip cache lookups for one "
+                    f"build without discarding anything, use "
+                    f"'{PROGRAM_NAME} build --no-cache' instead."
                 ),
             },
         ],
