@@ -59,11 +59,39 @@ Top-level utilities (each owns a focused concern):
   `draw_count_bar`, `clear_bar`, `progress_active`.
 - `arch.py` — `get_device_cpu_arch`, `detect_installed_arch` (ELF
   magic), `normalize_arch`, `get_emulator_args`, `ARCH_UNAME_M`.
+- `statedir.py` — the one way to reach a directory of the program's own
+  state tree, and it is not by name: `STATE_ROOTS`,
+  `split_state_path()`, `is_state_path()`, `open_state_dir()`,
+  `open_state_parent()`, `remove_state_tree()`. `RUNTIME_DIR` and
+  `BASE_CACHE_DIR` are the trust roots — named once, and created by
+  name when missing, since a first run must not fail because the
+  program's own directory does not exist yet. Everything *below* a root
+  is guest content on Termux, where both sit under the `$TERMUX_PREFIX`
+  bound read-write into every non-isolated container, so `containers/
+  <name>`, `cache` and `build-tmp` are names a session can leave behind
+  as symlinks. Each component is therefore opened `O_NOFOLLOW` off the
+  descriptor of the level above (`create=True` makes the missing ones
+  the same way), and one that is not a plain directory raises `ENOTDIR`
+  instead of being followed; a missing one without `create` is
+  `FileNotFoundError`, so a caller can tell "nothing installed" from
+  "refusing to follow that". The root is the outer one, which matters on
+  Termux: `BASE_CACHE_DIR` lives under `RUNTIME_DIR`, so matching it
+  first would leave `cache` itself in the part taken on trust. A path
+  outside both roots is not this module's business — `open_state_dir()`
+  raises `ValueError` for one, since only the trust root makes the walk
+  mean anything. `remove_state_tree()` is `dirfd.remove_tree()` with the
+  parent reached that way rather than opened by name, for a tree this
+  program keeps (a container directory, a rootfs being replaced, a
+  build's scratch root). What none of it settles is what happens to a
+  *name* afterwards: a caller that keeps addressing entries as
+  `(dir_fd, name)` is proof against a later swap, while one that goes
+  back to composing paths — an extractor, proot resolving a bind source
+  — is proof against the persistent case, which is the one a guest can
+  arrange at leisure.
 - `atomic.py` — `atomic_replace()`: temp file + `os.replace`; cleans up
   on `BaseException` (Ctrl-C never leaves half-written sentinels). A
-  destination inside `RUNTIME_DIR`/`BASE_CACHE_DIR` is reached by an
-  `O_NOFOLLOW` walk from that root (the outer one, so Termux's
-  `cache` is inside the walk rather than taken on trust), the temp is
+  destination inside `RUNTIME_DIR`/`BASE_CACHE_DIR` is reached by
+  `statedir.open_state_dir()`'s `O_NOFOLLOW` walk, the temp is
   `open_new_at`'d off the descriptor it validated, and the rename runs
   `src_dir_fd`/`dst_dir_fd` on it — `os.makedirs(exist_ok=True)` plus
   `mkstemp(dir=…)` both resolve the name, so a planted
@@ -654,7 +682,13 @@ only their `reset` needs it back). `-a` without `--image` is an error,
 not a silent no-op.
 
 A plain `clear-cache` measures the tree before emptying it, and both
-passes address entries as `(dir_fd, name)`. `os.walk()` plus
+passes address entries as `(dir_fd, name)`. The cache root is walked
+down to (`statedir.open_state_dir`), not named: on Termux it *is* a
+component below `RUNTIME_DIR`, and `os.path.isdir()` said "yes" to a
+planted `cache -> <host dir>` while `dirfd.opendir()` then followed it
+and handed the command a host directory to empty. A component that is
+not a plain directory ends the command; a missing root is still
+"Cache is empty." `os.walk()` plus
 `os.stat()`/`os.chmod()` on each name was the shape of it, and every one
 of those calls follows a symlink: the cache is guest-writable — on
 Termux it sits under the bound `$TERMUX_PREFIX` — so a planted
@@ -669,8 +703,9 @@ file at that level too.
 
 `clear-cache --orphan` sweeps only the blobs in `LAYER_CACHE_DIR` that
 nothing references, leaving the manifest cache and the build index in
-place. That directory is reached with `opendir_at` from
-`BASE_CACHE_DIR` and every blob is unlinked as `(dir_fd, name)` —
+place. That directory is reached by the same walk, one component at a
+time from the trust root, and every blob is unlinked as
+`(dir_fd, name)` —
 `os.listdir()` on a planted `oci_layers -> <host dir>` handed the sweep
 a directory of host files to delete, and a component that is not a plain
 directory now ends the command the way any other unreadable layer cache

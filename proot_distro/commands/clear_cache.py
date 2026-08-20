@@ -82,15 +82,11 @@ from proot_distro.helpers.docker import (
     referenced_blob_digests,
 )
 from proot_distro.locking import busy_locks
-from proot_distro import dirfd
+from proot_distro import dirfd, statedir
 from proot_distro.message import (
     crit_error, log_info, log_error, quote_error, quote_path,
 )
 from proot_distro.progress import fmt_size
-
-# LAYER_CACHE_DIR is BASE_CACHE_DIR/oci_layers; the sweep walks down to
-# it one component at a time rather than naming it (see _open_layer_cache).
-_LAYER_CACHE_NAME = os.path.basename(LAYER_CACHE_DIR)
 
 
 def _opendir_relaxing(dir_fd: int, name: str, st):
@@ -145,6 +141,28 @@ def _relax_cache_root() -> None:
                        only_dir=True)
     finally:
         os.close(parent_fd)
+
+
+def _open_cache_root() -> int:
+    """Open BASE_CACHE_DIR as a descriptor. Raises what it cannot open.
+
+    On Termux the cache lives *inside* RUNTIME_DIR, whose components are
+    guest-writable -- $TERMUX_PREFIX is bound read-write into every
+    non-isolated container -- so `cache` is one more name a session can
+    leave behind as a symlink. os.path.isdir() answered "yes" for one and
+    dirfd.opendir() then followed it, handing this command a host
+    directory to empty. statedir walks down to the root with O_NOFOLLOW
+    instead, and a component that is not a plain directory comes back as
+    ENOTDIR, which the caller reports rather than descends.
+
+    A cache root this user cannot enter is relaxed and retried, the same
+    bargain the walk below makes for every directory under it.
+    """
+    try:
+        return statedir.open_state_dir(BASE_CACHE_DIR)
+    except PermissionError:
+        _relax_cache_root()
+        return statedir.open_state_dir(BASE_CACHE_DIR)
 
 
 def _tree_size(root_fd: int) -> int:
@@ -212,24 +230,18 @@ def command_clear_cache(args) -> None:
 
     verbose = getattr(args, "verbose", False)
 
-    if not os.path.isdir(BASE_CACHE_DIR):
+    # Everything below the cache root is addressed as (dir_fd, name) from
+    # here on, and the root itself is walked down to rather than named
+    # (see _open_cache_root).
+    try:
+        root_fd = _open_cache_root()
+    except FileNotFoundError:
         log_info("Cache is empty.")
         return
-
-    # The cache root is named once, the way every module names the
-    # program's own directories; everything below it is addressed as
-    # (dir_fd, name) from here on.
-    try:
-        root_fd = dirfd.opendir(BASE_CACHE_DIR)
     except OSError as exc:
-        if isinstance(exc, PermissionError):
-            _relax_cache_root()
-        try:
-            root_fd = dirfd.opendir(BASE_CACHE_DIR)
-        except OSError as exc2:
-            crit_error(f"cannot read the cache directory "
-                       f"'{quote_path(BASE_CACHE_DIR)}': {quote_error(exc2)}")
-            sys.exit(1)
+        crit_error(f"cannot read the cache directory "
+                   f"'{quote_path(BASE_CACHE_DIR)}': {quote_error(exc)}")
+        sys.exit(1)
 
     try:
         total = _tree_size(root_fd)
@@ -350,30 +362,22 @@ def _drop_build_index(verbose: bool) -> tuple:
 def _open_layer_cache():
     """Open LAYER_CACHE_DIR as a descriptor. None when it is not there.
 
-    Reached through BASE_CACHE_DIR with O_NOFOLLOW rather than named
-    outright: the cache is guest-writable on Termux, and os.listdir()
-    on a planted `oci_layers -> <host dir>` would have handed the sweep
-    a directory of host files to unlink. A component that is not a plain
+    Every component below the trust root is walked with O_NOFOLLOW rather
+    than named outright: the cache is guest-writable on Termux, and
+    os.listdir() on a planted `oci_layers -> <host dir>` -- or on a
+    planted `cache` one level above it -- would have handed the sweep a
+    directory of host files to unlink. A component that is not a plain
     directory therefore surfaces as an error and stops the command, the
     same as any other unreadable layer cache -- an unreadable reference
     is not an absent one, and neither is an unreadable cache.
     """
     try:
-        base_fd = dirfd.opendir(BASE_CACHE_DIR)
+        return statedir.open_state_dir(LAYER_CACHE_DIR)
     except FileNotFoundError:
         return None
     except OSError as exc:
         crit_error(f"cannot read the layer cache: {quote_error(exc)}")
         sys.exit(1)
-    try:
-        return dirfd.opendir_at(base_fd, _LAYER_CACHE_NAME)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        crit_error(f"cannot read the layer cache: {quote_error(exc)}")
-        sys.exit(1)
-    finally:
-        os.close(base_fd)
 
 
 def _collect_orphans(dir_fd, keep: set) -> tuple:

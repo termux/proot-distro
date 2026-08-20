@@ -9,12 +9,13 @@
 # handed the orphan sweep a directory of host files to unlink.
 
 import os
+import shutil
 import stat
 from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.commands import clear_cache
+from proot_distro import statedir
 from proot_distro.commands.clear_cache import command_clear_cache
 from proot_distro.constants import BASE_CACHE_DIR, LAYER_CACHE_DIR
 
@@ -142,6 +143,65 @@ def test_sealed_cache_root_is_still_emptied():
     assert os.listdir(BASE_CACHE_DIR) == []
 
 
-def test_layer_cache_name_matches_the_constant():
-    assert os.path.join(BASE_CACHE_DIR, clear_cache._LAYER_CACHE_NAME) == \
-        LAYER_CACHE_DIR
+# --- the cache root itself -------------------------------------------------
+#
+# On Termux BASE_CACHE_DIR sits inside RUNTIME_DIR, so `cache` is one more
+# guest-writable name; off Termux it is a trust root of its own and is
+# named as one. The suite runs non-Termux, so the enclosing root is moved
+# one level up to give the walk the same shape the Termux layout has.
+
+@pytest.fixture
+def cache_inside_a_root(monkeypatch):
+    monkeypatch.setattr(
+        statedir, "STATE_ROOTS", (os.path.dirname(BASE_CACHE_DIR),),
+    )
+    yield
+    # The per-test wipe cannot clear a symlink standing where the cache
+    # root belongs (shutil.rmtree refuses one), so put the real directory
+    # back before the next test looks at it.
+    if os.path.islink(BASE_CACHE_DIR):
+        os.unlink(BASE_CACHE_DIR)
+    os.makedirs(LAYER_CACHE_DIR, exist_ok=True)
+
+
+def test_symlinked_cache_root_is_refused(cache_inside_a_root, tmp_path,
+                                         capsys):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keepsake").write_text("host content\n")
+    shutil.rmtree(BASE_CACHE_DIR)
+    os.symlink(str(outside), BASE_CACHE_DIR)
+
+    with pytest.raises(SystemExit) as exc:
+        command_clear_cache(_args())
+    assert exc.value.code == 1
+    assert "cannot read the cache directory" in capsys.readouterr().err
+    assert (outside / "keepsake").exists()
+
+
+def test_symlinked_cache_root_is_refused_by_the_orphan_sweep(
+        cache_inside_a_root, tmp_path, capsys):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sha256_something").write_text("host blob\n")
+    shutil.rmtree(BASE_CACHE_DIR)
+    os.symlink(str(outside), BASE_CACHE_DIR)
+
+    with pytest.raises(SystemExit) as exc:
+        command_clear_cache(_args(orphan=True))
+    assert exc.value.code == 1
+    assert "layer cache" in capsys.readouterr().err
+    assert (outside / "sha256_something").exists()
+
+
+def test_a_real_cache_root_still_works(cache_inside_a_root):
+    with open(os.path.join(LAYER_CACHE_DIR, "sha256_real"), "wb") as fh:
+        fh.write(b"y" * 10)
+    command_clear_cache(_args())
+    assert os.listdir(BASE_CACHE_DIR) == []
+
+
+def test_missing_cache_root_reports_empty(cache_inside_a_root, capsys):
+    shutil.rmtree(BASE_CACHE_DIR)
+    command_clear_cache(_args())
+    assert "Cache is empty." in capsys.readouterr().err

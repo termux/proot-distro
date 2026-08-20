@@ -35,15 +35,13 @@
 # a directory and tempfile.mkstemp(dir=...) then resolves the same name,
 # so a guest leaving `cache/oci_layers -> <host dir>` behind had every
 # blob written -- and renamed into place -- inside that host directory.
-# RUNTIME_DIR and BASE_CACHE_DIR are guest-writable on Termux, where
-# both sit under the $TERMUX_PREFIX bound read-write into every
-# non-isolated container. The components below whichever root contains
-# the destination are therefore walked one at a time with O_NOFOLLOW,
-# the temporary is created O_EXCL off the descriptor that walk
-# validated, and the publishing rename runs src_dir_fd/dst_dir_fd on it.
-# A path outside those roots is the user's own (`build --output`,
-# `backup -o`) and keeps the plain behaviour: it is not this program's
-# business where the user points it.
+# The components below the enclosing trust root are therefore walked one
+# at a time with O_NOFOLLOW (statedir.open_state_dir), the temporary is
+# created O_EXCL off the descriptor that walk validated, and the
+# publishing rename runs src_dir_fd/dst_dir_fd on it. A path outside
+# those roots is the user's own (`build --output`, `backup -o`) and
+# keeps the plain behaviour: it is not this program's business where the
+# user points it.
 #
 # The tmp *path* is still what the caller writes through, since it opens
 # the file itself in whatever way suits it. That name is unpredictable
@@ -53,29 +51,24 @@
 # else.
 
 import contextlib
-import errno
 import os
 import tempfile
 
-from proot_distro import dirfd
-from proot_distro.constants import BASE_CACHE_DIR, RUNTIME_DIR
-
-# Shortest first: on Termux BASE_CACHE_DIR lives *under* RUNTIME_DIR, so
-# matching the outer root is what puts `cache` itself inside the walk
-# rather than in the part taken on trust. Off Termux the two are
-# unrelated (XDG data vs cache) and at most one of them ever matches.
-_STATE_ROOTS = tuple(sorted({RUNTIME_DIR, BASE_CACHE_DIR}, key=len))
+from proot_distro import dirfd, statedir
 
 
 def _state_location(path: str):
-    """Return (root, parts) when *path* is inside a state dir, else (None, None)."""
-    for root in _STATE_ROOTS:
-        prefix = root.rstrip(os.sep) + os.sep
-        if path.startswith(prefix):
-            parts = tuple(p for p in path[len(prefix):].split(os.sep) if p)
-            if parts:
-                return root, parts
-    return None, None
+    """Return (root, parts) when *path* is inside a state dir, else (None, None).
+
+    A root itself is a directory, not a destination to write, so it
+    comes back as "not in the state tree" and takes the plain branch --
+    which cannot happen for a real caller, every one of which names a
+    file below a root.
+    """
+    root, parts = statedir.split_state_path(path)
+    if root is None or not parts:
+        return None, None
+    return root, parts
 
 
 @contextlib.contextmanager
@@ -102,17 +95,9 @@ def atomic_replace(path: str, *, suffix: str = ".tmp"):
         yield from _replace_by_name(path, suffix)
         return
 
-    try:
-        os.makedirs(root, exist_ok=True)
-    except OSError:
-        pass                        # the walk below reports what it finds
-    dir_fd = dirfd.opendir_under(root, parts[:-1], create=True)
-    if dir_fd is None:
-        raise OSError(
-            errno.ENOTDIR,
-            "not a directory inside the proot-distro state tree",
-            os.path.dirname(path),
-        )
+    dir_fd = statedir.open_state_dir(
+        os.path.join(root, *parts[:-1]), create=True,
+    )
     try:
         yield from _replace_at(dir_fd, os.path.dirname(path),
                                parts[-1], suffix)
