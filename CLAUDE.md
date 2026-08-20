@@ -634,9 +634,28 @@ bytes, and names containers installed from that image (unaffected —
 only their `reset` needs it back). `-a` without `--image` is an error,
 not a silent no-op.
 
+A plain `clear-cache` measures the tree before emptying it, and both
+passes address entries as `(dir_fd, name)`. `os.walk()` plus
+`os.stat()`/`os.chmod()` on each name was the shape of it, and every one
+of those calls follows a symlink: the cache is guest-writable — on
+Termux it sits under the bound `$TERMUX_PREFIX` — so a planted
+`oci_layers/x -> ~/.bashrc` had its target measured into the total and
+**chmod'ed u+rw** on the way past. `_tree_size()` walks on an explicit
+stack (the cache's depth is not this program's choice either) and only
+ever relaxes a *directory* it cannot descend, through
+`dirfd.chmod_at`; nothing needs relaxing to be measured or unlinked
+otherwise, so the per-file chmod is gone rather than made safe. Removal
+is one `rmtree_at(force=True)` per top-level entry, which covers a plain
+file at that level too.
+
 `clear-cache --orphan` sweeps only the blobs in `LAYER_CACHE_DIR` that
 nothing references, leaving the manifest cache and the build index in
-place. Two sources are roots, and both are read **strictly**:
+place. That directory is reached with `opendir_at` from
+`BASE_CACHE_DIR` and every blob is unlinked as `(dir_fd, name)` —
+`os.listdir()` on a planted `oci_layers -> <host dir>` handed the sweep
+a directory of host files to delete, and a component that is not a plain
+directory now ends the command the way any other unreadable layer cache
+does. Two sources are roots, and both are read **strictly**:
 `docker.referenced_blob_digests()` (every digest a manifest names —
 layers *and* the config descriptor) and
 `build_cache.recorded_layer_digests()`. Neither may fall back to "no

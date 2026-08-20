@@ -88,17 +88,116 @@ from proot_distro.message import (
 )
 from proot_distro.progress import fmt_size
 
+# LAYER_CACHE_DIR is BASE_CACHE_DIR/oci_layers; the sweep walks down to
+# it one component at a time rather than naming it (see _open_layer_cache).
+_LAYER_CACHE_NAME = os.path.basename(LAYER_CACHE_DIR)
 
-def _ensure_readable(path: str) -> None:
-    """Attempt to add read/execute permissions to a directory entry."""
+
+def _opendir_relaxing(dir_fd: int, name: str, st):
+    """Open the subdirectory *name* under dir_fd. Descriptor, or None.
+
+    A cache directory an interrupted write left unreadable is relaxed and
+    retried, which is what lets the measuring pass see inside one -- the
+    same bargain rmtree_at(force=True) makes when it comes to remove it.
+    The chmod goes through dirfd.chmod_at (O_PATH|O_NOFOLLOW plus
+    _chmod_fd), never through the name: Linux has no AT_SYMLINK_NOFOLLOW
+    for fchmodat(2), so os.chmod() on a name a guest has re-pointed
+    relaxes whatever host file it leads to.
+    """
     try:
-        st = os.stat(path)
-        if os.path.isdir(path):
-            os.chmod(path, st.st_mode | stat.S_IRWXU)
-        else:
-            os.chmod(path, st.st_mode | stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
+        return dirfd.opendir_at(dir_fd, name)
+    except PermissionError:
         pass
+    except OSError:
+        return None
+    dirfd.chmod_at(dir_fd, name, stat.S_IMODE(st.st_mode) | stat.S_IRWXU,
+                   only_dir=True)
+    try:
+        return dirfd.opendir_at(dir_fd, name)
+    except OSError:
+        return None
+
+
+def _relax_cache_root() -> None:
+    """Add u+rwx to BASE_CACHE_DIR itself, so a sealed root can be emptied.
+
+    The walk below relaxes every directory it cannot descend, but the
+    root is the one it never meets — os.walk() used to hand it to
+    _ensure_readable like any other. Done through the *parent's*
+    descriptor, because os.chmod() on the name follows a symlink and
+    fchmodat(2) has no AT_SYMLINK_NOFOLLOW; a root that is a symlink is
+    simply left alone rather than relaxed through.
+    """
+    parent, name = os.path.split(BASE_CACHE_DIR.rstrip(os.sep))
+    if not parent or not name:
+        return
+    try:
+        parent_fd = dirfd.opendir(parent)
+    except OSError:
+        return
+    try:
+        try:
+            st = dirfd.lstat_at(parent_fd, name)
+        except OSError:
+            return
+        dirfd.chmod_at(parent_fd, name,
+                       stat.S_IMODE(st.st_mode) | stat.S_IRWXU,
+                       only_dir=True)
+    finally:
+        os.close(parent_fd)
+
+
+def _tree_size(root_fd: int) -> int:
+    """Total bytes of the regular files under root_fd.
+
+    os.walk() plus os.stat()/os.chmod() on each name was the shape of
+    this, and every one of those calls follows a symlink. The cache is
+    guest-writable -- on Termux it sits under the $TERMUX_PREFIX bound
+    read-write into every non-isolated container -- so a planted
+    `oci_layers/x -> ~/.bashrc` had its target stat'ed for the total and
+    chmod'ed u+rw on the way past. Nothing needs relaxing to be measured
+    or unlinked in the first place except a directory that cannot be
+    descended, so that is the only chmod left, and it goes through a
+    descriptor.
+
+    Directories ride an explicit stack, in the layout dirfd's own walks
+    use: how deep the tree goes is not this program's choice, and one
+    past the interpreter's limit must not end the command in a
+    RecursionError.
+    """
+    total = 0
+    # Frame layout: [fd, None, pending names, owned].
+    stack = [[root_fd, None, None, False]]
+    try:
+        while stack:
+            frame = stack[-1]
+            fd, _, pending, owned = frame
+            if pending is None:
+                try:
+                    pending = frame[2] = dirfd.listdir_at(fd)
+                except OSError:
+                    pending = frame[2] = []
+            if not pending:
+                stack.pop()
+                if owned:
+                    os.close(fd)
+                continue
+            name = pending.pop()
+            try:
+                st = dirfd.lstat_at(fd, name)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(st.st_mode):
+                if stat.S_ISREG(st.st_mode):
+                    total += st.st_size
+                continue
+            sub = _opendir_relaxing(fd, name, st)
+            if sub is not None:
+                stack.append([sub, None, None, True])
+    except BaseException:
+        dirfd.close_frames(stack)
+        raise
+    return total
 
 
 def command_clear_cache(args) -> None:
@@ -117,54 +216,63 @@ def command_clear_cache(args) -> None:
         log_info("Cache is empty.")
         return
 
-    total = 0
-    for dirpath, _dirs, filenames in os.walk(BASE_CACHE_DIR):
-        _ensure_readable(dirpath)
-        for fname in filenames:
-            fpath = os.path.join(dirpath, fname)
-            _ensure_readable(fpath)
-            try:
-                total += os.path.getsize(fpath)
-            except OSError:
-                pass
-
-    if total == 0 and not any(True for _ in os.scandir(BASE_CACHE_DIR)):
-        log_info("Cache is empty.")
-        return
-
-    log_info("Clearing cache...")
-
-    for entry in os.scandir(BASE_CACHE_DIR):
+    # The cache root is named once, the way every module names the
+    # program's own directories; everything below it is addressed as
+    # (dir_fd, name) from here on.
+    try:
+        root_fd = dirfd.opendir(BASE_CACHE_DIR)
+    except OSError as exc:
+        if isinstance(exc, PermissionError):
+            _relax_cache_root()
         try:
-            if entry.is_dir(follow_symlinks=False):
-                # Through descriptors, and iteratively. On Termux this
-                # directory sits under the bound $TERMUX_PREFIX, so a guest
-                # can build a tree here deeper than the interpreter's stack
-                # — and shutil.rmtree() answered that with a RecursionError,
-                # which the handler below does not catch. Reporting moves
-                # to the walk's own callbacks, which name the entry that
-                # actually would not go rather than the directory above it.
-                def _under(rel, top):
-                    return quote_path(os.path.join(top, rel) if rel else top)
+            root_fd = dirfd.opendir(BASE_CACHE_DIR)
+        except OSError as exc2:
+            crit_error(f"cannot read the cache directory "
+                       f"'{quote_path(BASE_CACHE_DIR)}': {quote_error(exc2)}")
+            sys.exit(1)
 
-                def _failed(rel, exc, top=entry.path):
-                    log_error(f"Cannot remove '{_under(rel, top)}': "
-                              f"{quote_error(exc)}")
-
-                def _removed(rel, top=entry.path):
-                    log_info(f"Removing: '{_under(rel, top)}'")
-
-                dirfd.remove_tree(
-                    entry.path, on_error=_failed,
-                    on_remove=_removed if verbose else None,
-                )
-            else:
-                if verbose:
-                    log_info(f"Removing: '{quote_path(entry.path)}'")
-                os.remove(entry.path)
+    try:
+        total = _tree_size(root_fd)
+        try:
+            names = dirfd.listdir_at(root_fd)
         except OSError as exc:
-            log_error(f"Cannot remove '{quote_path(entry.path)}': "
-                      f"{quote_error(exc)}")
+            crit_error(f"cannot read the cache directory "
+                       f"'{quote_path(BASE_CACHE_DIR)}': {quote_error(exc)}")
+            sys.exit(1)
+
+        if not names:
+            log_info("Cache is empty.")
+            return
+
+        log_info("Clearing cache...")
+
+        # Through descriptors, and iteratively. On Termux this directory
+        # sits under the bound $TERMUX_PREFIX, so a guest can build a tree
+        # here deeper than the interpreter's stack — and shutil.rmtree()
+        # answered that with a RecursionError, which an `except OSError`
+        # does not catch. Reporting is the walk's own callbacks, which
+        # name the entry that actually would not go rather than the
+        # directory above it. rmtree_at covers a plain file at the top
+        # level too, so there is one removal path rather than two.
+        def _under(rel, top):
+            return quote_path(os.path.join(top, rel) if rel else top)
+
+        for name in names:
+            top = os.path.join(BASE_CACHE_DIR, name)
+
+            def _failed(rel, exc, top=top):
+                log_error(f"Cannot remove '{_under(rel, top)}': "
+                          f"{quote_error(exc)}")
+
+            def _removed(rel, top=top):
+                log_info(f"Removing: '{_under(rel, top)}'")
+
+            dirfd.rmtree_at(
+                root_fd, name, force=True, on_error=_failed,
+                on_remove=_removed if verbose else None,
+            )
+    finally:
+        os.close(root_fd)
 
     log_info(f"Reclaimed {fmt_size(total)} of disk space.")
 
@@ -239,12 +347,41 @@ def _drop_build_index(verbose: bool) -> tuple:
     return True, size
 
 
-def _collect_orphans(keep: set) -> tuple:
-    """Return ([(path, size)], total_bytes) for every collectable blob."""
+def _open_layer_cache():
+    """Open LAYER_CACHE_DIR as a descriptor. None when it is not there.
+
+    Reached through BASE_CACHE_DIR with O_NOFOLLOW rather than named
+    outright: the cache is guest-writable on Termux, and os.listdir()
+    on a planted `oci_layers -> <host dir>` would have handed the sweep
+    a directory of host files to unlink. A component that is not a plain
+    directory therefore surfaces as an error and stops the command, the
+    same as any other unreadable layer cache -- an unreadable reference
+    is not an absent one, and neither is an unreadable cache.
+    """
     try:
-        names = sorted(os.listdir(LAYER_CACHE_DIR))
+        base_fd = dirfd.opendir(BASE_CACHE_DIR)
     except FileNotFoundError:
-        names = []
+        return None
+    except OSError as exc:
+        crit_error(f"cannot read the layer cache: {quote_error(exc)}")
+        sys.exit(1)
+    try:
+        return dirfd.opendir_at(base_fd, _LAYER_CACHE_NAME)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        crit_error(f"cannot read the layer cache: {quote_error(exc)}")
+        sys.exit(1)
+    finally:
+        os.close(base_fd)
+
+
+def _collect_orphans(dir_fd, keep: set) -> tuple:
+    """Return ([(name, size)], total_bytes) for every collectable blob."""
+    if dir_fd is None:
+        return [], 0
+    try:
+        names = dirfd.listdir_at(dir_fd)
     except OSError as exc:
         crit_error(f"cannot read the layer cache: "
                    f"{quote_error(exc)}")
@@ -255,16 +392,15 @@ def _collect_orphans(keep: set) -> tuple:
     for name in names:
         if name in keep:
             continue
-        path = os.path.join(LAYER_CACHE_DIR, name)
         try:
-            st = os.lstat(path)
+            st = dirfd.lstat_at(dir_fd, name)
         except OSError:
             continue
         if not stat.S_ISREG(st.st_mode):
             # Nothing writes a directory or a symlink here; leaving one
             # alone costs nothing and keeps the sweep to one file type.
             continue
-        orphans.append((path, st.st_size))
+        orphans.append((name, st.st_size))
         total += st.st_size
     return orphans, total
 
@@ -297,7 +433,19 @@ def _sweep_layers(args, drop_build_index: bool) -> None:
     if drop_build_index:
         index_removed, reclaimed = _drop_build_index(verbose)
 
-    orphans, total = _collect_orphans(keep)
+    layer_fd = _open_layer_cache()
+    try:
+        _remove_orphans(layer_fd, keep, verbose, drop_build_index,
+                        index_removed, reclaimed)
+    finally:
+        if layer_fd is not None:
+            os.close(layer_fd)
+
+
+def _remove_orphans(layer_fd, keep, verbose, drop_build_index,
+                    index_removed, reclaimed) -> None:
+    """Unlink every collectable blob and report what was reclaimed."""
+    orphans, total = _collect_orphans(layer_fd, keep)
 
     if orphans:
         log_info(f"Removing {len(orphans)} orphan layer(s) "
@@ -314,9 +462,10 @@ def _sweep_layers(args, drop_build_index: bool) -> None:
         return
 
     failed = False
-    for path, size in orphans:
+    for name, size in orphans:
+        path = os.path.join(LAYER_CACHE_DIR, name)
         try:
-            os.remove(path)
+            os.unlink(name, dir_fd=layer_fd)
         except OSError as exc:
             log_error(f"Cannot remove '{quote_path(path)}': "
                       f"{quote_error(exc)}")
