@@ -54,9 +54,7 @@ from proot_distro.progress import (
     ByteCounter, clear_bar, draw_bytes_bar, progress_active,
 )
 from proot_distro.commands.help import HELP_COMMANDS
-from proot_distro.locking import (
-    ContainerLock, container_lock_path, read_lock_info,
-)
+from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
 from proot_distro.paths import (
     container_dir, container_manifest, container_rootfs,
@@ -406,7 +404,7 @@ def command_restore(args) -> None:
                         container_name, exclusive=True, command="restore"
                     )
                     if not lock.acquire():
-                        hint = read_lock_info(container_lock_path(container_name))
+                        hint = lock.holder_hint()
                         clear_bar()
                         log_error(f"Cannot restore: container "
                                   f"'{container_name}' is busy{hint}.")

@@ -100,7 +100,9 @@ Top-level utilities (each owns a focused concern):
 - `locking.py` — `ContainerLock`, `BuildLock` (POSIX flock), and
   `busy_locks()` (shared-flock probe over both namespaces, naming the
   exclusive holders — what `clear-cache --orphan`/`--build-cache` ask
-  before sweeping).
+  before sweeping). Lock files are opened as `(dir_fd, name)` with
+  `O_NOFOLLOW`, since the directory holding them is guest-writable and
+  the names in it are predictable — see "Locking".
 - `session.py` — active-session registry for `ps`: `register_session`
   (inheritable flock survives `execvpe`, like the container lock; records
   a `detach` flag among the per-session metadata), `active_sessions`
@@ -740,19 +742,44 @@ can still race on shared caches, safe because every writer uses
 `atomic.atomic_replace()` and `build_cache` holds its own flock over
 the index's RMW.
 
+Every lock file is addressed as `(dir_fd, name)`, never as a path.
+`RUNTIME_DIR/locks` is guest-writable — on Termux it sits under the
+`$TERMUX_PREFIX` bound read-write into every non-isolated container —
+and the names in it are derived from the container name, so
+`open(path, "w")` followed a planted `<name>.lock -> /host/file` and
+**truncated that host file** before flocking anything. `_locks_dir_fd()`
+walks `locks[/build]` off a descriptor per level and
+`_open_lock_file()` opens the entry through `dirfd.open_regular_at`
+(`O_NOFOLLOW` plus the type check, so a FIFO planted under the name
+cannot block the command waiting for a peer either). Nothing but this
+module writes here, so an entry that is not a plain file was planted:
+`_drop_planted()` removes it (`rmdir` for a directory, which therefore
+only goes while empty) and the real lock file is made in its place.
+One that will **not** go is the single case that fails closed
+(`_HostileLockPath` ⇒ `acquire()` returns False, `__enter__` names the
+path): a filesystem that cannot hold a lock file at all still proceeds
+unlocked as it always has, but a lock this program is being *prevented*
+from taking must not pass for one it merely could not create. The
+`create=True` walk is the only one that heals; the read paths
+(`busy_locks`, `holder_hint`) touch nothing.
+
+The lock file is truncated **after** the flock, not by opening it `"w"`
+before one: a process that loses the race used to blank the holder's
+PID line on its way to reporting a conflict that then named nobody.
+`read_lock_info(path)` is gone with it — the hint is
+`ContainerLock.holder_hint()`, off the same validated descriptor, which
+is what `restore` (acquiring lazily, per archive member) asks.
+
 `busy_locks()` reads that state from the outside: `*.lock` in both
 directories, each probed with a **shared** non-blocking flock (the
 `session._session_alive` idiom — a refusal means an exclusive holder,
-success means unheld), returning `(path, read_lock_info(path))` per
-holder. Shared holders answer the probe and so never appear, which is
-what `clear-cache --orphan` wants: `login`/`backup` hold shared locks
-and write nothing to the cache, while every cache writer (`install`,
-and `reset` through it; `build`/`push`) holds an exclusive one. An
-errno other than EACCES/EAGAIN counts as unheld, the same rule
-`acquire()` uses so a filesystem ignoring flock cannot wedge the
-caller. The hint may be empty: `acquire()` opens the lock file `"w"`
-*before* it flocks, so a process that lost the race has already
-truncated the holder's PID line.
+success means unheld), returning `(path, hint)` per holder. Shared
+holders answer the probe and so never appear, which is what
+`clear-cache --orphan` wants: `login`/`backup` hold shared locks and
+write nothing to the cache, while every cache writer (`install`, and
+`reset` through it; `build`/`push`) holds an exclusive one. An errno
+other than EACCES/EAGAIN counts as unheld, the same rule `acquire()`
+uses so a filesystem ignoring flock cannot wedge the caller.
 
 ## Architecture
 
