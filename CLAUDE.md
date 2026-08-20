@@ -109,7 +109,16 @@ Top-level utilities (each owns a focused concern):
   (reads `SESSIONS_DIR`, prunes dead via a shared flock probe),
   `session_file`/`session_is_live` (that probe for one PID) and
   `session_holders` (scans `/proc/*/fd` for the registry file's inode —
-  the members `kill` walks from).
+  the members `kill` walks from). `SESSIONS_DIR` is opened once as a
+  descriptor (`_sessions_dir_fd`, an `O_NOFOLLOW` walk down from
+  `RUNTIME_DIR`) and every entry is named as `(dir_fd, name)`:
+  `os.makedirs(exist_ok=True)` accepted a `sessions -> <host dir>`
+  symlink and `login` then wrote its record there, and — worse —
+  `active_sessions` unlinks every `*.json` whose flock probe answers,
+  so one `ps` emptied that host directory of files ending in `.json`.
+  Entries open through `open_regular_at`, so a planted symlink or FIFO
+  is not a record and is pruned by name only; the publishing
+  `os.replace` runs `src_dir_fd`/`dst_dir_fd` on the same descriptor.
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes

@@ -41,13 +41,47 @@
 # Registration is strictly best-effort: any failure (including a
 # filesystem without flock support) returns None and must never prevent
 # a session from starting.
+#
+# SESSIONS_DIR is guest-writable: on Termux it sits under the
+# $TERMUX_PREFIX bound read-write into every non-isolated container. It
+# is therefore opened as a descriptor once, by an O_NOFOLLOW walk down
+# from RUNTIME_DIR, and every entry below it is named as (dir_fd, name).
+# os.makedirs(exist_ok=True) accepted a `sessions -> <host dir>` symlink
+# and login then wrote its JSON there -- and, worse, active_sessions()
+# unlinks every *.json whose flock probe says nobody holds it, so one
+# `ps` emptied whichever host directory the link named of files ending
+# in .json. The entries themselves are opened through open_regular_at,
+# which refuses a symlink and a FIFO alike; an entry that is not a plain
+# file is not one this module wrote, and pruning it removes the name
+# only.
 
 import fcntl
 import json
 import os
+import stat
 import time
 
-from proot_distro.constants import SESSIONS_DIR
+from proot_distro import dirfd
+from proot_distro.constants import RUNTIME_DIR, SESSIONS_DIR
+
+# SESSIONS_DIR is RUNTIME_DIR/sessions; the walk below descends to it one
+# component at a time rather than naming it.
+_SESSIONS_PARTS = (os.path.basename(SESSIONS_DIR),)
+
+
+def _sessions_dir_fd(create: bool = False):
+    """Open SESSIONS_DIR. Descriptor, or None. The caller closes it.
+
+    RUNTIME_DIR is the trust root, named the way every other module names
+    it, and is created by name so a first `login` on a fresh machine
+    still registers; `sessions` below it is walked with O_NOFOLLOW.
+    """
+    if create:
+        try:
+            os.makedirs(RUNTIME_DIR, exist_ok=True)
+        except OSError:
+            return None
+    return dirfd.opendir_under(RUNTIME_DIR, _SESSIONS_PARTS, create=create)
 
 
 def register_session(*, container, kind, command_argv, user,
@@ -63,14 +97,25 @@ def register_session(*, container, kind, command_argv, user,
     Best-effort: every failure path returns None and is silently
     ignored so session tracking can never block a login/run.
     """
-    try:
-        os.makedirs(SESSIONS_DIR, exist_ok=True)
-    except OSError:
+    dir_fd = _sessions_dir_fd(create=True)
+    if dir_fd is None:
         return None
+    try:
+        return _register_at(
+            dir_fd,
+            container=container, kind=kind, command_argv=command_argv,
+            user=user, isolated=isolated, minimal=minimal, detach=detach,
+        )
+    finally:
+        os.close(dir_fd)
 
+
+def _register_at(dir_fd, *, container, kind, command_argv, user,
+                 isolated, minimal, detach):
+    """register_session()'s body, with SESSIONS_DIR already validated."""
     pid = os.getpid()
-    final_path = os.path.join(SESSIONS_DIR, f"{pid}.json")
-    tmp_path = os.path.join(SESSIONS_DIR, f".{pid}.{os.urandom(4).hex()}.tmp")
+    final_name = f"{pid}.json"
+    tmp_name = f".{pid}.{os.urandom(4).hex()}.tmp"
 
     payload = {
         "pid": pid,
@@ -85,8 +130,14 @@ def register_session(*, container, kind, command_argv, user,
     }
 
     try:
-        fd = open(tmp_path, "w")
+        raw, _st = dirfd.open_new_at(dir_fd, tmp_name)
     except OSError:
+        return None
+    try:
+        fd = os.fdopen(raw, "w")
+    except OSError:
+        _safe_close_fd(raw)
+        dirfd.unlink_quietly(dir_fd, tmp_name)
         return None
 
     # Clear O_CLOEXEC so the fd (and its flock) survives execvpe() and is
@@ -102,8 +153,7 @@ def register_session(*, container, kind, command_argv, user,
     try:
         fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        _safe_close(fd)
-        _safe_unlink(tmp_path)
+        _abandon(fd, dir_fd, tmp_name)
         return None
 
     try:
@@ -111,19 +161,19 @@ def register_session(*, container, kind, command_argv, user,
         fd.write("\n")
         fd.flush()
     except OSError:
-        _safe_close(fd)
-        _safe_unlink(tmp_path)
+        _abandon(fd, dir_fd, tmp_name)
         return None
 
     # Atomic publish. flock lives on the open file description / inode,
     # not the path, so the rename preserves the lock while making the
     # complete record visible to readers in one step. Any stale file left
-    # by a dead process that reused this PID is overwritten here.
+    # by a dead process that reused this PID is overwritten here — and a
+    # symlink left under that name is replaced rather than written
+    # through, rename(2) never following one at either end.
     try:
-        os.replace(tmp_path, final_path)
+        os.replace(tmp_name, final_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     except OSError:
-        _safe_close(fd)
-        _safe_unlink(tmp_path)
+        _abandon(fd, dir_fd, tmp_name)
         return None
 
     return fd
@@ -136,32 +186,51 @@ def active_sessions():
     holder has exited are unlinked as a side effect, so stale entries are
     never reported. Results are sorted by start time then PID.
     """
-    try:
-        names = os.listdir(SESSIONS_DIR)
-    except OSError:
+    dir_fd = _sessions_dir_fd()
+    if dir_fd is None:
         return []
-
-    sessions = []
-    for name in names:
-        if name.startswith(".") or not name.endswith(".json"):
-            continue
-        path = os.path.join(SESSIONS_DIR, name)
-
+    try:
         try:
-            with open(path) as fh:
-                data = json.load(fh)
-        except (OSError, ValueError):
-            data = None
+            names = dirfd.listdir_at(dir_fd)
+        except OSError:
+            return []
 
-        if not _session_alive(path):
-            _safe_unlink(path)
-            continue
+        sessions = []
+        for name in names:
+            if name.startswith(".") or not name.endswith(".json"):
+                continue
 
-        if isinstance(data, dict):
-            sessions.append(data)
+            data = _read_record(dir_fd, name)
+
+            if not _session_alive_at(dir_fd, name):
+                dirfd.unlink_quietly(dir_fd, name)
+                continue
+
+            if isinstance(data, dict):
+                sessions.append(data)
+    finally:
+        os.close(dir_fd)
 
     sessions.sort(key=lambda s: (s.get("start_time", 0.0), s.get("pid", 0)))
     return sessions
+
+
+def _read_record(dir_fd, name):
+    """Return the JSON dict in *name*, or None if it does not hold one."""
+    try:
+        fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        fh = os.fdopen(fd, "r", errors="replace")
+    except OSError:
+        _safe_close_fd(fd)
+        return None
+    with fh:
+        try:
+            return json.load(fh)
+        except (OSError, ValueError):
+            return None
 
 
 def session_file(pid):
@@ -180,7 +249,13 @@ def session_is_live(pid):
     exactly when `ps` would stop listing it. Cheap enough (one open +
     one flock) to poll in a loop, unlike a /proc scan.
     """
-    return _session_alive(session_file(pid))
+    dir_fd = _sessions_dir_fd()
+    if dir_fd is None:
+        return False
+    try:
+        return _session_alive_at(dir_fd, f"{pid}.json")
+    finally:
+        os.close(dir_fd)
 
 
 def session_holders(pid):
@@ -202,9 +277,19 @@ def session_holders(pid):
     Best-effort: an empty set means /proc was unreadable (or nothing
     holds the file), and the caller falls back to the recorded PID.
     """
+    dir_fd = _sessions_dir_fd()
+    if dir_fd is None:
+        return set()
     try:
-        st = os.stat(session_file(pid))
+        st = dirfd.lstat_at(dir_fd, f"{pid}.json")
     except OSError:
+        return set()
+    finally:
+        os.close(dir_fd)
+    if not stat.S_ISREG(st.st_mode):
+        # A symlink's own inode matches no descriptor anything holds, so
+        # this is belt and braces — but the answer to "who holds a
+        # planted entry open" is nobody, not "whoever holds its target".
         return set()
     wanted = (st.st_dev, st.st_ino)
 
@@ -237,15 +322,18 @@ def session_holders(pid):
     return holders
 
 
-def _session_alive(path):
-    """Return True iff a process still holds the exclusive lock on *path*.
+def _session_alive_at(dir_fd, name):
+    """Return True iff a process still holds the exclusive lock on *name*.
 
     Probes with a shared, non-blocking flock: a refusal means the
     session's exclusive lock is still held (alive); success means the
-    file is unheld (the session is dead).
+    file is unheld (the session is dead). An entry that will not open as
+    a plain file counts as dead, so the caller prunes it: nothing but
+    register_session() writes here, and unlinking removes the name and
+    nothing else.
     """
     try:
-        fd = os.open(path, os.O_RDONLY)
+        fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
     except OSError:
         return False
     try:
@@ -273,11 +361,17 @@ def _safe_close(fd):
         pass
 
 
-def _safe_unlink(path):
+def _safe_close_fd(fd):
     try:
-        os.unlink(path)
+        os.close(fd)
     except OSError:
         pass
+
+
+def _abandon(fd, dir_fd, name):
+    """Drop a half-written registration: close the handle, drop the file."""
+    _safe_close(fd)
+    dirfd.unlink_quietly(dir_fd, name)
 
 
 __all__ = ("register_session", "active_sessions", "session_file",
