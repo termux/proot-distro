@@ -35,6 +35,7 @@
 # unless --architecture narrows the selection.
 
 import os
+import stat
 import sys
 from contextlib import ExitStack
 
@@ -42,12 +43,12 @@ from proot_distro import dirfd, statedir
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import (
-    C, msg, log_info, log_error, crit_error, quote_error, quote_path,
+    C, msg, log_info, log_error, crit_error, quote_error, quote_path, warn,
 )
 from proot_distro.locking import BuildLock, ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_dir, container_rootfs, installed_container_names,
+    container_dir, container_entry_lstat, installed_container_names,
     read_container_manifest,
 )
 from proot_distro.progress import fmt_size
@@ -128,13 +129,26 @@ def _remove_container(args) -> None:
 
     require_valid_name(container_name)
 
-    rootfs_dir = container_rootfs(container_name)
-
-    if not os.path.isdir(rootfs_dir):
+    # lstat'ed off the containers directory's own descriptor, and asked
+    # about `containers/<name>` rather than about the rootfs inside it.
+    # os.path.isdir(container_rootfs(name)) followed the name, so an
+    # entry a session left behind -- a symlink to a directory with no
+    # rootfs in it, or a plain file under the name -- came back "not
+    # installed" from the one command whose job is to get rid of it,
+    # while every other command refused to touch it and told the user to
+    # remove it. A half-installed directory with no rootfs was equally
+    # stuck. What is under the name is what goes; what a link points at
+    # is not followed and not touched (see dirfd.rmtree_at).
+    entry_st = container_entry_lstat(container_name)
+    if entry_st is None:
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
 
     with ContainerLock(container_name, exclusive=True, command="remove"):
+        if not stat.S_ISDIR(entry_st.st_mode):
+            warn(f"'{quote_path(container_dir(container_name))}' is not a "
+                 f"container directory; removing that entry itself. "
+                 f"Whatever it names is left where it is.")
         log_info(f"Removing container '{container_name}'...")
 
         on_remove = None

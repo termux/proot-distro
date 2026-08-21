@@ -146,6 +146,77 @@ def test_remove_unlinks_a_planted_entry_without_following_it(outside):
     assert (outside / "rootfs").exists()
 
 
+def test_remove_gets_rid_of_a_planted_entry_with_no_rootfs_behind_it(outside):
+    # The gate used to be os.path.isdir(container_rootfs(name)), which
+    # followed the link and found no rootfs at the far end -- so `remove`
+    # answered "not installed" for an entry every other command refused
+    # to touch and told the user to remove. Nothing in the program could
+    # get rid of it.
+    _plant("box", outside)
+
+    command_remove(SimpleNamespace(
+        target="box", verbose=False, image=False, override_arch=None,
+    ))
+    assert not os.path.lexists(container_dir("box"))
+    # Only the link went; the directory it named is untouched.
+    assert (outside / "keepsake").read_text() == "host content\n"
+
+
+def test_remove_gets_rid_of_a_dangling_planted_entry(tmp_path):
+    _plant("box", tmp_path / "nowhere")
+
+    command_remove(SimpleNamespace(
+        target="box", verbose=False, image=False, override_arch=None,
+    ))
+    assert not os.path.lexists(container_dir("box"))
+
+
+def test_remove_gets_rid_of_a_file_under_the_container_name():
+    os.makedirs(CONTAINERS_DIR, exist_ok=True)
+    with open(container_dir("box"), "w") as fh:
+        fh.write("not a container")
+
+    command_remove(SimpleNamespace(
+        target="box", verbose=False, image=False, override_arch=None,
+    ))
+    assert not os.path.lexists(container_dir("box"))
+
+
+def test_remove_says_what_it_is_removing_when_it_is_not_a_directory(outside,
+                                                                    capsys):
+    _plant("box", outside)
+
+    command_remove(SimpleNamespace(
+        target="box", verbose=False, image=False, override_arch=None,
+    ))
+    err = capsys.readouterr().err
+    assert "not a container directory" in err
+    assert str(outside) not in err          # the target is nobody's business
+
+
+def test_remove_clears_a_container_directory_with_no_rootfs():
+    # A half-finished install leaves one of these, and it was just as
+    # stuck: not "installed" by the old gate, and in the way of the next
+    # install.
+    os.makedirs(container_dir("box"))
+    with open(os.path.join(container_dir("box"), "manifest.json"), "w") as fh:
+        fh.write("{}")
+
+    command_remove(SimpleNamespace(
+        target="box", verbose=False, image=False, override_arch=None,
+    ))
+    assert not os.path.exists(container_dir("box"))
+
+
+def test_remove_still_refuses_a_name_that_is_not_there(capsys):
+    with pytest.raises(SystemExit) as exc:
+        command_remove(SimpleNamespace(
+            target="ghost", verbose=False, image=False, override_arch=None,
+        ))
+    assert exc.value.code == 1
+    assert "is not installed" in capsys.readouterr().err
+
+
 # --- the inventory ---------------------------------------------------------
 
 def test_list_does_not_count_a_planted_entry_as_installed(outside, builders):

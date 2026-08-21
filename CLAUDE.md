@@ -575,7 +575,20 @@ starts its `O_NOFOLLOW` descent from `open_container_rootfs()` rather
 than from `os.open(rootfs)` — the rootfs is the one directory that
 descent cannot vouch for itself. `remove` is the deliberate exception at
 the far end: the walk unlinks a planted entry rather than traversing it,
-which is how the user gets rid of one.
+which is how the user gets rid of one. It asks a question of its own to
+get there — `paths.container_entry_lstat()`, an `lstat` of
+`containers/<name>` off that directory's descriptor, so the answer
+describes the **entry** and not what a link under it names. Neither of
+the other two spellings could: `container_is_installed()` refuses to
+walk a planted name (rightly — every other caller is about to run
+against it), and `os.path.isdir(container_rootfs(name))` followed the
+link and found no rootfs at the far end. So an entry a session left
+behind was "not installed" from the one command whose job is to delete
+it, while `_open_container_path` was telling the user to remove it, and
+nothing in the program could. A half-installed `containers/<name>` with
+no `rootfs` was stuck the same way. An entry that is not a plain
+directory is named in a warning before it goes, since what goes is the
+entry and not the directory it points at.
 
 The `manifest.json` sentinel inside that directory is read the same
 way. `paths.open_container_manifest()` walks down to the container

@@ -147,6 +147,39 @@ def container_is_installed(name: str) -> bool:
     return True
 
 
+def container_entry_lstat(name: str):
+    """lstat containers/<name> without following it. The stat, or None.
+
+    The question `remove` asks, and the only command that asks it: not
+    "is this a container" but "is there anything under that name at
+    all". Both of the other spellings answer no for an entry a guest
+    left behind -- container_is_installed() because it refuses to walk
+    a planted name, rightly, since every other caller is about to run
+    against it, and os.path.isdir() on the composed path because it
+    follows the link and finds no rootfs at the far end. So the one
+    command whose job is to get rid of such an entry reported it as not
+    installed, and nothing in the program could remove it -- while
+    _open_container_path tells the user to do exactly that.
+
+    The name is lstat'ed off the CONTAINERS_DIR descriptor, which is
+    walked down to like every other state path, so what comes back
+    describes the entry itself: a planted symlink is a symlink here,
+    never the directory it names. None means there is nothing to
+    remove -- no such entry, or no containers directory this program
+    can reach at all.
+    """
+    try:
+        root_fd = statedir.open_state_dir(CONTAINERS_DIR)
+    except OSError:
+        return None
+    try:
+        return dirfd.lstat_at(root_fd, name)
+    except OSError:
+        return None
+    finally:
+        os.close(root_fd)
+
+
 def _has_rootfs(root_fd: int, name: str) -> bool:
     """True when containers/<name>/rootfs is reachable as a directory."""
     try:
