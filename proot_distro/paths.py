@@ -309,13 +309,21 @@ def read_container_manifest(name: str) -> dict:
     Raises whatever open_container_manifest() raises, plus ValueError
     for a payload that is not a JSON object -- callers decide which of
     those is fatal and which is just "no image config".
+
+    The read is capped (statedir.read_state_file). json.load() on the
+    descriptor read until the file ended, and how long that is belongs
+    to whoever wrote the file: on Termux `containers/<name>` sits under
+    the bound $TERMUX_PREFIX, so a running guest chose what `login`,
+    `run` and `reset` allocated. An oversized file comes back as an
+    OSError, which is what every caller here already answers "no usable
+    manifest" to.
     """
     fd, _st = open_container_manifest(name)
     try:
-        with open(fd, "r", closefd=False) as fh:
-            data = json.load(fh)
+        raw = statedir.read_state_file(fd)
     finally:
         os.close(fd)
+    data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("manifest.json does not hold an object")
     return data

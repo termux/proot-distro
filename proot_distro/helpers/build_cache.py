@@ -117,7 +117,12 @@ def _read_index() -> bytes:
     FileNotFoundError means there is no index, which each caller reads
     differently: a fresh one for lookup(), "the index pins nothing" for
     the layer sweep. Anything else is a read failure and must not pass
-    for either.
+    for either -- an index too large to read included, which is why the
+    capped read (statedir.read_state_file) raises rather than truncating:
+    a half-read index parses as no index at all, and the layer sweep
+    would then collect every blob the real one pins. The cache is
+    guest-writable on Termux, so how many bytes stand under this name is
+    not this program's choice.
     """
     dir_fd, name = statedir.open_state_parent(_INDEX_PATH)
     try:
@@ -125,8 +130,7 @@ def _read_index() -> bytes:
     finally:
         os.close(dir_fd)
     try:
-        with open(fd, "rb", closefd=False) as fh:
-            return fh.read()
+        return statedir.read_state_file(fd)
     finally:
         os.close(fd)
 

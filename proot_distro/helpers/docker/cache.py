@@ -213,15 +213,18 @@ def _load_entry(dir_fd: int, name: str):
     Opened through open_regular_at, so a symlink or a FIFO left under an
     entry's name is not a cache entry: nothing but this program writes
     here, and one of those was planted. A payload that is not a JSON
-    object is no entry either.
+    object is no entry either, and neither is one too large to be a
+    manifest: the read is capped (statedir.read_state_file), since
+    json.load() on the descriptor read to the end of a file the cache
+    directory's writer chose the length of -- guest-writable on Termux,
+    and `list --image` reads every entry in it.
     """
     try:
         fd, st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
     except OSError:
         return None
     try:
-        with open(fd, "r", closefd=False) as fh:
-            payload = json.load(fh)
+        payload = json.loads(statedir.read_state_file(fd))
     except (OSError, ValueError):
         # ValueError covers both a malformed document and a file that is
         # not text at all (UnicodeDecodeError), which used to escape as

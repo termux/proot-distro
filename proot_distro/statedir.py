@@ -61,6 +61,55 @@ from proot_distro.constants import BASE_CACHE_DIR, RUNTIME_DIR
 # unrelated (XDG data vs cache) and at most one of them ever matches.
 STATE_ROOTS = tuple(sorted({RUNTIME_DIR, BASE_CACHE_DIR}, key=len))
 
+# What one of this program's own JSON documents may cost to read.
+#
+# A container's manifest.json, a session record, the build-cache index
+# and a manifest-cache entry are all written here and are a few kilobytes
+# at most -- but the *file* is a stranger's to replace. On Termux the
+# whole state tree sits under the $TERMUX_PREFIX bound read-write into
+# every non-isolated container, so a running guest decided how many bytes
+# `login`, `run`, `ps`, `list --image`, `clear-cache` and `build` each
+# pulled into memory before finding out the document was nonsense:
+# json.load() on the descriptor reads until the file ends. 16 MiB is the
+# ceiling install_local puts on an OCI archive's JSON and the one the
+# registry side reads metadata through, and it is orders of magnitude
+# above anything written here.
+MAX_STATE_JSON_BYTES = 16 * 1024 * 1024
+
+_READ_CHUNK = 1 << 20
+
+
+def read_state_file(fd: int, *, limit: int = MAX_STATE_JSON_BYTES) -> bytes:
+    """The whole content of the open state file *fd*, capped at *limit*.
+
+    OSError(EFBIG) for a file holding more than *limit* bytes, which
+    every caller already answers the way it answers an unreadable file
+    -- and a document this program did not write is what an oversized
+    one is.
+
+    The cap is applied to the bytes actually drawn rather than to an
+    fstat's st_size: the size a file reports is not a promise about how
+    much can be read out of it, and one being appended to while it is
+    read would otherwise pass the check and then exceed it.
+
+    The descriptor stays the caller's to close.
+    """
+    chunks = []
+    remaining = limit + 1
+    while remaining > 0:
+        chunk = os.read(fd, min(remaining, _READ_CHUNK))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    data = b"".join(chunks)
+    if len(data) > limit:
+        raise OSError(
+            errno.EFBIG,
+            f"state file is larger than {limit} bytes; refusing to read it",
+        )
+    return data
+
 
 def split_state_path(path: str):
     """Return (root, parts) for a path at or inside a state root.

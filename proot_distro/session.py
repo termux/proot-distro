@@ -77,7 +77,7 @@ import os
 import stat
 import time
 
-from proot_distro import dirfd
+from proot_distro import dirfd, statedir
 from proot_distro.constants import RUNTIME_DIR, SESSIONS_DIR
 from proot_distro.names import is_valid_name
 
@@ -339,21 +339,28 @@ def _validate_record(data, pid):
 
 
 def _read_record(dir_fd, name):
-    """Return the JSON dict in *name*, or None if it does not hold one."""
+    """Return the JSON dict in *name*, or None if it does not hold one.
+
+    Capped (statedir.read_state_file): a record this module writes is a
+    few hundred bytes, and json.load() on the descriptor read until the
+    file ended -- which, in a directory a guest can write, made one `ps`
+    cost whatever that guest chose. An oversized entry is no more a
+    record than an unreadable one.
+    """
     try:
         fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
     except OSError:
         return None
     try:
-        fh = os.fdopen(fd, "r", errors="replace")
+        raw = statedir.read_state_file(fd)
     except OSError:
-        _safe_close_fd(fd)
         return None
-    with fh:
-        try:
-            return json.load(fh)
-        except (OSError, ValueError):
-            return None
+    finally:
+        _safe_close_fd(fd)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
 
 
 def session_file(pid):

@@ -65,7 +65,9 @@ Top-level utilities (each owns a focused concern):
 - `statedir.py` — the one way to reach a directory of the program's own
   state tree, and it is not by name: `STATE_ROOTS`,
   `split_state_path()`, `is_state_path()`, `open_state_dir()`,
-  `open_state_parent()`, `remove_state_tree()`. `RUNTIME_DIR` and
+  `open_state_parent()`, `remove_state_tree()`, plus
+  `read_state_file()`/`MAX_STATE_JSON_BYTES` — how much of one of this
+  program's own JSON documents it will read. `RUNTIME_DIR` and
   `BASE_CACHE_DIR` are the trust roots — named once, and created by
   name when missing, since a first run must not fail because the
   program's own directory does not exist yet. Everything *below* a root
@@ -82,7 +84,27 @@ Top-level utilities (each owns a focused concern):
   first would leave `cache` itself in the part taken on trust. A path
   outside both roots is not this module's business — `open_state_dir()`
   raises `ValueError` for one, since only the trust root makes the walk
-  mean anything. `remove_state_tree()` is `dirfd.remove_tree()` with the
+  mean anything. `read_state_file(fd)` is the size half of the same
+  question: a container's `manifest.json`, a session record, the
+  build-cache index and a manifest-cache entry are each written by this
+  program and are kilobytes at most, but the *file* is a stranger's to
+  replace, so `json.load()` on the descriptor let a running guest decide
+  how many bytes `login`, `run`, `ps`, `list --image`, `clear-cache` and
+  `build` pulled into memory before finding out the document was
+  nonsense — and it need not even be nonsense, since a valid document
+  padded with whitespace loads and is then resident.
+  `MAX_STATE_JSON_BYTES` is 16 MiB — the ceiling `install_local` puts on
+  an OCI archive's JSON and the one the registry side reads metadata
+  through — applied to the **bytes actually drawn** rather than to an
+  `fstat`'s `st_size`, which a sparse (or growing) file makes no promise
+  about. Over it is `OSError(EFBIG)`, which every one of those four
+  callers already answers the way it answers an unreadable file:
+  `read_container_manifest` raises (and `container_image_config` returns
+  `{}`), a session record is not a record, `recorded_layer_digests()`
+  answers `readable=False` so the layer sweep stops rather than
+  collecting, and a manifest-cache entry is skipped by
+  `iter_cached_images()` and *reported* by `referenced_blob_digests()`.
+  `remove_state_tree()` is `dirfd.remove_tree()` with the
   parent reached that way rather than opened by name, for a tree this
   program keeps (a container directory, a rootfs being replaced, a
   build's scratch root). What none of it settles is what happens to a
