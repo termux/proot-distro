@@ -439,7 +439,9 @@ def _login_with_rootfs(container_name: str, args, lock,
     # process chdirs into the pinned descriptor just before the exec (see
     # _exec_proot). `--get-proot-cmd` prints a command the user runs
     # themselves, from their own working directory, so that one keeps the
-    # real path.
+    # real path -- and therefore cannot carry the pin, which is a
+    # descriptor and not something a shell command line can hold. The
+    # printed line is said to be what it is, next to where it is printed.
     show_cmd = getattr(args, "get_proot_cmd", False)
     proot_args = build_proot_args(
         proot_bin=proot_bin,
@@ -503,6 +505,21 @@ def _login_with_rootfs(container_name: str, args, lock,
     child_env.pop("LD_PRELOAD", None)
 
     if show_cmd:
+        # Said before the command rather than inside it: stdout is the
+        # command and nothing else, so it stays ready to redirect into a
+        # file or pipe into a shell. What the note is for is that the
+        # line below is *not* a copy of what this program runs -- it
+        # names the rootfs, and a name is resolved afresh each time the
+        # command is, while the session this program starts resolves the
+        # guest root against a descriptor it validated (see _exec_proot).
+        # Nothing printable closes that gap: a descriptor cannot be
+        # spelled, and `cd <path> && ... --rootfs=.` only moves the same
+        # name resolution one step earlier.
+        warn(f"printed for inspection: this is not a copy of what "
+             f"{PROGRAM_NAME} runs. It names the rootfs, which is "
+             f"resolved afresh whenever the command is run, while the "
+             f"session {PROGRAM_NAME} starts passes '--rootfs=.' from "
+             f"inside the directory it validated.")
         parts = ["env", "-i"]
         for k, v in child_env.items():
             parts.append(f"{k}={dq(v)}")

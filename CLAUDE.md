@@ -700,7 +700,14 @@ canonicalise the guest root against `getcwd()`, which the kernel answers
 from the directory's own parent chain, so it names the inode the walk
 validated whatever now stands under the old name. Verified against proot
 itself, both ways round. `--get-proot-cmd` keeps printing the real path
-(the user runs that command from their own directory), the `--detach`
+(the user runs that command from their own directory) and **says so on
+stderr**: a printed line cannot carry the pin — a descriptor is not
+something a shell command can hold, and `cd <path> && … --rootfs=.`
+only moves the same name resolution one step earlier — so what is left
+is that the path form must not pass for what the program runs, since a
+copy of it may be run at any later moment against a container directory
+that is no longer the one this walked. stdout stays exactly the command,
+so redirecting it into a file or a shell is unchanged. The `--detach`
 daemon does the `fchdir` in the grandchild so the foreground's own
 working directory is untouched, and `PD_PROOT_BIN` is made absolute
 since the chdir happens before the exec.

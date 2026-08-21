@@ -639,7 +639,11 @@ HELP_PAGES = {
             ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
-             "paste into a terminal."),
+             "paste into a terminal. It is meant for inspection: it "
+             "names the container's rootfs, which is resolved again "
+             "every time the command is run, whereas a real session "
+             "resolves the guest root against a directory this program "
+             "opened and checked."),
         ],
         "footer": [
             *([{
@@ -929,7 +933,11 @@ HELP_PAGES = {
             ("--get-proot-cmd",
              "Print the fully assembled proot command line and exit "
              "without running it. The output is ready to copy and "
-             "paste into a terminal."),
+             "paste into a terminal. It is meant for inspection: it "
+             "names the container's rootfs, which is resolved again "
+             "every time the command is run, whereas a real session "
+             "resolves the guest root against a directory this program "
+             "opened and checked."),
         ],
         "examples": [
             f"{PROGRAM_NAME} run nextcloud --redirect-ports",

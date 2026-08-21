@@ -75,7 +75,10 @@ def build_proot_args(
     than against a name a concurrent session can re-point. It defaults to
     *rootfs*, and `--get-proot-cmd` passes the path explicitly, since
     that command line is printed for the user to run from their own
-    working directory.
+    working directory. A printed command cannot carry the pin -- a
+    descriptor is not something a shell line can hold -- so the caller
+    says as much next to it rather than letting the path form pass for
+    what the program itself runs.
 
     *container_fd* and *rootfs_fd* are the two directories the caller
     pinned. The directories made here on the host side -- the container's

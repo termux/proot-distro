@@ -125,6 +125,28 @@ def test_get_proot_cmd_still_prints_a_usable_path(builders, capsys):
     assert "--rootfs=." not in out
 
 
+def test_get_proot_cmd_says_it_is_not_the_pinned_form(builders, capsys):
+    # A printed command cannot carry the pin: a descriptor is not
+    # something a shell line can hold, and `cd <path> && --rootfs=.`
+    # only moves the same name resolution one step earlier. What it can
+    # do is not pass for the real thing -- the path form is a copy the
+    # user may run at any later moment, and the container directory need
+    # not still be the one this walked.
+    builders.make_container("box", arch=HOST_ARCH)
+    with pytest.raises(SystemExit):
+        command_login(_login_args("box", get_proot_cmd=True))
+    captured = capsys.readouterr()
+
+    err = captured.err
+    assert "inspection" in err
+    assert "--rootfs=." in err
+
+    # The note is on stderr only: stdout stays exactly the command, so
+    # redirecting it into a file or a shell keeps working.
+    assert "inspection" not in captured.out
+    assert captured.out.startswith("env \\\n")
+
+
 def test_a_planted_container_dir_is_refused_outright(builders, tmp_path):
     """The persistent case still stops the command instead of following."""
     host_dir = tmp_path / "host-dir"
