@@ -108,7 +108,7 @@ def _dir_key(fd):
     return (st.st_dev, st.st_ino)
 
 
-def _resolve(rootfs_dir, guest_path):
+def _resolve(rootfs_dir, guest_path, root_fd=None):
     """Walk to the entry *guest_path* names. (stack, name, st), or None.
 
     stack[-1] is a descriptor on the directory holding *name*, *st* is
@@ -141,9 +141,20 @@ def _resolve(rootfs_dir, guest_path):
     lands on is checked against the (device, inode) recorded on the way
     down: a directory a guest moves elsewhere mid-walk has a different
     parent, and following it would leave the rootfs.
+
+    *root_fd* is the rootfs when the caller has already pinned it, and a
+    caller that has one must pass it: `login` opens containers/<name>/
+    rootfs with an O_NOFOLLOW walk and then reads the guest's passwd,
+    group and shell out of it, and opening `rootfs_dir` by name here
+    resolved `containers/<name>` a second time -- guest-writable on
+    Termux, with only a shared lock held. A private duplicate is taken
+    so the ownership below stays this function's either way. *rootfs_dir*
+    is still needed as a string: _l2s_parts recognises proot's hard-link
+    stand-ins by the path they name.
     """
     try:
-        root_fd = dirfd.opendir(rootfs_dir)
+        root_fd = (dirfd.reopen(root_fd) if root_fd is not None
+                   else dirfd.opendir(rootfs_dir))
     except OSError:
         return None
     root_key = _dir_key(root_fd)
@@ -254,7 +265,7 @@ def _close_stack(stack):
             pass
 
 
-def open_guest_file(rootfs_dir, guest_path):
+def open_guest_file(rootfs_dir, guest_path, *, root_fd=None):
     """Open the absolute guest path *guest_path* under *rootfs_dir*.
 
     Returns a text-mode file object for a regular file, or None — the path
@@ -268,7 +279,7 @@ def open_guest_file(rootfs_dir, guest_path):
     planted under the name since the lstat rather than blocking on a peer
     that never comes.
     """
-    found = _resolve(rootfs_dir, guest_path)
+    found = _resolve(rootfs_dir, guest_path, root_fd)
     if found is None:
         return None
     stack, name, st = found
@@ -293,14 +304,14 @@ def read_capped(fh):
     return data[:data.rfind("\n") + 1]
 
 
-def read_guest_file(rootfs_dir, guest_path):
+def read_guest_file(rootfs_dir, guest_path, *, root_fd=None):
     """Content of *guest_path* under *rootfs_dir*, capped. None if unreadable.
 
     None covers every way the file is not there to be read — missing,
     refused, not a regular file — because every caller answers the same
     way to all of them: fall back to what it would do without the file.
     """
-    fh = open_guest_file(rootfs_dir, guest_path)
+    fh = open_guest_file(rootfs_dir, guest_path, root_fd=root_fd)
     if fh is None:
         return None
     try:
@@ -310,7 +321,7 @@ def read_guest_file(rootfs_dir, guest_path):
         return None
 
 
-def guest_file_exists(rootfs_dir, guest_path) -> bool:
+def guest_file_exists(rootfs_dir, guest_path, *, root_fd=None) -> bool:
     """True when *guest_path* resolves to a regular file inside the rootfs.
 
     The same walk, for a caller that only asks whether the file is there
@@ -323,7 +334,7 @@ def guest_file_exists(rootfs_dir, guest_path) -> bool:
     shell the image ships execute-only still counts as there, and neither
     a FIFO nor a device planted under the name is touched.
     """
-    found = _resolve(rootfs_dir, guest_path)
+    found = _resolve(rootfs_dir, guest_path, root_fd)
     if found is None:
         return False
     stack, _name, st = found

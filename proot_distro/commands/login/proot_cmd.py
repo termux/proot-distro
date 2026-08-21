@@ -55,6 +55,7 @@ def build_proot_args(
     *,
     proot_bin,
     rootfs, login_wd, rootfs_arg=None,
+    container_fd=None, rootfs_fd=None,
     login_uid, login_gid, login_home,
     emu_args, need_emu,
     target_arch, hostname, kernel_release,
@@ -75,6 +76,14 @@ def build_proot_args(
     *rootfs*, and `--get-proot-cmd` passes the path explicitly, since
     that command line is printed for the user to run from their own
     working directory.
+
+    *container_fd* and *rootfs_fd* are the two directories the caller
+    pinned. The directories made here on the host side -- the container's
+    shm store, its sysdata stubs, the guest's /tmp, a termux-type guest's
+    cache dir -- are created and chmod'ed through them rather than from
+    a name walked afresh. What comes back is still a path, because a bind
+    source is a name proot resolves for itself; the pin covers our half
+    of it, not proot's.
     """
     args = [proot_bin] + list(emu_args)
 
@@ -102,6 +111,7 @@ def build_proot_args(
             dist_type=dist_type, isolated=isolated, need_emu=need_emu,
             use_shared_home=use_shared_home,
             shared_tmp=shared_tmp, shared_x11=shared_x11,
+            container_fd=container_fd, rootfs_fd=rootfs_fd,
         )
 
     _add_custom_binds(args, custom_binds)
@@ -150,9 +160,10 @@ def _add_non_minimal_binds(
     rootfs, login_home, login_uid,
     dist_type, isolated, need_emu,
     use_shared_home, shared_tmp, shared_x11,
+    container_fd=None, rootfs_fd=None,
 ):
     if dist_type != "termux" and IS_TERMUX:
-        _add_termux_dev_binds(args, rootfs)
+        _add_termux_dev_binds(args, rootfs, container_fd, rootfs_fd)
 
     if IS_TERMUX and not isolated:
         # Dalvik/ART caches and shared storage are host-domain Android
@@ -181,9 +192,11 @@ def _add_non_minimal_binds(
     # pointed, which on the host side of proot is anywhere the user can
     # write. Nothing depends on the result, so a refusal is silent.
     if IS_TERMUX and dist_type == "termux" and not isolated:
-        dirfd.makedirs_under(
-            rootfs, ("data", "data", TERMUX_APP_PACKAGE, "cache")
-        )
+        parts = ("data", "data", TERMUX_APP_PACKAGE, "cache")
+        if rootfs_fd is not None:
+            dirfd.makedirs_at(rootfs_fd, rootfs, parts)
+        else:
+            dirfd.makedirs_under(rootfs, parts)
 
     if use_shared_home:
         if dist_type == "termux":
@@ -199,7 +212,7 @@ def _add_non_minimal_binds(
         args.append(f"--bind={TERMUX_PREFIX}/tmp/.X11-unix:/tmp/.X11-unix")
 
 
-def _add_termux_dev_binds(args, rootfs):
+def _add_termux_dev_binds(args, rootfs, container_fd=None, rootfs_fd=None):
     """Bind device files and fake /proc/sys substitutes used by Termux."""
     args.append("--bind=/dev/urandom:/dev/random")
     if not os.path.lexists("/dev/fd"):
@@ -207,7 +220,7 @@ def _add_termux_dev_binds(args, rootfs):
     for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
         if not os.path.lexists(f"/dev/{name}") and os.path.exists(f"/proc/self/fd/{i}"):
             args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
-    args += fake_sysdata_bindings(rootfs)
+    args += fake_sysdata_bindings(rootfs, container_fd=container_fd)
 
     # /dev/shm comes from the container's own directory, not from a name
     # inside the rootfs: proot resolves a bind source when it mounts it,
@@ -217,8 +230,8 @@ def _add_termux_dev_binds(args, rootfs):
     # the next session mount a host directory of its choosing — under
     # --isolated too, which is the one mode meant to bind nothing of the
     # host at all. See proot_distro.shm.
-    make_guest_tmp(rootfs)
-    shm = make_shm_dir(rootfs)
+    make_guest_tmp(rootfs, rootfs_fd=rootfs_fd)
+    shm = make_shm_dir(rootfs, container_fd=container_fd)
     if shm is not None:
         args.append(f"--bind={shm}:/dev/shm")
     else:

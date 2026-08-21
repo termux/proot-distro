@@ -38,37 +38,43 @@
 # l2s stand-in — proot's hard-link replacement, whose target is a host
 # path into <rootfs>/.l2s — is followed to the file holding the content
 # instead. Both are the shared walk's doing; see guestfile.
+#
+# Every entry point takes *root_fd*, the descriptor `login` pinned the
+# rootfs as, and passes it down: the walk is only as good as where it
+# starts, and starting it at `containers/<name>/rootfs` resolved that
+# name again — after the check, with a shared lock held, on a directory
+# that is guest-writable on Termux.
 
 from proot_distro.guestfile import guest_file_exists, read_guest_file
 
 
-def _entries(rootfs: str, guest_path: str):
+def _entries(rootfs: str, guest_path: str, root_fd=None):
     """Yield the colon-split fields of each line of a passwd-shaped file."""
-    data = read_guest_file(rootfs, guest_path)
+    data = read_guest_file(rootfs, guest_path, root_fd=root_fd)
     if data is None:
         return
     for line in data.splitlines():
         yield line.strip().split(":")
 
 
-def passwd_available(rootfs: str) -> bool:
+def passwd_available(rootfs: str, *, root_fd=None) -> bool:
     """True when the container has an /etc/passwd to look users up in."""
-    return guest_file_exists(rootfs, "/etc/passwd")
+    return guest_file_exists(rootfs, "/etc/passwd", root_fd=root_fd)
 
 
-def shell_available(rootfs: str, guest_path: str) -> bool:
+def shell_available(rootfs: str, guest_path: str, *, root_fd=None) -> bool:
     """True when *guest_path* is a regular file inside the container."""
-    return guest_file_exists(rootfs, guest_path)
+    return guest_file_exists(rootfs, guest_path, root_fd=root_fd)
 
 
-def read_passwd_entry(rootfs: str, user: str) -> list:
+def read_passwd_entry(rootfs: str, user: str, *, root_fd=None) -> list:
     """Return the fields of *user*'s /etc/passwd line, or [] if absent.
 
     One read for the whole entry: the fields are wanted together, and
     re-opening the file per field gave four chances for it to change
     underneath the login instead of one.
     """
-    for parts in _entries(rootfs, "/etc/passwd"):
+    for parts in _entries(rootfs, "/etc/passwd", root_fd):
         if parts and parts[0] == user:
             return parts
     return []
@@ -81,17 +87,17 @@ def passwd_field(parts: list, field_index: int) -> str:
     return ""
 
 
-def find_passwd_by_uid(rootfs: str, uid: str) -> tuple:
+def find_passwd_by_uid(rootfs: str, uid: str, *, root_fd=None) -> tuple:
     """Return (home, shell, primary_gid) for the given UID, or ('','','')."""
-    for parts in _entries(rootfs, "/etc/passwd"):
+    for parts in _entries(rootfs, "/etc/passwd", root_fd):
         if len(parts) >= 7 and parts[2] == uid:
             return (parts[5], parts[6], parts[3])
     return ("", "", "")
 
 
-def read_group_gid(rootfs: str, group: str) -> str:
+def read_group_gid(rootfs: str, group: str, *, root_fd=None) -> str:
     """Return the GID string for the named group from /etc/group, or ''."""
-    for parts in _entries(rootfs, "/etc/group"):
+    for parts in _entries(rootfs, "/etc/group", root_fd):
         if parts and parts[0] == group and len(parts) > 2:
             return parts[2]
     return ""

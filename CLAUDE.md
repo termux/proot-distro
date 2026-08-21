@@ -286,7 +286,8 @@ Top-level utilities (each owns a focused concern):
   `_PdArgumentParser` (per-command help on error).
 - `paths.py` — `container_dir/_rootfs/_manifest`, `[name:]path` spec
   resolver, `container_locks_for_spec_pair`. `open_container_dir()` /
-  `open_container_rootfs()` / `container_is_installed()` are those first
+  `open_container_rootfs()` / `open_container_pair()` /
+  `container_is_installed()` are those first
   three paths as a **descriptor**, through `statedir`'s `O_NOFOLLOW`
   walk: composing `containers/<name>` is not the same as trusting it,
   since that directory is guest-writable on Termux and a session can
@@ -380,6 +381,14 @@ Top-level utilities (each owns a focused concern):
   it cannot chmod its way into a directory the image sealed, so a
   `chmod 000` subtree of a *previous* rootfs survived `restore` into the
   restored container.
+  `makedirs_at(dir_fd, root, parts, mode)` is that walk starting from a
+  descriptor the caller already holds, for the directories `login` makes
+  on the host side under a rootfs (or a container directory) it has
+  pinned — the `.l2s` store, the guest's `/tmp`, a termux-type guest's
+  cache dir, the `shm` store. What comes back is still a *path*, since a
+  bind source (or `PROOT_L2S_DIR`) is a name proot resolves for itself;
+  what the descriptor buys is the half that is ours, the creation and
+  the `chmod`.
   `makedirs_under(root, parts, mode)` is the one entry point taking a
   *path* — `os.makedirs()`'s replacement for a directory whose components
   are guest or image content — and `opendir_under(root, parts, create=,
@@ -607,8 +616,18 @@ dst_dir_fd=)`. `os.path.isdir()` answered "not
 installed" for a `containers/<name> -> <host dir>` a guest had left
 behind and `os.makedirs(exist_ok=True)` then accepted it, so the image
 was unpacked, the sysdata stubs written and the manifest published
-inside that host directory. `login` goes one step further: it keeps the descriptor
-`open_container_rootfs()` hands it and **chdirs into it** immediately
+inside that host directory. `open_container_pair()` is both of a container's directories at once,
+for a caller that needs them together — `login` reads the guest's
+passwd out of the rootfs and writes `sysdata/` and `shm/` beside it,
+`install` unpacks into one and writes the stubs into the other. The
+rootfs is **descended from** the container directory's own descriptor
+rather than walked to from the trust root a second time, so the two
+cannot end up describing different containers and the second walk
+cannot disagree with the first about a name that changed in between.
+`backup` uses it too.
+
+`login` goes one step further: it keeps the descriptor
+`open_container_pair()` hands it and **chdirs into it** immediately
 before the `execvpe`, with `--rootfs=.` in the argv. proot resolves
 `--rootfs` by name, long after every check here has run, so the path
 form let a live session (`login` holds only a *shared* lock) move
@@ -622,11 +641,36 @@ itself, both ways round. `--get-proot-cmd` keeps printing the real path
 (the user runs that command from their own directory), the `--detach`
 daemon does the `fchdir` in the grandchild so the foreground's own
 working directory is untouched, and `PD_PROOT_BIN` is made absolute
-since the chdir happens before the exec. What this does *not* cover is
-the rest of login's host-side work — `_resolve_login_user`,
-`setup_fake_sysdata`, `inject_termux_profile`, `.l2s`, and every
-`--bind` source — which still name the rootfs and are the same
-resolved-by-proot residual `makedirs_under` documents.
+since the chdir happens before the exec.
+
+Both descriptors are then threaded through **everything login does on
+the host side**, because the walks below them were only ever as good as
+where they started. `guestfile`'s `_resolve()` takes a `root_fd` (a
+private `reopen()` of it, so its own ownership rules are unchanged) and
+`passwd.py` passes it down, so `_detect_dist_type`, `_resolve_login_user`
+and `shell_available` read the guest's passwd, group and shell out of
+the pinned rootfs — those are the uid and gid `--change-id` runs the
+session as and the binary proot is told to execute, and a swap after the
+check used to decide all three (verified: uid `9999`, `/decoyhome`,
+`/bin/DECOYSH`). `env._open_profile_d()` takes it for the one thing
+login *writes* into the rootfs; `sysdata.setup_fake_sysdata()` /
+`fake_sysdata_bindings()` and `shm.make_shm_dir()` take the **container**
+descriptor (they work on siblings of the rootfs, and both create and
+`chmod` — 0700 and 1777 — what they name); and the `.l2s`, `/tmp` and
+termux-cache directories go through `dirfd.makedirs_at()`. Each takes
+the fd as an optional keyword, so a caller working on a tree this
+process made itself (a build stage) keeps the path form, which is right
+for it.
+
+What remains is the class a descriptor cannot reach: every `--bind`
+source and `PROOT_L2S_DIR` is a *name proot resolves after the exec*.
+Sources under `containers/<name>` but outside the rootfs (`sysdata/*`,
+`shm/`) are unreachable from a session confined to the rootfs, so their
+only attacker already owns the program; `.l2s` is the open one.
+`arch.detect_installed_arch()` is a separate matter — it composes
+`root + rel` with no walk at all and `_elf_arch` opens the result with a
+plain blocking `open()`, so a FIFO planted at `<rootfs>/bin/sh` hangs
+`login` and a guest-shipped `usr -> /` has it read host binaries.
 `run`, `backup`, `build --install-as` and the `[name:]path`
 spec resolver ask the same question the same way, and `pin_path()`
 starts its `O_NOFOLLOW` descent from `open_container_rootfs()` rather

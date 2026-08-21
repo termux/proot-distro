@@ -24,7 +24,7 @@
 # is determined by file extension or by --compress flag. Progress is
 # written to stderr so it doesn't corrupt piped archive data on stdout.
 #
-# The container directory is opened once -- through paths.open_container_dir(),
+# The container directory is opened once -- through paths.open_container_pair(),
 # the same O_NOFOLLOW walk the installed check makes -- and everything below
 # it is named as (dir_fd, entry). The three passes used to reopen
 # containers/<name> by path, which is guest-writable on Termux, so a session
@@ -68,7 +68,7 @@ from proot_distro.locking import ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
     container_is_installed, container_manifest, container_rootfs,
-    open_container_dir,
+    open_container_pair,
 )
 
 
@@ -489,27 +489,17 @@ def command_backup(args) -> None:
         # between and have the permission pass chmod -- and the archiver
         # pack -- a host directory of its choosing.
         try:
-            container_fd = open_container_dir(container_name)
+            container_fd, rootfs_fd = open_container_pair(container_name)
         except FileNotFoundError:
             crit_error(f"container '{container_name}' does not exist.")
             sys.exit(1)
         try:
-            try:
-                rootfs_fd = dirfd.opendir_at(
-                    container_fd, os.path.basename(rootfs_dir),
-                )
-            except OSError as exc:
-                crit_error(f"cannot read the rootfs of container "
-                           f"'{container_name}': {quote_error(exc)}")
-                sys.exit(1)
-            try:
-                _run_backup(
-                    container_fd, rootfs_fd, container_name, rootfs_dir,
-                    manifest_path, output_path, compression, verbose,
-                )
-            finally:
-                os.close(rootfs_fd)
+            _run_backup(
+                container_fd, rootfs_fd, container_name, rootfs_dir,
+                manifest_path, output_path, compression, verbose,
+            )
         finally:
+            os.close(rootfs_fd)
             os.close(container_fd)
 
 

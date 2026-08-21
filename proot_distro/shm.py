@@ -74,26 +74,44 @@ def shm_dir(rootfs: str) -> str:
     return os.path.join(os.path.dirname(rootfs), SHM_DIR_NAME)
 
 
-def make_shm_dir(rootfs: str):
+def make_shm_dir(rootfs: str, *, container_fd=None):
     """Create the shm store next to *rootfs*. Path, or None.
 
     None means the name could not be validated -- a component is a
     symlink or is not a directory -- in which case the caller binds
     nothing rather than handing proot a name it could not vouch for.
+
+    *container_fd* is the store's parent, `containers/<name>`, when the
+    caller has pinned it. The store is created and chmod'ed 1777, so
+    starting that walk at a name -- guest-writable on Termux, and
+    resolved by `login` under a shared lock -- was a host directory
+    relaxed to 1777 away from being a swapped name.
     """
+    if container_fd is not None:
+        return dirfd.makedirs_at(
+            container_fd, os.path.dirname(rootfs), (SHM_DIR_NAME,),
+            mode=SHM_DIR_MODE,
+        )
     return dirfd.makedirs_under(
         os.path.dirname(rootfs), (SHM_DIR_NAME,), mode=SHM_DIR_MODE,
     )
 
 
-def make_guest_tmp(rootfs: str) -> None:
+def make_guest_tmp(rootfs: str, *, rootfs_fd=None) -> None:
     """Give the guest a /tmp if it has none. Failure is not an error.
 
     Nothing is bound from here and nothing depends on the result, so a
     name that will not validate is simply left alone: the container
     either ships its own /tmp or does without, exactly as it would have
     without this call.
+
+    *rootfs_fd* is the rootfs when the caller has pinned it; the mode
+    goes on through a descriptor either way, but the walk has to start
+    somewhere and a pinned caller starts it at the inode.
     """
+    if rootfs_fd is not None:
+        dirfd.makedirs_at(rootfs_fd, rootfs, ("tmp",), mode=GUEST_TMP_MODE)
+        return
     dirfd.makedirs_under(rootfs, ("tmp",), mode=GUEST_TMP_MODE)
 
 

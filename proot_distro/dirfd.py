@@ -243,6 +243,34 @@ def makedirs_under(root: str, parts, mode: int = None):
     return os.path.join(root, *parts)
 
 
+def makedirs_at(dir_fd: int, root: str, parts, mode: int = None):
+    """makedirs_under() starting from a descriptor the caller holds.
+
+    Same walk, same refusals, same mode-through-the-descriptor; the
+    difference is where it starts. A caller that has pinned the root --
+    login holding the rootfs it is about to hand proot, say -- keeps
+    that guarantee only by descending from the descriptor, since going
+    back to the path re-resolves the very components the pin settled.
+
+    The answer is still a *path*, composed from *root*, because that is
+    what the callers need it for: a bind source, or PROOT_L2S_DIR. proot
+    resolves that name itself when it mounts it, which no descriptor
+    here can change. What the walk buys is the half that is ours: the
+    directory is created, and its mode applied, under the inode the
+    caller pinned rather than under whatever the name leads to now.
+
+    None means the directory could not be made inside the pinned root,
+    which callers treat as "do not use this path" -- see
+    makedirs_under(), whose contract this shares.
+    """
+    try:
+        fd = descend_at(dir_fd, parts, create=True, mode=mode)
+    except OSError:
+        return None
+    os.close(fd)
+    return os.path.join(root, *parts)
+
+
 def opendir_under(root: str, parts, *, create: bool = False,
                   mode: int = None):
     """Open the directory *parts* names under *root*. Descriptor, or None.

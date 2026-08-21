@@ -130,6 +130,51 @@ def open_container_rootfs(name: str, *, create: bool = False) -> int:
     return _open_container_path(container_rootfs(name), name, create)
 
 
+def open_container_pair(name: str, *, create: bool = False):
+    """Open containers/<name> and its rootfs. (container_fd, rootfs_fd).
+
+    For a caller that needs both -- `login` reads the guest's passwd out
+    of the rootfs and writes the container's sysdata/ and shm/ beside
+    it, `install` unpacks into one and writes the stubs into the other.
+    The rootfs is *descended from* the container directory's own
+    descriptor rather than walked to from the trust root a second time,
+    so the two cannot end up describing different containers, and the
+    second walk cannot disagree with the first about a name that changed
+    in between.
+
+    FileNotFoundError means the container, or its rootfs, is not there
+    -- both ordinary answers, and both left to the caller the way
+    _open_container_path leaves them. An entry that must not be followed
+    stops the command, again as it does there: every caller of this is
+    about to write into one of the two directories.
+
+    The caller owns both descriptors and closes them; nothing is left
+    open if this raises.
+    """
+    container_fd = _open_container_path(container_dir(name), name, create)
+    try:
+        if create:
+            return container_fd, dirfd.descend_at(
+                container_fd, ("rootfs",), create=True,
+            )
+        try:
+            return container_fd, dirfd.opendir_at(container_fd, "rootfs")
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            crit_error(
+                f"the storage of container '{name}' is not usable: "
+                f"'{quote_path(container_rootfs(name))}' is not a "
+                f"directory this program created ({exc.strerror}). "
+                f"Refusing to follow it; remove or move that entry and "
+                f"try again."
+            )
+            sys.exit(1)
+    except BaseException:
+        os.close(container_fd)
+        raise
+
+
 def container_is_installed(name: str) -> bool:
     """True when containers/<name>/rootfs is a directory reachable as one.
 

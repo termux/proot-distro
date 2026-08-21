@@ -97,8 +97,8 @@ def test_session_starts_in_the_pinned_rootfs_after_a_swap(
     real_st = os.stat(container_rootfs("box"))
     real_detect = login_mod._detect_dist_type
 
-    def detect_then_swap(rootfs):
-        answer = real_detect(rootfs)
+    def detect_then_swap(rootfs, rootfs_fd=None):
+        answer = real_detect(rootfs, rootfs_fd)
         decoy()
         return answer
 

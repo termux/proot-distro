@@ -44,7 +44,7 @@ from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.names import is_valid_name, require_valid_name
 from proot_distro.paths import (
     container_dir, container_manifest, container_rootfs,
-    container_is_installed, open_container_rootfs,
+    container_is_installed, open_container_pair,
 )
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import derive_alias, pull_image
@@ -223,7 +223,7 @@ def _run_install(
     # Termux, and os.path.isdir() said "no" to a symlink pointing at a
     # host directory with no rootfs in it, after which the whole install
     # was extracted inside that directory. A planted component stops the
-    # command in open_container_rootfs(); what reaches here is either a
+    # command in open_container_pair(); what reaches here is either a
     # real rootfs (refuse, the container exists) or nothing yet.
     if container_is_installed(install_name):
         msg()
@@ -258,8 +258,10 @@ def _run_install(
     # containers/<name>/rootfs a second time. Closing it and handing the
     # path down instead left the whole unpack open to a session that
     # re-pointed the name, which lands the image (and the manifest that
-    # follows it) in a host directory of the session's choosing.
-    rootfs_fd = open_container_rootfs(install_name, create=True)
+    # follows it) in a host directory of the session's choosing. The
+    # container directory comes back with it, for the sysdata stubs
+    # written beside the rootfs at the end.
+    container_fd, rootfs_fd = open_container_pair(install_name, create=True)
 
     def _cleanup() -> None:
         # The tree being discarded is whatever the image or the archive
@@ -323,7 +325,7 @@ def _run_install(
                 log_info("Registering Android-specific UIDs and GIDs...")
                 register_android_ids(rootfs_dir)
 
-        setup_fake_sysdata(rootfs_dir)
+        setup_fake_sysdata(rootfs_dir, container_fd=container_fd)
 
     except KeyboardInterrupt:
         clear_bar()
@@ -344,6 +346,7 @@ def _run_install(
         raise
     finally:
         os.close(rootfs_fd)
+        os.close(container_fd)
         if tmp_archive is not None:
             try:
                 os.remove(tmp_archive)

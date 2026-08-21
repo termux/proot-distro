@@ -389,15 +389,25 @@ def _write_if_missing(dir_fd: int, name: str, content: str) -> None:
         os.close(fd)
 
 
-def setup_fake_sysdata(rootfs: str) -> None:
+def setup_fake_sysdata(rootfs: str, *, container_fd=None) -> None:
     """Create fake /proc and /sys stubs required by proot on Android.
 
     *rootfs* is the absolute path to the container's rootfs directory
     (e.g. ``$RUNTIME_DIR/containers/<name>/rootfs``).  Fake files are
     written to a sibling ``sysdata/`` directory, not into the rootfs.
+
+    *container_fd* is that sibling's parent -- `containers/<name>` --
+    when the caller has pinned it, and a caller that has one must pass
+    it. Everything below here is already named as (dir_fd, entry), but
+    the walk started at `os.path.dirname(rootfs)`, a name that is
+    guest-writable on Termux and that `login` resolves while holding
+    only a shared lock. This directory is *created* and chmod'ed 0700
+    and its files written, so a re-pointed name meant doing all of that
+    somewhere else.
     """
     try:
-        parent_fd = dirfd.opendir(os.path.dirname(rootfs))
+        parent_fd = (dirfd.reopen(container_fd) if container_fd is not None
+                     else dirfd.opendir(os.path.dirname(rootfs)))
     except OSError:
         return
     try:
@@ -435,7 +445,21 @@ def _accepts_at(dir_fd: int, name: str, predicate) -> bool:
     return predicate(st)
 
 
-def fake_sysdata_bindings(rootfs: str) -> list:
+def _open_sysdata_dir(rootfs: str, container_fd):
+    """Open the container's sysdata/ directory. Descriptor, or None.
+
+    From the pinned container directory when the caller has one; see
+    setup_fake_sysdata for why that matters.
+    """
+    if container_fd is None:
+        return dirfd.opendir_under(os.path.dirname(rootfs), ("sysdata",))
+    try:
+        return dirfd.descend_at(container_fd, ("sysdata",))
+    except OSError:
+        return None
+
+
+def fake_sysdata_bindings(rootfs: str, *, container_fd=None) -> list:
     """Return --bind args for the fake /proc and /sys entries of *rootfs*.
 
     Only entries this module could verify are bound: sys_empty as a real
@@ -450,7 +474,7 @@ def fake_sysdata_bindings(rootfs: str) -> list:
     and every later session mounts it into the guest.
     """
     base = sysdata_dir(rootfs)
-    dir_fd = dirfd.opendir_under(os.path.dirname(rootfs), ("sysdata",))
+    dir_fd = _open_sysdata_dir(rootfs, container_fd)
     if dir_fd is None:
         return []
 

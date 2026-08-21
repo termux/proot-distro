@@ -127,7 +127,8 @@ def image_env_pairs(container_name: str):
         yield key, val
 
 
-def inject_termux_profile(rootfs: str, env: dict) -> None:
+def inject_termux_profile(rootfs: str, env: dict, *,
+                          rootfs_fd=None) -> None:
     """Write a profile.d snippet that re-applies the login-time environment.
 
     Login shells source /etc/profile, which reinitialises the environment
@@ -150,7 +151,7 @@ def inject_termux_profile(rootfs: str, env: dict) -> None:
     # file truncated and rewritten with export lines on the next login,
     # and chmod'ed 0644 after. Everything below is named against a
     # descriptor instead (see _open_profile_d and dirfd).
-    profile_fd = _open_profile_d(rootfs)
+    profile_fd = _open_profile_d(rootfs, rootfs_fd)
     if profile_fd is None:
         return
     try:
@@ -159,17 +160,25 @@ def inject_termux_profile(rootfs: str, env: dict) -> None:
         os.close(profile_fd)
 
 
-def _open_profile_d(rootfs: str):
+def _open_profile_d(rootfs: str, rootfs_fd=None):
     """Open <rootfs>/etc/profile.d as a descriptor, refusing symlinks.
 
     None when there is no such directory, which is the same condition the
     os.path.isdir() check used to express — the snippet is only dropped
     into a profile.d a distribution already ships, never into one this
     would have to create.
+
+    *rootfs_fd* is the rootfs when the caller has pinned it, and the
+    descent starts there instead. This is the one thing `login` *writes*
+    into the rootfs on the host side, so starting the walk at a name --
+    `containers/<name>/rootfs`, guest-writable on Termux and resolved
+    afresh here -- was the half of it a descriptor per level below could
+    not make up for.
     """
     fd = None
     try:
-        fd = dirfd.opendir(rootfs)
+        fd = (dirfd.reopen(rootfs_fd) if rootfs_fd is not None
+              else dirfd.opendir(rootfs))
         for part in ("etc", "profile.d"):
             nxt = dirfd.opendir_at(fd, part)
             os.close(fd)

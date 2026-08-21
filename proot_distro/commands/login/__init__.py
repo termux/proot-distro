@@ -56,7 +56,7 @@ from proot_distro.locking import ContainerLock
 from proot_distro.session import register_session
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_image_config, container_rootfs, open_container_rootfs,
+    container_image_config, container_rootfs, open_container_pair,
 )
 
 from proot_distro.commands.login.env import (
@@ -93,7 +93,7 @@ def command_login(args) -> None:
         _command_login_inner(container_name, args, lock)
 
 
-def _detect_dist_type(rootfs: str) -> str:
+def _detect_dist_type(rootfs: str, rootfs_fd=None) -> str:
     """Return 'termux' iff the rootfs is a Termux installation.
 
     Check for the existence of the Termux 'login' binary as a file
@@ -109,11 +109,12 @@ def _detect_dist_type(rootfs: str) -> str:
     --change-id is passed at all.
     """
     return "termux" if guest_file_exists(
-        rootfs, f"{TERMUX_PREFIX}/bin/login"
+        rootfs, f"{TERMUX_PREFIX}/bin/login", root_fd=rootfs_fd
     ) else "normal"
 
 
-def _resolve_login_user(rootfs: str, container_name: str, user_arg: str) -> dict:
+def _resolve_login_user(rootfs: str, container_name: str, user_arg: str,
+                        rootfs_fd=None) -> dict:
     """Resolve --user against the container's passwd/group.
 
     Returns a dict with name, uid, gid, home, shell — all strings.
@@ -130,14 +131,17 @@ def _resolve_login_user(rootfs: str, container_name: str, user_arg: str) -> dict
         user_spec = user_arg
         group_spec = None
 
-    if passwd_available(rootfs):
+    if passwd_available(rootfs, root_fd=rootfs_fd):
         if user_spec.isdigit():
             uid = user_spec
-            home, shell, primary_gid = find_passwd_by_uid(rootfs, user_spec)
+            home, shell, primary_gid = find_passwd_by_uid(
+                rootfs, user_spec, root_fd=rootfs_fd,
+            )
             home = home or "/"
             shell = shell or "/bin/sh"
         else:
-            entry = read_passwd_entry(rootfs, user_spec)
+            entry = read_passwd_entry(rootfs, user_spec,
+                                      root_fd=rootfs_fd)
             if not entry:
                 crit_error(f"no user '{user_spec}' defined in /etc/passwd.")
                 sys.exit(1)
@@ -156,7 +160,8 @@ def _resolve_login_user(rootfs: str, container_name: str, user_arg: str) -> dict
         elif group_spec.isdigit():
             gid = group_spec
         else:
-            gid = read_group_gid(rootfs, group_spec)
+            gid = read_group_gid(rootfs, group_spec,
+                                 root_fd=rootfs_fd)
             if not gid:
                 crit_error(
                     f"no group '{group_spec}' defined in /etc/group."
@@ -268,9 +273,10 @@ def _build_normal_env(container_name, login_user, login_home,
     return env
 
 
-def _check_shell_available(rootfs, login_shell, container_name):
+def _check_shell_available(rootfs, login_shell, container_name,
+                           rootfs_fd=None):
     """Exit with a helpful error when the shell can't be resolved in the rootfs."""
-    if shell_available(rootfs, login_shell):
+    if shell_available(rootfs, login_shell, root_fd=rootfs_fd):
         return
 
     cfg = container_image_config(container_name)
@@ -300,20 +306,24 @@ def _command_login_inner(container_name: str, args, lock) -> None:
     # through to the exec, where proot would otherwise resolve the name
     # again -- see _exec_proot().
     try:
-        rootfs_fd = open_container_rootfs(container_name)
+        container_fd, rootfs_fd = open_container_pair(container_name)
     except FileNotFoundError:
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
     try:
-        _login_with_rootfs(container_name, args, lock, rootfs_fd)
+        _login_with_rootfs(
+            container_name, args, lock, container_fd, rootfs_fd,
+        )
     finally:
         os.close(rootfs_fd)
+        os.close(container_fd)
 
 
-def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
+def _login_with_rootfs(container_name: str, args, lock,
+                       container_fd: int, rootfs_fd: int) -> None:
     rootfs = container_rootfs(container_name)
 
-    dist_type = _detect_dist_type(rootfs)
+    dist_type = _detect_dist_type(rootfs, rootfs_fd)
 
     login_user = getattr(args, "user", "root") or "root"
     kernel_release = (
@@ -353,7 +363,8 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         # termux-type doesn't use uid/gid for proot --change-id.
         login_uid = login_gid = login_home = None
     else:
-        user = _resolve_login_user(rootfs, container_name, login_user)
+        user = _resolve_login_user(rootfs, container_name, login_user,
+                                   rootfs_fd)
         login_user = user["name"]
         login_uid = user["uid"]
         login_gid = user["gid"]
@@ -371,14 +382,15 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         if run_inner is not None:
             inner = run_inner
         else:
-            _check_shell_available(rootfs, login_shell, container_name)
+            _check_shell_available(rootfs, login_shell, container_name,
+                                   rootfs_fd)
             if login_cmd:
                 inner = [login_shell, "-c", shlex.join(login_cmd)]
             else:
                 inner = [login_shell, "-l"]
 
         if IS_TERMUX and not minimal:
-            setup_fake_sysdata(rootfs)
+            setup_fake_sysdata(rootfs, container_fd=container_fd)
 
     # Ensure Termux bin is always last in PATH so guest tools can
     # invoke host Termux utilities. Skipped in --isolated and --minimal
@@ -394,7 +406,7 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         child_env["PATH"] = ":".join(components)
 
     if dist_type == "normal" and IS_TERMUX and not isolated and not minimal:
-        inject_termux_profile(rootfs, child_env)
+        inject_termux_profile(rootfs, child_env, rootfs_fd=rootfs_fd)
 
     # Architecture detection.
     target_arch = detect_installed_arch(rootfs)
@@ -430,6 +442,8 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         proot_bin=proot_bin,
         rootfs=rootfs,
         rootfs_arg=rootfs if show_cmd else os.curdir,
+        container_fd=container_fd,
+        rootfs_fd=rootfs_fd,
         login_wd=login_wd,
         login_uid=login_uid,
         login_gid=login_gid,
@@ -473,7 +487,7 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         # named. Unset rather than pointed somewhere unvalidated — proot
         # falls back to placing each intermediate next to its original,
         # which is what it did before the pin was added.
-        l2s_dir = dirfd.makedirs_under(rootfs, (".l2s",))
+        l2s_dir = dirfd.makedirs_at(rootfs_fd, rootfs, (".l2s",))
         if l2s_dir is not None:
             child_env["PROOT_L2S_DIR"] = l2s_dir
         else:
