@@ -141,6 +141,32 @@ def test_restore_bare_root_archive_rejected(tmp_path):
     assert exc.value.code == 1
 
 
+def test_restore_oversized_manifest_rejected(tmp_path, monkeypatch):
+    # The archive is a stranger's file and its member sizes are its own
+    # choice; the manifest is the one member read whole into memory.
+    monkeypatch.setattr(restore, "_MAX_MANIFEST_BYTES", 64)
+    with pytest.raises(SystemExit) as exc:
+        _run_restore(tmp_path, [
+            {"name": "box/manifest.json", "type": "file",
+             "data": b"{}" + b" " * 128},
+            {"name": "box/rootfs/etc/hostname", "type": "file", "data": b"a"},
+        ])
+    assert exc.value.code == 1
+    # Refused before the destructive commit point: nothing was created.
+    assert not os.path.exists(container_dir("box"))
+
+
+def test_restore_manifest_at_the_limit_is_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(restore, "_MAX_MANIFEST_BYTES", 64)
+    payload = b"{}" + b" " * 62          # exactly the limit
+    _run_restore(tmp_path, [
+        {"name": "box/manifest.json", "type": "file", "data": payload},
+        {"name": "box/rootfs/etc/hostname", "type": "file", "data": b"a"},
+    ])
+    with open(os.path.join(container_dir("box"), "manifest.json"), "rb") as fh:
+        assert fh.read() == payload
+
+
 def test_restore_manifest_only_rejected(tmp_path):
     # An archive that carries a manifest but no rootfs is not a usable
     # backup: it must be refused and must not create a phantom container.

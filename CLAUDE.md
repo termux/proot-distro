@@ -1754,6 +1754,14 @@ compress alike, and refused *by name* where it cannot, on both the
 extension and the flag, so nothing surfaces as a corrupt archive.
 Traversal blocked (`..`/`.`/empty dropped; container name must match
 `_NAME_RE`). First entry per container triggers rootfs clear + lock.
+`manifest.json` is the one member read **whole** — it is published only
+once the rootfs is committed, so it cannot be streamed to its
+destination — and the archive is a stranger's file, so the read is
+capped at `_MAX_MANIFEST_BYTES` (16 MiB, the ceiling `install_local`
+puts on an OCI archive's JSON) and applied to the bytes actually drawn
+rather than to `member.size`, which the archive declares either way.
+Over it, the restore is refused rather than truncated: nothing that
+large came out of `backup`.
 
 Backup opens `containers/<name>` **once** — `paths.open_container_dir()`,
 the same `O_NOFOLLOW` walk the installed check makes — and hands that

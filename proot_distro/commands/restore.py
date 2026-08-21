@@ -93,6 +93,16 @@ _MAGIC_COMPRESS = (
 # Legacy archive prefix.
 _LEGACY_PREFIX = "installed-rootfs"
 
+# How much of a `manifest.json` member is worth holding in memory. The
+# archive is a stranger's file -- someone hands the user a backup and
+# `restore` is what opens it -- so its member sizes are its own choice,
+# and this one member is read whole (it is written only once the rootfs
+# is committed, so it cannot be streamed to the destination). A real one
+# is a few kilobytes of image metadata; 16 MiB is orders of magnitude
+# above that and still bounded, the same ceiling install_local puts on
+# the JSON inside an OCI archive.
+_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+
 
 def _detect_compression(header: bytes) -> str:
     """Return the tarfile mode suffix inferred from *header* magic bytes."""
@@ -612,9 +622,24 @@ def command_restore(args) -> None:
                         data = b''
                         if fobj is not None:
                             try:
-                                data = fobj.read()
+                                # Capped on the bytes actually drawn, not
+                                # on member.size: the header is the
+                                # archive's to declare either way, so one
+                                # more byte than the limit is read and its
+                                # presence is the refusal.
+                                data = fobj.read(_MAX_MANIFEST_BYTES + 1)
                             finally:
                                 fobj.close()
+                        if len(data) > _MAX_MANIFEST_BYTES:
+                            clear_bar()
+                            log_error(
+                                f"Cannot restore: the archive's "
+                                f"'manifest.json' is larger than "
+                                f"{_MAX_MANIFEST_BYTES} bytes. Only "
+                                f"archives created by '{PROGRAM_NAME} "
+                                f"backup' are supported."
+                            )
+                            sys.exit(1)
                         pending_manifest = (data, stat.S_IMODE(member.mode))
                         _on_entry(member.size, member.name)
                     continue
