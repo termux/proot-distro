@@ -115,8 +115,12 @@ def do_run(engine, instr):
                 cached_fd = None
             if cached_fd is not None:
                 try:
-                    apply_layer(cached_fd, stage.rootfs_dir,
-                                digest=hit["layer_digest"])
+                    rootfs_fd = dirfd.opendir(stage.rootfs_dir)
+                    try:
+                        apply_layer(cached_fd, rootfs_fd,
+                                    digest=hit["layer_digest"])
+                    finally:
+                        os.close(rootfs_fd)
                 finally:
                     os.close(cached_fd)
                 stage.layers.append({

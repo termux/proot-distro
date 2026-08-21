@@ -249,9 +249,14 @@ def _close_all(fds) -> None:
 
 
 def pull_image(
-    image_ref: str, rootfs_dir: str, arch: str, insecure: bool = False
+    image_ref: str, rootfs_fd: int, arch: str, insecure: bool = False
 ) -> dict:
-    """Pull an OCI/Docker image and extract all layers into *rootfs_dir*.
+    """Pull an OCI/Docker image into the tree *rootfs_fd* names.
+
+    The rootfs is a **descriptor**, not a path: `install` validates
+    containers/<name>/rootfs with an O_NOFOLLOW walk and hands the
+    result straight down, so nothing between that check and the last
+    member written resolves the name a second time.
 
     The manifest is checked in the local cache first. If cached and
     every layer blob is present *and* re-hashes to its digest, the
@@ -281,14 +286,14 @@ def pull_image(
     registry = parse_image_ref(image_ref)[0]
     try:
         return _pull_layers(
-            image_ref, rootfs_dir, arch, insecure,
+            image_ref, rootfs_fd, arch, insecure,
             manifest, repo, image_config, registry, token, base, usable,
         )
     finally:
         _close_all(usable.values())
 
 
-def _pull_layers(image_ref, rootfs_dir, arch, insecure,
+def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                  manifest, repo, image_config, registry, token, base, usable):
     """pull_image's body, with the caller owning the descriptor cleanup."""
 
@@ -393,7 +398,7 @@ def _pull_layers(image_ref, rootfs_dir, arch, insecure,
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
         try:
-            apply_layer(layer_fd, rootfs_dir, digest=digest)
+            apply_layer(layer_fd, rootfs_fd, digest=digest)
         finally:
             if owned:
                 _close_all((layer_fd,))

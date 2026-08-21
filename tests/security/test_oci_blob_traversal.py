@@ -7,6 +7,7 @@ import tarfile
 
 import pytest
 
+from _builders import install_local_into
 from proot_distro.commands import install_local
 
 
@@ -37,7 +38,7 @@ def test_install_oci_with_traversal_index_digest_fails(tmp_path, builders):
     # The crafted index manifest digest is rejected by validate_digest before
     # any path is built from it.
     with pytest.raises(RuntimeError):
-        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+        install_local_into(str(arc), str(root), "x86_64")
 
 
 def test_install_oci_outer_hardlink_layer_rejected(tmp_path, builders):
@@ -66,7 +67,7 @@ def test_install_oci_outer_hardlink_layer_rejected(tmp_path, builders):
         }],
     )
     with pytest.raises(RuntimeError, match="not a regular file"):
-        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+        install_local_into(str(arc), str(root), "x86_64")
 
 
 def test_install_oci_outer_symlink_layer_rejected(tmp_path, builders):
@@ -89,7 +90,7 @@ def test_install_oci_outer_symlink_layer_rejected(tmp_path, builders):
         }],
     )
     with pytest.raises(RuntimeError, match="not a regular file"):
-        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+        install_local_into(str(arc), str(root), "x86_64")
 
 
 def test_install_oci_outer_hardlink_index_rejected(tmp_path, builders):
@@ -112,7 +113,7 @@ def test_install_oci_outer_hardlink_index_rejected(tmp_path, builders):
         }],
     )
     with pytest.raises(RuntimeError, match="not a regular file"):
-        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+        install_local_into(str(arc), str(root), "x86_64")
 
 
 def test_install_oci_with_hostile_layer_contained(tmp_path, builders):
@@ -130,7 +131,7 @@ def test_install_oci_with_hostile_layer_contained(tmp_path, builders):
         {"name": "evil", "type": "hardlink", "linkname": "../../../etc/shadow"},
     ]], arch="x86_64")
 
-    meta = install_local.install_from_local_file(str(arc), str(root), "x86_64")
+    meta = install_local_into(str(arc), str(root), "x86_64")
 
     assert open(os.path.join(str(root), "etc", "ok"), "rb").read() == b"OK"
     assert not os.path.exists(os.path.join(str(root), "evil"))
@@ -199,7 +200,7 @@ def test_install_refuses_an_archive_with_too_many_members(
         tmp_path, builders, [f"junk/{i}" for i in range(20)],
     )
     with pytest.raises(RuntimeError, match="refusing to index it"):
-        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+        install_local_into(str(arc), str(root), "x86_64")
     # Nothing was applied.
     assert os.listdir(str(root)) == []
 
@@ -214,5 +215,5 @@ def test_oversized_json_member_is_refused(tmp_path, builders, monkeypatch):
         str(arc), [[{"name": "etc/hostname", "type": "file", "data": b"g"}]],
     )
     with pytest.raises(RuntimeError, match="larger than 64 bytes"):
-        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+        install_local_into(str(arc), str(root), "x86_64")
     assert os.listdir(str(root)) == []

@@ -7,6 +7,7 @@ import urllib.error
 
 import pytest
 
+from _builders import pull_image_into
 from proot_distro.helpers.docker import pull as pull_mod
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
@@ -29,7 +30,7 @@ def test_pull_fully_offline(tmp_path, builders):
     ])
     root = tmp_path / "rootfs"
     root.mkdir()
-    meta = pull_mod.pull_image("x:1", str(root), "x86_64")
+    meta = pull_image_into("x:1", str(root), "x86_64")
     assert open(os.path.join(str(root), "etc", "hostname"), "rb").read() == b"cached\n"
     assert meta["manifest"]["layers"]
     assert meta["image_config"]["config"]["Env"] == ["X=1"]
@@ -52,7 +53,7 @@ def test_pull_missing_layer_no_network(tmp_path, builders, monkeypatch):
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError):
-        pull_mod.pull_image("x:miss", str(root), "x86_64")
+        pull_image_into("x:miss", str(root), "x86_64")
 
 
 def test_pull_zstd_layer_rejected(tmp_path, builders, monkeypatch):
@@ -67,5 +68,5 @@ def test_pull_zstd_layer_rejected(tmp_path, builders, monkeypatch):
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError) as exc:
-        pull_mod.pull_image("x:zstd", str(root), "x86_64")
+        pull_image_into("x:zstd", str(root), "x86_64")
     assert "zstd" in str(exc.value)

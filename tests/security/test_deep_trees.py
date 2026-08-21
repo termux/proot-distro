@@ -43,7 +43,7 @@ from proot_distro.commands.remove import command_remove
 from proot_distro.commands.sync import command_sync
 from proot_distro.constants import BASE_CACHE_DIR
 from proot_distro.helpers import layer_diff
-from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
+from _builders import extract_tar_into
 from proot_distro.paths import container_dir, container_rootfs
 
 # Comfortably past sys.getrecursionlimit()'s default of 1000, and past the
@@ -301,7 +301,7 @@ def test_whiteout_clears_a_tree_deeper_than_the_stack(tmp_path, builders):
         {"name": "after", "type": "file", "data": b"OK"},
     ])
     try:
-        extract_tar_to_rootfs(str(arc), str(root), handle_whiteouts=True)
+        extract_tar_into(str(arc), str(root), handle_whiteouts=True)
         assert not (root / "deep").exists()
         # The layer kept being applied after the whiteout.
         assert (root / "after").read_bytes() == b"OK"
@@ -321,7 +321,7 @@ def test_whiteout_clears_a_sealed_tree(tmp_path, builders):
         {"name": ".wh.deep", "type": "file", "data": b""},
     ])
     try:
-        extract_tar_to_rootfs(str(arc), str(root), handle_whiteouts=True)
+        extract_tar_into(str(arc), str(root), handle_whiteouts=True)
         assert not (root / "deep").exists()
     finally:
         if sealed.is_dir():

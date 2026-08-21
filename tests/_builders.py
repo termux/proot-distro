@@ -6,6 +6,7 @@
 # rootfs/container trees — so tests can drive the real code paths against
 # both well-formed and hostile input.
 
+import contextlib
 import gzip
 import hashlib
 import io
@@ -132,19 +133,57 @@ def rootfs_members(extra=()):
 # Layer blobs (gzipped tar) + OCI image-layout archives
 # ---------------------------------------------------------------------------
 
+@contextlib.contextmanager
+def dir_fd(path):
+    """A directory descriptor for an API that names a *pinned* rootfs.
+
+    The extractor, apply_layer() and pull_image() all take the rootfs as
+    a descriptor: resolving containers/<name>/rootfs a second time is
+    what the pin exists to prevent. Tests hold paths, so this is the
+    adaptor, and it is here so the ownership rule stays in one place.
+    """
+    fd = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def apply_layer_file(path, rootfs_dir):
     """apply_layer() for a blob that lives at *path*.
 
     The production API takes the descriptor the digest check was made on
-    (cache.open_verified_layer), so a test holding a blob on disk opens it
-    itself. Kept here so the ownership rule stays in one place.
+    (cache.open_verified_layer) and a descriptor on the rootfs, so a test
+    holding both on disk opens them itself.
     """
     from proot_distro.helpers.docker.layers import apply_layer
     fd = os.open(path, os.O_RDONLY)
     try:
-        apply_layer(fd, rootfs_dir)
+        with dir_fd(rootfs_dir) as rfd:
+            apply_layer(fd, rfd)
     finally:
         os.close(fd)
+
+
+def pull_image_into(image_ref, rootfs_dir, arch, **kw):
+    """pull_image() for a rootfs given as a path."""
+    from proot_distro.helpers.docker.pull import pull_image
+    with dir_fd(rootfs_dir) as rfd:
+        return pull_image(image_ref, rfd, arch, **kw)
+
+
+def install_local_into(archive_path, rootfs_dir, arch):
+    """install_from_local_file() for a rootfs given as a path."""
+    from proot_distro.commands.install_local import install_from_local_file
+    with dir_fd(rootfs_dir) as rfd:
+        return install_from_local_file(str(archive_path), rfd, arch)
+
+
+def extract_tar_into(archive_path, rootfs_dir, **kw):
+    """extract_tar_to_rootfs() for a rootfs given as a path."""
+    from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
+    with dir_fd(rootfs_dir) as rfd:
+        extract_tar_to_rootfs(str(archive_path), rfd, **kw)
 
 
 def make_layer_blob(members):

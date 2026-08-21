@@ -1202,6 +1202,31 @@ blob rides the same `r|*` auto-detect a gzip layer does. Whiteouts (`.wh..wh..op
 dir; `.wh.<name>` deletes sibling), hardlink linkname filtering, and
 member-name traversal protection live in `helpers/tar_extract.py`.
 
+That extractor takes the rootfs as a **descriptor**, not a path, and so
+do `apply_layer()`, `pull_image()` and `install_from_local_file()` above
+it — `install` keeps the one `open_container_rootfs()` handed it and
+passes it all the way down, so nothing between the installed check and
+the last member written resolves `containers/<name>/rootfs` a second
+time. Below the root the rule is the one `restore` and `copy_step`
+already follow: `safe_resolve_parts_at()` says where a member *belongs*
+(following the symlinks an earlier member shipped, re-anchoring an
+absolute target at the rootfs, clamping `..`), and the answer is then
+re-walked with `dirfd.descend_at()` so every write is `(dir_fd, name)`.
+Resolving by name and writing by name were two acts: `os.makedirs`,
+`os.remove`, `open(dest, "wb")`, `os.chmod` and `os.utime` each resolved
+the path afresh, so a process that re-pointed a resolved parent in
+between had the member land wherever it pointed — reproduced by staging
+the swap on the resolve, with the file landing outside the rootfs. Files
+go in through `open_new_at` (`O_EXCL`), symlinks and whiteouts through
+`rmtree_at(dir_fd, name)`, modes through `chmod_at`/`fchmod` and times
+through `os.utime(..., dir_fd=, follow_symlinks=False)`. Parent
+descriptors are cached one deep (`_Parents`): a tar lists its members in
+tree order, so consecutive entries share a parent and the descent costs
+about one `openat` per member. The two deferred passes — hard links,
+directory mtimes — re-resolve and re-descend the same way, since the
+whole point of deferring them is that a later member may have changed
+what the name means.
+
 Manifest-cache payload (`cache.py`): `{image_ref, arch, manifest, repo,
 image_config}`. The key is a hash, so the entry itself is the only
 record of which image it holds — `save_manifest_cache()` (the single

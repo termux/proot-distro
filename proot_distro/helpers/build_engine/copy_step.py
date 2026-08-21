@@ -359,9 +359,15 @@ def _pull_throwaway_image(engine, image_ref):
     if not engine.quiet:
         log_info(f"COPY --from='{image_ref}': fetching external image...")
     try:
-        pull_image(image_ref, rootfs, engine.target_arch_pd)
+        rootfs_fd = dirfd.opendir(rootfs)
+    except OSError as exc:
+        raise BuildError(f"COPY --from={image_ref}: {exc}") from exc
+    try:
+        pull_image(image_ref, rootfs_fd, engine.target_arch_pd)
     except RuntimeError as exc:
         raise BuildError(f"COPY --from={image_ref}: {exc}") from exc
+    finally:
+        os.close(rootfs_fd)
     return rootfs
 
 

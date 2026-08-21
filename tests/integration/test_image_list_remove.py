@@ -111,7 +111,6 @@ def test_legacy_entry_named_from_installed_container(builders):
 
 def test_pull_backfills_legacy_entry(builders, sandbox_tmp):
     """A cache hit repairs an entry that predates the stored metadata."""
-    from proot_distro.helpers.docker.pull import pull_image
 
     _seed_image(builders, "img:1", "x86_64")
     path = manifest_cache_path("img:1", "x86_64")
@@ -123,7 +122,7 @@ def test_pull_backfills_legacy_entry(builders, sandbox_tmp):
 
     rootfs = str(sandbox_tmp / "rootfs")
     os.makedirs(rootfs, exist_ok=True)
-    pull_image("img:1", rootfs, "x86_64")
+    builders.pull_image_into("img:1", rootfs, "x86_64")
 
     record = iter_cached_images()[0]
     assert record["image_ref"] == "img:1"

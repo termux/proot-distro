@@ -252,8 +252,14 @@ def _run_install(
         log_info(f"Installing '{display_ref}' as '{install_name}'...")
 
     # Made level by level off the descriptor of the level above, for the
-    # same reason it is checked that way.
-    os.close(open_container_rootfs(install_name, create=True))
+    # same reason it is checked that way -- and *kept*: the extraction
+    # writes every member as (dir_fd, name) beneath this descriptor, so
+    # nothing between the check and the last byte written resolves
+    # containers/<name>/rootfs a second time. Closing it and handing the
+    # path down instead left the whole unpack open to a session that
+    # re-pointed the name, which lands the image (and the manifest that
+    # follows it) in a host directory of the session's choosing.
+    rootfs_fd = open_container_rootfs(install_name, create=True)
 
     def _cleanup() -> None:
         # The tree being discarded is whatever the image or the archive
@@ -270,16 +276,20 @@ def _run_install(
     try:
         if local_path is not None:
             log_info("Extracting rootfs from archive...")
-            metadata = install_from_local_file(local_path, rootfs_dir, dist_arch)
+            metadata = install_from_local_file(
+                local_path, rootfs_fd, dist_arch,
+            )
         elif url is not None:
             tmp_archive = _cache_temp_file(f"dl_install_{install_name}")
             log_info("Downloading archive...")
             download_file(url, tmp_archive, insecure=allow_insecure)
             log_info("Extracting rootfs from archive...")
-            metadata = install_from_local_file(tmp_archive, rootfs_dir, dist_arch)
+            metadata = install_from_local_file(
+                tmp_archive, rootfs_fd, dist_arch,
+            )
         else:
             metadata = pull_image(
-                image_ref, rootfs_dir, dist_arch, insecure=allow_insecure
+                image_ref, rootfs_fd, dist_arch, insecure=allow_insecure
             )
 
         # Write manifest.json when metadata is available (Docker pull
@@ -333,6 +343,7 @@ def _run_install(
         _cleanup()
         raise
     finally:
+        os.close(rootfs_fd)
         if tmp_archive is not None:
             try:
                 os.remove(tmp_archive)

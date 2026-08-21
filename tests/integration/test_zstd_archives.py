@@ -10,13 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from _builders import extract_tar_into, install_local_into, pull_image_into
 from proot_distro import compress
 from proot_distro.commands import backup as backup_mod
-from proot_distro.commands import install_local as install_local_mod
 from proot_distro.commands import restore as restore_mod
 from proot_distro.commands.backup import command_backup
 from proot_distro.commands.restore import command_restore
-from proot_distro.helpers import tar_extract as tar_extract_mod
 from proot_distro.helpers.docker import pull as pull_mod
 from proot_distro.paths import container_dir, container_rootfs
 
@@ -125,7 +124,7 @@ def test_install_from_zstd_rootfs_tarball(tmp_path, builders):
     root = tmp_path / "dest"
     root.mkdir()
 
-    assert install_local_mod.install_from_local_file(
+    assert install_local_into(
         str(arc), str(root), "x86_64"
     ) is None
     assert open(os.path.join(str(root), "etc", "hostname"), "rb").read() \
@@ -143,7 +142,7 @@ def test_zstd_layer_extracts(tmp_path, builders):
     ], compression="zst")
     root = tmp_path / "rootfs"
     root.mkdir()
-    tar_extract_mod.extract_tar_to_rootfs(str(blob), str(root))
+    extract_tar_into(str(blob), str(root))
     assert open(os.path.join(str(root), "etc", "os-release"), "rb").read() \
         == b"ID=z\n"
 
@@ -209,10 +208,10 @@ def test_local_install_names_zstd_instead_of_corruption(tmp_path, monkeypatch):
     root.mkdir()
 
     with pytest.raises(RuntimeError) as exc:
-        install_local_mod.install_from_local_file(arc, str(root), "x86_64")
+        install_local_into(arc, str(root), "x86_64")
     assert "zstd" in str(exc.value)
     with pytest.raises(RuntimeError) as exc:
-        tar_extract_mod.extract_tar_to_rootfs(arc, str(root))
+        extract_tar_into(arc, str(root))
     assert "zstd" in str(exc.value)
 
 
@@ -234,13 +233,13 @@ def test_pull_gate_follows_the_probe(tmp_path, builders, monkeypatch):
 
     monkeypatch.setattr(pull_mod, "ZSTD_AVAILABLE", False)
     with pytest.raises(RuntimeError) as exc:
-        pull_mod.pull_image("x:zmedia", str(root), "x86_64")
+        pull_image_into("x:zmedia", str(root), "x86_64")
     assert "zstd" in str(exc.value)
 
     # With support present the mediaType is no longer a reason to stop:
     # the blob itself decides, via auto-detect.
     monkeypatch.setattr(pull_mod, "ZSTD_AVAILABLE", True)
-    pull_mod.pull_image("x:zmedia", str(root), "x86_64")
+    pull_image_into("x:zmedia", str(root), "x86_64")
     assert os.path.isfile(os.path.join(str(root), "etc", "x"))
 
 

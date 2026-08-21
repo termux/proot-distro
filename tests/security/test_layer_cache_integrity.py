@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.commands import install_local
+from _builders import install_local_into, pull_image_into
 from proot_distro.helpers import oci_writer
 from proot_distro.helpers.build_engine import run_step
 from proot_distro.helpers.build_engine.engine import BuildEngine
@@ -88,7 +88,7 @@ def test_pull_refetches_a_poisoned_cached_layer(tmp_path, builders,
 
     root = tmp_path / "rootfs"
     root.mkdir()
-    pull_mod.pull_image("x:1", str(root), "x86_64")
+    pull_image_into("x:1", str(root), "x86_64")
 
     assert called == [digest], "the poisoned blob was not reused"
     assert (root / "etc" / "os-release").read_bytes() == b"ID=real\n"
@@ -135,7 +135,7 @@ def test_pull_applies_the_inode_it_hashed_not_the_name(tmp_path, builders,
 
     root = tmp_path / "rootfs"
     root.mkdir()
-    pull_mod.pull_image("x:1", str(root), "x86_64")
+    pull_image_into("x:1", str(root), "x86_64")
 
     assert done, "the test did not exercise the swap"
     assert (root / "etc" / "os-release").read_bytes() == b"ID=real\n"
@@ -161,7 +161,7 @@ def test_pull_refuses_a_blob_rewritten_under_its_own_descriptor(
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError, match="does not match its digest"):
-        pull_mod.pull_image("x:1", str(root), "x86_64")
+        pull_image_into("x:1", str(root), "x86_64")
 
     assert done, "the test did not exercise the swap"
 
@@ -179,7 +179,7 @@ def test_pull_leaves_no_open_descriptors(tmp_path, builders):
     root.mkdir()
 
     before = _open_fds()
-    pull_mod.pull_image("x:1", str(root), "x86_64")
+    pull_image_into("x:1", str(root), "x86_64")
     assert len(_open_fds() - before) == 0
 
 
@@ -194,7 +194,7 @@ def test_pull_closes_descriptors_when_a_layer_fails(tmp_path, builders,
 
     before = _open_fds()
     with pytest.raises(RuntimeError, match="boom"):
-        pull_mod.pull_image("x:1", str(root), "x86_64")
+        pull_image_into("x:1", str(root), "x86_64")
     assert len(_open_fds() - before) == 0
     assert os.path.isfile(layer_cache_path(digest))
 
@@ -214,7 +214,7 @@ def test_pull_offline_refuses_a_poisoned_cached_layer(tmp_path, builders,
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError):
-        pull_mod.pull_image("x:1", str(root), "x86_64")
+        pull_image_into("x:1", str(root), "x86_64")
     assert not (root / "etc" / "PWNED").exists()
     assert os.listdir(str(root)) == []
 
@@ -233,7 +233,7 @@ def test_pull_refuses_an_unhashable_digest(tmp_path, builders, monkeypatch):
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError, match="Unsupported digest algorithm"):
-        pull_mod.pull_image("x:512", str(root), "x86_64")
+        pull_image_into("x:512", str(root), "x86_64")
 
 
 def test_download_blob_does_not_trust_a_cached_name(builders, monkeypatch):
@@ -349,7 +349,7 @@ def test_install_oci_layer_digest_mismatch_refused(tmp_path, builders):
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError, match="does not match its digest"):
-        install_local.install_from_local_file(arc, str(root), "x86_64")
+        install_local_into(arc, str(root), "x86_64")
 
     assert not os.path.exists(layer_cache_path(digest)), \
         "a mismatched blob must not reach the shared layer cache"
@@ -373,7 +373,7 @@ def test_install_oci_manifest_blob_swapped_refused(tmp_path, builders):
     root = tmp_path / "rootfs"
     root.mkdir()
     with pytest.raises(RuntimeError, match="does not match its digest"):
-        install_local.install_from_local_file(arc, str(root), "x86_64")
+        install_local_into(arc, str(root), "x86_64")
 
 
 def test_install_oci_repairs_a_poisoned_cache_entry(tmp_path, builders):
@@ -388,7 +388,7 @@ def test_install_oci_repairs_a_poisoned_cache_entry(tmp_path, builders):
 
     root = tmp_path / "rootfs"
     root.mkdir()
-    install_local.install_from_local_file(
+    install_local_into(
         str(tmp_path / "ok.oci.tar"), str(root), "x86_64")
 
     assert (root / "etc" / "os-release").read_bytes() == b"ID=real\n"

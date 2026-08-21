@@ -111,15 +111,17 @@ def download_blob(
     return retry_http(_attempt, what=f"Downloading layer {short_id}")
 
 
-def apply_layer(layer_fd: int, rootfs_dir: str, *, digest: str = "") -> None:
-    """Apply one OCI/Docker layer (gzipped tar) onto rootfs_dir.
+def apply_layer(layer_fd: int, rootfs_fd: int, *, digest: str = "") -> None:
+    """Apply one OCI/Docker layer (gzipped tar) into the *rootfs_fd* tree.
 
     Takes the **descriptor** the verification handed back, not a path, so
     the inode read is the one that was hashed (see
     cache.open_verified_layer). With *digest* the extraction re-hashes as
     it consumes and refuses a total that does not match, which is what
     covers the remaining case a descriptor cannot: the same inode
-    truncated and rewritten in place. Thin wrapper around
+    truncated and rewritten in place. The rootfs is a descriptor for the
+    same reason the blob is: every member goes in as (dir_fd, name)
+    beneath it. Thin wrapper around
     extract_tar_fd_to_rootfs that turns on OCI whiteout handling
     (.wh.<name> deletes sibling, .wh..wh..opq clears the parent dir). See
     that function for the full set of invariants enforced during
@@ -128,7 +130,7 @@ def apply_layer(layer_fd: int, rootfs_dir: str, *, digest: str = "") -> None:
     short = digest.split(":")[-1][:12] if digest else ""
     expected = split_digest(digest)[1] if digest else ""
     extract_tar_fd_to_rootfs(
-        layer_fd, rootfs_dir, handle_whiteouts=True,
+        layer_fd, rootfs_fd, handle_whiteouts=True,
         subject=f"layer {short}" if short else "layer",
         expected_sha256=expected,
     )

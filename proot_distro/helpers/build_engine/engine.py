@@ -30,6 +30,7 @@ import json
 import os
 import re
 
+from proot_distro import dirfd
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.message import C, log_info
 from proot_distro.helpers.docker import (
@@ -393,22 +394,31 @@ class BuildEngine:
         new_stage.image_config = json.loads(
             json.dumps(parent.image_config)
         )
-        for layer in parent.layers:
-            # Verified, not merely present: these layers were produced by
-            # this build, so a blob that no longer hashes to its digest
-            # cannot be refetched and must not be applied.
-            try:
-                layer_fd = open_required_layer(
-                    layer["digest"],
-                    what=f"Layer of stage '{parent.name or parent.index}':",
-                )
-            except RuntimeError as exc:
-                raise BuildError(str(exc)) from exc
-            try:
-                apply_layer(layer_fd, new_stage.rootfs_dir,
-                            digest=layer["digest"])
-            finally:
-                os.close(layer_fd)
+        # The stage rootfs is this process's own -- a fresh directory
+        # under the build's 0700 scratch root -- so it is opened by name
+        # here; what the extractor needs is the descriptor, since every
+        # member below it goes in as (dir_fd, name).
+        rootfs_fd = dirfd.opendir(new_stage.rootfs_dir)
+        try:
+            for layer in parent.layers:
+                # Verified, not merely present: these layers were produced
+                # by this build, so a blob that no longer hashes to its
+                # digest cannot be refetched and must not be applied.
+                try:
+                    layer_fd = open_required_layer(
+                        layer["digest"],
+                        what=(f"Layer of stage "
+                              f"'{parent.name or parent.index}':"),
+                    )
+                except RuntimeError as exc:
+                    raise BuildError(str(exc)) from exc
+                try:
+                    apply_layer(layer_fd, rootfs_fd,
+                                digest=layer["digest"])
+                finally:
+                    os.close(layer_fd)
+        finally:
+            os.close(rootfs_fd)
         new_stage.layers = list(parent.layers)
         new_stage.parent_layer_digest = parent.parent_layer_digest
 
@@ -416,10 +426,15 @@ class BuildEngine:
         """Use helpers.docker.pull_image to populate the stage rootfs."""
         log_info(f"Pulling base image '{image_ref}' ({self.target_arch_pd})...")
         try:
-            meta = pull_image(image_ref, stage.rootfs_dir,
-                              self.target_arch_pd)
+            rootfs_fd = dirfd.opendir(stage.rootfs_dir)
+        except OSError as exc:
+            raise BuildError(f"FROM {image_ref}: {exc}") from exc
+        try:
+            meta = pull_image(image_ref, rootfs_fd, self.target_arch_pd)
         except RuntimeError as exc:
             raise BuildError(f"FROM {image_ref}: {exc}") from exc
+        finally:
+            os.close(rootfs_fd)
 
         stage.image_config = meta.get("image_config") or {"config": {}}
         manifest = meta.get("manifest") or {}
