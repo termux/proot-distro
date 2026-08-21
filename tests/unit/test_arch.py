@@ -130,3 +130,62 @@ def test_emulator_override_used_when_valid(tmp_path):
     assert args[:2] == ["-q", str(emu)]
     # Any extra entries are android system --bind args.
     assert all(a.startswith("--bind=") for a in args[2:])
+
+
+# ---------------------------------------------------------------------------
+# get_proot_bin — the string both exec paths hand to a PATH the image sets
+# ---------------------------------------------------------------------------
+
+def test_proot_bin_is_absolute(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    proot = bin_dir / "proot"
+    proot.write_text("#!/bin/sh\n")
+    proot.chmod(proot.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.delenv("PD_PROOT_BIN", raising=False)
+
+    assert arch.get_proot_bin() == str(proot)
+
+
+def test_proot_bin_from_a_relative_path_entry_is_made_absolute(
+    tmp_path, monkeypatch
+):
+    # A relative PATH entry makes shutil.which() answer relatively; the
+    # answer is resolved here, while the cwd is still this process's own.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    proot = bin_dir / "proot"
+    proot.write_text("#!/bin/sh\n")
+    proot.chmod(proot.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "bin")
+    monkeypatch.delenv("PD_PROOT_BIN", raising=False)
+
+    resolved = arch.get_proot_bin()
+    assert os.path.isabs(resolved)
+    assert os.path.samefile(resolved, str(proot))
+
+
+def test_proot_bin_never_falls_back_to_a_bare_name(tmp_path, monkeypatch,
+                                                   capsys):
+    # "proot" with no directory in it would be looked up again by the
+    # exec, in the PATH of the *child* environment — which an image's Env
+    # supplies.
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.delenv("PD_PROOT_BIN", raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        arch.get_proot_bin()
+    assert exc.value.code == 1
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_proot_bin_override_is_made_absolute(tmp_path, monkeypatch):
+    proot = tmp_path / "proot-static"
+    proot.write_text("#!/bin/sh\n")
+    proot.chmod(proot.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PD_PROOT_BIN", "proot-static")
+
+    assert arch.get_proot_bin() == str(proot)

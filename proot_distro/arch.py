@@ -217,11 +217,26 @@ _QEMU_PKGS = {
 
 
 def get_proot_bin() -> str:
-    """Return the proot executable to invoke, honoring PD_PROOT_BIN.
+    """Return the absolute path of the proot executable, or exit.
 
     A set override is validated like --emulator: it must point at an
     existing, executable file, or the process exits with an error.
-    Unset falls back to the existing PATH lookup for "proot".
+    Unset falls back to the PATH lookup for "proot".
+
+    The answer is always absolute, and a lookup that finds nothing is a
+    refusal rather than the bare name "proot". Both callers hand this
+    string to an exec that resolves it against an environment the
+    *image* has a say in -- `login` to os.execvpe(child_env), the build's
+    RUN step to subprocess.Popen(env=child_env), which looks a name with
+    no directory in it up in that environment's PATH. PATH is
+    deliberately not blocked there, being the guest's to choose, so a
+    bare name meant an image's `ENV PATH=/tmp/mine` could decide which
+    binary this process became -- outside any container, before proot
+    had confined anything. A relative name is the same hole one step
+    removed, and worse once `login` chdirs into the rootfs: it would
+    resolve against a file the guest wrote. Every command that reaches
+    here has already passed cli.ensure_proot_installed(), so the exit is
+    a backstop, not the ordinary "proot is missing" report.
     """
     override = os.environ.get("PD_PROOT_BIN")
     if override:
@@ -229,11 +244,12 @@ def get_proot_bin() -> str:
             crit_error(f"PD_PROOT_BIN '{override}' is not found or not "
                        f"executable.")
             sys.exit(1)
-        # Absolute, because `login` chdirs into the container's rootfs
-        # before it exec's this: a relative override checked here would
-        # be looked up from somewhere else by then.
         return os.path.abspath(override)
-    return shutil.which("proot") or "proot"
+    found = shutil.which("proot")
+    if not found:
+        crit_error("proot utility does not exist on your system.")
+        sys.exit(1)
+    return os.path.abspath(found)
 
 
 def get_emulator_args(

@@ -182,6 +182,11 @@ def _run_extra_inputs(engine):
 def _exec_proot(engine, stage, command, stdin_input):
     """Invoke proot against *stage*'s rootfs to execute *command*."""
     rootfs = stage.rootfs_dir
+    # Absolute, from get_proot_bin(). subprocess resolves an executable
+    # with no directory in it against os.get_exec_path(env) -- env being
+    # child_env below, whose PATH is the image's and the stage's to set --
+    # so a bare "proot" would let a Dockerfile's own `ENV PATH=...` pick
+    # the binary this build execs outside any container.
     proot_bin = get_proot_bin()
     proot_args = [proot_bin]
 

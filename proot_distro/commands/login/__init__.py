@@ -31,7 +31,6 @@
 
 import os
 import shlex
-import shutil
 import sys
 
 from proot_distro.constants import (
@@ -431,6 +430,10 @@ def _login_with_rootfs(container_name: str, args, lock,
                    f"architecture-specific binaries.")
         sys.exit(1)
 
+    # Absolute, from get_proot_bin(): os.execvpe() looks a name with no
+    # directory in it up in the PATH of the environment it is handed --
+    # child_env's, which an image's Env sets, PATH being deliberately not
+    # blocked because it is the guest's to choose.
     proot_bin = get_proot_bin()
     # proot resolves --rootfs by name, so the argv carries "." and the
     # process chdirs into the pinned descriptor just before the exec (see
@@ -507,16 +510,6 @@ def _login_with_rootfs(container_name: str, args, lock,
         print(" \\\n  ".join(parts))
         sys.exit(0)
 
-    # Resolved against the *host* PATH, once, for both the foreground and
-    # the detached path. os.execvpe() looks a bare name up in the PATH of
-    # the environment it is handed -- child_env's, which an image's Env
-    # sets, PATH being deliberately not blocked because it is the guest's
-    # to choose. get_proot_bin() answers absolutely for every command
-    # that reaches here (cli.ensure_proot_installed refuses otherwise),
-    # so in practice this only confirms that; what it removes is the one
-    # way an image could still pick the binary this process becomes.
-    proot_bin = _resolve_proot_bin(proot_bin)
-
     # Session metadata shared by the foreground and detached paths.
     reg = dict(
         container=container_name,
@@ -564,23 +557,6 @@ def _login_with_rootfs(container_name: str, args, lock,
     _session_fd = register_session(**reg)  # noqa: F841 (kept alive until exec)
 
     _exec_proot(proot_bin, proot_args, child_env, rootfs_fd)
-
-
-def _resolve_proot_bin(proot_bin: str) -> str:
-    """Return an absolute path to the proot binary, or exit.
-
-    A relative one would be worse than a bare name once the exec chdirs
-    into the rootfs: it would resolve inside the container, against a
-    file the guest wrote.
-    """
-    if os.path.isabs(proot_bin):
-        return proot_bin
-    found = shutil.which(proot_bin)
-    if not found:
-        crit_error(f"proot binary '{proot_bin}' could not be found on "
-                   f"PATH.")
-        sys.exit(1)
-    return os.path.abspath(found)
 
 
 def _exec_proot(proot_bin, proot_args, child_env, rootfs_fd: int) -> None:

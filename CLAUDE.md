@@ -1458,10 +1458,19 @@ debian` keeps working while an image asking for the same thing does not;
 excepted, which is dropped from every source as it always was. The
 `PROOT_L2S_DIR` else-branch now `pop`s rather than merely warning — the
 comment promised "unset", and leaving whatever else put a value there
-standing is the opposite of it. The proot binary is resolved to an
-absolute path before either exec path, since `execvpe` looks a bare name
-up in the PATH of the environment it is handed — `child_env`'s, and PATH
-is deliberately *not* blocked because it is the guest's to choose.
+standing is the opposite of it. The proot binary is absolute wherever it
+comes from — `arch.get_proot_bin()` resolves the PATH lookup and the
+`PD_PROOT_BIN` override alike and **exits** rather than answering the
+bare name `proot`, so no caller has to remember to. A name with no
+directory in it is looked up again by the exec, in the PATH of the
+environment it is handed: `child_env`'s for `login`'s `execvpe`, and the
+same `child_env` for the build's `subprocess.Popen`, which resolves
+argv[0] against `os.get_exec_path(env)`. PATH is deliberately *not*
+blocked in either, being the guest's to choose, so a bare name let an
+image's `Env` — or a stage's own `ENV PATH=…` — pick the binary the
+process becomes, outside any container. Every command that reaches
+either site has already passed `cli.ensure_proot_installed()`, so the
+exit is a backstop and not the ordinary "proot is missing" report.
 
 `minimal` clears almost everything: image `Env` + `--env` + `TERM`
 (default `xterm-256color`) + inherited `COLORTERM`; no baseline PATH,
