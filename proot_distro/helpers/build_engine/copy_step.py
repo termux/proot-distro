@@ -47,7 +47,6 @@
 import hashlib
 import os
 import re
-import shlex
 import shutil
 import stat
 import tarfile
@@ -63,7 +62,7 @@ from proot_distro.helpers.build_engine.dockerignore import (
 )
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.parsing import (
-    TAR_HEADER_BYTES, is_tar_header, looks_like_url,
+    TAR_HEADER_BYTES, is_tar_header, looks_like_url, split_operands,
 )
 from proot_distro.helpers.build_engine.users import resolve_chown
 from proot_distro.helpers.docker import (
@@ -255,7 +254,7 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
     if instr["exec_form"]:
         tokens = list(instr["value"])
     else:
-        tokens = shlex.split(str(instr["value"]))
+        tokens = split_operands(instr["value"], instr)
     if len(tokens) < 2:
         raise BuildError(
             f"{instr['name']} requires at least one source and a "
@@ -659,6 +658,17 @@ def _extract_archive(tree, parts, dest, file_map, uid, gid, spool):
     through a single descriptor on the file, so the archive that gets
     unpacked is the inode the walk found and not whatever the name leads
     to by the time tarfile opens it.
+
+    The sniff is a signature, which is all a signature can be: gzip,
+    bzip2 and xz magic say "compressed", not "compressed *tar*", so a
+    plain `data.gz` looks exactly like a `data.tar.gz` until tarfile
+    reads the first header. Failing there means the source was never an
+    archive, and Docker copies such a file verbatim -- so this answers
+    False and lets the caller record it as an ordinary file. A failure
+    *after* members have been recorded is the other thing: a real
+    archive, truncated or corrupt, with half of itself already in the
+    file_map, and that ends the build naming the source. Both used to be
+    an uncaught tarfile.TarError, which `build` does not catch.
     """
     try:
         fd, _st = tree.open_file(parts)
@@ -669,14 +679,22 @@ def _extract_archive(tree, parts, dest, file_map, uid, gid, spool):
             if not is_tar_header(fh.read(TAR_HEADER_BYTES)):
                 return False
             fh.seek(0)
-            _extract_tar_into_dest(fh, dest, file_map, uid, gid, spool)
-            return True
+            return _extract_tar_into_dest(
+                fh, dest, file_map, uid, gid, spool, "/".join(parts),
+            ) > 0
     finally:
         os.close(fd)
 
 
-def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool):
+def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool, src):
     """ADD auto-extract: stream the tar in *fobj* into dest as a tree.
+
+    Returns how many members were recorded. Zero means the stream was
+    not an archive after all -- it failed on its very first header, or
+    it held nothing this records (an empty tar; one of nothing but
+    devices, FIFOs and traversal names) -- and _extract_archive reads
+    that as "copy the source verbatim", which is what Docker does with a
+    file its own archive probe rejects.
 
     Every regular member is spooled to its own file. Reading them into the
     file_map instead meant the archive's entire uncompressed content sat in
@@ -685,41 +703,57 @@ def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool):
     """
     if not dest.endswith("/"):
         dest = dest + "/"
-    with tarfile.open(fileobj=fobj, mode="r|*") as tf:
-        for m in tf:
-            if m.isblk() or m.ischr() or m.isfifo():
-                continue
-            # Strip a literal leading './' prefix (not lstrip("./") — that
-            # would eat any combination of dots and slashes and silently
-            # neutralise './../foo' style traversal entries).
-            rel = m.name
-            while rel.startswith("./"):
-                rel = rel[2:]
-            rel = rel.lstrip("/")
-            if any(p in ("..", ".", "") for p in rel.split("/")):
-                continue
-            arc = (dest + rel).lstrip("/")
-            if m.isdir():
-                file_map[arc] = {
-                    "kind": "dir",
-                    "mode": stat.S_IMODE(m.mode) or 0o755,
-                    "uid": uid, "gid": gid, "mtime": int(m.mtime),
-                }
-            elif m.issym():
-                file_map[arc] = {
-                    "kind": "symlink", "target": m.linkname,
-                    "mode": 0o777, "uid": uid, "gid": gid,
-                    "mtime": int(m.mtime),
-                }
-            elif m.isreg():
-                fobj_m = tf.extractfile(m)
-                if fobj_m is None:
+    recorded = 0
+    try:
+        with tarfile.open(fileobj=fobj, mode="r|*") as tf:
+            for m in tf:
+                if m.isblk() or m.ischr() or m.isfifo():
                     continue
-                path = _spool_stream(fobj_m, spool)
-                _spool_entry(
-                    file_map, arc, path,
-                    stat.S_IMODE(m.mode) or 0o644, uid, gid, int(m.mtime),
-                )
+                # Strip a literal leading './' prefix (not lstrip("./") —
+                # that would eat any combination of dots and slashes and
+                # silently neutralise './../foo' style traversal entries).
+                rel = m.name
+                while rel.startswith("./"):
+                    rel = rel[2:]
+                rel = rel.lstrip("/")
+                if any(p in ("..", ".", "") for p in rel.split("/")):
+                    continue
+                arc = (dest + rel).lstrip("/")
+                if m.isdir():
+                    file_map[arc] = {
+                        "kind": "dir",
+                        "mode": stat.S_IMODE(m.mode) or 0o755,
+                        "uid": uid, "gid": gid, "mtime": int(m.mtime),
+                    }
+                elif m.issym():
+                    file_map[arc] = {
+                        "kind": "symlink", "target": m.linkname,
+                        "mode": 0o777, "uid": uid, "gid": gid,
+                        "mtime": int(m.mtime),
+                    }
+                elif m.isreg():
+                    fobj_m = tf.extractfile(m)
+                    if fobj_m is None:
+                        continue
+                    path = _spool_stream(fobj_m, spool)
+                    _spool_entry(
+                        file_map, arc, path,
+                        stat.S_IMODE(m.mode) or 0o644, uid, gid,
+                        int(m.mtime),
+                    )
+                else:
+                    continue
+                recorded += 1
+    except tarfile.TarError as exc:
+        if recorded:
+            raise BuildError(
+                f"ADD: cannot extract '{src}': {exc}."
+            ) from exc
+        # Nothing was recorded, so there is nothing to undo and nothing
+        # in the file_map to disagree with the file the caller is about
+        # to record instead.
+        return 0
+    return recorded
 
 
 def _materialise_files(rootfs_dir, file_map):

@@ -73,7 +73,7 @@ def test_add_tar_extract_drops_traversal(tmp_path, builders):
     spool.mkdir()
     with open(str(arc), "rb") as fh:
         copy_step._extract_tar_into_dest(
-            fh, "extracted", file_map, 0, 0, str(spool))
+            fh, "extracted", file_map, 0, 0, str(spool), "payload.tar")
 
     keys = set(file_map.keys())
     # No key escapes via ".." and every key is confined under the dest prefix.
@@ -88,6 +88,89 @@ def test_add_tar_extract_drops_traversal(tmp_path, builders):
 
 
 # --- symlinked parents ------------------------------------------------------
+
+def _add_from_context(ctx, name, dest, spool):
+    """Run ADD's context path for one source, returning the file_map."""
+    file_map = {}
+    copy_step._copy_from_context(
+        _engine(ctx), name, dest, False, file_map, 0, 0, None, True,
+        spool=str(spool),
+    )
+    return file_map
+
+
+def test_add_corrupt_archive_is_a_build_error(tmp_path, builders):
+    # A real archive that stops mid-stream: half its members are already
+    # in the file_map, so the build cannot quietly go on. It used to be
+    # an uncaught tarfile.ReadError, which `build` does not catch.
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    arc = ctx / "payload.tar"
+    builders.make_tar(str(arc), [
+        {"name": "a", "type": "file", "data": b"A" * 4096},
+        {"name": "b", "type": "file", "data": b"B" * 4096},
+    ])
+    whole = arc.read_bytes()
+    arc.write_bytes(whole[:len(whole) // 2])       # truncated
+    spool = tmp_path / "spool"
+    spool.mkdir()
+
+    with pytest.raises(BuildError) as exc:
+        _add_from_context(ctx, "payload.tar", "/dest/", spool)
+    assert "payload.tar" in str(exc.value)
+
+
+def test_add_of_a_plain_gzip_file_copies_it_verbatim(tmp_path):
+    # gzip magic says "compressed", not "compressed tar" -- and a source
+    # that is not an archive is copied as an ordinary file, which is
+    # what Docker does with one its own probe rejects.
+    import gzip
+    import random
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    blob = ctx / "data.gz"
+    # Incompressible, so the file clears the 512 bytes is_tar_header
+    # needs before it will even look at a signature.
+    blob.write_bytes(gzip.compress(random.Random(0).randbytes(4096)))
+    spool = tmp_path / "spool"
+    spool.mkdir()
+
+    file_map = _add_from_context(ctx, "data.gz", "/dest/data.gz", spool)
+    assert list(file_map) == ["dest/data.gz"]
+    assert file_map["dest/data.gz"]["kind"] == "file"
+
+
+def test_add_of_an_empty_archive_copies_it_verbatim(tmp_path, builders):
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    arc = ctx / "empty.tar"
+    # A valid tar whose only member is skipped: the stream reads clean
+    # and records nothing, so there is nothing to extract.
+    builders.make_tar(str(arc), [
+        {"name": "sock", "type": "fifo"},
+    ])
+    spool = tmp_path / "spool"
+    spool.mkdir()
+
+    file_map = _add_from_context(ctx, "empty.tar", "/dest/empty.tar", spool)
+    assert list(file_map) == ["dest/empty.tar"]
+    assert file_map["dest/empty.tar"]["kind"] == "file"
+
+
+def test_add_of_a_real_archive_still_extracts(tmp_path, builders):
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    arc = ctx / "payload.tar"
+    builders.make_tar(str(arc), [
+        {"name": "a", "type": "file", "data": b"A"},
+        {"name": "d", "type": "dir"},
+    ])
+    spool = tmp_path / "spool"
+    spool.mkdir()
+
+    file_map = _add_from_context(ctx, "payload.tar", "/dest/", spool)
+    assert set(file_map) == {"dest/a", "dest/d"}
+
 
 @pytest.fixture
 def outside(tmp_path):

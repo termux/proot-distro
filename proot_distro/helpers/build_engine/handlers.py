@@ -27,7 +27,6 @@
 
 import json
 import os
-import shlex
 
 from proot_distro import dirfd
 from proot_distro.atomic import publish_file
@@ -37,7 +36,7 @@ from proot_distro.helpers.build_engine.copy_step import do_add, do_copy
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.constants import PREDEFINED_ARGS
 from proot_distro.helpers.build_engine.parsing import (
-    parse_kv_list, split_arg, to_argv,
+    parse_kv_list, split_arg, split_operands, to_argv,
 )
 from proot_distro.helpers.build_engine.run_step import do_run
 from proot_distro.helpers.docker import layer_cache_path
@@ -239,7 +238,7 @@ def do_expose(engine, instr):
     """EXPOSE port[/proto]: record container ports in image config."""
     cfg = engine.current.image_config.setdefault("config", {})
     ports = dict(cfg.get("ExposedPorts") or {})
-    for token in shlex.split(str(instr["value"])):
+    for token in split_operands(instr["value"], instr):
         if "/" not in token:
             token = token + "/tcp"
         ports[token] = {}
@@ -253,7 +252,7 @@ def do_volume(engine, instr):
     if instr["exec_form"]:
         paths = list(instr["value"])
     else:
-        paths = shlex.split(str(instr["value"]))
+        paths = split_operands(instr["value"], instr)
     for p in paths:
         vols[p] = {}
     cfg["Volumes"] = vols

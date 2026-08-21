@@ -73,6 +73,25 @@ def test_do_volume(engine):
     assert _cfg(engine)["Volumes"] == {"/data": {}, "/cache": {}}
 
 
+def test_do_expose_unbalanced_quote_is_a_build_error(engine):
+    # shlex answers an unbalanced quote with ValueError, which `build`
+    # does not catch: one mistyped line ended it in a traceback.
+    with pytest.raises(BuildError) as exc:
+        handlers.do_expose(engine, _instr("EXPOSE", '"80', lineno=7))
+    assert "line 7" in str(exc.value)
+
+
+def test_do_volume_unbalanced_quote_is_a_build_error(engine):
+    with pytest.raises(BuildError) as exc:
+        handlers.do_volume(engine, _instr("VOLUME", "/data '", lineno=9))
+    assert "line 9" in str(exc.value)
+
+
+def test_do_volume_trailing_backslash_is_a_build_error(engine):
+    with pytest.raises(BuildError):
+        handlers.do_volume(engine, _instr("VOLUME", "/data \\"))
+
+
 def test_do_stopsignal(engine):
     handlers.do_stopsignal(engine, _instr("STOPSIGNAL", "SIGTERM"))
     assert _cfg(engine)["StopSignal"] == "SIGTERM"

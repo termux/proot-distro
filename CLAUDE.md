@@ -1529,6 +1529,14 @@ both standard OCI layout **and** Docker-legacy `manifest.json` so
 (`syntax`/`escape`), here-docs in ADD/COPY/RUN, JSON exec form
 detection, and `expand_vars()` for `$VAR`/`${VAR:-default}` family.
 
+Shell-form operands — COPY/ADD's source list, EXPOSE's ports, VOLUME's
+mount points — are split by `parsing.split_operands()`, which turns
+`shlex`'s `ValueError` on an unbalanced quote or a trailing backslash
+into a `BuildError` naming the line. `build` catches only `BuildError`
+and `OSError`, so a mistyped line used to end it in a traceback;
+`parse_kv_list` (ENV/LABEL) already did this and is where the shape
+comes from.
+
 `BuildEngine` pre-scans for global ARGs and named stages (validates
 `--target` early), then dispatches to `HANDLERS` (metadata), `do_run`,
 or `do_copy_or_add`. FROM resolves `scratch`, named stages (re-apply
@@ -1637,7 +1645,18 @@ one, which is what `os.walk(followlinks=False)` gave minus the name
 resolution), ADD's auto-extract sniffs and unpacks the archive through
 one descriptor on the file (`parsing.is_tar_header` takes the bytes, not
 a name), and the progress denominator is the size the enumeration
-measured rather than a `getsize` of a name. A `file` entry without
+measured rather than a `getsize` of a name.
+
+That sniff is a **signature**, which is all a signature can be: gzip,
+bzip2 and xz magic say "compressed", not "compressed tar". So
+`_extract_tar_into_dest` returns how many members it recorded and a
+`TarError` is read against that count. Zero — the stream failed on its
+first header, or held nothing worth recording — means the source was
+never an archive, and it is copied verbatim as an ordinary file, which
+is what Docker does with a file its own `IsArchivePath` probe rejects.
+Non-zero means a real archive that stopped mid-stream with half of
+itself already in the `file_map`, and that is a `BuildError` naming the
+source. Both were an uncaught `tarfile.TarError` before. A `file` entry without
 `root`/`rel` is a programming error and raises `KeyError` rather than
 falling back to a path.
 

@@ -43,7 +43,7 @@ def test_auto_extracted_members_are_spooled(tmp_path, builders, spool):
     file_map = {}
     with open(str(arc), "rb") as fh:
         copy_step._extract_tar_into_dest(
-            fh, "extracted", file_map, 0, 0, spool)
+            fh, "extracted", file_map, 0, 0, spool, "payload.tar")
 
     _assert_no_bytes_held(file_map)
     with open(file_map["extracted/a"]["src"], "rb") as fh:
@@ -66,7 +66,7 @@ def test_member_mtime_survives_the_spool(tmp_path, builders, spool):
     file_map = {}
     with open(str(arc), "rb") as fh:
         copy_step._extract_tar_into_dest(
-            fh, "extracted", file_map, 0, 0, spool)
+            fh, "extracted", file_map, 0, 0, spool, "payload.tar")
 
     assert int(os.stat(file_map["extracted/a"]["src"]).st_mtime) == 1234567890
 
@@ -81,7 +81,7 @@ def test_an_absurd_member_mtime_does_not_raise(tmp_path, builders, spool):
     file_map = {}
     with open(str(arc), "rb") as fh:
         copy_step._extract_tar_into_dest(
-            fh, "extracted", file_map, 0, 0, spool)
+            fh, "extracted", file_map, 0, 0, spool, "payload.tar")
 
     assert os.path.isfile(file_map["extracted/a"]["src"])
 
