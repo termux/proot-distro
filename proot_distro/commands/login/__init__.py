@@ -409,7 +409,7 @@ def _login_with_rootfs(container_name: str, args, lock,
         inject_termux_profile(rootfs, child_env, rootfs_fd=rootfs_fd)
 
     # Architecture detection.
-    target_arch = detect_installed_arch(rootfs)
+    target_arch = detect_installed_arch(rootfs, rootfs_fd=rootfs_fd)
     if target_arch == "unknown":
         target_arch = get_device_cpu_arch()
 

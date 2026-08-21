@@ -265,19 +265,15 @@ def _close_stack(stack):
             pass
 
 
-def open_guest_file(rootfs_dir, guest_path, *, root_fd=None):
-    """Open the absolute guest path *guest_path* under *rootfs_dir*.
+def _open_guest_fd(rootfs_dir, guest_path, root_fd):
+    """Open the regular file *guest_path* names. Descriptor, or None.
 
-    Returns a text-mode file object for a regular file, or None — the path
-    does not exist, names something other than a regular file, or leads
-    out of the rootfs. Undecodable bytes are replaced rather than raised:
-    the content is the image's, and a UnicodeDecodeError is not an
-    OSError, so no caller's net would have caught one.
-
-    The entry is opened as (directory fd, name) off the walk that
-    resolved it, and through open_regular_at(), which refuses a FIFO
-    planted under the name since the lstat rather than blocking on a peer
-    that never comes.
+    What both public readers are built on. The entry is opened as
+    (directory fd, name) off the walk that resolved it, and through
+    open_regular_at(), which refuses a FIFO planted under the name since
+    the lstat rather than blocking on a peer that never comes. None
+    covers every way the path does not name a regular file inside the
+    rootfs; callers answer the same way to all of them.
     """
     found = _resolve(rootfs_dir, guest_path, root_fd)
     if found is None:
@@ -290,9 +286,59 @@ def open_guest_file(rootfs_dir, guest_path, *, root_fd=None):
             fd, _st = dirfd.open_regular_at(stack[-1], name, os.O_RDONLY)
         except OSError:
             return None
-        return open(fd, encoding="utf-8", errors="replace")
+        return fd
     finally:
         _close_stack(stack)
+
+
+def open_guest_file(rootfs_dir, guest_path, *, root_fd=None):
+    """Open the absolute guest path *guest_path* under *rootfs_dir*.
+
+    Returns a text-mode file object for a regular file, or None — the path
+    does not exist, names something other than a regular file, or leads
+    out of the rootfs. Undecodable bytes are replaced rather than raised:
+    the content is the image's, and a UnicodeDecodeError is not an
+    OSError, so no caller's net would have caught one.
+
+    For a caller that wants the bytes themselves rather than lines of
+    text, read_guest_bytes() is the same walk without the decoding.
+    """
+    fd = _open_guest_fd(rootfs_dir, guest_path, root_fd)
+    if fd is None:
+        return None
+    return open(fd, encoding="utf-8", errors="replace")
+
+
+def read_guest_bytes(rootfs_dir, guest_path, size, *, root_fd=None):
+    """The first *size* bytes of a guest file, or None if unreadable.
+
+    The binary counterpart of read_guest_file(), for a caller inspecting
+    a *format* rather than reading text — the ELF header arch detection
+    reads out of a container's shell binaries. The size is the caller's
+    ceiling and nothing larger is ever read, so an image cannot decide
+    how much memory the probe costs.
+
+    Short reads are looped over: os.read() may return less than asked
+    for, and a caller that decides on a fixed-width header would read a
+    truncated one as a malformed file.
+    """
+    fd = _open_guest_fd(rootfs_dir, guest_path, root_fd)
+    if fd is None:
+        return None
+    chunks = []
+    got = 0
+    try:
+        while got < size:
+            chunk = os.read(fd, size - got)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            got += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
 
 
 def read_capped(fh):

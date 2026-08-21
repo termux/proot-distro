@@ -32,6 +32,7 @@ import sys
 
 from proot_distro.message import crit_error
 from proot_distro.constants import TERMUX_PREFIX
+from proot_distro.guestfile import read_guest_bytes
 from proot_distro.paths import container_rootfs
 
 
@@ -87,25 +88,52 @@ _ELF_MACHINE_MAP = {
 }
 
 
-def _elf_arch(path: str) -> str:
-    """Return the proot-distro arch name for an ELF binary, or '' on failure."""
-    try:
-        with open(path, "rb") as fh:
-            ident = fh.read(20)
-        if len(ident) < 20 or ident[:4] != b"\x7fELF":
-            return ""
-        fmt = "<H" if ident[5] == 1 else ">H"  # EI_DATA: 1=LE, 2=BE
-        e_machine = struct.unpack_from(fmt, ident, 18)[0]
-        return _ELF_MACHINE_MAP.get(e_machine, "")
-    except OSError:
+# e_ident (16 bytes) + e_type (2) + e_machine (2): everything the probe
+# needs and nothing more, so how much is read never depends on the file.
+_ELF_HEADER_BYTES = 20
+
+
+def _elf_arch(ident) -> str:
+    """Return the proot-distro arch name for an ELF header, or '' if it isn't one.
+
+    Takes the *bytes*, not a path. Reading them is the caller's job
+    because where they come from is the whole question: these are a
+    container's binaries, and every component of the path to one is
+    image or guest content (see detect_installed_arch).
+    """
+    if not ident or len(ident) < _ELF_HEADER_BYTES or ident[:4] != b"\x7fELF":
         return ""
+    fmt = "<H" if ident[5] == 1 else ">H"  # EI_DATA: 1=LE, 2=BE
+    try:
+        e_machine = struct.unpack_from(fmt, ident, 18)[0]
+    except struct.error:
+        return ""
+    return _ELF_MACHINE_MAP.get(e_machine, "")
 
 
-def detect_installed_arch(container_name_or_rootfs: str) -> str:
+def detect_installed_arch(container_name_or_rootfs: str, *,
+                          rootfs_fd=None) -> str:
     """Detect CPU architecture of an installed container by reading ELF headers.
 
     Accepts either a plain container name (resolved as
     ``CONTAINERS_DIR/<name>/rootfs``) or a full path to the rootfs directory.
+    *rootfs_fd* is that directory when the caller has pinned it.
+
+    The candidates are read through the guest walk, the same one `login`
+    takes the container's passwd out of, rather than by composing
+    ``root + rel`` and handing the result to open(). That composition was
+    wrong three ways. It resolved the *middle* of the path on the host,
+    so a rootfs shipping an absolute ``/bin -> /usr/bin`` — or a guest
+    leaving ``usr -> /`` behind — had the probe read the **host's**
+    binaries and report the host's architecture: for an emulated
+    container that means no emulator is selected and the session cannot
+    start. It followed an absolute symlink out of the rootfs for the same
+    reason, where the walk re-anchors one at the guest's "/" the way
+    proot does at runtime, so a legitimate one now resolves to the right
+    binary instead of a host one. And open() on a *FIFO* blocks until a
+    peer appears, which a guest that plants one at ``/bin/sh`` simply
+    never provides — the login hung for as long as the user left it.
+    open_regular_at() refuses one outright.
     """
     if os.sep in container_name_or_rootfs or container_name_or_rootfs.startswith("/"):
         root = container_name_or_rootfs
@@ -118,7 +146,9 @@ def detect_installed_arch(container_name_or_rootfs: str) -> str:
         "/bin/bash", "/bin/sh", "/bin/su", "/bin/busybox",
     ]
     for rel in candidates:
-        arch = _elf_arch(root + rel)
+        arch = _elf_arch(read_guest_bytes(
+            root, rel, _ELF_HEADER_BYTES, root_fd=rootfs_fd,
+        ))
         if arch:
             return arch
     return "unknown"

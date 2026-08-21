@@ -9,40 +9,43 @@ import pytest
 from proot_distro import arch
 
 
+def _header(tmp_path, builders, *a, **kw):
+    """The bytes _elf_arch() judges: written by the builder, read back."""
+    p = tmp_path / "bin"
+    builders.write_elf(str(p), *a, **kw)
+    return p.read_bytes()[:arch._ELF_HEADER_BYTES]
+
+
 @pytest.mark.parametrize("name", ["i686", "arm", "x86_64", "aarch64", "riscv64"])
 def test_elf_arch_detects_each(tmp_path, builders, name):
-    p = tmp_path / "bin"
-    builders.write_elf(str(p), name)
-    assert arch._elf_arch(str(p)) == name
+    assert arch._elf_arch(_header(tmp_path, builders, name)) == name
 
 
 def test_elf_arch_big_endian(tmp_path, builders):
-    p = tmp_path / "bin"
-    builders.write_elf(str(p), "aarch64", little_endian=False)
-    assert arch._elf_arch(str(p)) == "aarch64"
+    header = _header(tmp_path, builders, "aarch64", little_endian=False)
+    assert arch._elf_arch(header) == "aarch64"
 
 
 def test_elf_arch_truncated_returns_empty(tmp_path, builders):
-    p = tmp_path / "bin"
-    builders.write_elf(str(p), "x86_64", truncated=True)
-    assert arch._elf_arch(str(p)) == ""
+    header = _header(tmp_path, builders, "x86_64", truncated=True)
+    assert arch._elf_arch(header) == ""
 
 
 def test_elf_arch_bad_magic_returns_empty(tmp_path, builders):
-    p = tmp_path / "bin"
-    builders.write_elf(str(p), "x86_64", valid_magic=False)
-    assert arch._elf_arch(str(p)) == ""
+    header = _header(tmp_path, builders, "x86_64", valid_magic=False)
+    assert arch._elf_arch(header) == ""
 
 
-def test_elf_arch_unknown_machine_returns_empty(tmp_path):
-    p = tmp_path / "bin"
+def test_elf_arch_unknown_machine_returns_empty():
     # Valid ELF magic but e_machine = 0 (unmapped).
-    p.write_bytes(b"\x7fELF\x02\x01" + b"\x00" * 14)
-    assert arch._elf_arch(str(p)) == ""
+    assert arch._elf_arch(b"\x7fELF\x02\x01" + b"\x00" * 14) == ""
 
 
-def test_elf_arch_missing_file(tmp_path):
-    assert arch._elf_arch(str(tmp_path / "nope")) == ""
+def test_elf_arch_of_nothing_read_returns_empty():
+    # What read_guest_bytes() answers for a file that is not there, not
+    # readable, or not a regular file.
+    assert arch._elf_arch(None) == ""
+    assert arch._elf_arch(b"") == ""
 
 
 def test_detect_installed_arch_from_rootfs(tmp_path, builders):

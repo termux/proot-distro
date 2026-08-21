@@ -58,7 +58,10 @@ Top-level utilities (each owns a focused concern):
 - `progress.py` — `fmt_size`, `ByteCounter`, `draw_bytes_bar`,
   `draw_count_bar`, `clear_bar`, `progress_active`.
 - `arch.py` — `get_device_cpu_arch`, `detect_installed_arch` (ELF
-  magic), `normalize_arch`, `get_emulator_args`, `ARCH_UNAME_M`.
+  magic, read through `guestfile`), `normalize_arch`,
+  `get_emulator_args`, `ARCH_UNAME_M`. `_elf_arch()` takes the header
+  *bytes*, not a path: where they come from is the whole question, so
+  reading them is the caller's job.
 - `statedir.py` — the one way to reach a directory of the program's own
   state tree, and it is not by name: `STATE_ROOTS`,
   `split_state_path()`, `is_state_path()`, `open_state_dir()`,
@@ -667,10 +670,6 @@ source and `PROOT_L2S_DIR` is a *name proot resolves after the exec*.
 Sources under `containers/<name>` but outside the rootfs (`sysdata/*`,
 `shm/`) are unreachable from a session confined to the rootfs, so their
 only attacker already owns the program; `.l2s` is the open one.
-`arch.detect_installed_arch()` is a separate matter — it composes
-`root + rel` with no walk at all and `_elf_arch` opens the result with a
-plain blocking `open()`, so a FIFO planted at `<rootfs>/bin/sh` hangs
-`login` and a guest-shipped `usr -> /` has it read host binaries.
 `run`, `backup`, `build --install-as` and the `[name:]path`
 spec resolver ask the same question the same way, and `pin_path()`
 starts its `O_NOFOLLOW` descent from `open_container_rootfs()` rather
@@ -1201,7 +1200,22 @@ uses so a filesystem ignoring flock cannot wedge the caller.
 ## Architecture
 
 `detect_installed_arch(rootfs)` reads ELF e_machine from common shell
-binaries. `normalize_arch()` accepts native names, bare Docker names
+binaries — through `guestfile.read_guest_bytes()`, the same clamped,
+fd-borne walk `login` takes the container's passwd out of, and with
+`rootfs_fd=` when the caller has pinned it. It used to compose
+`root + rel` and hand that to `open()`, which was wrong three ways. The
+*middle* of the path was resolved on the host, so a rootfs shipping an
+ordinary absolute `/usr/bin/bash -> /bin/bash` had the probe read the
+**host's** bash and report the host's architecture — for an emulated
+container that means no emulator is selected and the session cannot
+start, which makes this a correctness fix as much as a containment one.
+An absolute symlink left the rootfs for the same reason, where the walk
+re-anchors one at the guest's `/` the way proot does at runtime. And
+`open()` on a **FIFO** blocks until a peer appears, which a guest that
+plants one at `/bin/sh` never provides: `login` hung for as long as the
+user left it running. `open_regular_at()` refuses one outright, and
+`_ELF_HEADER_BYTES` is the ceiling on how much is ever read, so the
+file never decides that either. `normalize_arch()` accepts native names, bare Docker names
 (`arm64`/`amd64`/`386`), and `linux/`-prefixed forms. Native 32-on-64:
 `aarch64` runs `arm` when `personality(PER_LINUX32)` succeeds; `x86_64`
 runs `i686` always. Otherwise `get_emulator_args()` selects
