@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import tarfile
 import urllib.error
 from types import SimpleNamespace
@@ -25,8 +26,10 @@ from proot_distro.helpers.build_engine.engine import BuildEngine
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.docker import pull as pull_mod
 from proot_distro.helpers.docker import push as push_mod
+from proot_distro.constants import LAYER_CACHE_DIR
 from proot_distro.helpers.docker.cache import (
-    layer_cache_path, save_manifest_cache,
+    blob_present, layer_cache_name, layer_cache_path,
+    open_required_layer, open_verified_layer, save_manifest_cache,
 )
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
 
@@ -520,3 +523,73 @@ def test_run_cache_hit_ignored_when_blob_is_poisoned(tmp_path, builders,
         run_step.do_run(engine, instr)
     assert stage.layers == []
     assert not os.path.exists(os.path.join(stage.rootfs_dir, "etc", "PWNED"))
+
+
+# ---------------------------------------------------------------------------
+# The blob's *directory* is a name too.
+# ---------------------------------------------------------------------------
+#
+# O_NOFOLLOW on a composed LAYER_CACHE_DIR/<blob> covers the final
+# component and nothing above it. `oci_layers` sits below BASE_CACHE_DIR,
+# which on Termux is under the $TERMUX_PREFIX bound read-write into every
+# non-isolated container, so a guest can leave it behind as a symlink --
+# and the blob was then read out of whatever it named, and, on a digest
+# mismatch, unlinked from there.
+
+@pytest.fixture
+def hijacked_layer_cache(tmp_path):
+    """Point LAYER_CACHE_DIR at a host directory holding a decoy blob.
+
+    The decoy carries the *name* a real digest maps to and content that
+    does not hash to it, which is what makes it both a candidate to read
+    and a candidate to evict.
+    """
+    digest = "sha256:" + "0" * 64
+    host_dir = tmp_path / "host-dir"
+    host_dir.mkdir()
+    decoy = host_dir / layer_cache_name(digest)
+    decoy.write_bytes(b"a host file that happens to sit under that name\n")
+    shutil.rmtree(LAYER_CACHE_DIR)
+    os.symlink(str(host_dir), LAYER_CACHE_DIR)
+    return digest, decoy
+
+
+def test_verified_layer_does_not_read_through_a_symlinked_cache(
+        hijacked_layer_cache):
+    digest, decoy = hijacked_layer_cache
+    assert open_verified_layer(digest) is None
+    assert decoy.exists()
+
+
+def test_eviction_does_not_unlink_through_a_symlinked_cache(
+        hijacked_layer_cache):
+    digest, decoy = hijacked_layer_cache
+    open_verified_layer(digest, evict=True)
+    assert decoy.exists(), "eviction deleted a host file"
+
+
+def test_required_layer_does_not_read_through_a_symlinked_cache(
+        hijacked_layer_cache):
+    digest, decoy = hijacked_layer_cache
+    with pytest.raises(RuntimeError):
+        open_required_layer(digest)
+    assert decoy.exists()
+
+
+def test_blob_present_does_not_answer_for_a_symlinked_cache(
+        hijacked_layer_cache):
+    digest, _decoy = hijacked_layer_cache
+    assert blob_present(digest) is False
+
+
+def test_a_planted_blob_name_is_not_a_blob(builders):
+    """A symlink under the blob's own name is refused, not followed."""
+    digest, _size, _diff = builders.seed_cached_layer(BENIGN)
+    path = layer_cache_path(digest)
+    real = path + ".moved"
+    os.rename(path, real)
+    os.symlink(real, path)
+    assert open_verified_layer(digest, evict=False) is None
+    assert blob_present(digest) is False
+    # Refused, not deleted: the link is not ours to remove by hashing it.
+    assert os.path.lexists(path)

@@ -34,7 +34,10 @@
 #       Both hand back an open **descriptor**, not a path: hashing a
 #       name and then reading that name again are two acts on two
 #       possibly-different files, and a guest sharing the directory can
-#       swap the blob in between.
+#       swap the blob in between. The *directory* is a name too, and
+#       O_NOFOLLOW on a composed LAYER_CACHE_DIR/<blob> covers only the
+#       last component of it, so every blob is opened -- and an evicted
+#       one unlinked -- as (dir_fd, name) off open_layer_cache_dir().
 #
 #   manifests/<sha256-prefix>.json
 #       { "image_ref": ..., "arch": ...,
@@ -114,6 +117,11 @@ def layer_cache_path(digest: str) -> str:
 
     Refuses malformed digests so callers cannot accidentally route a
     crafted value past LAYER_CACHE_DIR via path traversal.
+
+    For a *destination* (atomic_replace / publish_file both walk down to
+    the directory themselves) and for messages. Nothing reads or unlinks
+    through this: those go through _open_blob's descriptor, since the
+    directory component is guest content the same way the blob is.
     """
     return os.path.join(LAYER_CACHE_DIR, layer_cache_name(digest))
 
@@ -337,25 +345,53 @@ def fd_matches_digest(fd: int, digest: str) -> bool:
 
 
 def _open_blob(digest: str):
-    """Open the cache file for *digest* read-only. Descriptor, or None.
+    """Open the cache file for *digest* read-only. (dir_fd, fd), or None.
 
-    O_NOFOLLOW, and a regular file or nothing: this directory is not
-    only ours to write (see the module header), so the entry standing
-    at a blob's name may be a symlink or a pipe someone else put there.
+    Both descriptors, because the blob's *directory* is as much a name
+    as the blob is. O_NOFOLLOW on a composed LAYER_CACHE_DIR/<name>
+    covers the last component and nothing above it, so a guest that
+    left `oci_layers -> <host dir>` behind had the entry read out of
+    that directory -- and, when the digest did not match, unlinked from
+    it. The walk statedir performs one component at a time from the
+    trust root is what settles which directory this is; the entry is
+    then named as (dir_fd, name) off the descriptor it validated.
+
+    open_regular_at() is the rest of it: this directory is not only
+    ours to write (see the module header), so the entry standing at a
+    blob's name may be a symlink or a pipe someone else put there.
+
+    The caller closes both descriptors -- the directory one last, since
+    an eviction names the blob through it.
     """
+    name = layer_cache_name(digest)
     try:
-        fd = os.open(layer_cache_path(digest), os.O_RDONLY | os.O_NOFOLLOW
-                     | os.O_NONBLOCK)
+        dir_fd = open_layer_cache_dir()
     except OSError:
         return None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            os.close(fd)
-            return None
+        fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
     except OSError:
-        os.close(fd)
+        os.close(dir_fd)
         return None
-    return fd
+    return dir_fd, fd
+
+
+def blob_present(digest: str) -> bool:
+    """True when the layer cache holds a usable blob for *digest*.
+
+    The existence probe that goes with _open_blob(): reached by the
+    same walk, so a planted parent cannot answer for the cache, and a
+    symlink or a pipe under the blob's own name is not a blob. Says
+    nothing about the content -- open_required_layer() is what checks
+    that.
+    """
+    opened = _open_blob(digest)
+    if opened is None:
+        return False
+    dir_fd, fd = opened
+    os.close(fd)
+    os.close(dir_fd)
+    return True
 
 
 def open_verified_layer(digest: str, *, evict: bool = True):
@@ -379,23 +415,29 @@ def open_verified_layer(digest: str, *, evict: bool = True):
     build-cache hit, an archive still open); use open_required_layer()
     where it cannot.
     """
-    fd = _open_blob(digest)
-    if fd is None:
+    opened = _open_blob(digest)
+    if opened is None:
         return None
-    if fd_matches_digest(fd, digest):
-        return fd
-    os.close(fd)
-    short = digest.split(":")[-1][:12]
-    if evict:
-        warn(f"Cached layer {short} does not match its digest; discarding "
-             f"it so it can be fetched again.")
-        try:
-            os.unlink(layer_cache_path(digest))
-        except OSError:
-            pass
-    else:
-        warn(f"Cached layer {short} does not match its digest; ignoring it.")
-    return None
+    dir_fd, fd = opened
+    try:
+        if fd_matches_digest(fd, digest):
+            return fd
+        os.close(fd)
+        short = digest.split(":")[-1][:12]
+        if evict:
+            warn(f"Cached layer {short} does not match its digest; "
+                 f"discarding it so it can be fetched again.")
+            # Named through the descriptor the walk validated. os.unlink()
+            # on the composed path resolved `oci_layers` again, so a guest
+            # that left it behind as a symlink had the host file standing
+            # at the blob's name deleted instead.
+            dirfd.unlink_quietly(dir_fd, layer_cache_name(digest))
+        else:
+            warn(f"Cached layer {short} does not match its digest; "
+                 f"ignoring it.")
+        return None
+    finally:
+        os.close(dir_fd)
 
 
 def open_required_layer(digest: str, *, what: str = "Layer blob") -> int:
@@ -406,18 +448,22 @@ def open_required_layer(digest: str, *, what: str = "Layer blob") -> int:
     left alone for the user to inspect rather than deleted out from
     under them. The caller closes the descriptor.
     """
-    fd = _open_blob(digest)
-    if fd is None:
+    opened = _open_blob(digest)
+    if opened is None:
         raise RuntimeError(
             f"{what} {digest} is missing from the layer cache."
         )
-    if not fd_matches_digest(fd, digest):
-        os.close(fd)
-        raise RuntimeError(
-            f"{what} {digest} does not match its digest; the layer cache "
-            f"holds content that was not produced by this build. Rebuild "
-            f"the image to repopulate the cache."
-        )
+    dir_fd, fd = opened
+    try:
+        if not fd_matches_digest(fd, digest):
+            os.close(fd)
+            raise RuntimeError(
+                f"{what} {digest} does not match its digest; the layer "
+                f"cache holds content that was not produced by this "
+                f"build. Rebuild the image to repopulate the cache."
+            )
+    finally:
+        os.close(dir_fd)
     return fd
 
 

@@ -45,7 +45,7 @@ from proot_distro.progress import (
     clear_bar, fmt_size,
 )
 from proot_distro.helpers.docker.cache import (
-    layer_cache_path, load_manifest_cache, open_required_layer,
+    blob_present, load_manifest_cache, open_required_layer,
 )
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
@@ -300,9 +300,13 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
             f"Cached manifest for '{image_ref}' has no filesystem layers."
         )
 
+    # Asked of the layer cache's own descriptor, not of a composed
+    # path: `oci_layers` is a name a guest can leave behind as a
+    # symlink, and os.path.isfile() follows one -- so a host directory's
+    # files answered for the blobs this push is about to upload.
     missing = [
         layer["digest"] for layer in layers
-        if not os.path.isfile(layer_cache_path(layer["digest"]))
+        if not blob_present(layer["digest"])
     ]
     if missing:
         raise RuntimeError(

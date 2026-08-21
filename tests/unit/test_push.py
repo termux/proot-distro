@@ -181,7 +181,7 @@ def test_upload_blob_bytes_4xx_fails_fast(monkeypatch):
 
 # ----- push_image: --allow-insecure threading -----------------------------
 
-def test_push_image_threads_base_and_insecure(monkeypatch, tmp_path):
+def test_push_image_threads_base_and_insecure(monkeypatch):
     # push_image must resolve the scheme/base via get_auth_token(insecure=...)
     # and thread that base + the insecure flag into every upload helper, so an
     # HTTP-only (or bad-cert) registry is pushed to over the resolved transport.
@@ -194,13 +194,10 @@ def test_push_image_threads_base_and_insecure(monkeypatch, tmp_path):
         "layers": [{"digest": layer_digest}],
     }
 
-    blob = tmp_path / "layer"
-    blob.write_bytes(b"data")
-
     monkeypatch.setattr(push, "load_manifest_cache",
                         lambda ref, arch: (manifest, "me/app", {"k": "v"}))
     monkeypatch.setattr(push, "canonical_json", lambda d: cfg_bytes)
-    monkeypatch.setattr(push, "layer_cache_path", lambda d: str(blob))
+    monkeypatch.setattr(push, "blob_present", lambda d: True)
     monkeypatch.setattr(push, "parse_image_ref",
                         lambda ref: ("reg.example", "me/app", "latest"))
 
