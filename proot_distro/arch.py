@@ -199,7 +199,10 @@ def get_proot_bin() -> str:
             crit_error(f"PD_PROOT_BIN '{override}' is not found or not "
                        f"executable.")
             sys.exit(1)
-        return override
+        # Absolute, because `login` chdirs into the container's rootfs
+        # before it exec's this: a relative override checked here would
+        # be looked up from somewhere else by then.
+        return os.path.abspath(override)
     return shutil.which("proot") or "proot"
 
 

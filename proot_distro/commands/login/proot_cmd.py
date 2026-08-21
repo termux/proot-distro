@@ -54,7 +54,7 @@ from proot_distro.commands.login.bindings import (
 def build_proot_args(
     *,
     proot_bin,
-    rootfs, login_wd,
+    rootfs, login_wd, rootfs_arg=None,
     login_uid, login_gid, login_home,
     emu_args, need_emu,
     target_arch, hostname, kernel_release,
@@ -64,7 +64,18 @@ def build_proot_args(
     custom_binds, redirect_ports,
     inner,
 ):
-    """Assemble the full proot command-line argv. Exits on bad --bind input."""
+    """Assemble the full proot command-line argv. Exits on bad --bind input.
+
+    *rootfs* is the container's rootfs path, used to compose the bind
+    sources that live inside it. *rootfs_arg* is what `--rootfs=` itself
+    is given, which is not the same thing: the caller normally passes
+    "." and chdirs into the descriptor it pinned just before the exec, so
+    proot resolves the guest root against getcwd() -- the inode -- rather
+    than against a name a concurrent session can re-point. It defaults to
+    *rootfs*, and `--get-proot-cmd` passes the path explicitly, since
+    that command line is printed for the user to run from their own
+    working directory.
+    """
     args = [proot_bin] + list(emu_args)
 
     _add_proot_extensions(
@@ -80,7 +91,7 @@ def build_proot_args(
     if dist_type != "termux":
         args.append(f"--change-id={login_uid}:{login_gid}")
 
-    args.append(f"--rootfs={rootfs}")
+    args.append(f"--rootfs={rootfs_arg or rootfs}")
     args.append(f"--cwd={login_wd}")
     args += ["--bind=/dev", "--bind=/proc", "--bind=/sys"]
 

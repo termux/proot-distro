@@ -590,7 +590,27 @@ dst_dir_fd=)`. `os.path.isdir()` answered "not
 installed" for a `containers/<name> -> <host dir>` a guest had left
 behind and `os.makedirs(exist_ok=True)` then accepted it, so the image
 was unpacked, the sysdata stubs written and the manifest published
-inside that host directory. `login`, `run`, `backup`, `build --install-as` and the `[name:]path`
+inside that host directory. `login` goes one step further: it keeps the descriptor
+`open_container_rootfs()` hands it and **chdirs into it** immediately
+before the `execvpe`, with `--rootfs=.` in the argv. proot resolves
+`--rootfs` by name, long after every check here has run, so the path
+form let a live session (`login` holds only a *shared* lock) move
+`containers/<name>` aside and leave a symlink under it after the
+installed check — and the next session started with a host directory of
+that session's choosing as its root. Resolving `.` makes proot
+canonicalise the guest root against `getcwd()`, which the kernel answers
+from the directory's own parent chain, so it names the inode the walk
+validated whatever now stands under the old name. Verified against proot
+itself, both ways round. `--get-proot-cmd` keeps printing the real path
+(the user runs that command from their own directory), the `--detach`
+daemon does the `fchdir` in the grandchild so the foreground's own
+working directory is untouched, and `PD_PROOT_BIN` is made absolute
+since the chdir happens before the exec. What this does *not* cover is
+the rest of login's host-side work — `_resolve_login_user`,
+`setup_fake_sysdata`, `inject_termux_profile`, `.l2s`, and every
+`--bind` source — which still name the rootfs and are the same
+resolved-by-proot residual `makedirs_under` documents.
+`run`, `backup`, `build --install-as` and the `[name:]path`
 spec resolver ask the same question the same way, and `pin_path()`
 starts its `O_NOFOLLOW` descent from `open_container_rootfs()` rather
 than from `os.open(rootfs)` — the rootfs is the one directory that

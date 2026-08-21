@@ -45,13 +45,21 @@ import os
 from proot_distro.session import register_session
 
 
-def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs):
+def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
+                   rootfs_fd=None):
     """Launch proot as a detached daemon; return its PID, or None.
 
     Called from the foreground process in place of the usual
     register_session()+os.execvpe() tail. Returns the daemon's PID to
     the foreground (None if the daemon could not be started). The
     foreground never returns from inside the forked children.
+
+    *rootfs_fd* is the descriptor the container's rootfs was pinned as.
+    The daemon chdirs into it before the exec, for the same reason the
+    foreground path does (see login._exec_proot): the argv says
+    `--rootfs=.` so proot resolves the guest root against an inode
+    rather than a name. The chdir happens in the grandchild, so the
+    foreground's own working directory is left alone.
     """
     try:
         read_fd, write_fd = os.pipe()
@@ -109,6 +117,8 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs):
     # (and soon /dev/null) standard streams.
     try:
         _redirect_std_to_devnull()
+        if rootfs_fd is not None:
+            os.fchdir(rootfs_fd)
         # Keep a reference until execvpe so the session fd (and its
         # inherited flock) is not closed early. Best-effort.
         _session_fd = register_session(**register_kwargs)  # noqa: F841

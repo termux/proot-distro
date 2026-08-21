@@ -55,7 +55,7 @@ from proot_distro.locking import ContainerLock
 from proot_distro.session import register_session
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_image_config, container_is_installed, container_rootfs,
+    container_image_config, container_rootfs, open_container_rootfs,
 )
 
 from proot_distro.commands.login.env import (
@@ -296,14 +296,25 @@ def _check_shell_available(rootfs, login_shell, container_name):
 def _command_login_inner(container_name: str, args, lock) -> None:
     migrate_legacy_rootfs(container_name)
 
-    # Asked of the O_NOFOLLOW walk, not of the composed path: a
-    # `containers/<name>` a guest re-pointed at a host directory holding
-    # a rootfs used to answer "installed", and the session then ran with
-    # that host directory as its root.
-    if not container_is_installed(container_name):
+    # The descriptor the O_NOFOLLOW walk validated, not just its answer:
+    # a `containers/<name>` a guest re-pointed at a host directory
+    # holding a rootfs used to answer "installed", and the session then
+    # ran with that host directory as its root. Asking by descriptor
+    # refuses that; *keeping* the descriptor is what carries the answer
+    # through to the exec, where proot would otherwise resolve the name
+    # again -- see _exec_proot().
+    try:
+        rootfs_fd = open_container_rootfs(container_name)
+    except FileNotFoundError:
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
+    try:
+        _login_with_rootfs(container_name, args, lock, rootfs_fd)
+    finally:
+        os.close(rootfs_fd)
 
+
+def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
     rootfs = container_rootfs(container_name)
 
     dist_type = _detect_dist_type(rootfs)
@@ -413,9 +424,16 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         sys.exit(1)
 
     proot_bin = get_proot_bin()
+    # proot resolves --rootfs by name, so the argv carries "." and the
+    # process chdirs into the pinned descriptor just before the exec (see
+    # _exec_proot). `--get-proot-cmd` prints a command the user runs
+    # themselves, from their own working directory, so that one keeps the
+    # real path.
+    show_cmd = getattr(args, "get_proot_cmd", False)
     proot_args = build_proot_args(
         proot_bin=proot_bin,
         rootfs=rootfs,
+        rootfs_arg=rootfs if show_cmd else os.curdir,
         login_wd=login_wd,
         login_uid=login_uid,
         login_gid=login_gid,
@@ -467,7 +485,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
                  "PROOT_L2S_DIR unset for this session.")
     child_env.pop("LD_PRELOAD", None)
 
-    if getattr(args, "get_proot_cmd", False):
+    if show_cmd:
         parts = ["env", "-i"]
         for k, v in child_env.items():
             parts.append(f"{k}={dq(v)}")
@@ -494,6 +512,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         pid = spawn_detached(
             proot_bin, proot_args, child_env,
             register_kwargs=dict(reg, detach=True),
+            rootfs_fd=rootfs_fd,
         )
         if pid is None:
             crit_error(f"failed to start detached session for container "
@@ -520,6 +539,34 @@ def _command_login_inner(container_name: str, args, lock) -> None:
     # reference alive until execvpe() so the fd is not closed early.
     _session_fd = register_session(**reg)  # noqa: F841 (kept alive until exec)
 
+    _exec_proot(proot_bin, proot_args, child_env, rootfs_fd)
+
+
+def _exec_proot(proot_bin, proot_args, child_env, rootfs_fd: int) -> None:
+    """chdir into the pinned rootfs, then become proot.
+
+    proot resolves `--rootfs` by name, and every check this command makes
+    is over by the time it does. `containers/<name>` is guest-writable on
+    Termux and `login` takes only a *shared* lock, so a live session was
+    free to move the directory aside and leave a symlink under the name
+    after container_is_installed() had walked it -- and the next session
+    then started with a host directory of that session's choosing as its
+    root. Nothing in the argv could say otherwise: a path is a path.
+
+    So the argv says "." and the process chdirs into the descriptor the
+    walk validated. proot canonicalises a relative binding against
+    getcwd(), which the kernel answers from the directory's own parent
+    chain -- it names the inode we hold open, whatever has since been
+    left standing under the name it used to have. Verified against proot
+    itself: with the swap in place, `--rootfs=<path>` starts in the
+    planted directory and `--rootfs=.` from here starts in the real one.
+
+    The descriptor is not inheritable (Python opens CLOEXEC), so nothing
+    is handed to proot or to the guest beyond the chdir. A rootfs deleted
+    out from under us makes getcwd() fail and proot refuse to start,
+    which is the right way for that to end.
+    """
+    os.fchdir(rootfs_fd)
     os.execvpe(proot_bin, proot_args, child_env)
 
 
