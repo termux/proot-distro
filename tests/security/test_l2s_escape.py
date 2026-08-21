@@ -47,12 +47,14 @@ def _backup_member(root, rel):
         else root
     name = os.path.basename(rel)
     fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    rootfs_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         st = os.stat(name, dir_fd=fd, follow_symlinks=False)
         return _pack(lambda tf: _add_path(
             tf, fd, name, f"box/rootfs/{rel}",
-            os.path.join(root, rel), st, root))
+            os.path.join(root, rel), st, root, rootfs_fd))
     finally:
+        os.close(rootfs_fd)
         os.close(fd)
 
 

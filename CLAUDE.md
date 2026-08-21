@@ -1575,6 +1575,17 @@ extension and the flag, so nothing surfaces as a corrupt archive.
 Traversal blocked (`..`/`.`/empty dropped; container name must match
 `_NAME_RE`). First entry per container triggers rootfs clear + lock.
 
+Backup opens `containers/<name>` **once** — `paths.open_container_dir()`,
+the same `O_NOFOLLOW` walk the installed check makes — and hands that
+descriptor, and one on the `rootfs` below it, to every pass. The three
+passes each reopened the container directory *by path*, after a check
+that had already walked it, so a session that re-pointed the name in
+between had the permission pass `chmod` and the archiver pack a host
+directory of its choosing under the container's name (`box/rootfs/…` in
+the archive the user is handed). `l2s.open_l2s_backing()` takes that
+same `rootfs_fd`, since opening the rootfs by name there resolved
+`containers/<name>/rootfs` a second time.
+
 Backup walks the rootfs through **directory descriptors** (`_walk_tree`,
 over `dirfd`), never by path, and every one of its three passes — relax
 permissions, measure, archive — is driven by the same walk. It holds only

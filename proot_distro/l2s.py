@@ -108,7 +108,7 @@ def resolve_l2s_target(symlink_full: str, target: str, rootfs: str):
     return real_target
 
 
-def open_l2s_backing(rootfs: str, l2s_path: str):
+def open_l2s_backing(rootfs: str, l2s_path: str, *, rootfs_fd: int = None):
     """Open the backing file resolve_l2s_target() named. (fd, stat) or None.
 
     Resolving a path and reading it are two steps, and between them a
@@ -119,6 +119,13 @@ def open_l2s_backing(rootfs: str, l2s_path: str):
     swapped component instead of following it, and the caller gets a
     descriptor rather than a name to open again. Same guarantee
     paths.pin_path() gives `copy` and `sync`, for the same reason.
+
+    *rootfs_fd* is that descriptor when the caller already holds one, and
+    a caller that does must pass it: opening `rootfs` by name here would
+    resolve `containers/<name>/rootfs` a second time and give the walk
+    back the very component the caller's pin exists to settle. Without
+    it the rootfs is opened by name, which is right for a tree this
+    process made itself (a build stage).
 
     open_regular_at() refuses anything that is not a regular file, so a
     FIFO planted under the name cannot block the read waiting for a peer
@@ -131,7 +138,8 @@ def open_l2s_backing(rootfs: str, l2s_path: str):
         return None
     fd = None
     try:
-        fd = dirfd.opendir(rootfs_real)
+        fd = (dirfd.reopen(rootfs_fd) if rootfs_fd is not None
+              else dirfd.opendir(rootfs_real))
         for part in parts[:-1]:
             nxt = dirfd.opendir_at(fd, part)
             os.close(fd)

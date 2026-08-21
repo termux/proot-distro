@@ -106,11 +106,15 @@ def _pack_one(root, name, path, st):
     """Archive one entry and return its members plus the first one's data."""
     bio = io.BytesIO()
     fd = _dir_fd(root)
+    # The command pins the rootfs once and hands that descriptor down;
+    # here the entry's parent is the rootfs itself.
+    rootfs_fd = _dir_fd(root)
     try:
         with tarfile.open(fileobj=bio, mode="w") as tf:
             backup_mod._add_path(tf, fd, name, f"box/rootfs/{name}",
-                                 path, st, str(root))
+                                 path, st, str(root), rootfs_fd)
     finally:
+        os.close(rootfs_fd)
         os.close(fd)
     bio.seek(0)
     with tarfile.open(fileobj=bio) as tf:
@@ -180,3 +184,94 @@ def test_add_path_does_not_block_on_a_swapped_in_fifo(env):
     members, _data = _pack_one(root, "f", str(f), st)
 
     assert members == []
+
+
+# --- the container directory itself ----------------------------------------
+#
+# The three passes (relax, measure, archive) each reopened
+# containers/<name> by name, after an installed check that had already
+# walked it. That directory is guest-writable on Termux, and the shared
+# lock is deliberately not enough to keep a live session out of it, so a
+# swap in between aimed the whole command at a directory of the session's
+# choosing: the permission pass chmod'ed what it found there and the
+# archiver packed it.
+
+@pytest.fixture
+def planted(tmp_path, builders):
+    """An installed container plus a host directory to redirect it to.
+
+    Returns (name, host_dir, swap) where swap() replaces
+    containers/<name> with a symlink to host_dir — the move the loser of
+    the race makes.
+    """
+    from proot_distro.paths import container_dir
+
+    builders.make_container("box", files={"/etc/hostname": b"real\n"})
+    host = tmp_path / "host-dir"
+    (host / "rootfs" / "etc").mkdir(parents=True)
+    (host / "rootfs" / "etc" / "secret").write_text("SECRET")
+    (host / "rootfs" / "etc" / "secret").chmod(0o600)
+
+    def swap():
+        real = container_dir("box") + ".moved"
+        os.rename(container_dir("box"), real)
+        os.symlink(str(host), container_dir("box"))
+
+    return "box", host, swap
+
+
+def _run_backup(name, out):
+    from types import SimpleNamespace
+
+    from proot_distro.commands.backup import command_backup
+
+    command_backup(SimpleNamespace(
+        container_name=name, output=str(out), compression=None,
+        verbose=False,
+    ))
+
+
+def test_backup_refuses_a_container_dir_swapped_after_the_check(
+        tmp_path, planted, monkeypatch):
+    """Swapped between the installed check and the open: fail, don't follow."""
+    name, host, swap = planted
+    real_check = backup_mod.container_is_installed
+
+    def _check_then_swap(container):
+        answer = real_check(container)
+        swap()
+        return answer
+
+    monkeypatch.setattr(backup_mod, "container_is_installed",
+                        _check_then_swap)
+
+    out = tmp_path / "bk.tar"
+    with pytest.raises(SystemExit) as exc:
+        _run_backup(name, out)
+    assert exc.value.code == 1
+    assert not out.exists()
+    # The host tree was neither read nor relaxed.
+    assert stat.S_IMODE(
+        (host / "rootfs" / "etc" / "secret").stat().st_mode) == 0o600
+
+
+def test_backup_holds_its_pin_across_a_mid_run_swap(tmp_path, planted,
+                                                    monkeypatch):
+    """Swapped while the passes run: the archive is still the real tree."""
+    name, host, swap = planted
+    real_fix = backup_mod._fix_permissions
+
+    def _fix_then_swap(container_fd, rootfs_dir):
+        real_fix(container_fd, rootfs_dir)
+        swap()
+
+    monkeypatch.setattr(backup_mod, "_fix_permissions", _fix_then_swap)
+
+    out = tmp_path / "bk.tar"
+    _run_backup(name, out)
+
+    with tarfile.open(str(out)) as tf:
+        names = tf.getnames()
+        payload = tf.extractfile("box/rootfs/etc/hostname").read()
+    assert payload == b"real\n"
+    assert "box/rootfs/etc/secret" not in names

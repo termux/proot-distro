@@ -24,6 +24,13 @@
 # is determined by file extension or by --compress flag. Progress is
 # written to stderr so it doesn't corrupt piped archive data on stdout.
 #
+# The container directory is opened once -- through paths.open_container_dir(),
+# the same O_NOFOLLOW walk the installed check makes -- and everything below
+# it is named as (dir_fd, entry). The three passes used to reopen
+# containers/<name> by path, which is guest-writable on Termux, so a session
+# that re-pointed it after the check had the permission pass chmod, and the
+# archiver pack, a host directory of its choosing under the container's name.
+#
 # The rootfs is walked through directory descriptors (see proot_distro.dirfd),
 # never by path. `backup` holds only a *shared* lock, so a `login` session
 # can be running against the same container while the archive is written,
@@ -61,6 +68,7 @@ from proot_distro.locking import ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
     container_is_installed, container_manifest, container_rootfs,
+    open_container_dir,
 )
 
 
@@ -192,37 +200,36 @@ def _walk_tree(parent_fd, name, arcname, path, visit, skip=()):
         raise
 
 
-def _each_entry(container_name, rootfs_dir, manifest_path, visit):
+def _each_entry(container_fd, container_name, rootfs_dir, manifest_path,
+                visit):
     """Call *visit* for manifest.json, then for every entry of the rootfs.
 
-    Both live directly under the container directory, which is opened once
-    and handed to the walk as the descriptor everything below is named
-    from.
+    Both live directly under the container directory, and *container_fd*
+    is the descriptor the whole command holds on it -- opened once, by
+    the O_NOFOLLOW walk, and never resolved again. Opening
+    `containers/<name>` here was the one step of this command still done
+    by name, and it was done three times (relax, measure, archive): the
+    directory is guest-writable on Termux and `backup` holds only a
+    shared lock, so a live session could re-point it between the
+    installed check and any of them and have the pass run against a host
+    directory of its choosing.
     """
-    container_root = os.path.dirname(rootfs_dir) or os.sep
     manifest_name = os.path.basename(manifest_path)
     rootfs_name = os.path.basename(rootfs_dir)
+    # manifest.json is optional (legacy containers have none) and is
+    # only ever a plain file; anything else under that name is skipped
+    # rather than followed.
     try:
-        cfd = dirfd.opendir(container_root)
+        mst = dirfd.lstat_at(container_fd, manifest_name)
     except OSError:
-        return
-    try:
-        # manifest.json is optional (legacy containers have none) and is
-        # only ever a plain file; anything else under that name is skipped
-        # rather than followed.
-        try:
-            mst = dirfd.lstat_at(cfd, manifest_name)
-        except OSError:
-            mst = None
-        if mst is not None and stat.S_ISREG(mst.st_mode):
-            visit(cfd, manifest_name,
-                  os.path.join(container_name, manifest_name),
-                  manifest_path, mst)
-        _walk_tree(cfd, rootfs_name,
-                   os.path.join(container_name, rootfs_name), rootfs_dir,
-                   visit, skip=(".l2s",))
-    finally:
-        os.close(cfd)
+        mst = None
+    if mst is not None and stat.S_ISREG(mst.st_mode):
+        visit(container_fd, manifest_name,
+              os.path.join(container_name, manifest_name),
+              manifest_path, mst)
+    _walk_tree(container_fd, rootfs_name,
+               os.path.join(container_name, rootfs_name), rootfs_dir,
+               visit, skip=(".l2s",))
 
 
 class _ReadCounter:
@@ -256,7 +263,7 @@ def _strip_owner(info: tarfile.TarInfo) -> None:
 
 def _add_path(
     tf: tarfile.TarFile, dir_fd: int, name: str, arcname: str,
-    path: str, st, rootfs: str, on_read=None,
+    path: str, st, rootfs: str, rootfs_fd: int, on_read=None,
 ) -> None:
     """Add *name* under dir_fd to *tf* as *arcname*, stripping ownership.
 
@@ -277,7 +284,9 @@ def _add_path(
     shared lock is free to do.
 
     *rootfs* is the container's rootfs root, used to confine resolved
-    l2s targets to the rootfs subtree.
+    l2s targets to the rootfs subtree; *rootfs_fd* is the descriptor the
+    command pinned it as, which is what the backing file is then opened
+    through — resolving the rootfs path again would undo the pin.
 
     *on_read*, when provided, is called with the byte count of each chunk
     read from a regular file so callers can track progress during compression.
@@ -306,7 +315,8 @@ def _add_path(
             # read are two steps and backup holds only a shared lock,
             # so a live session could re-point a component in between
             # (see l2s.open_l2s_backing).
-            opened = open_l2s_backing(rootfs, l2s_path)
+            opened = open_l2s_backing(rootfs, l2s_path,
+                                      rootfs_fd=rootfs_fd)
             if opened is not None:
                 cfd, cst = opened
                 try:
@@ -401,18 +411,16 @@ def _relax_permissions(dir_fd, name, _arcname, _path, st) -> None:
         dirfd.chmod_at(dir_fd, name, mode | needed)
 
 
-def _fix_permissions(rootfs_dir: str) -> None:
-    """Ensure all dirs and files in *rootfs_dir* are readable by owner."""
-    parent = os.path.dirname(rootfs_dir) or os.sep
-    try:
-        fd = dirfd.opendir(parent)
-    except OSError:
-        return
-    try:
-        _walk_tree(fd, os.path.basename(rootfs_dir), '', rootfs_dir,
-                   _relax_permissions)
-    finally:
-        os.close(fd)
+def _fix_permissions(container_fd: int, rootfs_dir: str) -> None:
+    """Ensure all dirs and files in *rootfs_dir* are readable by owner.
+
+    Named off the container directory's own descriptor, like the two
+    passes that follow it: this one *writes* -- it chmods what it walks
+    -- so resolving `containers/<name>` again would hand those mode
+    changes to whatever the name led to by then.
+    """
+    _walk_tree(container_fd, os.path.basename(rootfs_dir), '', rootfs_dir,
+               _relax_permissions)
 
 
 def command_backup(args) -> None:
@@ -472,14 +480,41 @@ def command_backup(args) -> None:
         sys.exit(1)
 
     with ContainerLock(container_name, exclusive=False, command="backup"):
-        _run_backup(
-            container_name, rootfs_dir, manifest_path,
-            output_path, compression, verbose,
-        )
+        # One descriptor on containers/<name> for the whole run, taken
+        # by the same O_NOFOLLOW walk the installed check used, and one
+        # on the rootfs below it. Everything after this is named as
+        # (dir_fd, entry): the three passes used to reopen
+        # containers/<name> by path, and `backup` holds only a shared
+        # lock on purpose, so a live session was free to re-point it in
+        # between and have the permission pass chmod -- and the archiver
+        # pack -- a host directory of its choosing.
+        try:
+            container_fd = open_container_dir(container_name)
+        except FileNotFoundError:
+            crit_error(f"container '{container_name}' does not exist.")
+            sys.exit(1)
+        try:
+            try:
+                rootfs_fd = dirfd.opendir_at(
+                    container_fd, os.path.basename(rootfs_dir),
+                )
+            except OSError as exc:
+                crit_error(f"cannot read the rootfs of container "
+                           f"'{container_name}': {quote_error(exc)}")
+                sys.exit(1)
+            try:
+                _run_backup(
+                    container_fd, rootfs_fd, container_name, rootfs_dir,
+                    manifest_path, output_path, compression, verbose,
+                )
+            finally:
+                os.close(rootfs_fd)
+        finally:
+            os.close(container_fd)
 
 
 def _run_backup(
-    container_name, rootfs_dir, manifest_path,
+    container_fd, rootfs_fd, container_name, rootfs_dir, manifest_path,
     output_path, compression, verbose,
 ):
     log_info(f"Backing up '{container_name}'...")
@@ -490,7 +525,7 @@ def _run_backup(
         log_info("Will write backup data to stdout.")
 
     log_info("Fixing file permissions in rootfs...")
-    _fix_permissions(rootfs_dir)
+    _fix_permissions(container_fd, rootfs_dir)
 
     # Pre-compute total size of payload bytes to drive the progress bar.
     # Regular files contribute their own size; l2s symlinks contribute
@@ -514,14 +549,16 @@ def _run_backup(
         l2s_path = resolve_l2s_target(path, target, rootfs_dir)
         if l2s_path is None:
             return
-        opened = open_l2s_backing(rootfs_dir, l2s_path)
+        opened = open_l2s_backing(rootfs_dir, l2s_path,
+                                  rootfs_fd=rootfs_fd)
         if opened is None:
             return
         cfd, cst = opened
         os.close(cfd)
         total_size += cst.st_size
 
-    _each_entry(container_name, rootfs_dir, manifest_path, _measure)
+    _each_entry(container_fd, container_name, rootfs_dir, manifest_path,
+                _measure)
 
     done_size = 0
 
@@ -571,10 +608,11 @@ def _run_backup(
         with _open_archive() as tf:
             def _archive(dir_fd, name, arc, path, st) -> None:
                 _add_path(tf, dir_fd, name, arc, path, st, rootfs_dir,
-                          on_read=_on_read)
+                          rootfs_fd, on_read=_on_read)
                 _on_entry(arc)
 
-            _each_entry(container_name, rootfs_dir, manifest_path, _archive)
+            _each_entry(container_fd, container_name, rootfs_dir,
+                        manifest_path, _archive)
 
         clear_bar()
         log_info("Finished backing up.")
