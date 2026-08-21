@@ -110,6 +110,120 @@ def test_a_fifo_manifest_does_not_block(fifo):
     assert paths.container_image_config("box") == {}
 
 
+# --- what the fields inside it may be -------------------------------------
+#
+# The name is refused when it is not a plain file, but the file under it
+# is still the container directory's, and that directory is guest-
+# writable on Termux. So what the document *says* is a running session's
+# to choose, and every consumer used to believe it: `.get` was called on
+# whatever stood under `image_config`, and the reference was handed to
+# str methods whatever its type. None of `login`, `run`, `reset`,
+# `remove --image` or `list --image` catches an AttributeError.
+
+@pytest.mark.parametrize("image_config", ["nope", [], 5, ["config"]])
+def test_a_non_object_image_config_is_no_image_config(builders, image_config):
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_ref": "real:1", "arch": HOST_ARCH,
+        "image_config": image_config,
+    })
+    assert paths.container_image_config("box") == {}
+
+    from proot_distro.commands.run import _read_image_config
+    assert _read_image_config("box") == {}
+
+    from proot_distro.commands.login.env import read_manifest_env
+    assert read_manifest_env("box") == []
+
+
+@pytest.mark.parametrize("config", ["nope", [], 5])
+def test_a_non_object_config_is_no_config(builders, config):
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_ref": "real:1", "arch": HOST_ARCH,
+        "image_config": {"config": config},
+    })
+    assert paths.container_image_config("box") == {}
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"image_ref": "real:1", "arch": HOST_ARCH}, ("real:1", HOST_ARCH)),
+    ({"image_ref": 5, "arch": HOST_ARCH}, ("", HOST_ARCH)),
+    ({"image_ref": "real:1", "arch": 5}, ("real:1", "")),
+    ({"image_ref": {}, "arch": []}, ("", "")),
+    # A field that is simply absent has always answered the same way as
+    # one this refuses, and each caller already handles it: `reset`
+    # reinstalls without an architecture override, and the cache's
+    # reference hints skip the container.
+    ({"image_ref": "real:1"}, ("real:1", "")),
+    ({"arch": HOST_ARCH}, ("", HOST_ARCH)),
+    ({}, ("", "")),
+])
+def test_container_image_origin_answers_with_strings(builders, payload,
+                                                     expected):
+    builders.make_container("box", arch=HOST_ARCH, manifest=payload)
+    assert paths.container_image_origin("box") == expected
+
+
+def test_container_image_origin_of_an_unreadable_manifest(planted):
+    assert paths.container_image_origin("box") == ("", "")
+
+
+def test_reset_refuses_a_reference_that_is_not_a_string(builders, capsys):
+    # It used to reach install(), which asks the reference whether it
+    # startswith('/') -- after reset had already deleted the rootfs.
+    from proot_distro.commands.reset import command_reset
+    from proot_distro.paths import container_rootfs
+
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_ref": 5, "arch": HOST_ARCH,
+    })
+    with pytest.raises(SystemExit) as exc:
+        command_reset(SimpleNamespace(container_name="box"))
+    assert exc.value.code == 1
+    assert "no OCI" in capsys.readouterr().err
+    # Refused before anything was removed.
+    assert os.path.isdir(container_rootfs("box"))
+
+
+def test_remove_image_survives_a_container_naming_a_bad_reference(builders):
+    # Every installed container is walked to report which were installed
+    # from the image being removed, so one bad manifest.json ended the
+    # command for an image it has nothing to do with.
+    from proot_distro.commands.remove import command_remove
+    from proot_distro.helpers.docker.cache import (
+        manifest_cache_path, save_manifest_cache,
+    )
+
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_ref": 5, "arch": HOST_ARCH,
+    })
+    save_manifest_cache("img:1", HOST_ARCH, {"layers": []}, "library/img", {})
+
+    command_remove(SimpleNamespace(target="img:1", image=True, verbose=False,
+                                   override_arch=None))
+    assert not os.path.exists(manifest_cache_path("img:1", HOST_ARCH))
+
+
+def test_list_image_survives_a_container_naming_a_bad_reference(builders,
+                                                               capsys):
+    # The same walk, reached through the cache's reference hints: an
+    # entry with no image_ref of its own is named from installed
+    # containers.
+    from proot_distro.commands.list import command_list
+    from proot_distro.constants import MANIFEST_CACHE_DIR
+    from proot_distro.helpers.docker.cache import manifest_cache_name
+
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_ref": 5, "arch": HOST_ARCH,
+    })
+    name = manifest_cache_name("img:1", HOST_ARCH)
+    os.makedirs(MANIFEST_CACHE_DIR, exist_ok=True)
+    with open(os.path.join(MANIFEST_CACHE_DIR, name), "w") as fh:
+        json.dump({"manifest": {"layers": []}}, fh)
+
+    command_list(SimpleNamespace(image=True, quiet=True))
+    assert capsys.readouterr().out.strip()
+
+
 def test_a_real_manifest_is_still_read(builders):
     builders.make_container("box", arch=HOST_ARCH, manifest={
         "image_ref": "real:1", "arch": HOST_ARCH,

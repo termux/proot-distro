@@ -43,7 +43,9 @@ import sys
 from proot_distro.message import crit_error, quote_error
 from proot_distro.commands.login import command_login
 from proot_distro.names import require_valid_name
-from proot_distro.paths import container_is_installed, read_container_manifest
+from proot_distro.paths import (
+    container_is_installed, manifest_image_config, read_container_manifest,
+)
 
 
 def _read_image_config(container_name: str) -> dict:
@@ -64,8 +66,7 @@ def _read_image_config(container_name: str) -> dict:
         crit_error(f"cannot read manifest.json for '{container_name}': "
                    f"{quote_error(exc)}")
         sys.exit(1)
-    config = data.get("image_config", {}).get("config")
-    return config if isinstance(config, dict) else {}
+    return manifest_image_config(data)
 
 
 def _string_list(img_cfg: dict, key: str, container_name: str) -> list:

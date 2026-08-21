@@ -708,25 +708,20 @@ def _ref_hints() -> dict:
     two, so any still-installed container identifies its own image.
 
     That file is the container's own directory's, which is guest-
-    writable on Termux, so both fields are held to being strings before
-    a reference is parsed out of one: parse_image_ref() splits what it
-    is given, and a number under `image_ref` ended `list --image` in an
-    AttributeError -- from a container the malformed entry need not even
-    have anything to do with.
+    writable on Termux, so both fields come through
+    container_image_origin(), which answers with strings or with
+    nothing: parse_image_ref() splits what it is given, and a number
+    under `image_ref` ended `list --image` in an AttributeError -- from
+    a container the malformed entry need not even have anything to do
+    with.
     """
     from proot_distro.paths import (
-        installed_container_names, read_container_manifest,
+        container_image_origin, installed_container_names,
     )
 
     hints = {}
     for name in installed_container_names():
-        try:
-            data = read_container_manifest(name)
-        except (OSError, ValueError):
-            continue
-        ref, arch = data.get("image_ref"), data.get("arch")
-        if not isinstance(ref, str) or not isinstance(arch, str):
-            continue
+        ref, arch = container_image_origin(name)
         if not ref or not arch:
             continue
         hints.setdefault(manifest_cache_key(ref, arch), (ref, arch))

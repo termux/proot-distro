@@ -329,6 +329,25 @@ def read_container_manifest(name: str) -> dict:
     return data
 
 
+def manifest_image_config(data: dict) -> dict:
+    """Return a manifest payload's image_config.config mapping, or {}.
+
+    Both levels are checked, not just the inner one. `or {}` covers a
+    missing key and a JSON null and nothing else, so an `image_config`
+    that is a string or a list had `.get` called on it -- and the file
+    it comes out of is the container directory's, which on Termux sits
+    under the $TERMUX_PREFIX bound read-write into every non-isolated
+    container. That AttributeError ended `login` (which takes the
+    image's Env from here) and `run` (which takes the Entrypoint and Cmd
+    it executes), neither of which catches one.
+    """
+    image_config = data.get("image_config")
+    if not isinstance(image_config, dict):
+        return {}
+    config = image_config.get("config")
+    return config if isinstance(config, dict) else {}
+
+
 def container_image_config(name: str) -> dict:
     """Return the image_config.config mapping, or {} for anything else.
 
@@ -341,8 +360,35 @@ def container_image_config(name: str) -> dict:
         data = read_container_manifest(name)
     except (OSError, ValueError):
         return {}
-    config = (data.get("image_config") or {}).get("config")
-    return config if isinstance(config, dict) else {}
+    return manifest_image_config(data)
+
+
+def container_image_origin(name: str) -> tuple:
+    """Return (image_ref, arch) a container was installed from, as strings.
+
+    Each field is answered independently: '' for one that is absent and
+    for one that is present but is not a string, which is the same thing
+    to every caller and is what each already did with a missing key.
+    None can use a value of another type: `reset` hands the reference
+    back to `install`, which asks it whether it startswith('/');
+    `remove --image` and the manifest cache's _ref_hints() both run it
+    through canonical_ref(), which splits it. A number under either name
+    was an AttributeError out of all three -- and for `remove --image`
+    and `list --image` it came from a container that need have nothing
+    to do with the image being addressed, since both walk every
+    installed container looking for one that names it.
+
+    That the file is a stranger's is the point: `containers/<name>` is
+    guest-writable on Termux, so a running session chooses what these
+    two say.
+    """
+    try:
+        data = read_container_manifest(name)
+    except (OSError, ValueError):
+        return "", ""
+    ref, arch = data.get("image_ref"), data.get("arch")
+    return (ref if isinstance(ref, str) else "",
+            arch if isinstance(arch, str) else "")
 
 
 def container_from_spec(spec: str):

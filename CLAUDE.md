@@ -767,7 +767,29 @@ waiting for a writer that never comes. `read_container_manifest()` is
 that plus the JSON parse, raising for a caller that must report the
 difference (`run`), and `container_image_config()` is the forgiving
 form — `{}` for anything unreadable — for `login`'s Env and its
-Entrypoint check. Nothing there exits the command on a re-pointed
+Entrypoint check.
+
+Refusing the *name* says nothing about what the file under it holds:
+the container directory is guest-writable on Termux, so the document is
+a running session's to compose, and `read_container_manifest()` checks
+only that it is a JSON object. Two accessors hold the fields below that
+to their types, because every consumer used them as one.
+`manifest_image_config(data)` checks **both** levels — `or {}` covers a
+missing key and a JSON `null` and nothing else, so an `image_config`
+that is a string had `.get` called on it, ending `login` and `run` in an
+`AttributeError` neither catches; `run._read_image_config()` and
+`container_image_config()` are both it now.
+`container_image_origin(name)` is the `(image_ref, arch)` pair as
+strings, each answered independently and `''` for one that is absent or
+is not a string — which is what each caller already did with a missing
+key. Nothing can use another type: `reset` hands the reference back to
+`install`, which asks it whether it `startswith('/')`; `remove --image`
+and the manifest cache's `_ref_hints()` run it through
+`canonical_ref()`, which splits it. `reset` used to reach `install`'s
+`AttributeError` *after* deleting the rootfs, and the other two walk
+**every** installed container, so one bad `manifest.json` ended
+`remove --image` and `list --image` for an image it had nothing to do
+with. Nothing there exits the command on a re-pointed
 container directory, because every caller has already asked
 `container_is_installed()`, which does. Plain-tarball installs do **not**
 write `manifest.json`. Legacy `installed-rootfs/<name>` layout is

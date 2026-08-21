@@ -49,7 +49,7 @@ from proot_distro.locking import BuildLock, ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
     container_dir, container_entry_lstat, installed_container_names,
-    read_container_manifest,
+    container_image_origin,
 )
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.docker import (
@@ -379,11 +379,11 @@ def _containers_from_images(targets: list) -> list:
 
     found = []
     for name in installed_container_names():
-        try:
-            data = read_container_manifest(name)
-        except (OSError, ValueError):
-            continue
-        ref, arch = data.get("image_ref"), data.get("arch")
+        # Both fields as strings or not at all: canonical_ref() splits
+        # the reference, and every installed container is walked here --
+        # so one of them saying `"image_ref": 5` ended `remove --image`
+        # for an image it has nothing to do with.
+        ref, arch = container_image_origin(name)
         if ref and (canonical_ref(ref), arch) in wanted:
             found.append(name)
     return found

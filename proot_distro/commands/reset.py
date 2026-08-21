@@ -34,7 +34,7 @@ from proot_distro.commands.install import command_install
 from proot_distro.locking import ContainerLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_is_installed, container_rootfs, read_container_manifest,
+    container_image_origin, container_is_installed, container_rootfs,
 )
 from proot_distro.shm import shm_dir
 from proot_distro.statedir import remove_state_tree
@@ -58,15 +58,10 @@ def command_reset(args) -> None:
     # Read original image_ref and arch from the stored manifest, through
     # the container directory's own descriptor: what gets reinstalled
     # comes out of this file, and the name is a guest-writable one
-    # (see paths.open_container_manifest).
-    image_ref = None
-    override_arch = None
-    try:
-        manifest_data = read_container_manifest(container_name)
-        image_ref = manifest_data.get("image_ref")
-        override_arch = manifest_data.get("arch")
-    except (OSError, ValueError):
-        pass
+    # (see paths.open_container_manifest). Both fields come back as
+    # strings or not at all -- install() asks the reference whether it
+    # startswith('/'), which a number answered with an AttributeError.
+    image_ref, override_arch = container_image_origin(container_name)
 
     if not image_ref:
         crit_error(f"container '{container_name}' has no OCI "
