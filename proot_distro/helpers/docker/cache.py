@@ -530,6 +530,62 @@ def _blob_size(layer_fd, digest: str):
     return st.st_size if stat.S_ISREG(st.st_mode) else None
 
 
+def _text(value) -> str:
+    """*value* when it is a string, '' otherwise.
+
+    Every string field a record promises passes through here. The values
+    come out of a JSON document this program wrote but does not own --
+    the manifest cache is guest-writable on Termux, where BASE_CACHE_DIR
+    sits under the bound $TERMUX_PREFIX -- and consumers index the
+    record rather than re-checking it: `list --image` measures each cell
+    with len() and pads it with ljust(), `remove --image` splits the
+    reference into registry/repo/tag, and iter_cached_images() sorts on
+    the reference and the architecture. A number or an object under one
+    of those names was a TypeError or an AttributeError in whichever of
+    them met it first, and no command handler catches either.
+    """
+    return value if isinstance(value, str) else ""
+
+
+def _entry_manifest(payload: dict, name: str):
+    """Return (layers, config digest) for a cache entry, or None.
+
+    None is "this is not a readable manifest-cache entry" -- the answer
+    both callers already give a document that will not parse, and the
+    one they know how to act on: an inventory skips such an entry, and a
+    sweep counts it among the ones it could not account for and refuses
+    to delete anything.
+
+    The shapes are the ones the rest of the program holds a manifest to,
+    and `layers` is manifest_layers' rule exactly: a list of descriptors
+    each naming a digest string, with a descriptor that names none fatal
+    rather than skipped, since an image's layers are an ordered stack.
+    A `config` that is absent is ordinary (a locally built entry may
+    carry no config descriptor at all); one that is present but is not a
+    descriptor naming a digest is not, because that digest is the image
+    ID this reports and the blob `push` re-verifies.
+    """
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
+        return None
+    try:
+        layers = manifest_layers(manifest, name)
+    except RuntimeError:
+        return None
+
+    config = manifest.get("config")
+    if config is None:
+        return layers, ""
+    if not isinstance(config, dict):
+        return None
+    digest = config.get("digest")
+    if digest is None:
+        return layers, ""
+    if not isinstance(digest, str):
+        return None
+    return layers, digest
+
+
 def _read_record(dir_fd: int, name: str, layer_fd=None,
                  image_ref: str = "", arch: str = ""):
     """Build the cached-image record for manifest-cache entry *name*.
@@ -542,19 +598,16 @@ def _read_record(dir_fd: int, name: str, layer_fd=None,
     if loaded is None:
         return None
     payload, st = loaded
-    manifest = payload.get("manifest")
-    if not isinstance(manifest, dict):
+    parsed = _entry_manifest(payload, name)
+    if parsed is None:
         return None
+    layers, config_digest = parsed
     path = os.path.join(MANIFEST_CACHE_DIR, name)
 
     image_config = payload.get("image_config")
     if not isinstance(image_config, dict):
         image_config = {}
 
-    layers = [
-        layer for layer in manifest.get("layers") or []
-        if isinstance(layer, dict) and layer.get("digest")
-    ]
     size = 0
     missing = 0
     for layer in layers:
@@ -568,19 +621,17 @@ def _read_record(dir_fd: int, name: str, layer_fd=None,
         "path": path,
         "name": name,
         "key": os.path.splitext(name)[0],
-        "image_ref": payload.get("image_ref") or image_ref or "",
-        "repo": payload.get("repo") or "",
+        "image_ref": _text(payload.get("image_ref")) or image_ref,
+        "repo": _text(payload.get("repo")),
         "arch": (
-            payload.get("arch") or arch
-            or DOCKER_TO_ARCH.get(image_config.get("architecture", ""), "")
+            _text(payload.get("arch")) or arch
+            or DOCKER_TO_ARCH.get(_text(image_config.get("architecture")), "")
         ),
-        "image_id": (
-            (manifest.get("config") or {}).get("digest", "").split(":")[-1]
-        ),
+        "image_id": config_digest.split(":")[-1],
         "layers": layers,
         "size": size,
         "missing": missing,
-        "created": image_config.get("created") or "",
+        "created": _text(image_config.get("created")),
         "cached_at": st.st_mtime,
     }
 
@@ -628,15 +679,21 @@ def referenced_blob_digests():
             if loaded is None:
                 unreadable.append(path)
                 continue
-            manifest = loaded[0].get("manifest")
-            if not isinstance(manifest, dict):
+            # Same rule the inventory reads an entry by, and for a
+            # sharper reason: a manifest whose `layers` is a number was
+            # a TypeError here, and one whose descriptors are the wrong
+            # shape names blobs this cannot enumerate -- which, to a
+            # caller about to delete everything it did not enumerate, is
+            # exactly the case that must not pass for "no references".
+            parsed = _entry_manifest(loaded[0], fname)
+            if parsed is None:
                 unreadable.append(path)
                 continue
-            descriptors = list(manifest.get("layers") or [])
-            descriptors.append(manifest.get("config"))
-            for descriptor in descriptors:
-                if isinstance(descriptor, dict) and descriptor.get("digest"):
-                    digests.add(descriptor["digest"])
+            layers, config_digest = parsed
+            for layer in layers:
+                digests.add(layer["digest"])
+            if config_digest:
+                digests.add(config_digest)
     finally:
         os.close(dir_fd)
     return digests, unreadable
@@ -649,6 +706,13 @@ def _ref_hints() -> dict:
     container's manifest.json records the reference and architecture it
     was installed from, and the cache key is a pure function of those
     two, so any still-installed container identifies its own image.
+
+    That file is the container's own directory's, which is guest-
+    writable on Termux, so both fields are held to being strings before
+    a reference is parsed out of one: parse_image_ref() splits what it
+    is given, and a number under `image_ref` ended `list --image` in an
+    AttributeError -- from a container the malformed entry need not even
+    have anything to do with.
     """
     from proot_distro.paths import (
         installed_container_names, read_container_manifest,
@@ -661,6 +725,8 @@ def _ref_hints() -> dict:
         except (OSError, ValueError):
             continue
         ref, arch = data.get("image_ref"), data.get("arch")
+        if not isinstance(ref, str) or not isinstance(arch, str):
+            continue
         if not ref or not arch:
             continue
         hints.setdefault(manifest_cache_key(ref, arch), (ref, arch))

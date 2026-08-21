@@ -1451,6 +1451,35 @@ what a deletion addresses it by. `refs.py` owns the string forms: `canonical_ref
 (cache-key input), `with_explicit_tag()` (`:latest` default, shared by
 `build`/`push`/`remove`), `DOCKER_TO_ARCH`.
 
+A cache entry is not the registry's word for it: it is a file under
+`BASE_CACHE_DIR`, which on Termux sits inside the bound
+`$TERMUX_PREFIX`, so what one *says* is a guest's to choose — and
+`list --image` reads every entry in the directory, so one planted file
+was enough to take the whole inventory down. Two rules keep a record's
+contract real. `_entry_manifest()` decides whether an entry holds a
+manifest at all, by the shape `manifest_layers()` already names — a
+list of descriptors each with a digest **string**, a descriptor naming
+none being fatal rather than skipped — plus a `config` that is either
+absent (ordinary: a locally built entry may carry none) or a descriptor
+whose digest is a string, that digest being the image ID this reports
+and the blob `push` re-verifies. `"layers": 1` was a `TypeError` and
+`"config": "bad"` an `AttributeError`, in `list --image`,
+`remove --image` and `clear-cache --orphan` alike. Both callers already
+knew what to do with the answer: `_read_record()` returns None and the
+inventory skips the entry, `referenced_blob_digests()` reports it among
+the `unreadable` and the sweep refuses to delete anything — an entry
+whose blobs cannot be enumerated is exactly the one that must not pass
+for "no references". And `_text()` is the other half: every string
+field a record promises (`image_ref`, `repo`, `arch`, `created`, and
+`image_config`'s `architecture`) passes through it, because consumers
+*index* the record rather than re-checking it — `list --image` measures
+each cell with `len()` and pads it with `ljust()`, `remove --image`
+splits the reference into registry/repo/tag, `iter_cached_images()`
+sorts on the reference and the architecture, and `_created_epoch()`
+hands the value straight to a regex. `_ref_hints()` holds a container's
+own `manifest.json` to the same rule, since `parse_image_ref()` splits
+whatever it is given.
+
 Nothing a registry says about itself is read unbounded or believed
 unchecked. **Size**: a manifest, an index, an image config, a token
 grant and a search page are each parsed whole, so how many bytes there

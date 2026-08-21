@@ -304,6 +304,57 @@ def test_remove_image_refuses_while_build_lock_held(builders, capsys):
     assert len(iter_cached_images()) == 1
 
 
+# ----- malformed cache entries --------------------------------------------
+
+# The manifest cache is a file this program wrote but does not own: on
+# Termux BASE_CACHE_DIR sits under the $TERMUX_PREFIX bound read-write
+# into every non-isolated container, so what an entry says is a guest's
+# to choose. Neither command handler catches a TypeError or an
+# AttributeError, so each of these shapes ended the command in a
+# traceback -- and `list --image` reads *every* entry, so one planted
+# file was enough to make the whole inventory unusable.
+
+_MALFORMED_ENTRIES = [
+    {"manifest": {"layers": 1}},
+    {"manifest": {"layers": [{"digest": 123}]}},
+    {"manifest": {"layers": [], "config": "bad"}},
+    {"manifest": {"layers": [], "config": {"digest": 123}}},
+    {"manifest": {"layers": [], "config": {"digest": "sha256:" + "ab" * 32}},
+     "image_ref": {}, "repo": 5, "arch": [],
+     "image_config": {"architecture": [], "created": 5}},
+]
+
+
+def _plant_entry(payload, key="f" * 16):
+    from proot_distro.constants import MANIFEST_CACHE_DIR
+    os.makedirs(MANIFEST_CACHE_DIR, exist_ok=True)
+    with open(os.path.join(MANIFEST_CACHE_DIR, key + ".json"), "w") as fh:
+        json.dump(payload, fh)
+
+
+@pytest.mark.parametrize("payload", _MALFORMED_ENTRIES)
+def test_list_image_survives_a_malformed_entry(payload, builders, capsys):
+    _seed_image(builders, "ubuntu:24.04", "x86_64")
+    _plant_entry(payload)
+
+    _list_image()
+
+    # The good image is still inventoried, whatever the planted entry says.
+    assert "ubuntu:24.04" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("payload", _MALFORMED_ENTRIES)
+def test_remove_image_survives_a_malformed_entry(payload, builders, capsys):
+    layers = _seed_image(builders, "ubuntu:24.04", "x86_64")
+    _plant_entry(payload)
+
+    _remove_image("ubuntu:24.04")
+
+    assert not os.path.exists(manifest_cache_path("ubuntu:24.04", "x86_64"))
+    for layer in layers:
+        assert not os.path.exists(layer_cache_path(layer["digest"]))
+
+
 def test_remove_container_rejects_architecture_flag(builders, capsys):
     builders.make_container("box")
     with pytest.raises(SystemExit) as exc:

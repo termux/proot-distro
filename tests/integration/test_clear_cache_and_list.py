@@ -125,6 +125,33 @@ def test_orphan_aborts_on_an_unreadable_manifest_entry(builders, capsys):
     assert "broken.json" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("payload", [
+    {"manifest": {"layers": 1}},
+    {"manifest": {"layers": [{"digest": 123}]}},
+    {"manifest": {"layers": [], "config": "bad"}},
+    {"manifest": {"layers": [], "config": {"digest": 123}}},
+])
+def test_orphan_aborts_on_a_malformed_manifest_entry(payload, builders,
+                                                     capsys):
+    # A manifest whose shape is not a manifest's used to end the sweep in
+    # a TypeError or an AttributeError before it decided anything. It is
+    # an entry that cannot be read, and an entry that cannot be read is
+    # not an entry with no references.
+    import json
+    digest, _, _ = builders.seed_cached_layer(
+        [{"name": "x", "type": "file", "data": b"1"}]
+    )
+    with open(os.path.join(MANIFEST_CACHE_DIR, "broken.json"), "w") as fh:
+        json.dump(payload, fh)
+
+    with pytest.raises(SystemExit) as exc:
+        command_clear_cache(_orphan())
+
+    assert exc.value.code == 1
+    assert os.path.isfile(layer_cache_path(digest))
+    assert "broken.json" in capsys.readouterr().err
+
+
 def test_orphan_aborts_on_an_unreadable_build_index(builders, capsys):
     digest, _, _ = builders.seed_cached_layer(
         [{"name": "x", "type": "file", "data": b"1"}]

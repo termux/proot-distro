@@ -137,6 +137,102 @@ def test_iter_cached_images_skips_unreadable_entries():
 
 
 # ---------------------------------------------------------------------------
+# Malformed cache entries — the manifest cache is a file this program
+# wrote but does not own: on Termux BASE_CACHE_DIR sits under the
+# $TERMUX_PREFIX bound read-write into every non-isolated container, so
+# what an entry *says* is a guest's to choose. Every one of these used
+# to end `list --image`, `remove --image` or `clear-cache --orphan` in a
+# TypeError or an AttributeError, which no command handler catches.
+# ---------------------------------------------------------------------------
+
+_GOOD_DIGEST = "sha256:" + "ab" * 32
+
+
+def _put_entry(payload, key="f" * 16):
+    """Write a raw manifest-cache entry, bypassing save_manifest_cache."""
+    import json
+    os.makedirs(MANIFEST_CACHE_DIR, exist_ok=True)
+    path = os.path.join(MANIFEST_CACHE_DIR, key + ".json")
+    with open(path, "w") as fh:
+        json.dump(payload, fh)
+    return path
+
+
+_MALFORMED = [
+    ("layers is not a list", {"manifest": {"layers": 1}}),
+    ("layers holds a number", {"manifest": {"layers": [7]}}),
+    ("a layer names no digest", {"manifest": {"layers": [{"size": 1}]}}),
+    ("a layer digest is a number",
+     {"manifest": {"layers": [{"digest": 123}]}}),
+    ("config is not an object",
+     {"manifest": {"layers": [], "config": "bad"}}),
+    ("config digest is a number",
+     {"manifest": {"layers": [], "config": {"digest": 123}}}),
+    ("manifest is not an object", {"manifest": "nope"}),
+    ("manifest is absent", {"image_ref": "x:1"}),
+]
+
+
+@pytest.mark.parametrize("label,payload", _MALFORMED,
+                         ids=[c[0] for c in _MALFORMED])
+def test_iter_cached_images_skips_a_malformed_manifest(label, payload):
+    cache.save_manifest_cache("img:1", "x86_64", {"layers": []},
+                              "library/img", {})
+    _put_entry(payload)
+    assert [r["image_ref"] for r in cache.iter_cached_images()] == ["img:1"]
+
+
+@pytest.mark.parametrize("label,payload", _MALFORMED,
+                         ids=[c[0] for c in _MALFORMED])
+def test_referenced_blob_digests_reports_a_malformed_manifest(label, payload):
+    # An entry a sweep cannot enumerate is not an entry with no
+    # references: clear-cache --orphan reads this and refuses to delete
+    # anything while `unreadable` is non-empty.
+    cache.save_manifest_cache(
+        "img:1", "x86_64",
+        {"layers": [{"digest": _GOOD_DIGEST}]}, "library/img", {},
+    )
+    path = _put_entry(payload)
+    digests, unreadable = cache.referenced_blob_digests()
+    assert unreadable == [path]
+    assert digests == {_GOOD_DIGEST}
+
+
+def test_a_config_descriptor_may_be_absent():
+    # Locally built entries carry no config descriptor at all, and
+    # save_manifest_cache has always stored the manifest verbatim.
+    cache.save_manifest_cache("img:1", "x86_64", {"layers": []},
+                              "library/img", {})
+    record = cache.image_cache_entry("img:1", "x86_64")
+    assert record is not None
+    assert record["image_id"] == ""
+    assert cache.referenced_blob_digests() == (set(), [])
+
+
+def test_record_string_fields_survive_an_entry_that_lies_about_them():
+    # The record's consumers index it: list --image measures each cell
+    # with len() and pads it with ljust(), remove --image splits the
+    # reference into registry/repo/tag, and iter_cached_images() sorts
+    # on the reference and the architecture.
+    _put_entry({
+        "image_ref": {"not": "a string"},
+        "repo": 5,
+        "arch": ["x86_64"],
+        "manifest": {"layers": [], "config": {"digest": _GOOD_DIGEST}},
+        "image_config": {"architecture": [], "created": 5},
+    })
+    records = cache.iter_cached_images()
+    assert len(records) == 1
+    record = records[0]
+    for field in ("image_ref", "repo", "arch", "image_id", "created"):
+        assert isinstance(record[field], str), field
+    assert record["image_ref"] == ""
+    assert record["arch"] == ""
+    assert record["created"] == ""
+    assert record["image_id"] == "ab" * 32
+
+
+# ---------------------------------------------------------------------------
 # Blob integrity — the digest checks every cached-blob consumer runs
 # ---------------------------------------------------------------------------
 
