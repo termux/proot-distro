@@ -1485,6 +1485,21 @@ concurrent sessions agree. `LD_PRELOAD` stripped before exec.
 `command_login` via `args._run_inner`. `--work-dir` overrides
 `WorkingDir`; default is `/` (not user home).
 
+What those three fields *hold* is a registry's JSON, persisted verbatim
+by `install` into a file that sits under the bound `$TERMUX_PREFIX` on
+Termux, so `_string_list()` and `_working_dir()` check the shape OCI
+gives them before an argv is built out of them: `Entrypoint` and `Cmd`
+are lists of strings, `WorkingDir` is a string, absent (or JSON `null`)
+is "not set", and anything else is a **refusal** naming the field.
+`list(cfg.get("Entrypoint") or [])` believed whatever it found — an int
+ended the command in a `TypeError` traceback, an object yielded its
+keys, the string `"sh"` became `['s', 'h']`, and a list holding a
+non-string got all the way to `os.execvpe()`, past every net. Dropping
+a malformed field quietly would be worse than refusing: `run` would
+execute a *different* command than the image names. `login` reads the
+same file for the image's `Env` and already filters it this way
+(`env.read_manifest_env`).
+
 `-d`/`--detach` (login + run, via `_add_login_or_run_common`)
 backgrounds the session: after all setup, `_command_login_inner`
 delegates the final exec to `commands/login/detach.spawn_detached`

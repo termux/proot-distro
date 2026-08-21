@@ -24,6 +24,19 @@
 # list, then delegates entirely to command_login with the pre-built inner
 # command injected via args._run_inner so that login's proot setup is
 # reused without duplication.
+#
+# What that block *says* is nobody's promise. It is a registry's JSON,
+# persisted verbatim by install, and on Termux the file holding it sits
+# under the $TERMUX_PREFIX bound read-write into every non-isolated
+# container. So the three fields this command reads are checked against
+# the shape OCI gives them before anything is built out of them:
+# Entrypoint and Cmd are lists of strings and WorkingDir is a string, or
+# the command refuses. `list(cfg.get("Entrypoint") or [])` accepted far
+# more than that -- an int ended the command in a TypeError traceback, a
+# JSON object yielded its keys, and the string "sh" became
+# ['s', 'h'], which is an argv nobody wrote. A list holding a non-string
+# survived this module entirely and surfaced as a TypeError out of
+# os.execvpe(), past every net.
 
 import sys
 
@@ -55,6 +68,46 @@ def _read_image_config(container_name: str) -> dict:
     return config if isinstance(config, dict) else {}
 
 
+def _string_list(img_cfg: dict, key: str, container_name: str) -> list:
+    """The image config's *key* as a list of strings, or exit.
+
+    A missing (or JSON null) field is "not set", which is how an image
+    says it has no Entrypoint or no Cmd. Anything present but shaped
+    otherwise is a malformed image and is reported as one: quietly
+    dropping it would run a *different* command than the image names,
+    which is worse than refusing, and quietly coercing it invents an
+    argv out of characters or dict keys.
+    """
+    value = img_cfg.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) for item in value
+    ):
+        crit_error(f"the image manifest for '{container_name}' declares a "
+                   f"{key} that is not a list of strings; the image is "
+                   f"malformed.")
+        sys.exit(1)
+    return list(value)
+
+
+def _working_dir(img_cfg: dict, container_name: str) -> str:
+    """The image config's WorkingDir, or "/". Exits for a non-string.
+
+    It becomes proot's --cwd, so a value of another type used to reach
+    the argv through an f-string and name a directory no image meant.
+    """
+    value = img_cfg.get("WorkingDir")
+    if value is None:
+        return "/"
+    if not isinstance(value, str):
+        crit_error(f"the image manifest for '{container_name}' declares a "
+                   f"WorkingDir that is not a string; the image is "
+                   f"malformed.")
+        sys.exit(1)
+    return value or "/"
+
+
 def command_run(args) -> None:
     """Execute the container image's Entrypoint/Cmd inside proot."""
     container_name = args.container_name
@@ -68,8 +121,8 @@ def command_run(args) -> None:
 
     img_cfg = _read_image_config(container_name)
 
-    entrypoint: list = list(img_cfg.get("Entrypoint") or [])
-    cmd: list = list(img_cfg.get("Cmd") or [])
+    entrypoint = _string_list(img_cfg, "Entrypoint", container_name)
+    cmd = _string_list(img_cfg, "Cmd", container_name)
 
     if run_args:
         # Args after '--' replace Cmd but are appended to Entrypoint.
@@ -90,7 +143,7 @@ def command_run(args) -> None:
     # Use WorkingDir from image config unless --work-dir was given.
     # Fall back to "/" when neither is available.
     if not getattr(args, "work_dir", None):
-        args.work_dir = img_cfg.get("WorkingDir") or "/"
+        args.work_dir = _working_dir(img_cfg, container_name)
 
     # Signal to command_login to bypass shell wrapping and run inner directly.
     args._run_inner = inner
