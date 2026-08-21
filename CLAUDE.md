@@ -669,6 +669,20 @@ would shadow the container's.
 `/`, `./`, `../`, or `~`), or an `http(s)://` URL. `--user` takes name,
 numeric uid, or `user:group`.
 
+A local **OCI archive** is a stranger's file (`install ./img.tar`, or a
+URL), so how much memory reading it costs must not be the archive's to
+choose. Two things bound it. `_index_oci_members()` replaces
+`tf.getmembers()`, which held a `TarInfo` for every member the archive
+declared: the scan stops at `_MAX_OCI_MEMBERS` — a refusal, not a silent
+truncation, since a half-built index surfaces as a missing blob — and
+keeps only the names `_oci_open_member()` can ever be asked for
+(`index.json` and the `blobs/<algo>/<hex>` form `_oci_blob_path()`
+builds), later members winning as tar itself means them. And
+`_oci_read_capped()` bounds the JSON reads at `_MAX_JSON_BYTES`, applied
+to the bytes actually drawn rather than to `member.size`, which is the
+archive's to declare either way. Both limits are orders of magnitude
+above any real image.
+
 `search` is `docker search`: `helpers/docker/search.py` queries Docker
 Hub's `index.docker.io/v1/search` — the one registry API that is **Hub
 only**, since searching is not part of the OCI distribution protocol, so

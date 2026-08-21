@@ -36,6 +36,7 @@
 import hashlib
 import json
 import os
+import re
 import sys
 import tarfile
 
@@ -54,6 +55,36 @@ from proot_distro.helpers.tar_extract import extract_tar_to_rootfs
 
 # Copy/hash slice for layer blobs coming out of an OCI archive.
 _BLOB_CHUNK = 1024 * 1024
+
+# How much of a JSON member is worth reading. index.json, an image
+# manifest and an image config are all small by construction -- a few
+# kilobytes, tens at the outside -- and every one of them is read whole
+# into memory before it is parsed. The archive is a stranger's
+# (`install ./img.tar`, or an http(s):// URL) and its member sizes are
+# whatever it says they are, so an unbounded read is the archive's
+# choice of how much memory this process allocates. 16 MiB is orders of
+# magnitude above any real one and still bounded.
+_MAX_JSON_BYTES = 16 * 1024 * 1024
+
+# How many members are worth indexing. Blobs are addressed by digest in
+# whatever order the manifest lists them, so the OCI branch needs random
+# access and therefore a map -- which tf.getmembers() built over the
+# whole archive, one TarInfo per member with no ceiling on how many the
+# archive declares. A real OCI layout names a handful: `index.json`,
+# `oci-layout`, `manifest.json`, and one blob per manifest, config and
+# layer. Even a multi-arch index of twenty platforms stays in the low
+# thousands.
+_MAX_OCI_MEMBERS = 16384
+
+# The names _oci_open_member() can ever be asked for: "index.json", and
+# the blobs/<algo>/<hex> form _oci_blob_path() builds out of a digest
+# validate_digest() has already accepted. Anything else in the archive
+# is unaddressable here, so it is not worth a TarInfo -- which is what
+# keeps a member list this reader cannot use from costing memory.
+_OCI_INDEX_NAME = "index.json"
+_OCI_BLOB_RE = re.compile(
+    r"^blobs/[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*/[A-Fa-f0-9]+$"
+)
 
 # Top-level directory names that signal a rootfs filesystem root.
 _ROOTFS_DIRS = frozenset({
@@ -132,13 +163,30 @@ def _oci_open_member(tf, member_map, path):
     return fobj
 
 
-def _oci_read_json(tf, member_map, path):
-    """Extract a member from the outer archive and parse it as JSON."""
+def _oci_read_capped(tf, member_map, path) -> bytes:
+    """Read one JSON member whole, refusing one that is absurdly large.
+
+    The size in the header is the archive's to declare and the member
+    can lie about it either way, so the cap is applied to the bytes
+    actually drawn rather than to member.size: one more byte than the
+    limit is read, and its presence is the refusal.
+    """
     fobj = _oci_open_member(tf, member_map, path)
     try:
-        return json.loads(fobj.read())
+        data = fobj.read(_MAX_JSON_BYTES + 1)
     finally:
         fobj.close()
+    if len(data) > _MAX_JSON_BYTES:
+        raise RuntimeError(
+            f"OCI archive entry '{path}' is larger than "
+            f"{_MAX_JSON_BYTES} bytes; refusing to read it."
+        )
+    return data
+
+
+def _oci_read_json(tf, member_map, path):
+    """Extract a member from the outer archive and parse it as JSON."""
+    return json.loads(_oci_read_capped(tf, member_map, path))
 
 
 def _oci_read_blob_json(tf, member_map, digest):
@@ -149,11 +197,7 @@ def _oci_read_blob_json(tf, member_map, digest):
     by digest, so a swapped blob is caught here rather than believed.
     """
     path = _oci_blob_path(digest)
-    fobj = _oci_open_member(tf, member_map, path)
-    try:
-        data = fobj.read()
-    finally:
-        fobj.close()
+    data = _oci_read_capped(tf, member_map, path)
     require_data_digest(data, digest, what=f"OCI archive blob '{path}'")
     return json.loads(data)
 
@@ -329,6 +373,35 @@ def _extract_oci(tf, member_map, rootfs_dir, dist_arch):
 # Format-detecting entry point
 # ---------------------------------------------------------------------------
 
+def _index_oci_members(tf) -> dict:
+    """Map the addressable members of an OCI layout archive by name.
+
+    tf.getmembers() was the whole of this, and it holds a TarInfo for
+    every member the archive declares — however many that is, and
+    however long their names. The two things that bound it are here
+    instead: the scan stops at _MAX_OCI_MEMBERS (a hard refusal, not a
+    silent truncation, since a half-indexed archive would surface as a
+    missing blob), and only names _oci_open_member() can be asked for
+    are kept.
+
+    Later members win, which is what building the dict over
+    getmembers() did, and what tar itself means by a repeated name.
+    """
+    member_map: dict = {}
+    scanned = 0
+    for member in tf:
+        scanned += 1
+        if scanned > _MAX_OCI_MEMBERS:
+            raise RuntimeError(
+                f"OCI archive declares more than {_MAX_OCI_MEMBERS} "
+                f"entries; refusing to index it."
+            )
+        name = member.name
+        if name == _OCI_INDEX_NAME or _OCI_BLOB_RE.match(name):
+            member_map[name] = member
+    return member_map
+
+
 def install_from_local_file(
     archive_path: str, rootfs_dir: str, dist_arch: str
 ):
@@ -363,14 +436,15 @@ def install_from_local_file(
 
     if is_oci:
         # OCI image layout: blobs are accessed by digest in arbitrary
-        # order, so random access via getmembers() is required.
+        # order, so random access — and therefore an index — is required.
         with tarfile.open(archive_path, "r:*") as tf:
             if progress_active():
                 log_info("Indexing OCI archive...")
                 sys.stderr.flush()
-            raw_members = tf.getmembers()
-            clear_bar()
-            member_map = {m.name: m for m in raw_members}
+            try:
+                member_map = _index_oci_members(tf)
+            finally:
+                clear_bar()
             return _extract_oci(tf, member_map, rootfs_dir, dist_arch)
 
     strip = detect_strip_count(probe_names)

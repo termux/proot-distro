@@ -3,6 +3,7 @@
 # not escape the blob layout, and hostile layer content must stay in rootfs.
 
 import os
+import tarfile
 
 import pytest
 
@@ -138,3 +139,80 @@ def test_install_oci_with_hostile_layer_contained(tmp_path, builders):
     # Local OCI returns metadata so install can write manifest.json.
     assert meta is not None
     assert meta["arch"] == "x86_64"
+
+
+# ---------------------------------------------------------------------------
+# Bounded indexing and bounded reads.
+# ---------------------------------------------------------------------------
+#
+# The archive is a stranger's -- `install ./img.tar`, or an http(s)://
+# URL -- and both the number of members it declares and the size it gives
+# each one are its own choice. tf.getmembers() held a TarInfo for every
+# member and the JSON readers pulled a whole member into memory, so how
+# much this process allocates was the archive's to decide.
+
+def _oci_with_extra_members(tmp_path, builders, names):
+    """A valid one-layer OCI archive carrying *names* as extra members."""
+    arc = tmp_path / "img.oci.tar"
+    builders.make_oci_archive(
+        str(arc),
+        [[{"name": "etc/hostname", "type": "file", "data": b"g"}]],
+        outer_extra_members=[
+            {"name": n, "type": "file", "data": b""} for n in names
+        ],
+    )
+    return arc
+
+
+def test_unaddressable_members_are_not_indexed(tmp_path, builders):
+    """Only the names _oci_open_member() can ask for get a TarInfo."""
+    arc = _oci_with_extra_members(
+        tmp_path, builders,
+        ["junk/a", "junk/b", "oci-layout.bak", "blobs/sha256/zz-not-hex"],
+    )
+    with tarfile.open(str(arc), "r:*") as tf:
+        member_map = install_local._index_oci_members(tf)
+    assert "index.json" in member_map
+    assert all(
+        name == "index.json" or name.startswith("blobs/sha256/")
+        for name in member_map
+    )
+    assert not any("junk" in name for name in member_map)
+
+
+def test_member_count_is_capped(tmp_path, builders, monkeypatch):
+    monkeypatch.setattr(install_local, "_MAX_OCI_MEMBERS", 4)
+    arc = _oci_with_extra_members(
+        tmp_path, builders, [f"junk/{i}" for i in range(20)],
+    )
+    with tarfile.open(str(arc), "r:*") as tf:
+        with pytest.raises(RuntimeError, match="more than 4 entries"):
+            install_local._index_oci_members(tf)
+
+
+def test_install_refuses_an_archive_with_too_many_members(
+        tmp_path, builders, monkeypatch):
+    monkeypatch.setattr(install_local, "_MAX_OCI_MEMBERS", 4)
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    arc = _oci_with_extra_members(
+        tmp_path, builders, [f"junk/{i}" for i in range(20)],
+    )
+    with pytest.raises(RuntimeError, match="refusing to index it"):
+        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+    # Nothing was applied.
+    assert os.listdir(str(root)) == []
+
+
+def test_oversized_json_member_is_refused(tmp_path, builders, monkeypatch):
+    """index.json is read to a ceiling, not to whatever the header says."""
+    monkeypatch.setattr(install_local, "_MAX_JSON_BYTES", 64)
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    arc = tmp_path / "img.oci.tar"
+    builders.make_oci_archive(
+        str(arc), [[{"name": "etc/hostname", "type": "file", "data": b"g"}]],
+    )
+    with pytest.raises(RuntimeError, match="larger than 64 bytes"):
+        install_local.install_from_local_file(str(arc), str(root), "x86_64")
+    assert os.listdir(str(root)) == []
