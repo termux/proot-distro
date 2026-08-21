@@ -49,6 +49,7 @@ from proot_distro.helpers.download import retry_http
 from proot_distro.helpers.docker.cache import (
     annotate_manifest_cache,
     load_manifest_cache,
+    manifest_layers,
     require_data_digest,
     save_manifest_cache,
     open_verified_layer,
@@ -64,6 +65,8 @@ from proot_distro.helpers.docker.refs import ARCH_TO_DOCKER, parse_image_ref
 from proot_distro.helpers.docker.transport import (
     auth_denied_msg,
     auth_note,
+    MAX_METADATA_BYTES,
+    decode_json_object,
     get_auth_token,
     opener,
     _ua,
@@ -96,7 +99,17 @@ def _get_manifest(
 
     def _attempt():
         with opener(insecure).open(req) as resp:
-            return resp.read(), resp.headers.get("Content-Type", "")
+            # Metadata, held whole in memory and subscripted below; how
+            # much of it there is is the registry's choice, so one byte
+            # past the ceiling is the refusal.
+            body = resp.read(MAX_METADATA_BYTES + 1)
+            ct = resp.headers.get("Content-Type", "")
+        if len(body) > MAX_METADATA_BYTES:
+            raise RuntimeError(
+                f"Manifest for '{repo}' is larger than "
+                f"{MAX_METADATA_BYTES} bytes; refusing to read it."
+            )
+        return body, ct
 
     body, ct = retry_http(_attempt, what=f"Fetching manifest {ref}")
     # A reference containing ':' is a digest, not a tag: the registry's
@@ -105,10 +118,31 @@ def _get_manifest(
     # an --allow-insecure MITM) and an arbitrary layer list.
     if ":" in ref:
         require_data_digest(body, ref, what=f"Manifest for '{repo}'")
-    data = json.loads(body)
+    data = decode_json_object(body, f"Fetching manifest {ref}")
     # Prefer the Content-Type header; fall back to the mediaType field.
-    data["_ct"] = ct.split(";")[0].strip() or data.get("mediaType", "")
+    media = data.get("mediaType", "")
+    data["_ct"] = ct.split(";")[0].strip() or (
+        media if isinstance(media, str) else ""
+    )
     return data
+
+
+def _entry_platform(entry):
+    """Return an index entry's platform object, or None when it has none.
+
+    Both the entry and its platform are whatever the registry sent, and
+    an index whose entries are strings (or whose platform is a list) used
+    to end the pull in an AttributeError partway down _pick_platform. An
+    entry that cannot be read simply does not match, which is the same
+    outcome as one describing another architecture. An entry that is a
+    proper object with no platform at all still answers {}, as it always
+    did: it matches nothing either, but it is listed among the platforms
+    the image does offer.
+    """
+    if not isinstance(entry, dict):
+        return None
+    plat = entry.get("platform", {})
+    return plat if isinstance(plat, dict) else None
 
 
 def _pick_platform(
@@ -117,7 +151,9 @@ def _pick_platform(
     """Find the manifest list entry matching arch (and optionally variant)."""
     # Exact match first (arch + non-empty variant must match).
     for entry in entries:
-        plat = entry.get("platform", {})
+        plat = _entry_platform(entry)
+        if plat is None:
+            continue
         if plat.get("os", "linux") != "linux":
             continue
         if plat.get("architecture") != arch:
@@ -128,15 +164,17 @@ def _pick_platform(
 
     # Variant-agnostic fallback.
     for entry in entries:
-        plat = entry.get("platform", {})
+        plat = _entry_platform(entry)
+        if plat is None:
+            continue
         if (plat.get("os", "linux") == "linux"
                 and plat.get("architecture") == arch):
             return entry
 
     available = []
     for e in entries:
-        plat = e.get("platform", {})
-        if plat.get("os", "linux") != "linux":
+        plat = _entry_platform(e)
+        if plat is None or plat.get("os", "linux") != "linux":
             continue
         a = plat.get("architecture", "?")
         v = plat.get("variant", "")
@@ -162,16 +200,23 @@ def _resolve_single_manifest(
 
     if manifest["_ct"] in _MANIFEST_LIST_TYPES or "manifests" in manifest:
         docker_arch, docker_variant = ARCH_TO_DOCKER.get(arch, (arch, ""))
+        entries = manifest.get("manifests", [])
+        if not isinstance(entries, list):
+            raise RuntimeError(
+                f"Manifest index for '{image_ref}' is malformed: "
+                f"'manifests' is not a list."
+            )
         target = _pick_platform(
-            manifest.get("manifests", []),
-            docker_arch,
-            docker_variant,
-            image_ref,
+            entries, docker_arch, docker_variant, image_ref,
         )
+        digest = target.get("digest")
+        if not isinstance(digest, str) or not digest:
+            raise RuntimeError(
+                f"Manifest index for '{image_ref}' names the {arch} image "
+                f"with no usable digest."
+            )
         log_info(f"Fetching {arch} manifest...")
-        manifest = _get_manifest(
-            repo, target["digest"], token, base, insecure
-        )
+        manifest = _get_manifest(repo, digest, token, base, insecure)
 
     return manifest, token, repo, base
 
@@ -198,18 +243,35 @@ def _fetch_config_blob(
         req = urllib.request.Request(url, headers=headers)
 
         def _attempt():
+            # A config blob is metadata: parsed whole, never streamed,
+            # so its size is the registry's choice of allocation.
             with opener(insecure).open(req) as resp:
-                return resp.read()
+                data = resp.read(MAX_METADATA_BYTES + 1)
+            if len(data) > MAX_METADATA_BYTES:
+                raise RuntimeError(
+                    f"Image config blob is larger than "
+                    f"{MAX_METADATA_BYTES} bytes; refusing to read it."
+                )
+            return data
 
         body = retry_http(_attempt, what="Fetching image config")
+    except RuntimeError:
+        # Too large is a refusal, not a degraded config: it is the one
+        # failure here that says something about the blob rather than
+        # about reaching it.
+        raise
     except Exception:
         return {}
 
     require_data_digest(body, cfg_digest, what="Image config blob")
     try:
-        return json.loads(body)
-    except (ValueError, TypeError):
+        config = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
         return {}
+    # `run` and `login` read Entrypoint/Cmd/Env out of this, and it is
+    # persisted into the manifest cache; a document that is not an object
+    # answers no such question, so it is the same as not having one.
+    return config if isinstance(config, dict) else {}
 
 
 def _usable_cached_layers(layers: list) -> dict:
@@ -301,7 +363,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
         # The hit proves which image this entry holds; record it when the
         # entry is an old one that never stored its own reference.
         annotate_manifest_cache(image_ref, arch)
-        layers = manifest.get("layers", [])
+        layers = manifest_layers(manifest, image_ref)
         usable.update(_usable_cached_layers(layers))
         missing = sum(1 for layer in layers if layer["digest"] not in usable)
         if not missing:
@@ -347,14 +409,21 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                     ) from net_err
             log_error(f"No cached manifest found for '{image_ref}' ({arch}).")
             raise RuntimeError(f"Network error: {net_err}") from net_err
-        cfg_digest = manifest.get("config", {}).get("digest", "")
+        config = manifest.get("config", {})
+        cfg_digest = config.get("digest", "") if isinstance(
+            config, dict
+        ) else ""
+        if not isinstance(cfg_digest, str):
+            cfg_digest = ""
         image_config = _fetch_config_blob(
             repo, cfg_digest, token, base, insecure
         )
         save_manifest_cache(image_ref, arch, manifest, repo, image_config)
-        usable.update(_usable_cached_layers(manifest.get("layers", [])))
+        usable.update(
+            _usable_cached_layers(manifest_layers(manifest, image_ref))
+        )
 
-    layers = manifest.get("layers", [])
+    layers = manifest_layers(manifest, image_ref)
     if not layers:
         raise RuntimeError(
             f"Manifest for '{image_ref}' contains no filesystem layers."
@@ -362,8 +431,13 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
 
     n_layers = len(layers)
     for i, layer in enumerate(layers):
+        # manifest_layers has vouched for the digest; the rest of a
+        # descriptor is still the registry's to shape, and both of these
+        # are only ever read for a message or a substring test.
         digest = layer["digest"]
         media_type = layer.get("mediaType", "")
+        if not isinstance(media_type, str):
+            media_type = ""
         if "zstd" in media_type and not ZSTD_AVAILABLE:
             raise RuntimeError(
                 unsupported_msg(f"Layer {i + 1}/{n_layers}")
@@ -382,7 +456,8 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                      f"skipping download.")
         else:
             size = layer.get("size", 0)
-            size_str = f" ({fmt_size(size)})" if size else ""
+            size_str = (f" ({fmt_size(size)})"
+                        if isinstance(size, int) and size > 0 else "")
             log_info(f"{short_id}: Downloading layer "
                      f"{i + 1}/{n_layers}{size_str}...")
             try:

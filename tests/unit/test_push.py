@@ -181,6 +181,21 @@ def test_upload_blob_bytes_4xx_fails_fast(monkeypatch):
 
 # ----- push_image: --allow-insecure threading -----------------------------
 
+@pytest.mark.parametrize("manifest", [
+    "a manifest",                                   # not an object
+    {"layers": {"digest": "sha256:" + "a" * 64}},   # not a list
+    {"layers": [42]},                               # not a descriptor
+    {"layers": [{"size": 1}]},                      # names no digest
+])
+def test_push_refuses_a_malformed_cached_manifest(monkeypatch, manifest):
+    # The manifest cache is a directory a container can write to on
+    # Termux; a manifest of the wrong shape must not be a traceback.
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda ref, arch: (manifest, "me/app", {}))
+    with pytest.raises(RuntimeError):
+        push.push_image("reg.example/me/app:latest", "x86_64")
+
+
 def test_push_image_threads_base_and_insecure(monkeypatch):
     # push_image must resolve the scheme/base via get_auth_token(insecure=...)
     # and thread that base + the insecure flag into every upload helper, so an

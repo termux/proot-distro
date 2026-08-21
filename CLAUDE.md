@@ -769,6 +769,17 @@ to the bytes actually drawn rather than to `member.size`, which is the
 archive's to declare either way. Both limits are orders of magnitude
 above any real image.
 
+What those bytes then *say* is the archive's too, and `install`'s
+handler catches only `EOFError`/`OSError`/`TarError`/`RuntimeError` — so
+a document that is not JSON (`ValueError`), that is a JSON *list*
+(`AttributeError` on the first `.get`), or whose `manifests`/`layers`
+entries are strings or lack a `digest` (`TypeError`, `KeyError`) all
+ended the command in a traceback. `_oci_json_object()` and
+`_oci_digest()` are the two places that decide it now, and every read of
+`index.json`, an image manifest and an image config goes through them,
+so a malformed archive is a message. Same rule, same reasons, as the
+registry side below.
+
 `search` is `docker search`: `helpers/docker/search.py` queries Docker
 Hub's `index.docker.io/v1/search` — the one registry API that is **Hub
 only**, since searching is not part of the OCI distribution protocol, so
@@ -1368,6 +1379,31 @@ count, `created`, `cached_at` — consumed by `list --image` /
 what a deletion addresses it by. `refs.py` owns the string forms: `canonical_ref()`
 (cache-key input), `with_explicit_tag()` (`:latest` default, shared by
 `build`/`push`/`remove`), `DOCKER_TO_ARCH`.
+
+Nothing a registry says about itself is read unbounded or believed
+unchecked. **Size**: a manifest, an index, an image config, a token
+grant and a search page are each parsed whole, so how many bytes there
+are is the server's choice of allocation — every one is read to
+`transport.MAX_METADATA_BYTES` (16 MiB, the ceiling `install_local`
+puts on an OCI archive's JSON), one byte past the limit being the
+refusal, and a `RuntimeError` rather than something `retry_http` would
+fetch again. Layer blobs are *not* metadata: they stream to disk and
+are bounded by their own digest. **Shape**: `transport.
+decode_json_object()` turns "not JSON" and "JSON, but not an object"
+into a `RuntimeError` at the point the body arrives;
+`cache.manifest_layers()` is the one rule for a manifest's layer list
+(`pull` and `push` both), fatal on a descriptor naming no digest since
+layers are an ordered stack and skipping one produces a rootfs that is
+not the image asked for; `_entry_platform()` skips an index entry that
+is not an object rather than failing on it, the same outcome an entry
+for another architecture gets; and a token that is not a string, a
+`mediaType` that is not a string, a `size` that is not an int are each
+read as absent. All of it exists because a `ValueError`, `KeyError`,
+`TypeError` or `AttributeError` is what every one of those used to be —
+and no command handler catches those, so a hostile mirror, an
+`--allow-insecure` MITM, or a manifest-cache entry a guest wrote (the
+cache is under the bound `$TERMUX_PREFIX` on Termux) ended the command
+in a traceback.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise

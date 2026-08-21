@@ -56,6 +56,34 @@ def test_pull_missing_layer_no_network(tmp_path, builders, monkeypatch):
         pull_image_into("x:miss", str(root), "x86_64")
 
 
+@pytest.mark.parametrize("manifest", [
+    {"schemaVersion": 2, "layers": "not-a-list"},
+    {"schemaVersion": 2, "layers": ["just-a-string"]},
+    {"schemaVersion": 2, "layers": [{"size": 10}]},          # no digest
+    {"schemaVersion": 2, "layers": [{"digest": 12345}]},     # not a string
+])
+def test_pull_malformed_cached_manifest_is_a_runtime_error(
+    tmp_path, manifest,
+):
+    # The manifest cache is guest-writable on Termux, and a registry can
+    # send this shape directly. Every one of these used to reach the
+    # layer loop and die there: TypeError, AttributeError or KeyError,
+    # none of which install's handler catches.
+    save_manifest_cache("x:bad", "x86_64", manifest, "library/x", {})
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    with pytest.raises(RuntimeError):
+        pull_image_into("x:bad", str(root), "x86_64")
+
+
+def test_pull_manifest_that_is_not_an_object_is_a_runtime_error(tmp_path):
+    save_manifest_cache("x:str", "x86_64", "a manifest", "library/x", {})
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    with pytest.raises(RuntimeError):
+        pull_image_into("x:str", str(root), "x86_64")
+
+
 def test_pull_zstd_layer_rejected(tmp_path, builders, monkeypatch):
     # zstd-compressed layers need Python 3.14's tarfile; where that is
     # missing the layer is refused up front rather than mid-extraction.

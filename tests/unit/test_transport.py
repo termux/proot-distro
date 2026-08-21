@@ -180,6 +180,104 @@ def test_get_auth_token_open_registry_returns_empty(monkeypatch):
     assert base == "https://open.example"
 
 
+# ----- malformed and oversized registry answers ---------------------------
+
+class _RawResp:
+    """A response whose body is whatever bytes the test chose."""
+
+    def __init__(self, body: bytes):
+        self._buf = io.BytesIO(body)
+
+    def read(self, *a):
+        return self._buf.read(*a)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_decode_json_object_rejects_a_non_object():
+    with pytest.raises(RuntimeError):
+        transport.decode_json_object(b'["a"]', "Testing")
+    with pytest.raises(RuntimeError):
+        transport.decode_json_object(b'not json at all', "Testing")
+    with pytest.raises(RuntimeError):
+        transport.decode_json_object(b'\xff\xfe', "Testing")
+    assert transport.decode_json_object(b'{"a": 1}', "Testing") == {"a": 1}
+
+
+def test_token_endpoint_answering_a_list_is_a_runtime_error(monkeypatch):
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(b'["not", "an", "object"]'),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError):
+        transport.get_auth_token("library/ubuntu")
+
+
+def test_token_endpoint_answering_junk_is_a_runtime_error(monkeypatch):
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(b'<html>proxy error</html>'),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError):
+        transport.get_auth_token("library/ubuntu")
+
+
+def test_token_that_is_not_a_string_is_refused(monkeypatch):
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(b'{"token": {"nested": 1}}'),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError):
+        transport.get_auth_token("library/ubuntu")
+
+
+def test_oversized_token_response_is_refused(monkeypatch):
+    monkeypatch.setattr(transport, "MAX_METADATA_BYTES", 64)
+    body = b'{"token": "' + b"A" * 4096 + b'"}'
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(body),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError):
+        transport.get_auth_token("library/ubuntu")
+
+
+def test_response_at_the_limit_is_read(monkeypatch):
+    payload = b'{"token": "' + b"A" * 40 + b'"}'
+    monkeypatch.setattr(transport, "MAX_METADATA_BYTES", len(payload))
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(payload),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    tok, _base = transport.get_auth_token("library/ubuntu")
+    assert tok == "A" * 40
+
+
+def test_oversized_response_is_not_retried(monkeypatch):
+    # A refusal is deterministic: retrying would only fetch it again.
+    monkeypatch.setattr(transport, "MAX_METADATA_BYTES", 8)
+    calls = []
+
+    def fake_urlopen(req, *a, **k):
+        calls.append(req.full_url)
+        return _RawResp(b'{"token": "' + b"A" * 512 + b'"}')
+
+    monkeypatch.setattr(transport.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError):
+        transport.get_auth_token("library/ubuntu")
+    assert len(calls) == 1
+
+
 # ----- insecure transport: HTTP-only registries ---------------------------
 
 def test_registry_base_url_scheme():

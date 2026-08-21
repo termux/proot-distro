@@ -45,7 +45,7 @@ from proot_distro.progress import (
     clear_bar, fmt_size,
 )
 from proot_distro.helpers.docker.cache import (
-    blob_present, load_manifest_cache, open_required_layer,
+    blob_present, load_manifest_cache, manifest_layers, open_required_layer,
 )
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
@@ -294,7 +294,10 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
             f"first with: {PROGRAM_NAME} build -t {image_ref}"
         )
 
-    layers = manifest.get("layers", [])
+    # The cache entry is a file on disk, and on Termux that directory is
+    # guest-writable; a manifest that is not the shape the loop below
+    # subscripts is a traceback rather than a message without this.
+    layers = manifest_layers(manifest, image_ref)
     if not layers:
         raise RuntimeError(
             f"Cached manifest for '{image_ref}' has no filesystem layers."
@@ -322,7 +325,13 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     # we PUT. Round-tripping the dict through json.dump+json.load preserves
     # all keys, so the canonical form is reproducible here.
     config_bytes = canonical_json(image_config)
-    expected_cfg_digest = manifest.get("config", {}).get("digest", "")
+    cached_config = manifest.get("config", {})
+    expected_cfg_digest = (
+        cached_config.get("digest", "")
+        if isinstance(cached_config, dict) else ""
+    )
+    if not isinstance(expected_cfg_digest, str):
+        expected_cfg_digest = ""
     actual_cfg_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
     if expected_cfg_digest != actual_cfg_digest:
         raise RuntimeError(

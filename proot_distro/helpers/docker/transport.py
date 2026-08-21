@@ -29,6 +29,17 @@
 #   - Token-exchange flow: PD_DOCKER_AUTH (username:password) is the
 #     single auth contract; the registry's WWW-Authenticate header
 #     tells us where to redeem it for a Bearer token.
+#
+# Everything a registry says about itself arrives here first, and none of
+# it is this program's to trust: how many bytes a metadata response holds
+# is the server's choice, and so is whether the body is JSON at all or an
+# object of the shape the caller is about to subscript. Bodies are read
+# through a ceiling (MAX_METADATA_BYTES) and decoded through
+# decode_json_object(), which turns a malformed or wrongly-shaped answer
+# into a RuntimeError -- the one exception type every command handler
+# already reports cleanly. A registry must not be able to end a command
+# in a traceback, and an --allow-insecure MITM or a hostile mirror must
+# not be able to end it in an allocation the size of the response.
 
 import base64
 import json
@@ -50,6 +61,16 @@ from proot_distro.helpers.download import (
 
 REGISTRY_URL = "https://registry-1.docker.io"
 AUTH_URL = "https://auth.docker.io/token"
+
+# How large a metadata response may be before it is refused. Manifests,
+# manifest indexes, image configs, token grants and search pages are all
+# small documents -- a fat multi-arch index is tens of kilobytes -- and
+# nothing here streams, so every one of them is held whole in memory.
+# 16 MiB is orders of magnitude above any real one and still bounded,
+# the same ceiling install_local puts on the JSON inside an OCI archive.
+# Layer blobs are not metadata: they stream to disk and are bounded by
+# their own digest, not by this.
+MAX_METADATA_BYTES = 16 * 1024 * 1024
 
 
 def _ua() -> dict:
@@ -111,18 +132,77 @@ def auth_opener():
     return _verified_opener
 
 
-def _request_body(open_fn, req, what: str) -> bytes:
-    """Open *req* via *open_fn* and return the full response body.
+def _request_body(open_fn, req, what: str, limit: int = None) -> bytes:
+    """Open *req* via *open_fn* and return the response body, up to *limit*.
 
     Transient network failures are retried (same policy as the URL
     downloader). HTTP errors — including the expected 401 that carries the
     Bearer challenge — and deterministic TLS failures are not retried; they
     propagate to the caller, which knows how to handle them.
+
+    The body is metadata, held whole in memory by every caller, and how
+    much of it there is is the server's choice — a Content-Length says
+    nothing, since the bytes are what arrive. So one byte more than the
+    limit is read and its presence is the refusal, which is a
+    RuntimeError and therefore not retried: the answer would be the same
+    every time.
     """
+    cap = MAX_METADATA_BYTES if limit is None else limit
+
     def _attempt():
         with open_fn(req) as resp:
-            return resp.read()
+            data = resp.read(cap + 1)
+        if len(data) > cap:
+            raise RuntimeError(
+                f"{what}: the registry's response is larger than "
+                f"{cap} bytes; refusing to read it."
+            )
+        return data
     return retry_http(_attempt, what=what)
+
+
+def _grant_token(data: dict, what: str) -> str:
+    """Pull the Bearer token out of a token-endpoint grant.
+
+    The value goes straight into an Authorization header, so it has to
+    be a string: a grant answering with a number or a nested object
+    would otherwise be formatted into the header and sent. An empty
+    grant is legitimate — a wide-open registry needs no token — and is
+    the one non-string this accepts.
+    """
+    token = data.get("token") or data.get("access_token", "")
+    if not token:
+        return ""
+    if not isinstance(token, str):
+        raise RuntimeError(
+            f"{what}: the registry's token grant is not a string."
+        )
+    return token
+
+
+def decode_json_object(body: bytes, what: str) -> dict:
+    """Parse *body* as a JSON object, or raise RuntimeError saying so.
+
+    Every registry response this program reads is a JSON object whose
+    members the caller goes on to subscript. A body that is not JSON at
+    all, or that decodes to a list or a string, used to surface as a
+    ValueError or an AttributeError out of the middle of the pull —
+    a traceback, since no command handler catches those. RuntimeError is
+    the type they all already report.
+    """
+    try:
+        data = json.loads(body)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise RuntimeError(
+            f"{what}: the registry returned a malformed response "
+            f"(not valid JSON)."
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"{what}: the registry returned an unexpected response "
+            f"(not a JSON object)."
+        )
+    return data
 
 
 def registry_base_url(registry: str, insecure: bool = False) -> str:
@@ -283,11 +363,11 @@ def get_auth_token(
         req = urllib.request.Request(url, headers=_ua())
         if basic_auth:
             req.add_header("Authorization", basic_auth)
-        data = json.loads(
-            _request_body(urllib.request.urlopen, req, f"Authenticating {repo}")
+        what = f"Authenticating {repo}"
+        data = decode_json_object(
+            _request_body(urllib.request.urlopen, req, what), what,
         )
-        token = data.get("token") or data.get("access_token", "")
-        return token, REGISTRY_URL
+        return _grant_token(data, what), REGISTRY_URL
 
     # Custom registry: probe /v2/ to resolve the scheme and discover the
     # Bearer realm. Registries serving public images still require this dance —
@@ -324,11 +404,11 @@ def get_auth_token(
             )
             if basic_auth:
                 token_req.add_header("Authorization", basic_auth)
-            data = json.loads(
-                _request_body(op.open, token_req, "Requesting auth token")
+            what = "Requesting auth token"
+            data = decode_json_object(
+                _request_body(op.open, token_req, what), what,
             )
-            token = data.get("token") or data.get("access_token", "")
-            return token, base
+            return _grant_token(data, what), base
         except urllib.error.URLError as exc:
             # The server speaks TLS but its certificate is untrusted. Only
             # reachable when enforcing HTTPS (the insecure opener skips

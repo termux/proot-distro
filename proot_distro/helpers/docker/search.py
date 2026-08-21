@@ -58,7 +58,9 @@ from proot_distro.helpers.download import (
     is_cert_verification_error,
     retry_http,
 )
-from proot_distro.helpers.docker.transport import _ua, opener
+from proot_distro.helpers.docker.transport import (
+    MAX_METADATA_BYTES, _ua, opener,
+)
 
 
 SEARCH_URL = "https://index.docker.io/v1/search"
@@ -147,8 +149,17 @@ def _fetch_page(query: str, page: int, page_size: int) -> dict:
     req = urllib.request.Request(f"{SEARCH_URL}?{params}", headers=_ua())
 
     def _attempt():
+        # A page is parsed whole, so how much of it there is is Hub's
+        # choice of allocation -- the same ceiling every other metadata
+        # response is read through.
         with opener().open(req, timeout=_TIMEOUT) as resp:
-            return resp.read()
+            data = resp.read(MAX_METADATA_BYTES + 1)
+        if len(data) > MAX_METADATA_BYTES:
+            raise RuntimeError(
+                f"Docker Hub's search response is larger than "
+                f"{MAX_METADATA_BYTES} bytes; refusing to read it."
+            )
+        return data
 
     try:
         body = retry_http(_attempt, what=f"Searching for '{query}'")

@@ -184,9 +184,53 @@ def _oci_read_capped(tf, member_map, path) -> bytes:
     return data
 
 
+def _oci_json_object(data: bytes, what: str) -> dict:
+    """Parse *data* as a JSON object, or raise RuntimeError saying so.
+
+    The archive is a stranger's file and every document in it is read to
+    be subscripted, so "not JSON" and "JSON, but a list" are both things
+    it can say. Either used to escape install's handler as a ValueError
+    or an AttributeError -- a traceback, since only EOFError, OSError,
+    TarError and RuntimeError are caught there.
+    """
+    try:
+        payload = json.loads(data)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise RuntimeError(
+            f"{what} is not valid JSON. The archive is corrupt or is not "
+            f"an OCI image."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            f"{what} is not a JSON object. The archive is corrupt or is "
+            f"not an OCI image."
+        )
+    return payload
+
+
+def _oci_digest(entry, what: str) -> str:
+    """Return *entry*'s digest string, or raise RuntimeError.
+
+    Every blob below index.json is addressed by one, and the value is
+    the archive's to write: a descriptor that is not an object, or whose
+    digest is absent or is not a string, names nothing this can read.
+    """
+    if not isinstance(entry, dict):
+        raise RuntimeError(
+            f"{what} is malformed: expected an object describing a blob."
+        )
+    digest = entry.get("digest")
+    if not isinstance(digest, str) or not digest:
+        raise RuntimeError(f"{what} names no digest.")
+    return digest
+
+
 def _oci_read_json(tf, member_map, path):
     """Extract a member from the outer archive and parse it as JSON."""
-    return json.loads(_oci_read_capped(tf, member_map, path))
+    return _oci_json_object(
+        _oci_read_capped(tf, member_map, path),
+        f"OCI archive entry '{path}'",
+    )
 
 
 def _oci_read_blob_json(tf, member_map, digest):
@@ -199,7 +243,7 @@ def _oci_read_blob_json(tf, member_map, digest):
     path = _oci_blob_path(digest)
     data = _oci_read_capped(tf, member_map, path)
     require_data_digest(data, digest, what=f"OCI archive blob '{path}'")
-    return json.loads(data)
+    return _oci_json_object(data, f"OCI archive blob '{path}'")
 
 
 def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
@@ -215,7 +259,12 @@ def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
 
     docker_arch = ARCH_TO_DOCKER.get(dist_arch, (dist_arch, ""))[0]
 
-    platform_entries = [e for e in index_manifests if "platform" in e]
+    # A "platform" that is not an object describes nothing, so the entry
+    # takes the slow path with the ones that carry no platform at all
+    # rather than deciding the architecture on a value nothing can read.
+    platform_entries = [
+        e for e in index_manifests if isinstance(e.get("platform"), dict)
+    ]
     if platform_entries:
         for entry in platform_entries:
             p = entry["platform"]
@@ -228,12 +277,17 @@ def _oci_find_manifest_entry(tf, member_map, index_manifests, dist_arch):
 
     # Slow path: read each manifest → config to detect architecture.
     for entry in index_manifests:
-        manifest = _oci_read_blob_json(tf, member_map, entry["digest"])
-        config_digest = manifest.get("config", {}).get("digest", "")
-        if not config_digest:
+        manifest = _oci_read_blob_json(
+            tf, member_map, _oci_digest(entry, "OCI index manifest entry"),
+        )
+        config = manifest.get("config", {})
+        config_digest = (
+            config.get("digest", "") if isinstance(config, dict) else ""
+        )
+        if not isinstance(config_digest, str) or not config_digest:
             continue
-        config = _oci_read_blob_json(tf, member_map, config_digest)
-        if config.get("architecture") == docker_arch:
+        image_config = _oci_read_blob_json(tf, member_map, config_digest)
+        if image_config.get("architecture") == docker_arch:
             return entry
 
     raise RuntimeError(
@@ -303,6 +357,11 @@ def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
     """
     index = _oci_read_json(tf, member_map, "index.json")
     index_manifests = index.get("manifests", [])
+    if not isinstance(index_manifests, list):
+        raise RuntimeError(
+            "OCI index.json is malformed: 'manifests' is not a list."
+        )
+    index_manifests = [e for e in index_manifests if isinstance(e, dict)]
     if not index_manifests:
         raise RuntimeError("OCI index.json contains no manifests.")
 
@@ -310,26 +369,44 @@ def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
         tf, member_map, index_manifests, dist_arch
     )
 
-    manifest = _oci_read_blob_json(tf, member_map, manifest_entry["digest"])
+    manifest = _oci_read_blob_json(
+        tf, member_map,
+        _oci_digest(manifest_entry, "OCI index manifest entry"),
+    )
 
-    config_digest = manifest.get("config", {}).get("digest", "")
-    if not config_digest:
+    config = manifest.get("config", {})
+    if not isinstance(config, dict):
+        raise RuntimeError("OCI image manifest has a malformed config.")
+    config_digest = config.get("digest", "")
+    if not isinstance(config_digest, str) or not config_digest:
         raise RuntimeError("OCI image manifest has no config digest.")
     image_config = _oci_read_blob_json(tf, member_map, config_digest)
 
     docker_arch = image_config.get("architecture", "")
-    actual_arch = DOCKER_TO_ARCH.get(docker_arch, dist_arch)
+    actual_arch = DOCKER_TO_ARCH.get(
+        docker_arch if isinstance(docker_arch, str) else "", dist_arch,
+    )
 
     layers = manifest.get("layers", [])
+    if not isinstance(layers, list):
+        raise RuntimeError(
+            "OCI image manifest is malformed: 'layers' is not a list."
+        )
     if not layers:
         raise RuntimeError("OCI image manifest contains no layers.")
+    # Every layer is applied in order, so one that names no readable
+    # digest is fatal rather than skipped: the result would not be the
+    # image the archive describes.
+    for layer in layers:
+        _oci_digest(layer, "OCI image layer")
 
     n_layers = len(layers)
     for i, layer in enumerate(layers):
         digest = layer["digest"]
         short_id = digest[:19]
         size = layer.get("size", 0)
-        size_str = f" ({fmt_size(size)})" if size else ""
+        size_str = (f" ({fmt_size(size)})"
+                    if isinstance(size, int) and size > 0 else "")
         # A descriptor, not a name: the blob is hashed and then read, and
         # naming it twice is what lets it change in between (see
         # cache.open_verified_layer).
@@ -355,11 +432,15 @@ def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
                 pass
 
     annotations = manifest_entry.get("annotations", {})
+    if not isinstance(annotations, dict):
+        annotations = {}
     image_ref = (
         annotations.get("io.containerd.image.name")
         or annotations.get("org.opencontainers.image.ref.name")
         or ""
     )
+    if not isinstance(image_ref, str):
+        image_ref = ""
 
     return {
         "manifest": manifest,

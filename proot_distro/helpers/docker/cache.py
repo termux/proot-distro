@@ -102,6 +102,45 @@ def validate_digest(digest: str) -> str:
     return digest
 
 
+def manifest_layers(manifest, image_ref: str) -> list:
+    """Return *manifest*'s layer descriptors, or raise RuntimeError.
+
+    An image manifest reaches this program from two places and neither
+    is its own: a registry sends one, and the manifest cache holds one
+    -- a cache that is guest-writable on Termux, where RUNTIME_DIR sits
+    under the bound $TERMUX_PREFIX. Every consumer then subscripts each
+    descriptor for its digest and asks it for a mediaType or a size, so
+    a manifest whose `layers` is a string, or whose entries are numbers,
+    used to end `install` or `push` in a TypeError, an AttributeError or
+    a KeyError -- none of which their handlers catch, so a traceback.
+
+    A descriptor with no usable digest is fatal rather than skipped: an
+    image's layers are an ordered stack, and quietly leaving one out
+    produces a rootfs that is not the image that was asked for. The
+    digest's *syntax* is still validate_digest's to judge, at the point
+    it becomes a path or a request.
+    """
+    if not isinstance(manifest, dict):
+        raise RuntimeError(
+            f"Manifest for '{image_ref}' is malformed: not a JSON object."
+        )
+    layers = manifest.get("layers", [])
+    if not isinstance(layers, list):
+        raise RuntimeError(
+            f"Manifest for '{image_ref}' is malformed: 'layers' is not "
+            f"a list."
+        )
+    for layer in layers:
+        if not isinstance(layer, dict) or not isinstance(
+            layer.get("digest"), str
+        ):
+            raise RuntimeError(
+                f"Manifest for '{image_ref}' is malformed: a layer "
+                f"descriptor names no digest."
+            )
+    return layers
+
+
 def layer_cache_name(digest: str) -> str:
     """Return the cached blob's file name for *digest*.
 

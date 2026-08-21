@@ -2,6 +2,7 @@
 # (proot_distro.commands.install_local) — crafted digests in index.json must
 # not escape the blob layout, and hostile layer content must stay in rootfs.
 
+import io
 import os
 import tarfile
 
@@ -202,6 +203,44 @@ def test_install_refuses_an_archive_with_too_many_members(
     with pytest.raises(RuntimeError, match="refusing to index it"):
         install_local_into(str(arc), str(root), "x86_64")
     # Nothing was applied.
+    assert os.listdir(str(root)) == []
+
+
+def _rewrite_index(arc_path, payload: bytes):
+    """Rebuild *arc_path* with index.json replaced by *payload*."""
+    src = tarfile.open(arc_path)
+    members = [(m, src.extractfile(m).read() if m.isreg() else None)
+               for m in src.getmembers()]
+    src.close()
+    with tarfile.open(arc_path, "w") as tf:
+        for m, data in members:
+            if m.name == "index.json":
+                data = payload
+                m.size = len(data)
+            tf.addfile(m, io.BytesIO(data) if data is not None else None)
+
+
+@pytest.mark.parametrize("payload", [
+    b"not json at all",                       # not JSON
+    b'["a list"]',                            # JSON, wrong shape
+    b'{"manifests": "not-a-list"}',           # object, wrong member
+    b'{"manifests": ["a string"]}',           # entry is not a descriptor
+    b'{"manifests": [{"size": 3}]}',          # descriptor names no digest
+    b'{"manifests": [{"digest": 7}]}',        # digest is not a string
+])
+def test_malformed_index_json_is_a_runtime_error(tmp_path, builders, payload):
+    # The archive is a stranger's file. Every one of these used to leave
+    # install's handler as a ValueError, an AttributeError, a TypeError
+    # or a KeyError -- none of which it catches.
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    arc = tmp_path / "img.oci.tar"
+    builders.make_oci_archive(
+        str(arc), [[{"name": "etc/hostname", "type": "file", "data": b"g"}]],
+    )
+    _rewrite_index(str(arc), payload)
+    with pytest.raises(RuntimeError):
+        install_local_into(str(arc), str(root), "x86_64")
     assert os.listdir(str(root)) == []
 
 
