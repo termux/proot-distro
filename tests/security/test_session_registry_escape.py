@@ -117,3 +117,128 @@ def test_session_is_live_ignores_a_planted_entry(tmp_path):
 def test_sessions_parts_match_the_constant():
     from proot_distro.constants import RUNTIME_DIR
     assert os.path.join(RUNTIME_DIR, *session._SESSIONS_PARTS) == SESSIONS_DIR
+
+
+# ---------------------------------------------------------------------------
+# Forged records: a guest that can write here can compose one, and the
+# file name is the only thing tying a record to a process.
+# ---------------------------------------------------------------------------
+
+import fcntl  # noqa: E402
+import json  # noqa: E402
+
+from proot_distro.commands import kill  # noqa: E402
+
+
+def _plant(name, payload):
+    """Write *payload* under *name* and hold its exclusive lock.
+
+    That is all a guest has to do: the liveness probe is a shared flock,
+    so a record nobody holds is pruned and one its author holds is
+    "live". The returned handle must outlive the assertions.
+    """
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    fh = open(os.path.join(SESSIONS_DIR, name), "w")
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    json.dump(payload, fh)
+    fh.flush()
+    return fh
+
+
+def _record(pid, **over):
+    base = {"pid": pid, "container": "box", "kind": "login",
+            "command": ["/bin/sh", "-l"], "user": "root",
+            "start_time": 1.0, "isolated": False, "minimal": False,
+            "detach": False}
+    base.update(over)
+    return base
+
+
+def test_a_record_under_a_name_that_is_not_a_pid_is_not_a_session():
+    # `fake.json` claiming PID 4321 was probed for liveness under its own
+    # name and then had 4321's *holders* looked up -- of which there are
+    # none, because 4321 never registered -- so `kill` fell through to
+    # "is 4321 a live proot?" and signalled an unrelated proot process.
+    fh = _plant("fake.json", _record(4321))
+    try:
+        assert session.active_sessions() == []
+    finally:
+        fh.close()
+
+
+@pytest.mark.parametrize("name", ["007.json", "0.json", "-1.json",
+                                  "1e3.json", "١٢.json", "12 .json",
+                                  "12.json.json"])
+def test_only_the_canonical_decimal_name_registers_a_pid(name):
+    assert session._record_pid(name) is None
+
+
+def test_a_record_naming_another_pid_is_not_a_session():
+    # The same forgery under a well-formed name: the file is 4321.json
+    # but the payload names 9999, so kill would have gone looking for
+    # 9999's holders while the liveness of 4321 said "alive".
+    fh = _plant("4321.json", _record(9999))
+    try:
+        assert session.active_sessions() == []
+    finally:
+        fh.close()
+
+
+@pytest.mark.parametrize("over", [
+    {"container": "../../etc"},         # not a name this program accepts
+    {"container": 5},
+    {"kind": "sudo"},                   # outside the closed vocabulary
+    {"kind": None},
+    {"command": "rm -rf /"},            # not a list
+    {"command": ["ok", 5]},
+    {"user": 5},
+    {"start_time": "soon"},             # TypeError out of the sort
+    {"start_time": float("nan")},
+    {"detach": "yes"},
+    {"pid": True},
+    {"pid": "4321"},
+])
+def test_a_malformed_field_makes_it_not_a_record(over):
+    payload = _record(4321)
+    payload.update(over)
+    fh = _plant("4321.json", payload)
+    try:
+        assert session.active_sessions() == []
+    finally:
+        fh.close()
+
+
+def test_a_wellformed_planted_record_still_describes_only_its_own_name():
+    # What a guest can still do -- register its *own* PID -- is all it
+    # can do: the record it composes is reported under the name it wrote,
+    # and every consumer asks about that same name.
+    fh = _plant("4321.json", _record(4321))
+    try:
+        sessions = session.active_sessions()
+        assert [s["pid"] for s in sessions] == [4321]
+        assert sessions[0]["container"] == "box"
+    finally:
+        fh.close()
+
+
+def test_kill_does_not_signal_a_recorded_pid_whose_file_went_unheld(
+    monkeypatch
+):
+    # The holder scan is what normally decides the target. When it comes
+    # up empty -- /proc unreadable, or the session ended between the
+    # listing and the scan -- the fallback signals the recorded PID
+    # directly, and `_root_is_proot` says yes to *any* proot. Gating it
+    # on the registry file still being locked is what keeps a recycled
+    # PID out of the sweep.
+    monkeypatch.setattr(kill, "_root_is_proot", lambda pid: True)
+    monkeypatch.setattr(kill, "session_holders", lambda pid: set())
+    monkeypatch.setattr(kill, "_is_alive", lambda pid: True)
+
+    fh = _plant("4321.json", _record(4321))
+    try:
+        assert kill._session_roots(4321, {}) == [4321]
+    finally:
+        fh.close()
+
+    # Same PID, same record — but nothing holds the file any more.
+    assert kill._session_roots(4321, {}) == []

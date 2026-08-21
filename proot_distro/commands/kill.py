@@ -175,10 +175,22 @@ def _session_roots(pid, pid_ppid):
     guests were reparented to init. Only the topmost holders are
     returned; their descendants come from the tree walk, which also
     catches guests that closed the inherited descriptor.
+
+    An empty holder set means either that /proc could not be read (an
+    Android kernel with hidepid, say) or that the session ended between
+    the registry listing and this scan. Only the first is a reason to
+    fall back to signalling the recorded PID directly: in the second the
+    kernel is free to have handed that number to an unrelated process,
+    and `_root_is_proot` says yes to any proot, including one this
+    program never started. The registry file settles which it is,
+    because its exclusive flock is held for exactly as long as some
+    member of the session is running.
     """
     holders = {p for p in session_holders(pid) if _is_alive(p)}
     if holders:
         return _forest_roots(holders, pid_ppid)
+    if not session_is_live(pid):
+        return []
     if _is_alive(pid) and _root_is_proot(pid) is True:
         return [pid]
     return []

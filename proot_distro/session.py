@@ -54,15 +54,42 @@
 # which refuses a symlink and a FIFO alike; an entry that is not a plain
 # file is not one this module wrote, and pruning it removes the name
 # only.
+#
+# Being able to write there also means being able to *compose* a record,
+# and the file name is the only thing tying one to a process. The name
+# is the tie: liveness is probed on `<pid>.json`, and session_holders()
+# goes back to that same name to find out which processes are still
+# running under it. A record read from any other name broke the tie --
+# `fake.json` saying `"pid": 1234` was probed for liveness under its own
+# name (its author held the flock) and then had 1234's holders looked
+# up, of which there are none, because 1234 never registered. `kill`
+# fell through to "is 1234 a live proot?" and signalled a proot process
+# that had nothing to do with this program. So _record_pid() accepts
+# only the canonical decimal `<pid>.json`, _validate_record() requires
+# the recorded pid to be that one, and every other field is checked
+# against the shape register_session() writes: a forged record can now
+# only ever describe the PID of the file it lives in.
 
 import fcntl
 import json
+import math
 import os
 import stat
 import time
 
 from proot_distro import dirfd
 from proot_distro.constants import RUNTIME_DIR, SESSIONS_DIR
+from proot_distro.names import is_valid_name
+
+# What `kind` may say. A closed vocabulary, written at the single call
+# site in commands/login, so anything else in that field was not written
+# by this program.
+SESSION_KINDS = ("login", "run")
+
+# The record fields that are plain flags, and their default: `detach`
+# postdates the other two, so a session started by an older build of
+# this program (and still running across an upgrade) has no such key.
+_FLAG_FIELDS = ("isolated", "minimal", "detach")
 
 # SESSIONS_DIR is RUNTIME_DIR/sessions; the walk below descends to it one
 # component at a time rather than naming it.
@@ -182,9 +209,16 @@ def _register_at(dir_fd, *, container, kind, command_argv, user,
 def active_sessions():
     """Return a list of live session records, pruning dead ones.
 
-    Each record is the dict written by register_session(). Files whose
-    holder has exited are unlinked as a side effect, so stale entries are
-    never reported. Results are sorted by start time then PID.
+    Each record is a validated form of what register_session() wrote:
+    the fields are present and of the right type, `pid` is the PID the
+    file is named for, `container` is a name this program would accept
+    and `kind` is one of SESSION_KINDS. A `*.json` that says anything
+    else is not reported -- SESSIONS_DIR is guest-writable on Termux, so
+    a record is only ever evidence of what its own name already says.
+
+    Files whose holder has exited are unlinked as a side effect, so
+    stale entries are never reported. Results are sorted by start time
+    then PID.
     """
     dir_fd = _sessions_dir_fd()
     if dir_fd is None:
@@ -199,20 +233,109 @@ def active_sessions():
         for name in names:
             if name.startswith(".") or not name.endswith(".json"):
                 continue
+            pid = _record_pid(name)
 
-            data = _read_record(dir_fd, name)
+            # A name outside the grammar registers no PID, so there is
+            # nothing to read out of it -- only to prune, if unheld.
+            record = (None if pid is None
+                      else _validate_record(_read_record(dir_fd, name), pid))
 
             if not _session_alive_at(dir_fd, name):
                 dirfd.unlink_quietly(dir_fd, name)
                 continue
 
-            if isinstance(data, dict):
-                sessions.append(data)
+            if record is not None:
+                sessions.append(record)
     finally:
         os.close(dir_fd)
 
-    sessions.sort(key=lambda s: (s.get("start_time", 0.0), s.get("pid", 0)))
+    sessions.sort(key=lambda s: (s["start_time"], s["pid"]))
     return sessions
+
+
+def _record_pid(name):
+    """The PID *name* claims to register, or None if it registers none.
+
+    register_session() names every file after the PID it exec's into,
+    and both session_holders() and session_is_live() go back to that
+    name. Only the canonical decimal spelling counts, so a PID cannot
+    be registered twice over (`7.json` and `007.json`) and nothing
+    outside that grammar is a record.
+    """
+    if not name.endswith(".json"):
+        return None
+    stem = name[:-len(".json")]
+    if not stem.isascii() or not stem.isdigit():
+        return None
+    pid = int(stem)
+    if pid <= 0 or str(pid) != stem:
+        return None
+    return pid
+
+
+def _validate_record(data, pid):
+    """The session *data* describes, normalised, or None.
+
+    *pid* is the PID the file name registers, and the recorded one has
+    to be it: that is what keeps a record describing anything but the
+    process it is named for, which is the one this module's liveness
+    probe and holder scan both ask about.
+
+    Every other field is checked against what _register_at() writes, so
+    what comes back is safe to sort, format and signal without each
+    reader re-deciding: `container` is a name this program would accept,
+    `kind` is one of SESSION_KINDS, `command` is a list of strings, and
+    `start_time` is a finite number. A dict that fails any of it is not
+    a record. The three flags default to False, since `detach` postdates
+    the others and a session may outlive an upgrade.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    recorded = data.get("pid")
+    if isinstance(recorded, bool) or not isinstance(recorded, int):
+        return None
+    if recorded != pid:
+        return None
+
+    container = data.get("container")
+    if not isinstance(container, str) or not is_valid_name(container):
+        return None
+
+    kind = data.get("kind")
+    if kind not in SESSION_KINDS:
+        return None
+
+    user = data.get("user")
+    if not isinstance(user, str):
+        return None
+
+    command = data.get("command")
+    if not isinstance(command, list) or not all(
+        isinstance(item, str) for item in command
+    ):
+        return None
+
+    start_time = data.get("start_time")
+    if isinstance(start_time, bool) or not isinstance(start_time, (int, float)):
+        return None
+    if not math.isfinite(start_time):
+        return None
+
+    record = {
+        "pid": pid,
+        "container": container,
+        "kind": kind,
+        "command": list(command),
+        "user": user,
+        "start_time": float(start_time),
+    }
+    for field in _FLAG_FIELDS:
+        value = data.get(field, False)
+        if not isinstance(value, bool):
+            return None
+        record[field] = value
+    return record
 
 
 def _read_record(dir_fd, name):

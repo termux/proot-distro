@@ -196,6 +196,36 @@ Top-level utilities (each owns a focused concern):
   Entries open through `open_regular_at`, so a planted symlink or FIFO
   is not a record and is pruned by name only; the publishing
   `os.replace` runs `src_dir_fd`/`dst_dir_fd` on the same descriptor.
+  Being able to write there also means being able to **compose** a
+  record, and the file *name* is the only thing tying one to a process:
+  liveness is probed on `<pid>.json` and `session_holders` goes back to
+  that same name. A record read from any other name broke the tie —
+  `fake.json` saying `"pid": 1234` was probed under its own name (its
+  author holding the flock) and then had 1234's holders looked up, of
+  which there are none, so `kill` fell through to "is 1234 a live
+  proot?" and signalled a proot this program never started. So
+  `_record_pid()` accepts only the canonical decimal `<pid>.json` (no
+  `007.json`, so one PID cannot be registered twice) and
+  `_validate_record()` requires the recorded `pid` to be that one — a
+  forged record can then only ever describe the PID of the file it lives
+  in, and that file's holders are the processes `kill` reaches. The
+  other fields are checked against what `_register_at` writes:
+  `container` is a name `names.is_valid_name` accepts, `kind` is one of
+  `SESSION_KINDS`, `command` is a list of strings, `start_time` is a
+  finite number, the three flags are bools (defaulting to False, since
+  `detach` postdates the others and a session may outlive an upgrade).
+  What that buys `ps` is that it can index the fields rather than
+  `.get`-with-a-default them, and that a `start_time` of the wrong type
+  can no longer `TypeError` out of the sort; `user` and `command` are
+  still free text and go through `quote_path` there.
+  `kill`'s `_session_roots` closes the other half: when the holder scan
+  comes up empty it may fall back to signalling the recorded PID, and
+  `_root_is_proot` says yes to *any* proot, so the fallback is gated on
+  `session_is_live(pid)` — the registry file's exclusive flock is held
+  for exactly as long as some member of the session runs, which
+  distinguishes "/proc is unreadable" (the case the fallback is for)
+  from "the session ended and the kernel handed that number to someone
+  else".
 - `guestfile.py` — reading a file out of a container the way the *guest*
   sees it: `open_guest_file`, `read_guest_file` (capped),
   `guest_file_exists`, `MAX_ID_FILE_BYTES`. Two commands need it and

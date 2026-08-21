@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro.commands import kill
+from proot_distro.session import register_session
 from proot_distro.commands.kill import (
     _collect_tree,
     _forest_roots,
@@ -32,6 +33,35 @@ from proot_distro.commands.kill import (
 )
 
 _HAVE_SH = shutil.which("sh") is not None and shutil.which("sleep") is not None
+
+
+def _spawn_registered(script, *, container="box", kind="run"):
+    """Spawn a shell tree that registers itself the way a session does.
+
+    `kill` reaches a session through the registry file: session_holders()
+    scans /proc for the processes holding it open, and the fallback that
+    signals the recorded PID directly is gated on the file still being
+    locked. A test that fakes active_sessions() without a file on disk
+    describes a session that never registered, which is not a session
+    `kill` can (or should) find.
+
+    So the registration happens where the real one does -- between fork
+    and exec, so os.getpid() is already the PID the file is named for --
+    and the shell standing in for proot inherits the locked descriptor,
+    as do the children it spawns. close_fds is off because the fd has to
+    survive the exec; register_session() clears its O_CLOEXEC bit, but
+    subprocess's own fd sweep runs after preexec_fn.
+    """
+    def _register():
+        # Kept referenced until exec, exactly as _command_login_inner
+        # keeps its own, or the lock would be released by the collector.
+        globals()["_KEPT_SESSION_FD"] = register_session(
+            container=container, kind=kind,
+            command_argv=["sh", "-c", script], user="root",
+        )
+
+    return subprocess.Popen(["sh", "-c", script], preexec_fn=_register,
+                            close_fds=False)
 
 
 # ---------------------------------------------------------------------------
@@ -149,15 +179,11 @@ def test_read_pid_ppid_and_collect_live_tree():
 
 @pytest.mark.skipif(not _HAVE_SH, reason="needs sh and sleep binaries")
 def test_command_kill_tears_down_whole_tree(monkeypatch):
-    proc = subprocess.Popen(["sh", "-c", "sleep 300 & sleep 300 & wait"])
+    proc = _spawn_registered("sleep 300 & sleep 300 & wait")
     time.sleep(0.3)
 
     # The test root is a shell, not proot, so bypass the comm guard.
     monkeypatch.setattr(kill, "_root_is_proot", lambda pid: True)
-    monkeypatch.setattr(
-        kill, "active_sessions",
-        lambda: [{"pid": proc.pid, "container": "box", "kind": "run"}],
-    )
 
     tree = _collect_tree(proc.pid, _read_pid_ppid())
     assert len(tree) >= 3
@@ -391,16 +417,12 @@ def test_command_kill_tears_down_tree_that_ignores_term_and_quit(monkeypatch):
     # Stands in for the real failure: proot ignores SIGTERM outright and
     # an interactive guest shell does too, so the session used to survive
     # `kill` entirely. The sweep must finish the job.
-    proc = subprocess.Popen(
-        ["sh", "-c", 'trap "" TERM QUIT; sleep 300 & sleep 300 & wait'])
+    proc = _spawn_registered(
+        'trap "" TERM QUIT; sleep 300 & sleep 300 & wait', kind="login")
     time.sleep(0.3)
 
     monkeypatch.setattr(kill, "_GRACE_SECONDS", 0.2)
     monkeypatch.setattr(kill, "_root_is_proot", lambda pid: True)
-    monkeypatch.setattr(
-        kill, "active_sessions",
-        lambda: [{"pid": proc.pid, "container": "box", "kind": "login"}],
-    )
 
     tree = _collect_tree(proc.pid, _read_pid_ppid())
     assert len(tree) >= 3

@@ -182,11 +182,20 @@ def test_fmt_uptime():
 
 
 def test_fmt_command():
+    # active_sessions() only ever hands back a list of strings now, so
+    # that is the whole of the input domain.
     assert _fmt_command(["nginx", "-g", "daemon off;"]) == "nginx -g 'daemon off;'"
     assert _fmt_command(["/bin/bash", "-l"]) == "/bin/bash -l"
-    assert _fmt_command("plain string") == "plain string"
-    assert _fmt_command(None) == ""
     assert _fmt_command([]) == ""
+
+
+def test_fmt_command_escapes_control_characters():
+    # shlex.join quotes for a shell, which passes an ESC straight
+    # through; the argv is read back out of a guest-writable directory.
+    rendered = _fmt_command(["\x1b[2Jwiped"])
+    assert "\x1b" not in rendered
+    assert "\\e[2Jwiped" in rendered
+
 
 
 # ---------------------------------------------------------------------------
