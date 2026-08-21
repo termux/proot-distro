@@ -1,4 +1,5 @@
-# Containment tests for atomic_replace()'s destination directory.
+# Containment tests for atomic_replace()'s destination directory and for
+# the temporary it writes through.
 #
 # Every cache / manifest / layer writer publishes through it, and it used
 # to reach the destination directory by name: os.makedirs(exist_ok=True)
@@ -6,6 +7,12 @@
 # the same name again. The runtime and cache trees are guest-writable on
 # Termux, so a planted `oci_layers -> <host dir>` redirected every blob
 # written into that host directory.
+#
+# The *temporary* was reached by name too: it was created, closed, and
+# its path handed to the caller to open again. An unpredictable name
+# cannot be waited for but it can be read out of readdir(), so a process
+# sharing the directory replaced it with a symlink and the caller's
+# open() wrote the file's bytes into whatever that named.
 
 import errno
 import os
@@ -14,7 +21,7 @@ import stat
 import pytest
 
 from proot_distro import atomic
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_replace, atomic_write
 from proot_distro.constants import (
     BASE_CACHE_DIR, CONTAINERS_DIR, LAYER_CACHE_DIR, RUNTIME_DIR,
 )
@@ -28,9 +35,13 @@ def outside(tmp_path):
 
 
 def _write(path, data=b"payload"):
-    with atomic_replace(path) as tmp:
-        with open(tmp, "wb") as fh:
-            fh.write(data)
+    with atomic_write(path) as fh:
+        fh.write(data)
+
+
+def _temp_names(directory):
+    """The in-flight temporaries sitting in *directory*."""
+    return [n for n in os.listdir(directory) if ".tmp" in n]
 
 
 # --- the state-tree branch -------------------------------------------------
@@ -84,21 +95,24 @@ def test_publish_replaces_a_symlinked_destination(outside):
 def test_temporary_is_removed_on_error():
     dest = os.path.join(LAYER_CACHE_DIR, "sha256_deadbeef")
     with pytest.raises(RuntimeError):
-        with atomic_replace(dest) as tmp:
-            with open(tmp, "wb") as fh:
-                fh.write(b"half")
+        with atomic_write(dest) as fh:
+            fh.write(b"half")
             raise RuntimeError("boom")
     assert os.listdir(LAYER_CACHE_DIR) == []
 
 
 def test_temporary_lives_next_to_the_destination():
     dest = os.path.join(LAYER_CACHE_DIR, "sha256_deadbeef")
-    with atomic_replace(dest) as tmp:
-        assert os.path.dirname(tmp) == LAYER_CACHE_DIR
-        assert os.path.basename(tmp).startswith("sha256_deadbeef.")
-        assert os.path.exists(tmp)
-        with open(tmp, "wb") as fh:
-            fh.write(b"x")
+    with atomic_replace(dest) as fd:
+        names = _temp_names(LAYER_CACHE_DIR)
+        assert len(names) == 1
+        assert names[0].startswith("sha256_deadbeef.")
+        # The descriptor is that entry, not merely a file beside it.
+        entry = os.lstat(os.path.join(LAYER_CACHE_DIR, names[0]))
+        written = os.fstat(fd)
+        assert (entry.st_dev, entry.st_ino) == (written.st_dev,
+                                                written.st_ino)
+        os.write(fd, b"x")
 
 
 def test_published_mode_is_owner_only():
@@ -110,10 +124,10 @@ def test_published_mode_is_owner_only():
 def test_long_names_still_fit_one_component():
     name = "sha256_" + "a" * 240
     dest = os.path.join(LAYER_CACHE_DIR, name)
-    with atomic_replace(dest) as tmp:
-        assert len(os.fsencode(os.path.basename(tmp))) <= 255
-        with open(tmp, "wb") as fh:
-            fh.write(b"x")
+    with atomic_replace(dest) as fd:
+        for tmp in _temp_names(LAYER_CACHE_DIR):
+            assert len(os.fsencode(tmp)) <= 255
+        os.write(fd, b"x")
     assert os.path.exists(dest)
 
 
@@ -121,12 +135,35 @@ def test_concurrent_writers_get_distinct_temporaries():
     dest = os.path.join(LAYER_CACHE_DIR, "sha256_deadbeef")
     with atomic_replace(dest) as first:
         with atomic_replace(dest) as second:
-            assert first != second
-            with open(second, "wb") as fh:
-                fh.write(b"2")
-        with open(first, "wb") as fh:
-            fh.write(b"1")
+            assert len(set(_temp_names(LAYER_CACHE_DIR))) == 2
+            os.write(second, b"2")
+        os.write(first, b"1")
     assert open(dest, "rb").read() == b"1"
+
+
+# --- the temporary itself --------------------------------------------------
+
+def test_bytes_do_not_follow_a_swapped_temporary(outside):
+    """A symlink planted under the temporary's name gets none of the write."""
+    victim = outside / "host-file"
+    victim.write_text("host content\n")
+    dest = os.path.join(LAYER_CACHE_DIR, "sha256_deadbeef")
+
+    with pytest.raises(OSError) as exc:
+        with atomic_replace(dest) as fd:
+            # The concurrent same-UID writer reads the name out of
+            # readdir() and puts its own link there.
+            tmp = _temp_names(LAYER_CACHE_DIR)[0]
+            os.unlink(os.path.join(LAYER_CACHE_DIR, tmp))
+            os.symlink(str(victim), os.path.join(LAYER_CACHE_DIR, tmp))
+            os.write(fd, b"payload the guest wanted somewhere else")
+
+    assert exc.value.errno == errno.ESTALE
+    # The bytes went into the unlinked inode, not through the link...
+    assert victim.read_text() == "host content\n"
+    # ...and the link was not published as the cache entry either.
+    assert not os.path.lexists(dest)
+    assert os.listdir(LAYER_CACHE_DIR) == []
 
 
 # --- the user-path branch --------------------------------------------------

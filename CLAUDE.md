@@ -88,7 +88,8 @@ Top-level utilities (each owns a focused concern):
   back to composing paths — an extractor, proot resolving a bind source
   — is proof against the persistent case, which is the one a guest can
   arrange at leisure.
-- `atomic.py` — `atomic_replace()` and `publish_file()`: temp file +
+- `atomic.py` — `atomic_replace()`, `atomic_write()` and
+  `publish_file()`: temp file +
   `os.replace`; cleans up
   on `BaseException` (Ctrl-C never leaves half-written sentinels). A
   destination inside `RUNTIME_DIR`/`BASE_CACHE_DIR` is reached by
@@ -100,6 +101,26 @@ Top-level utilities (each owns a focused concern):
   there. A component that is not a plain directory raises `ENOTDIR`
   rather than being followed. A path outside those roots is the user's
   own (`build --output`, `backup -o`) and keeps the plain behaviour.
+  What the caller writes through is the temporary's **descriptor**,
+  never its name. Handing back a path and letting the caller open it
+  again left a window, and an unpredictable name is not a secret: a
+  process sharing the directory reads it out of `readdir()`, unlinks it
+  and leaves a symlink under it, and the caller's `open()` then wrote
+  the file's bytes into whatever that named — the rename afterwards
+  publishing the link, so the cache entry pointed at the host file it
+  had just overwritten. The temp is created `O_EXCL`, `O_RDWR`
+  (`open_new_at(readable=True)`, so a writer that must read its own
+  bytes back — a layer blob handed straight to the extractor — never
+  reopens the name) and never named again for the write.
+  `atomic_write(path, mode)` is the same thing with the descriptor
+  already wrapped in a file object, which is what most callers want.
+  The publishing rename is still by name, so `_publish_at()` compares
+  the entry against the descriptor's `(st_dev, st_ino)` first and
+  raises `ESTALE` on a mismatch: the bytes can no longer be redirected,
+  but publishing a link this module did not write is not a thing to do
+  quietly either, and the check leaves the instant before the rename in
+  place of the whole duration of the write — for a layer blob, however
+  long the download takes.
   `publish_file(src, dest)` is that ending without the beginning, for a
   writer whose destination name is not known until its bytes exist — a
   build's layer blob, named by the digest of its own content — and it is

@@ -534,13 +534,12 @@ def command_restore(args) -> None:
         # renames the temporary onto the name under the descriptor it
         # validated. open(path, 'wb') truncated whatever the name led to.
         try:
-            with atomic_replace(container_manifest(restore_name)) as tmp:
-                with open(tmp, 'wb') as out:
-                    out.write(data)
-                    try:
-                        os.fchmod(out.fileno(), mode)
-                    except OSError:
-                        pass
+            with atomic_replace(container_manifest(restore_name)) as tmp_fd:
+                os.write(tmp_fd, data)
+                try:
+                    os.fchmod(tmp_fd, mode)
+                except OSError:
+                    pass
         except OSError:
             return
 

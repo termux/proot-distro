@@ -47,11 +47,12 @@ def download_blob(
     """Download a blob to the layer cache; return an open descriptor on it.
 
     Streams the bytes through sha256 and verifies the result against the
-    expected *digest* before promoting the .tmp file. The descriptor is
-    opened on that .tmp *before* the rename, so it names the very inode
-    whose bytes were just hashed — os.replace() carries the inode across,
-    and re-opening the destination by name afterwards would have cost a
-    second full hash to prove the same thing. The caller closes it.
+    expected *digest* before promoting the .tmp file. The descriptor is a
+    duplicate of the one the bytes were *written* through, so it names
+    the very inode that was just hashed — os.replace() carries the inode
+    across, and re-opening the destination by name afterwards would have
+    cost a second full hash to prove the same thing. The caller closes
+    it.
 
     A blob already in the cache is re-hashed rather than taken at its
     name (open_verified_layer): the file may have been written by
@@ -76,8 +77,9 @@ def download_blob(
         # state from a failed partial download must not carry over.
         hasher = hashlib.sha256()
         try:
-            with atomic_replace(dest) as tmp:
-                with opener(insecure).open(req) as resp, open(tmp, "wb") as fh:
+            with atomic_replace(dest) as tmp_fd:
+                with opener(insecure).open(req) as resp, \
+                        open(tmp_fd, "wb", closefd=False) as fh:
                     total = int(resp.headers.get("Content-Length", 0))
                     downloaded = 0
                     while True:
@@ -94,11 +96,13 @@ def download_blob(
                         f"Layer integrity check failed for digest '{digest}': "
                         f"expected {expected_hex}, got {actual_hex}."
                     )
-                # Opened before the rename below promotes it, so the
-                # descriptor is bound to the inode these bytes went into
-                # and nothing that later happens to the name can change
-                # what the caller reads.
-                fd = os.open(tmp, os.O_RDONLY)
+                # A duplicate of the descriptor the bytes were written
+                # through, so what the caller reads is the inode they
+                # went into. atomic_replace closes its own once the
+                # rename has promoted it; nothing that later happens to
+                # the name changes what this names.
+                fd = os.dup(tmp_fd)
+                os.lseek(fd, 0, os.SEEK_SET)
         finally:
             clear_bar()
         return fd

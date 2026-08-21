@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_write
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
 from proot_distro.message import msg, log_info, log_error
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
@@ -197,9 +197,8 @@ def download_file(
     host = urllib.parse.urlparse(url).netloc or url
 
     def _attempt():
-        with atomic_replace(dest) as tmp:
-            with urllib.request.urlopen(req, context=context) as resp, \
-                    open(tmp, "wb") as fh:
+        with atomic_write(dest, "wb") as fh:
+            with urllib.request.urlopen(req, context=context) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
                 while True:

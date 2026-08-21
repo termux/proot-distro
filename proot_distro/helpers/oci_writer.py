@@ -39,7 +39,7 @@ import hashlib
 import os
 import tarfile
 
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_write
 from proot_distro.helpers.docker import (
     parse_image_ref,
     open_required_layer,
@@ -199,8 +199,8 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
         _build_docker_manifest(manifest, config_digest_hex, image_ref)
     )
 
-    with atomic_replace(os.path.abspath(out_path)) as tmp:
-        with tarfile.open(tmp, mode) as tf:
+    with atomic_write(os.path.abspath(out_path)) as tmp_fh:
+        with tarfile.open(fileobj=tmp_fh, mode=mode) as tf:
             # oci-layout first so our own install probe detects the
             # OCI format on the first member it sees.
             _add_bytes(tf, "oci-layout", oci_layout_bytes)

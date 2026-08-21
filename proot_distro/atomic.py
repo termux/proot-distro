@@ -49,14 +49,26 @@
 # to the build's scratch directory first and renamed into the cache
 # afterwards. The destination directory is reached the same way.
 #
-# The tmp *path* is still what the caller writes through, since it opens
-# the file itself in whatever way suits it. That name is unpredictable
-# and was just created, so nothing can be waiting under it; a directory
-# re-pointed in the window between would strand those bytes under a
-# random name and fail the rename, rather than publish them somewhere
-# else.
+# What the caller writes through is the **descriptor** of the temporary,
+# never its name. Handing back a path and letting the caller open it
+# again put a window between the create and that open, and a name is not
+# a secret: an unpredictable name cannot be waited for, but it can be
+# *seen* -- a process sharing the directory reads it out of readdir(),
+# unlinks it and puts a symlink in its place, and the caller's open()
+# then writes the file's bytes into whatever that names. The rename
+# afterwards publishes the symlink, so the cache entry ends up pointing
+# at the host file it just overwrote. On Termux the directory really is
+# shared: RUNTIME_DIR and BASE_CACHE_DIR both sit under the
+# $TERMUX_PREFIX bound read-write into every non-isolated container.
+#
+# The descriptor settles which inode the bytes go into, and the rename
+# publishes that same inode -- it is created O_EXCL and never named
+# again, so there is nothing left for a swap to redirect. atomic_write()
+# is the same thing with the descriptor already wrapped in a file
+# object, which is what most callers want.
 
 import contextlib
+import errno
 import os
 import tempfile
 
@@ -79,13 +91,18 @@ def _state_location(path: str):
 
 @contextlib.contextmanager
 def atomic_replace(path: str, *, suffix: str = ".tmp"):
-    """Yield a tmp path next to *path*; rename on success, remove on error.
+    """Yield an open fd on a tmp next to *path*; rename it on success.
 
-    The caller writes to the yielded tmp path however it pleases —
-    open()/tarfile.open()/shutil.copyfileobj are all fine. On normal
-    exit the tmp is os.replace()'d onto *path* (atomic on POSIX). On
-    any exception the tmp is removed and the original exception
-    re-raised.
+    The caller writes through the descriptor — with os.write(), or by
+    wrapping it in ``open(fd, mode, closefd=False)``; atomic_write()
+    below does the wrapping. The descriptor stays this context
+    manager's to close. On normal exit the tmp is os.replace()'d onto
+    *path* (atomic on POSIX). On any exception the tmp is removed and
+    the original exception re-raised.
+
+    A **descriptor** rather than the tmp's name, because a name the
+    caller has to open again is a name something else can put a symlink
+    under in between — see the note at the top of this module.
 
     A unique tmp name is minted per call so two concurrent writers to
     the same final path (e.g. two `build`s sharing a base image)
@@ -105,10 +122,24 @@ def atomic_replace(path: str, *, suffix: str = ".tmp"):
         os.path.join(root, *parts[:-1]), create=True,
     )
     try:
-        yield from _replace_at(dir_fd, os.path.dirname(path),
-                               parts[-1], suffix)
+        yield from _replace_at(dir_fd, parts[-1], suffix)
     finally:
         os.close(dir_fd)
+
+
+@contextlib.contextmanager
+def atomic_write(path: str, mode: str = "wb", *, suffix: str = ".tmp",
+                 **kwargs):
+    """atomic_replace() with the descriptor already wrapped in a file.
+
+    The shape nearly every caller wants: a file object to json.dump(),
+    write() or copyfileobj() into. The wrapper is closed (and so
+    flushed) before the rename, and it does not own the descriptor —
+    atomic_replace() closes that.
+    """
+    with atomic_replace(path, suffix=suffix) as fd:
+        with open(fd, mode, closefd=False, **kwargs) as fh:
+            yield fh
 
 
 def publish_file(src_path: str, dest_path: str) -> None:
@@ -145,19 +176,68 @@ def publish_file(src_path: str, dest_path: str) -> None:
         os.close(dir_fd)
 
 
-def _replace_at(dir_fd: int, dest_dir: str, name: str, suffix: str):
+def _close_quietly(fd: int) -> None:
+    """Close *fd*, tolerating a caller that already closed it."""
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _replace_at(dir_fd: int, name: str, suffix: str):
     """atomic_replace's body for a destination directory already validated."""
     tmp_name = dirfd.temp_name(
         name, f".{os.getpid()}.{os.urandom(4).hex()}{suffix}",
     )
-    fd, _st = dirfd.open_new_at(dir_fd, tmp_name, 0o600)
-    os.close(fd)
+    # O_RDWR, matching what mkstemp gives the by-name branch: a writer
+    # that must read its own bytes back (a layer blob handed to the
+    # extractor) does it through this descriptor rather than by opening
+    # the name a second time.
+    fd, _st = dirfd.open_new_at(dir_fd, tmp_name, 0o600, readable=True)
     try:
-        yield os.path.join(dest_dir, tmp_name)
-        os.replace(tmp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        yield fd
+        written = os.fstat(fd)
+        os.close(fd)
+        fd = None
+        _publish_at(dir_fd, tmp_name, name, written)
     except BaseException:
+        if fd is not None:
+            _close_quietly(fd)
         dirfd.unlink_quietly(dir_fd, tmp_name)
         raise
+
+
+def _publish_at(dir_fd: int, tmp_name: str, name: str, written) -> None:
+    """rename(2) the temporary onto *name*, refusing one that was swapped.
+
+    The bytes went into the inode *written* describes and can no longer
+    be redirected, but the rename is still by name, so a process sharing
+    the directory can unlink the temporary and leave a symlink under it:
+    the write lands where it should and the *published* entry is the
+    attacker's link. Nothing downstream would read it (every consumer of
+    these files opens through dirfd.open_regular_at, which refuses one),
+    but publishing something this module did not write is not a thing to
+    do quietly either.
+
+    Comparing the entry against the descriptor's identity leaves only
+    the instant between this lstat and the rename, in place of the whole
+    duration of the write -- which for a layer blob is however long the
+    download takes. A mismatch aborts, and the caller's cleanup unlinks
+    whatever is standing there.
+    """
+    try:
+        entry = dirfd.lstat_at(dir_fd, tmp_name)
+    except OSError:
+        entry = None
+    if (entry is None
+            or (entry.st_dev, entry.st_ino)
+            != (written.st_dev, written.st_ino)):
+        raise OSError(
+            errno.ESTALE,
+            "the temporary file was replaced while it was being written",
+            tmp_name,
+        )
+    os.replace(tmp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
 
 
 def _replace_by_name(path: str, suffix: str):
@@ -169,11 +249,14 @@ def _replace_by_name(path: str, suffix: str):
         suffix=suffix,
         dir=dest_dir,
     )
-    os.close(fd)
     try:
-        yield tmp
+        yield fd
+        os.close(fd)
+        fd = None
         os.replace(tmp, path)
     except BaseException:
+        if fd is not None:
+            _close_quietly(fd)
         try:
             os.remove(tmp)
         except OSError:

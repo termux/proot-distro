@@ -35,7 +35,7 @@ import sys
 import tarfile
 
 from proot_distro import dirfd, statedir
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_write
 from proot_distro.constants import BASE_CACHE_DIR, PROGRAM_NAME
 from proot_distro.message import C, msg, log_info, log_error, crit_error
 from proot_distro.progress import clear_bar
@@ -105,9 +105,14 @@ def _cache_temp_file(prefix: str) -> str:
     cache root is a name a guest can re-point on Termux, so the whole
     downloaded archive landed in whatever directory it led to. The
     directory is walked down to instead and the file created O_EXCL off
-    the descriptor the walk validated; the caller then writes through the
-    path, which is the same bargain atomic_replace makes -- the name was
-    just minted and nothing can be waiting under it.
+    the descriptor the walk validated.
+
+    Nothing writes *through* this name: it is only the destination
+    download_file() hands to atomic_replace(), which writes its own
+    temporary through a descriptor and renames it onto this entry --
+    and rename(2) replaces a symlink standing at the destination rather
+    than following it. What the name buys is a reservation, so two
+    installs running at once cannot pick the same one.
     """
     dir_fd = statedir.open_state_dir(BASE_CACHE_DIR, create=True)
     try:
@@ -290,9 +295,10 @@ def _run_install(
                 "image_config": metadata.get("image_config", {}),
             }
             try:
-                with atomic_replace(container_manifest(install_name)) as tmp:
-                    with open(tmp, "w") as fh:
-                        json.dump(manifest_data, fh, indent=2)
+                with atomic_write(
+                    container_manifest(install_name), "w",
+                ) as fh:
+                    json.dump(manifest_data, fh, indent=2)
             except OSError as exc:
                 log_error(f"Warning: could not write manifest.json: {exc}")
 

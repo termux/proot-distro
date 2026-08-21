@@ -35,7 +35,7 @@ import os
 import time
 
 from proot_distro import dirfd, statedir
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_write
 from proot_distro.constants import BASE_CACHE_DIR
 from proot_distro.locking import open_lock_file_at
 
@@ -146,9 +146,8 @@ def _load_index():
 
 
 def _save_index(data):
-    with atomic_replace(_INDEX_PATH) as tmp:
-        with open(tmp, "w") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
+    with atomic_write(_INDEX_PATH, "w") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
 
 
 def lookup(recipe_hash):

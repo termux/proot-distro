@@ -73,7 +73,7 @@ import re
 import stat
 
 from proot_distro import dirfd, statedir
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_write
 from proot_distro.constants import LAYER_CACHE_DIR, MANIFEST_CACHE_DIR
 from proot_distro.message import warn
 from proot_distro.helpers.docker.refs import DOCKER_TO_ARCH, canonical_ref
@@ -213,9 +213,8 @@ def save_manifest_cache(
         "image_config": image_config,
     }
     path = manifest_cache_path(image_ref, arch)
-    with atomic_replace(path) as tmp:
-        with open(tmp, "w") as fh:
-            json.dump(payload, fh)
+    with atomic_write(path, "w") as fh:
+        json.dump(payload, fh)
     return path
 
 
@@ -251,9 +250,8 @@ def annotate_manifest_cache(image_ref: str, arch: str) -> None:
         # atomic_replace reaches a destination inside the state tree by
         # the same walk, so the rewrite lands in the directory the read
         # came out of.
-        with atomic_replace(manifest_cache_path(image_ref, arch)) as tmp:
-            with open(tmp, "w") as fh:
-                json.dump(payload, fh)
+        with atomic_write(manifest_cache_path(image_ref, arch), "w") as fh:
+            json.dump(payload, fh)
     except OSError:
         pass
 

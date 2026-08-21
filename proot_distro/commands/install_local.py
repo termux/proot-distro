@@ -221,8 +221,8 @@ def _oci_cache_layer(tf, member_map, digest):
     try:
         # atomic_replace removes the temporary on any exception, so a
         # mismatch leaves nothing behind for a later pull to pick up.
-        with atomic_replace(cache_path) as tmp:
-            with open(tmp, "wb") as out:
+        with atomic_replace(cache_path) as tmp_fd:
+            with open(tmp_fd, "wb", closefd=False) as out:
                 while True:
                     chunk = fobj.read(_BLOB_CHUNK)
                     if not chunk:
@@ -237,7 +237,12 @@ def _oci_cache_layer(tf, member_map, digest):
                     f"sha256:{actual_hex}). The archive is corrupt or was "
                     f"tampered with."
                 )
-            fd = os.open(tmp, os.O_RDONLY)
+            # A second descriptor on the same inode: atomic_replace
+            # closes the one it yielded once the rename is done, and
+            # the caller reads these bytes rather than the name they
+            # were published under.
+            fd = os.dup(tmp_fd)
+            os.lseek(fd, 0, os.SEEK_SET)
     finally:
         fobj.close()
     return fd

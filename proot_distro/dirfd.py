@@ -179,7 +179,8 @@ def open_regular_at(dir_fd: int, name: str, flags: int, mode: int = 0o644):
     return fd, st
 
 
-def open_new_at(dir_fd: int, name: str, mode: int = 0o644):
+def open_new_at(dir_fd: int, name: str, mode: int = 0o644, *,
+                readable: bool = False):
     """Create *name* under dir_fd as a brand-new file. Returns (fd, stat).
 
     O_EXCL, so no entry already carrying the name is ever written *through*.
@@ -193,8 +194,14 @@ def open_new_at(dir_fd: int, name: str, mode: int = 0o644):
     A leftover from an interrupted run is unlinked and the create retried
     once. Unlinking removes the *name*; whatever else the inode is linked
     from keeps its content, which is exactly the point.
+
+    *readable* opens O_RDWR instead of O_WRONLY, for a writer that has to
+    read its own bytes back through the same descriptor — a layer blob
+    whose content is handed straight to the extractor, where re-opening
+    the name would be the very step the descriptor exists to avoid.
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    access = os.O_RDWR if readable else os.O_WRONLY
+    flags = access | os.O_CREAT | os.O_EXCL
     try:
         return open_regular_at(dir_fd, name, flags, mode)
     except FileExistsError:
