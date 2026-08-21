@@ -1083,7 +1083,7 @@ sweep) and harmless (`run_step` re-verifies the blob on a hit and
 re-runs the step when it is gone or does not match).
 Containers are not roots either, matching `remove --image`.
 The sweep **refuses to run** while `busy_locks()` reports an exclusive
-holder: a build in progress has already written its COPY/ADD layers
+holder — or cannot tell (`LockStateUnknown`; see "Locking"): a build in progress has already written its COPY/ADD layers
 (only `do_run` records into the index) and stores the manifest naming
 them last of all, so mid-build those blobs are indistinguishable from
 orphans. It is a snapshot, not a lock — it cannot see a build that
@@ -1177,13 +1177,26 @@ cannot block the command waiting for a peer either). Nothing but this
 module writes here, so an entry that is not a plain file was planted:
 `_drop_planted()` removes it (`rmdir` for a directory, which therefore
 only goes while empty) and the real lock file is made in its place.
-One that will **not** go is the single case that fails closed
-(`_HostileLockPath` ⇒ `acquire()` returns False, `__enter__` names the
-path): a filesystem that cannot hold a lock file at all still proceeds
-unlocked as it always has, but a lock this program is being *prevented*
-from taking must not pass for one it merely could not create. The
-`create=True` walk is the only one that heals; the read paths
-(`busy_locks`, `holder_hint`) touch nothing.
+One that will **not** go is one of the two cases that fail closed
+(`_HostileLockPath` ⇒ `acquire()` returns False, `blocked_detail()`
+names the path): a filesystem that cannot hold a lock file at all still
+proceeds unlocked as it always has, but a lock this program is being
+*prevented* from taking must not pass for one it merely could not
+create. The other is **being denied the path**: the lock directory and
+the names in it are the guest's to chmod, so `chmod 000` on `locks/`,
+on `RUNTIME_DIR` or on one `<name>.lock` made every `EACCES` look like
+that same "cannot hold a lock file", and the command ran unlocked —
+which is how a container arranged for `remove`, `restore`, `reset`,
+`copy` or `sync` to run alongside its own live session. `EACCES`/
+`EPERM` anywhere on the path (the `makedirs`, each level's `opendir_at`
+and `mkdir`, the lock file's own open) is therefore `_LockPathDenied`
+⇒ refusal, while `EROFS`, `ENOSPC` and a filesystem that ignores
+`flock` keep the old behaviour, since those say the lock file cannot
+exist rather than that something is keeping this process from it.
+`build_cache`'s index lock takes the same denial the same way it takes
+`_HostileLockPath` — as "carry on unlocked" — for the reason
+`open_lock_file_at` gives. The `create=True` walk is the only one that
+heals; the read paths (`busy_locks`, `holder_hint`) touch nothing.
 
 The lock file is truncated **after** the flock, not by opening it `"w"`
 before one: a process that loses the race used to blank the holder's
@@ -1200,8 +1213,21 @@ holders answer the probe and so never appear, which is what
 `clear-cache --orphan` wants: `login`/`backup` hold shared locks and
 write nothing to the cache, while every cache writer (`install`, and
 `reset` through it; `build`/`push`) holds an exclusive one. An errno
-other than EACCES/EAGAIN counts as unheld, the same rule `acquire()`
-uses so a filesystem ignoring flock cannot wedge the caller.
+other than EACCES/EAGAIN **from the flock** counts as unheld, the same
+rule `acquire()` uses so a filesystem ignoring flock cannot wedge the
+caller.
+
+Failing to reach the state is not the same answer as "nothing is held",
+and only the first is safe to act on — the caller deletes on the
+strength of it. So the read path answers "nothing" for exactly one
+shape, a lock directory that **is not there**; a directory that cannot
+be opened or listed, and an entry that cannot be opened (`chmod 000`, a
+planted symlink or FIFO — a holder keeps a plain file open under that
+very name, so anything else under it *hides* one rather than ruling it
+out), raise `LockStateUnknown`. `clear-cache --orphan`/`--build-cache`
+turns that into a refusal with nothing deleted, the same way it already
+refuses an unreadable reference set. `holder_hint()` is cosmetic and
+still answers `''`.
 
 ## Architecture
 

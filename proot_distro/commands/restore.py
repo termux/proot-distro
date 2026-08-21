@@ -582,10 +582,16 @@ def command_restore(args) -> None:
                         container_name, exclusive=True, command="restore"
                     )
                     if not lock.acquire():
-                        hint = lock.holder_hint()
                         clear_bar()
-                        log_error(f"Cannot restore: container "
-                                  f"'{container_name}' is busy{hint}.")
+                        detail = lock.blocked_detail()
+                        if detail:
+                            log_error(f"Cannot restore: cannot lock "
+                                      f"container '{container_name}': "
+                                      f"{detail}")
+                        else:
+                            log_error(f"Cannot restore: container "
+                                      f"'{container_name}' is busy"
+                                      f"{lock.holder_hint()}.")
                         sys.exit(1)
                     log_info(f"Destination: {restore_name}")
                 elif container_name != restore_name:

@@ -81,7 +81,7 @@ from proot_distro.helpers.docker import (
     layer_cache_path,
     referenced_blob_digests,
 )
-from proot_distro.locking import busy_locks
+from proot_distro.locking import LockStateUnknown, busy_locks
 from proot_distro import dirfd, statedir
 from proot_distro.message import (
     crit_error, log_info, log_error, quote_error, quote_path,
@@ -417,7 +417,20 @@ def _sweep_layers(args, drop_build_index: bool) -> None:
     """Delete the layer blobs nothing references, and optionally the index."""
     verbose = getattr(args, "verbose", False)
 
-    busy = busy_locks()
+    try:
+        busy = busy_locks()
+    except LockStateUnknown as exc:
+        # An empty answer is what lets this sweep delete; one that could
+        # not be read is not an empty answer. The lock tree is
+        # guest-writable on Termux, so a container can make a build look
+        # like no build at all with one chmod.
+        crit_error(
+            f"cannot tell whether another {PROGRAM_NAME} command is "
+            f"running: the lock state at '{quote_path(str(exc))}' could "
+            f"not be read. Nothing was deleted; restore access to it and "
+            f"try again."
+        )
+        sys.exit(1)
     if busy:
         why = (
             "A build in progress has recorded steps whose layers this "

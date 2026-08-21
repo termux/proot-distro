@@ -63,10 +63,21 @@
 # anything. O_NOFOLLOW refuses the link instead; since nothing but this
 # module writes here, an entry that is not a plain file was planted, and
 # it is unlinked and the real lock file made in its place. One that will
-# not go is the single case that fails closed: a filesystem that cannot
-# hold a lock file at all still proceeds unlocked, as it always has, but
-# a lock this program is being *prevented* from taking must not pass for
-# one it merely could not create.
+# not go is one of the two cases that fail closed: a filesystem that
+# cannot hold a lock file at all still proceeds unlocked, as it always
+# has, but a lock this program is being *prevented* from taking must not
+# pass for one it merely could not create.
+#
+# The other is being denied access outright. The lock directory and the
+# names in it are the guest's to chmod, so `chmod 000` on locks/, on
+# RUNTIME_DIR, or on one <name>.lock made every EACCES look like a
+# filesystem that cannot hold locks -- and the command carried on
+# unlocked, which is how a container arranged for `remove`, `restore`,
+# `reset`, `copy` or `sync` to run alongside its own live session.
+# EACCES/EPERM anywhere on the lock path is therefore a refusal, while
+# EROFS, ENOSPC and a filesystem that ignores flock keep the old
+# behaviour: those say the lock file cannot exist, not that someone is
+# keeping this process away from it.
 
 import errno
 import fcntl
@@ -120,18 +131,30 @@ def _locks_dir_fd(parts, create: bool = False):
 
     Creating goes level by level so a planted level gets the same
     treatment a planted lock file does — replaced, or refused. Reading
-    (busy_locks, a holder hint) touches nothing and simply gives up.
+    (busy_locks, a holder hint) touches nothing.
+
+    None is "there is no lock directory and none could be made", which
+    has always meant "carry on unlocked". Being *kept* from one is
+    _LockPathDenied instead: a `chmod 000` on RUNTIME_DIR or on locks/
+    is a thing a container can do, and it must not read as a filesystem
+    that cannot hold locks. Reading raises it too, since a directory
+    that cannot be listed hides holders rather than proving there are
+    none; there, a missing directory is the only "nothing is held".
     """
     if not create:
-        return dirfd.opendir_under(RUNTIME_DIR, parts)
+        return _read_locks_dir_fd(parts)
 
     try:
         os.makedirs(RUNTIME_DIR, exist_ok=True)
-    except OSError:
+    except OSError as exc:
+        if _is_denied(exc):
+            raise _LockPathDenied(RUNTIME_DIR) from None
         return None
     try:
         fd = dirfd.opendir(RUNTIME_DIR)
-    except OSError:
+    except OSError as exc:
+        if _is_denied(exc):
+            raise _LockPathDenied(RUNTIME_DIR) from None
         return None
     try:
         for depth, part in enumerate(parts, 1):
@@ -149,6 +172,34 @@ def _locks_dir_fd(parts, create: bool = False):
             os.close(fd)
 
 
+def _read_locks_dir_fd(parts):
+    """Open one of the lock directories without creating anything.
+
+    None means the directory is simply not there, which is the one shape
+    of "no lock is held" a reader may believe. Anything else -- no
+    permission, a planted symlink where the directory should be, a
+    component that is not a directory -- hides whatever is held behind
+    it, so it comes back as LockStateUnknown rather than as an empty
+    answer.
+    """
+    try:
+        root_fd = dirfd.opendir(RUNTIME_DIR)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise LockStateUnknown(RUNTIME_DIR) from None
+    try:
+        return dirfd.descend_at(root_fd, parts)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise LockStateUnknown(
+            os.path.join(RUNTIME_DIR, *parts)
+        ) from None
+    finally:
+        os.close(root_fd)
+
+
 def _open_lock_subdir(dir_fd: int, name: str, path: str):
     """Open (creating) the lock directory *name* under dir_fd. Or None."""
     try:
@@ -156,6 +207,8 @@ def _open_lock_subdir(dir_fd: int, name: str, path: str):
     except FileNotFoundError:
         pass
     except OSError as exc:
+        if _is_denied(exc):
+            raise _LockPathDenied(path) from None
         if not _is_planted(exc):
             return None
         if not _drop_planted(dir_fd, name):
@@ -164,13 +217,17 @@ def _open_lock_subdir(dir_fd: int, name: str, path: str):
         os.mkdir(name, 0o777, dir_fd=dir_fd)
     except FileExistsError:
         pass                        # lost a race with another writer
-    except OSError:
+    except OSError as exc:
+        if _is_denied(exc):
+            raise _LockPathDenied(path) from None
         return None
     try:
         return dirfd.opendir_at(dir_fd, name)
     except OSError as exc:
         if _is_planted(exc):
             raise _HostileLockPath(path) from None
+        if _is_denied(exc):
+            raise _LockPathDenied(path) from None
         return None
 
 
@@ -218,13 +275,22 @@ def _lock_is_held_at(dir_fd: int, name: str) -> bool:
     tell a live session from a dead one. A refusal means an exclusive
     holder is present; success means the file is unheld, and the shared
     lock is dropped again immediately rather than held across any work.
-    Any other errno is treated as "not held", matching acquire()'s rule
-    that a filesystem which ignores flock must not stall the caller.
+    Any other errno from the flock is treated as "not held", matching
+    acquire()'s rule that a filesystem which ignores flock must not
+    stall the caller.
+
+    Failing to *open* the entry is a different matter. Only its absence
+    proves nobody holds it: a holder keeps a plain file open under this
+    very name, so a `chmod 000` or a FIFO left in its place hides one
+    rather than ruling it out, and this probe is what an orphan sweep
+    asks before deleting. Both come back as LockStateUnknown.
     """
     try:
         fd, _st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError:
+        raise LockStateUnknown(name) from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -251,7 +317,9 @@ def _probe_locks_dir(parts, held: list) -> None:
         try:
             names = dirfd.listdir_at(dir_fd)   # already sorted
         except OSError:
-            return
+            raise LockStateUnknown(
+                os.path.join(RUNTIME_DIR, *parts)
+            ) from None
         for name in names:
             if not name.endswith(".lock"):
                 continue
@@ -275,6 +343,12 @@ def busy_locks() -> list:
     The answer is a snapshot by construction. It says nothing about a
     command that starts immediately afterwards, so it is a guard against
     running concurrently with work in progress, not a lock.
+
+    Raises LockStateUnknown when any part of the lock tree cannot be
+    read. An empty list has to mean "nothing is held", and a directory
+    or an entry this process is not allowed to look at cannot say that
+    -- a container is free to chmod either, and the caller deletes on
+    the strength of the answer.
     """
     held = []
     for parts in (_CONTAINER_PARTS, _BUILD_PARTS):
@@ -284,6 +358,28 @@ def busy_locks() -> list:
 
 class _HostileLockPath(Exception):
     """Raised when the lock file's name is occupied by something else."""
+
+
+class _LockPathDenied(Exception):
+    """Raised when the lock path cannot be reached: permission denied.
+
+    A lock directory or lock file this program creates itself is
+    readable and writable by the user running it, so an EACCES on one
+    is not the state a working installation is ever in -- but it is
+    exactly the state a `chmod 000` from inside a container leaves it
+    in, and RUNTIME_DIR/locks is guest-writable on Termux. Carrying on
+    unlocked there is how a live session arranged to be raced.
+    """
+
+
+class LockStateUnknown(Exception):
+    """Raised when busy_locks() cannot tell whether a lock is held.
+
+    "Nothing is held" and "this process is not allowed to look" are
+    different answers, and only the first is safe to act on: the caller
+    (clear-cache's orphan sweep) is about to delete blobs on the strength
+    of no build being in progress.
+    """
 
 
 def _open_lock_file(dir_fd: int, name: str, path: str):
@@ -306,6 +402,8 @@ def _open_lock_file(dir_fd: int, name: str, path: str):
         fd, _st = dirfd.open_regular_at(dir_fd, name, flags, 0o644)
         return fd
     except OSError as exc:
+        if _is_denied(exc):
+            raise _LockPathDenied(path) from None
         if not _is_planted(exc):
             return None
     if not _drop_planted(dir_fd, name):
@@ -316,6 +414,8 @@ def _open_lock_file(dir_fd: int, name: str, path: str):
     except OSError as exc:
         if _is_planted(exc):
             raise _HostileLockPath(path) from None
+        if _is_denied(exc):
+            raise _LockPathDenied(path) from None
         return None
 
 
@@ -335,11 +435,12 @@ def open_lock_file_at(dir_fd: int, name: str, path: str = ""):
     losing the lock costs there is a concurrent record()'s entry, not a
     corrupt file -- the index itself is published through
     atomic_replace(). A container lock is the other way round and fails
-    closed; see acquire().
+    closed; see acquire(). Being denied the name is the same bargain
+    here, and for the same reason.
     """
     try:
         return _open_lock_file(dir_fd, name, path or name)
-    except _HostileLockPath:
+    except (_HostileLockPath, _LockPathDenied):
         return None
 
 
@@ -352,6 +453,18 @@ _PLANTED_ERRNOS = frozenset((errno.EISDIR, errno.EINVAL, errno.ENXIO))
 def _is_planted(exc: OSError) -> bool:
     """True when *exc* says the name is held by something not a plain file."""
     return dirfd.is_refusal(exc) or exc.errno in _PLANTED_ERRNOS
+
+
+# What being kept away from the lock path reports. EROFS, ENOSPC and
+# friends are deliberately absent: they say the lock file cannot exist,
+# which has always meant "carry on unlocked", not that something is
+# standing between this process and it.
+_DENIED_ERRNOS = frozenset((errno.EACCES, errno.EPERM))
+
+
+def _is_denied(exc: OSError) -> bool:
+    """True when *exc* says this process is not allowed at the lock path."""
+    return exc.errno in _DENIED_ERRNOS
 
 
 def _drop_planted(dir_fd: int, name: str) -> bool:
@@ -400,6 +513,7 @@ class _FlockBase:
         self._reentrant = False
         self._disowned = False
         self._hostile = ""
+        self._denied = ""
         # Subclasses populate these before acquire() is called.
         self._lock_path: str = ""
         self._dir_parts: tuple = _CONTAINER_PARTS
@@ -411,8 +525,16 @@ class _FlockBase:
         return self._lock_path
 
     def holder_hint(self) -> str:
-        """Parenthesised note naming the lock's holder, or ''."""
-        dir_fd = _locks_dir_fd(self._dir_parts)
+        """Parenthesised note naming the lock's holder, or ''.
+
+        Cosmetic, so a lock tree it cannot read is simply no hint -- the
+        refusal itself is decided in acquire(), which does not fall back
+        to a guess.
+        """
+        try:
+            dir_fd = _locks_dir_fd(self._dir_parts)
+        except LockStateUnknown:
+            return ""
         if dir_fd is None:
             return ""
         try:
@@ -420,13 +542,35 @@ class _FlockBase:
         finally:
             os.close(dir_fd)
 
+    def blocked_detail(self) -> str:
+        """Why acquire() refused, beyond another process holding the lock.
+
+        Empty when the lock is simply held by someone else, which is the
+        ordinary conflict every caller already words for itself.
+        """
+        if self._hostile:
+            return (f"'{self._hostile}' is not a plain file and could "
+                    f"not be replaced, so this command cannot be "
+                    f"serialised against others. Remove it and try "
+                    f"again.")
+        if self._denied:
+            return (f"'{self._denied}' cannot be opened (permission "
+                    f"denied), so this command cannot be serialised "
+                    f"against others. Restore access to it and try "
+                    f"again.")
+        return ""
+
     def acquire(self) -> bool:
         """Try to acquire the lock non-blocking.
 
         Returns True on success (or when re-entrant / filesystem ignores
-        flock). Returns False when blocked by another process, or when
-        the lock file's name is occupied by something this module cannot
-        remove — see _open_lock_file. __enter__ tells the two apart.
+        flock). Returns False when blocked by another process, when the
+        lock file's name is occupied by something this module cannot
+        remove (see _open_lock_file), or when the lock path cannot be
+        reached at all because access to it is denied — a state a
+        container can arrange with one chmod, and the reason that is not
+        treated as "this filesystem cannot hold locks". blocked_detail()
+        tells them apart.
         """
         if self._lock_path in _held_exclusive:
             # This process already holds an exclusive lock on this path
@@ -446,6 +590,9 @@ class _FlockBase:
                 os.close(dir_fd)
         except _HostileLockPath as exc:
             self._hostile = str(exc)
+            return False
+        except _LockPathDenied as exc:
+            self._denied = str(exc)
             return False
         if raw is None:
             return True  # Cannot open/create lock file; proceed unlocked.
@@ -529,12 +676,10 @@ class _FlockBase:
 
     def __enter__(self):
         if not self.acquire():
-            if self._hostile:
+            detail = self.blocked_detail()
+            if detail:
                 crit_error(
-                    f"cannot lock {self._label} '{self._display}': "
-                    f"'{self._hostile}' is not a plain file and could not "
-                    f"be replaced, so this command cannot be serialised "
-                    f"against others. Remove it and try again."
+                    f"cannot lock {self._label} '{self._display}': {detail}"
                 )
             else:
                 crit_error(f"{self._label} '{self._display}' is busy"

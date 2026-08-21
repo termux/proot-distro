@@ -13,7 +13,7 @@ import stat
 
 import pytest
 
-from proot_distro import locking
+from proot_distro import dirfd, locking
 from proot_distro.locking import BuildLock, ContainerLock
 
 
@@ -179,13 +179,130 @@ def test_hint_is_empty_when_the_entry_is_not_a_lock_file(locks_dir, victim):
 
 # --- busy_locks ------------------------------------------------------------
 
-def test_busy_locks_ignores_a_symlinked_entry(locks_dir, victim):
+def test_busy_locks_reports_a_lock_it_cannot_read(locks_dir, victim):
+    # A symlink is not followed (the victim is never opened), but it is
+    # not "nothing is held" either: a holder keeps a plain file open
+    # under this very name, so an entry that cannot be read hides one.
     os.symlink(str(victim), os.path.join(locks_dir, "other.lock"))
+    lock, ok = _acquire()
+    try:
+        assert ok is True
+        with pytest.raises(locking.LockStateUnknown):
+            locking.busy_locks()
+        assert victim.read_text() == "host content\n"
+    finally:
+        lock.release()
+
+
+def test_busy_locks_lists_holders_when_the_tree_is_readable(locks_dir):
     lock, ok = _acquire()
     try:
         assert ok is True
         held = locking.busy_locks()
         assert [os.path.basename(p) for p, _hint in held] == ["box.lock"]
+    finally:
+        lock.release()
+
+
+def test_busy_locks_refuses_an_unreadable_locks_dir(locks_dir):
+    lock, ok = _acquire()
+    try:
+        assert ok is True
+        os.chmod(locks_dir, 0o000)
+        try:
+            with pytest.raises(locking.LockStateUnknown):
+                locking.busy_locks()
+        finally:
+            os.chmod(locks_dir, 0o700)
+    finally:
+        lock.release()
+
+
+def test_busy_locks_is_empty_without_a_lock_tree():
+    # The one shape of "nothing is held" a reader may believe.
+    assert not os.path.exists(locking.LOCKS_DIR)
+    assert locking.busy_locks() == []
+
+
+# --- being kept away from the lock path ------------------------------------
+
+def test_unreadable_lock_file_fails_closed(locks_dir):
+    # `chmod 000` on the entry is a thing a container can do, and it
+    # used to read as "this filesystem cannot hold a lock file".
+    path = locking.container_lock_path("box")
+    open(path, "w").close()
+    os.chmod(path, 0o000)
+
+    lock = ContainerLock("box", exclusive=True, command="test")
+    assert lock.acquire() is False
+    assert lock._denied == path
+    assert "permission denied" in lock.blocked_detail()
+
+    with pytest.raises(SystemExit) as exc:
+        with ContainerLock("box", exclusive=True, command="test"):
+            pass
+    assert exc.value.code == 1
+
+
+def test_unreadable_locks_dir_fails_closed(locks_dir):
+    os.chmod(locks_dir, 0o000)
+    try:
+        lock = ContainerLock("box", exclusive=True, command="test")
+        assert lock.acquire() is False
+        assert lock._denied == locks_dir
+    finally:
+        os.chmod(locks_dir, 0o700)
+
+
+def test_unwritable_locks_dir_fails_closed(locks_dir):
+    # The directory is readable, but a new lock file cannot be created
+    # in it -- the same denial one step further along.
+    os.chmod(locks_dir, 0o500)
+    try:
+        lock = ContainerLock("box", exclusive=True, command="test")
+        assert lock.acquire() is False
+        assert lock._denied == locking.container_lock_path("box")
+    finally:
+        os.chmod(locks_dir, 0o700)
+
+
+def test_unreadable_runtime_dir_fails_closed():
+    os.makedirs(locking.RUNTIME_DIR, exist_ok=True)
+    os.chmod(locking.RUNTIME_DIR, 0o000)
+    try:
+        lock = ContainerLock("box", exclusive=True, command="test")
+        assert lock.acquire() is False
+        assert lock._denied == locking.RUNTIME_DIR
+    finally:
+        os.chmod(locking.RUNTIME_DIR, 0o700)
+
+
+def test_build_lock_fails_closed_too():
+    lock = BuildLock("repo/image:1.0", "aarch64", command="build")
+    os.makedirs(os.path.dirname(lock.lock_path), exist_ok=True)
+    os.chmod(os.path.dirname(lock.lock_path), 0o500)
+    try:
+        assert lock.acquire() is False
+        assert lock._denied == lock.lock_path
+    finally:
+        os.chmod(os.path.dirname(lock.lock_path), 0o700)
+
+
+def test_read_only_lock_dir_still_proceeds_unlocked(locks_dir, monkeypatch):
+    # A filesystem that cannot hold a lock file at all is not a denial:
+    # that has always meant "carry on unlocked" and still does.
+    real = dirfd.open_regular_at
+
+    def fake(dir_fd, name, flags, *args):
+        if name.endswith(".lock"):
+            raise OSError(errno.EROFS, "read-only file system")
+        return real(dir_fd, name, flags, *args)
+
+    monkeypatch.setattr(locking.dirfd, "open_regular_at", fake)
+    lock = ContainerLock("box", exclusive=True, command="test")
+    try:
+        assert lock.acquire() is True
+        assert lock.blocked_detail() == ""
     finally:
         lock.release()
 
