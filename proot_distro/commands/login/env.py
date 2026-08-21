@@ -29,6 +29,7 @@ import os
 import re
 
 from proot_distro import dirfd
+from proot_distro.execenv import is_host_exec_var
 from proot_distro.constants import TERMUX_PREFIX
 from proot_distro.paths import container_image_config
 
@@ -60,6 +61,13 @@ ANDROID_HOST_ENV_VARS = (
 # Vars the image Env must not override. Some are proot-distro-defined
 # values; others are host-inherited terminal vars that must remain
 # under the launcher's control regardless of image configuration.
+#
+# The LD_* and PROOT_* namespaces are refused as well, by prefix rather
+# than by name -- see proot_distro.execenv, which owns that rule because
+# the build engine applies it too. Those two are not "must not
+# override": they are read by the host-side proot exec before anything
+# is confined, so an image setting one runs its own code as the
+# invoking user.
 IMAGE_ENV_BLOCKED = frozenset({
     *ANDROID_HOST_ENV_VARS,
     "MOZ_FAKE_NO_SANDBOX", "PULSE_SERVER",
@@ -93,6 +101,30 @@ def read_manifest_env(container_name: str) -> list:
     if not isinstance(env, list):
         return []
     return [e for e in env if isinstance(e, str) and "=" in e]
+
+
+def image_env_pairs(container_name: str):
+    """The (key, value) pairs an image's Env may contribute to a session.
+
+    The one place the image's own Env is turned into variables, so the
+    refusals are made once instead of at each builder. Two kinds:
+    IMAGE_ENV_BLOCKED, values that are proot-distro's or the launching
+    terminal's to decide; and the LD_*/PROOT_* namespaces, which the
+    host-side proot exec acts on before it confines anything --
+    `Env: ["LD_LIBRARY_PATH=/evil/lib"]` plus a libtalloc.so.2 the image
+    ships at a path it chose is code execution as the invoking user,
+    outside any container, with no race and in every mode.
+
+    Only the *image's* values are filtered. The invoking user's own
+    environment still reaches proot through the explicit passthrough in
+    _command_login_inner (`PROOT_NO_SECCOMP=1 proot-distro login debian`
+    keeps working), and so do their own --env flags.
+    """
+    for entry in read_manifest_env(container_name):
+        key, _, val = entry.partition("=")
+        if not key or key in IMAGE_ENV_BLOCKED or is_host_exec_var(key):
+            continue
+        yield key, val
 
 
 def inject_termux_profile(rootfs: str, env: dict) -> None:

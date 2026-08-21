@@ -262,6 +262,23 @@ Top-level utilities (each owns a focused concern):
   does not come back carrying the scratch of the one before it; `remove`
   and `rename` take it with the container directory, and `backup` never
   sees it (it archives `manifest.json` and `rootfs/` only).
+- `execenv.py` — `is_host_exec_var()`: whether a variable name belongs
+  to the **host side** of a session rather than to the guest. proot has
+  no way to set the guest's environment on its own — the dict handed to
+  `os.execvpe(proot_bin, …)` is proot's own and proot passes it on — so
+  one dict serves two masters, and a name that means "a setting for the
+  container" to whoever wrote it means "a setting for the process that
+  has not confined anything yet" to the dynamic loader. `LD_*` and
+  `PROOT_*` are that, matched by **prefix** because enumerating them
+  goes stale (`LD_AUDIT` was already missing from the list that
+  existed). An image whose `Env` sets one ships a `libtalloc.so.2` at a
+  path it also controls and runs its own code as the invoking user,
+  outside any container — no race, no concurrent session, and in every
+  mode, `--isolated` and `--minimal` included. The rule is about
+  **provenance**, not about the name: a value the *user* set (their
+  shell's environment, a `--env` flag, an `ENV` line in their own
+  Dockerfile) still applies, since they already control the command
+  line; a value out of an *image's* config does not.
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes
@@ -1286,8 +1303,10 @@ re-typed out of the JSON before it leaves the module.
 `child_env` is built explicitly and passed to `os.execvpe` — no
 `env -i` wrapper, host env is **not** propagated. `normal`-type
 precedence (later wins): PATH/MOZ_FAKE_NO_SANDBOX/PULSE_SERVER baseline
-(non-minimal only) → image `Env` (filtered by `IMAGE_ENV_BLOCKED`:
-Android vars, MOZ/PULSE, TERM/COLORTERM) → Android host vars
+(non-minimal only) → image `Env` (via `env.image_env_pairs()`, the one
+place the image's own Env becomes variables: `IMAGE_ENV_BLOCKED`
+— Android vars, MOZ/PULSE, TERM/COLORTERM — plus the `LD_*`/`PROOT_*`
+namespaces `execenv.is_host_exec_var()` names) → Android host vars
 (`ANDROID_HOST_ENV_VARS`, Termux + neither isolated nor minimal) →
 user `--env` → HOME/USER (non-minimal only) → TERM/COLORTERM. Image
 `Env` and `--env` apply in **every** mode (isolated and minimal
@@ -1305,6 +1324,18 @@ except per-session and proot-internal vars
 against the identifier regex `^[A-Za-z_][A-Za-z0-9_]*$`; anything that
 would otherwise corrupt the sourced script (spaces, `;`, quotes …) is
 dropped silently. Legacy `termux-prefix.sh` unlinked first.
+
+`PROOT_NO_SECCOMP`/`PROOT_VERBOSE` are read from the **user's own**
+environment after that merge, so `PROOT_NO_SECCOMP=1 proot-distro login
+debian` keeps working while an image asking for the same thing does not;
+`--env` flags are the user's own too and stay sovereign, `LD_PRELOAD`
+excepted, which is dropped from every source as it always was. The
+`PROOT_L2S_DIR` else-branch now `pop`s rather than merely warning — the
+comment promised "unset", and leaving whatever else put a value there
+standing is the opposite of it. The proot binary is resolved to an
+absolute path before either exec path, since `execvpe` looks a bare name
+up in the PATH of the environment it is handed — `child_env`'s, and PATH
+is deliberately *not* blocked because it is the guest's to choose.
 
 `minimal` clears almost everything: image `Env` + `--env` + `TERM`
 (default `xterm-256color`) + inherited `COLORTERM`; no baseline PATH,
@@ -1377,6 +1408,20 @@ detection, and `expand_vars()` for `$VAR`/`${VAR:-default}` family.
 or `do_copy_or_add`. FROM resolves `scratch`, named stages (re-apply
 cached layers), or external images via `pull_image()`. Base image
 `OnBuild` triggers fire after FROM.
+
+A pulled base image's config is filtered by `_strip_host_exec_env()`
+where it is **adopted**, not where it is used: the stage's env is seeded
+from that `Env` list at FROM, `FROM <earlier stage>` deep-copies the
+whole config, and what the build stores as its own image's config comes
+from it too, so one filter keeps all three clean. An `ENV` line in the
+user's *own* Dockerfile is untouched — `ENV LD_LIBRARY_PATH=/opt/lib` is
+an ordinary thing to write and its author is the one running the build.
+An `ENV` fired by the base image's `OnBuild` is not: a trigger that
+fires always came from an image (a Dockerfile's own `ONBUILD` only
+records one for whoever builds *from* the result), so the engine sets
+`_firing_onbuild` around that loop and `do_env` drops a host-exec name
+with a warning, from the produced config as well as from the live
+scope.
 
 `build_engine/users.py` resolves `USER` and `COPY --chown` against the
 rootfs's own `/etc/passwd` and `/etc/group` through `guestfile`, the

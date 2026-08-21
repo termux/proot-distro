@@ -31,6 +31,8 @@ import shlex
 
 from proot_distro import dirfd
 from proot_distro.atomic import publish_file
+from proot_distro.execenv import is_host_exec_var
+from proot_distro.message import warn
 from proot_distro.helpers.build_engine.copy_step import do_add, do_copy
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.constants import PREDEFINED_ARGS
@@ -90,7 +92,18 @@ def do_env(engine, instr):
         for e in env_list
         if isinstance(e, str) and "=" in e
     }
+    # An ENV fired by the base image's ONBUILD is the image's line, not
+    # the author's, so it is held to the rule the image's own Env is
+    # held to: the LD_*/PROOT_* namespaces are read by the host-side
+    # proot exec before it confines anything (see proot_distro.execenv).
+    # Dropped rather than merely not applied, so the built image does
+    # not carry it on to whoever runs it next either.
+    from_image = getattr(engine, "_firing_onbuild", False)
     for k, v in pairs:
+        if from_image and is_host_exec_var(k):
+            warn(f"ignoring ONBUILD ENV '{k}' from the base image: "
+                 f"it is read by proot itself, not by the container.")
+            continue
         env_map[k] = v
         engine.current.env[k] = v
     cfg["Env"] = [f"{k}={v}" for k, v in env_map.items()]

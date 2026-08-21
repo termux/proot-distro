@@ -31,6 +31,7 @@
 
 import os
 import shlex
+import shutil
 import sys
 
 from proot_distro.constants import (
@@ -59,8 +60,7 @@ from proot_distro.paths import (
 )
 
 from proot_distro.commands.login.env import (
-    ANDROID_HOST_ENV_VARS, IMAGE_ENV_BLOCKED,
-    inject_termux_profile, read_manifest_env,
+    ANDROID_HOST_ENV_VARS, image_env_pairs, inject_termux_profile,
 )
 from proot_distro.commands.login.detach import spawn_detached
 from proot_distro.commands.login.migrate import migrate_legacy_rootfs
@@ -202,11 +202,9 @@ def _build_termux_env(container_name, extra_env, minimal, isolated):
         env["TMPDIR"] = f"{TERMUX_PREFIX}/tmp"
 
     # Image manifest Env applies in every mode (including isolated and
-    # minimal). IMAGE_ENV_BLOCKED still guards host-controlled vars.
-    for entry in read_manifest_env(container_name):
-        key, _, val = entry.partition("=")
-        if key and key not in IMAGE_ENV_BLOCKED:
-            env[key] = val
+    # minimal); image_env_pairs() is where what it may set is decided.
+    for key, val in image_env_pairs(container_name):
+        env[key] = val
 
     # Android system vars are inherited from the host only in the default
     # mode; isolated and minimal sessions keep just the image's values.
@@ -243,11 +241,9 @@ def _build_normal_env(container_name, login_user, login_home,
             env["PULSE_SERVER"] = "127.0.0.1"
 
     # Image manifest Env applies in every mode (including isolated and
-    # minimal). IMAGE_ENV_BLOCKED still guards host-controlled vars.
-    for entry in read_manifest_env(container_name):
-        key, _, val = entry.partition("=")
-        if key and key not in IMAGE_ENV_BLOCKED:
-            env[key] = val
+    # minimal); image_env_pairs() is where what it may set is decided.
+    for key, val in image_env_pairs(container_name):
+        env[key] = val
 
     # Android system vars are inherited from the host only in the default
     # mode; isolated and minimal sessions keep just the image's values.
@@ -481,6 +477,10 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         if l2s_dir is not None:
             child_env["PROOT_L2S_DIR"] = l2s_dir
         else:
+            # "Unset" is what the comment above promises and what the
+            # fallback needs; leaving whatever else put a value there
+            # standing is the opposite of it.
+            child_env.pop("PROOT_L2S_DIR", None)
             warn("container's .l2s is not a plain directory; leaving "
                  "PROOT_L2S_DIR unset for this session.")
     child_env.pop("LD_PRELOAD", None)
@@ -492,6 +492,16 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
         parts.extend(dq(a) for a in proot_args)
         print(" \\\n  ".join(parts))
         sys.exit(0)
+
+    # Resolved against the *host* PATH, once, for both the foreground and
+    # the detached path. os.execvpe() looks a bare name up in the PATH of
+    # the environment it is handed -- child_env's, which an image's Env
+    # sets, PATH being deliberately not blocked because it is the guest's
+    # to choose. get_proot_bin() answers absolutely for every command
+    # that reaches here (cli.ensure_proot_installed refuses otherwise),
+    # so in practice this only confirms that; what it removes is the one
+    # way an image could still pick the binary this process becomes.
+    proot_bin = _resolve_proot_bin(proot_bin)
 
     # Session metadata shared by the foreground and detached paths.
     reg = dict(
@@ -540,6 +550,23 @@ def _login_with_rootfs(container_name: str, args, lock, rootfs_fd: int) -> None:
     _session_fd = register_session(**reg)  # noqa: F841 (kept alive until exec)
 
     _exec_proot(proot_bin, proot_args, child_env, rootfs_fd)
+
+
+def _resolve_proot_bin(proot_bin: str) -> str:
+    """Return an absolute path to the proot binary, or exit.
+
+    A relative one would be worse than a bare name once the exec chdirs
+    into the rootfs: it would resolve inside the container, against a
+    file the guest wrote.
+    """
+    if os.path.isabs(proot_bin):
+        return proot_bin
+    found = shutil.which(proot_bin)
+    if not found:
+        crit_error(f"proot binary '{proot_bin}' could not be found on "
+                   f"PATH.")
+        sys.exit(1)
+    return os.path.abspath(found)
 
 
 def _exec_proot(proot_bin, proot_args, child_env, rootfs_fd: int) -> None:

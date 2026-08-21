@@ -580,6 +580,9 @@ def _build_child_env(stage):
         if l2s_dir is not None:
             env["PROOT_L2S_DIR"] = l2s_dir
         else:
+            # As in login: "unset" has to actually unset, or a value
+            # from somewhere else stands in the fallback's place.
+            env.pop("PROOT_L2S_DIR", None)
             warn("rootfs .l2s is not a plain directory; leaving "
                  "PROOT_L2S_DIR unset for this step.")
     env.pop("LD_PRELOAD", None)

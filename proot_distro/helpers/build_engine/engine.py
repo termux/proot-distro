@@ -31,6 +31,7 @@ import os
 import re
 
 from proot_distro import dirfd
+from proot_distro.execenv import is_host_exec_var
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.message import C, log_info
 from proot_distro.helpers.docker import (
@@ -50,6 +51,38 @@ from proot_distro.helpers.build_engine.stage import Stage
 
 _FROM_RE = re.compile(r"^\s*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IGNORECASE)
 _FROM_AS_RE = re.compile(r"\s+AS\s+(\S+)\s*$", re.IGNORECASE)
+
+
+
+def _strip_host_exec_env(image_config: dict) -> dict:
+    """Drop LD_*/PROOT_* from a pulled image's config Env, in place.
+
+    Filtered where a stranger's config is *adopted*, not where it is
+    used, so nothing downstream can re-seed the values: a stage's env is
+    seeded from this list at FROM, `FROM <earlier stage>` deep-copies the
+    whole config, and what the build finally stores as its own image's
+    config comes from here too. One filter, and every one of those is
+    clean by construction.
+
+    An ENV line in the user's own Dockerfile is untouched -- it goes
+    through do_env, which writes this same list afterwards. That is the
+    point: `ENV LD_LIBRARY_PATH=/opt/lib` is an ordinary thing for a
+    Dockerfile to say and its author is the one running the build, while
+    the same line arriving inside a base image is a stranger choosing
+    what the host-side proot exec loads (see proot_distro.execenv).
+    """
+    cfg = image_config.get("config")
+    if not isinstance(cfg, dict):
+        return image_config
+    env_list = cfg.get("Env")
+    if not isinstance(env_list, list):
+        return image_config
+    cfg["Env"] = [
+        e for e in env_list
+        if not (isinstance(e, str) and "=" in e
+                and is_host_exec_var(e.partition("=")[0]))
+    ]
+    return image_config
 
 
 class BuildEngine:
@@ -97,6 +130,9 @@ class BuildEngine:
         self._stop_after = False
         self._step_no = 0
         self._step_total = 0
+        # True only while the base image's ONBUILD triggers are running,
+        # so do_env can tell a stranger's ENV from the author's.
+        self._firing_onbuild = False
 
     # ----- public entry point ----------------------------------------------
 
@@ -368,20 +404,29 @@ class BuildEngine:
         )
         if base_onbuild:
             from proot_distro.helpers.dockerfile import parse_dockerfile
-            for trig in base_onbuild:
-                _, trig_instrs = parse_dockerfile(trig + "\n")
-                for ti in trig_instrs:
-                    self._step_no += 1
-                    self._announce(ti)
-                    if ti["name"] in EXPANDS_VARS and not ti["exec_form"]:
-                        ti = self._expand_instruction(ti)
-                    h = HANDLERS.get(ti["name"])
-                    if h is None:
-                        raise BuildError(
-                            f"ONBUILD trigger uses unsupported "
-                            f"instruction '{ti['name']}'."
-                        )
-                    self._run_with_history(h, ti)
+            # A trigger that *fires* is always the base image's, never
+            # this Dockerfile's: `ONBUILD` here only records one for
+            # whoever builds FROM the result. So an ENV among them is a
+            # stranger's line, and do_env holds it to the same rule the
+            # image's own Env is held to.
+            self._firing_onbuild = True
+            try:
+                for trig in base_onbuild:
+                    _, trig_instrs = parse_dockerfile(trig + "\n")
+                    for ti in trig_instrs:
+                        self._step_no += 1
+                        self._announce(ti)
+                        if ti["name"] in EXPANDS_VARS and not ti["exec_form"]:
+                            ti = self._expand_instruction(ti)
+                        h = HANDLERS.get(ti["name"])
+                        if h is None:
+                            raise BuildError(
+                                f"ONBUILD trigger uses unsupported "
+                                f"instruction '{ti['name']}'."
+                            )
+                        self._run_with_history(h, ti)
+            finally:
+                self._firing_onbuild = False
 
     def _inherit_from_stage(self, new_stage, parent):
         """Apply parent's layers to new_stage.rootfs_dir; copy config.
@@ -436,7 +481,9 @@ class BuildEngine:
         finally:
             os.close(rootfs_fd)
 
-        stage.image_config = meta.get("image_config") or {"config": {}}
+        stage.image_config = _strip_host_exec_env(
+            meta.get("image_config") or {"config": {}}
+        )
         manifest = meta.get("manifest") or {}
         config_diff_ids = (
             (stage.image_config.get("rootfs") or {}).get("diff_ids") or []
