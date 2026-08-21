@@ -268,7 +268,7 @@ def _lock_info_at(dir_fd: int, name: str) -> str:
     return f" (PID {pid}: {cmd})"
 
 
-def _lock_is_held_at(dir_fd: int, name: str) -> bool:
+def _lock_is_held_at(dir_fd: int, name: str, path: str = "") -> bool:
     """Return True iff some process holds *name* exclusively.
 
     Shared, non-blocking flock probe — the same one session.py uses to
@@ -290,7 +290,7 @@ def _lock_is_held_at(dir_fd: int, name: str) -> bool:
     except FileNotFoundError:
         return False
     except OSError:
-        raise LockStateUnknown(name) from None
+        raise LockStateUnknown(path or name) from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -323,9 +323,9 @@ def _probe_locks_dir(parts, held: list) -> None:
         for name in names:
             if not name.endswith(".lock"):
                 continue
-            if _lock_is_held_at(dir_fd, name):
-                held.append((os.path.join(RUNTIME_DIR, *parts, name),
-                             _lock_info_at(dir_fd, name)))
+            path = os.path.join(RUNTIME_DIR, *parts, name)
+            if _lock_is_held_at(dir_fd, name, path):
+                held.append((path, _lock_info_at(dir_fd, name)))
     finally:
         os.close(dir_fd)
 
