@@ -12,8 +12,28 @@ import stat
 import pytest
 
 from proot_distro.helpers.rootfs import (
-    register_android_ids, write_hosts, write_resolv_conf,
+    open_etc, register_android_ids_at, write_hosts, write_resolv_conf,
 )
+
+
+def register_android_ids(rootfs: str) -> None:
+    """What `install` does: open `etc` off the rootfs, then fix up through it.
+
+    The fixup itself only ever sees a descriptor; open_etc is the step
+    that decides whether there is an `etc` to hand it, and refuses a
+    symlink under the name.
+    """
+    root_fd = os.open(rootfs, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        etc_fd = open_etc(root_fd)
+    finally:
+        os.close(root_fd)
+    if etc_fd is None:
+        return
+    try:
+        register_android_ids_at(etc_fd)
+    finally:
+        os.close(etc_fd)
 
 
 @pytest.fixture

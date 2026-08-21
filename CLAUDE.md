@@ -1418,6 +1418,24 @@ directory mtimes — re-resolve and re-descend the same way, since the
 whole point of deferring them is that a later member may have changed
 what the name means.
 
+The **post-extraction fixups** run off that same descriptor. `install`
+opens `etc` once with `helpers.rootfs.open_etc(rootfs_fd)` and calls
+`write_resolv_conf_at` / `write_hosts_at` / `register_android_ids_at`
+through that one fd, instead of handing each of them the path back:
+`os.path.isdir(<rootfs>/etc)` followed whatever stood under
+`containers/<name>` by then and the three writers resolved it again, so
+a same-user process that swapped the container directory once the unpack
+was over had `etc/resolv.conf` and `etc/hosts` replaced and the four id
+files chmod'ed 0644 and appended to, inside a host directory of its
+choosing — the extraction being pinned bought nothing, since the writes
+that followed it were not. The `passwd` guard moved with them:
+`os.path.isfile()` answered for the *target* of a link an image ships
+under the name while the append that follows refuses one, so it said yes
+to exactly the entries the work then declined; it is an `lstat` of the
+entry itself now. Each fixup keeps a path-taking form for a caller that
+holds a name rather than a descriptor — `build`'s FROM, which passes
+`root_fd=stage.rootfs_fd`.
+
 Manifest-cache payload (`cache.py`): `{image_ref, arch, manifest, repo,
 image_config}`. The key is a hash, so the entry itself is the only
 record of which image it holds — `save_manifest_cache()` (the single

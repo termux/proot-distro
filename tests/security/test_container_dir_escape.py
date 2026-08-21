@@ -11,10 +11,12 @@
 # it led to.
 
 import os
+import stat
 from types import SimpleNamespace
 
 import pytest
 
+from proot_distro.commands import install
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.reset import command_reset
@@ -102,6 +104,59 @@ def test_install_still_creates_a_fresh_container(archive):
     command_install(_install_args(archive, name="box"))
     assert os.path.isdir(container_rootfs("box"))
     assert os.path.isdir(os.path.join(container_dir("box"), "sysdata"))
+
+
+def test_post_extraction_fixups_follow_the_pin_not_the_name(
+        tmp_path, outside, builders, monkeypatch):
+    # The extraction is pinned, but the fixups that follow it used to go
+    # back to the name: os.path.isdir(<rootfs>/etc) followed whatever was
+    # under containers/box by then, and write_resolv_conf / write_hosts /
+    # register_android_ids each resolved it again. So a same-user process
+    # that swaps the container directory once the unpack is over redirects
+    # every one of those writes -- a replaced resolv.conf and hosts, and a
+    # chmod 0644 plus an appended line on a host passwd-like file.
+    arc = tmp_path / "box.tar.gz"
+    builders.make_tar(str(arc), builders.rootfs_members(extra=[
+        {"name": "etc/passwd", "type": "file",
+         "data": b"root:x:0:0::/root:/bin/sh\n"},
+    ]), compression="gz")
+
+    decoy_etc = outside / "rootfs" / "etc"
+    decoy_etc.mkdir(parents=True)
+    for name, body in (("resolv.conf", "nameserver 10.0.0.1\n"),
+                       ("hosts", "127.0.0.1 host\n"),
+                       ("passwd", "hostuser:x:1000:1000::/home:/bin/sh\n")):
+        (decoy_etc / name).write_text(body)
+    (decoy_etc / "passwd").chmod(0o600)
+
+    real = install.install_from_local_file
+    moved = tmp_path / "moved-aside"
+
+    def swap_after_extraction(*args, **kwargs):
+        metadata = real(*args, **kwargs)
+        os.rename(container_dir("box"), str(moved))
+        os.symlink(str(outside), container_dir("box"))
+        return metadata
+
+    monkeypatch.setattr(install, "install_from_local_file",
+                        swap_after_extraction)
+    command_install(_install_args(str(arc), name="box"))
+
+    # Nothing under the planted name was written, replaced or relaxed.
+    assert (decoy_etc / "resolv.conf").read_text() == "nameserver 10.0.0.1\n"
+    assert (decoy_etc / "hosts").read_text() == "127.0.0.1 host\n"
+    assert (decoy_etc / "passwd").read_text() == \
+        "hostuser:x:1000:1000::/home:/bin/sh\n"
+    assert stat.S_IMODE((decoy_etc / "passwd").stat().st_mode) == 0o600
+    assert sorted(os.listdir(str(decoy_etc))) == \
+        ["hosts", "passwd", "resolv.conf"]
+    assert sorted(os.listdir(str(outside))) == ["keepsake", "rootfs"]
+
+    # The fixups landed in the rootfs the extraction actually wrote to.
+    real_etc = moved / "rootfs" / "etc"
+    assert "nameserver" in (real_etc / "resolv.conf").read_text()
+    assert "127.0.0.1" in (real_etc / "hosts").read_text()
+    assert "\naid_" in (real_etc / "passwd").read_text()
 
 
 def test_failed_install_does_not_clean_through_a_planted_parent(

@@ -31,6 +31,7 @@
 import json
 import os
 import re
+import stat
 import sys
 import tarfile
 
@@ -49,9 +50,10 @@ from proot_distro.paths import (
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import derive_alias, pull_image
 from proot_distro.helpers.rootfs import (
-    register_android_ids,
-    write_hosts,
-    write_resolv_conf,
+    open_etc,
+    register_android_ids_at,
+    write_hosts_at,
+    write_resolv_conf_at,
 )
 from proot_distro.helpers.download import download_file
 from proot_distro.commands.install_local import install_from_local_file
@@ -207,6 +209,15 @@ def _resolve_install_name(image_ref, local_path, url, custom_container_name):
     return derived
 
 
+def _is_regular_at(dir_fd: int, name: str) -> bool:
+    """True when *name* under dir_fd is a plain file, following nothing."""
+    try:
+        st = dirfd.lstat_at(dir_fd, name)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
 def _run_install(
     install_name: str,
     image_ref: str,
@@ -314,16 +325,39 @@ def _run_install(
             except OSError as exc:
                 log_error(f"Warning: could not write manifest.json: {exc}")
 
-        if os.path.isdir(os.path.join(rootfs_dir, "etc")):
-            log_info("Updating '/etc/resolv.conf'...")
-            write_resolv_conf(rootfs_dir)
+        # The fixups are the last thing the install writes into the
+        # rootfs, and every one of them writes: a name resolved a second
+        # time is a name that can have been re-pointed since the
+        # extraction finished. `containers/<name>` is guest-writable on
+        # Termux -- it sits under the bound $TERMUX_PREFIX -- so
+        # os.path.isdir() on the composed path followed whatever a
+        # concurrent same-user process left under it, and the three
+        # writers then resolved it again, replacing etc/resolv.conf and
+        # etc/hosts and chmod'ing and appending to passwd-like files in a
+        # host directory of that process's choosing. `etc` is opened once
+        # off the descriptor the extraction itself wrote through, and the
+        # three fixups work from that one descriptor.
+        etc_fd = open_etc(rootfs_fd)
+        if etc_fd is not None:
+            try:
+                log_info("Updating '/etc/resolv.conf'...")
+                write_resolv_conf_at(etc_fd)
 
-            log_info("Updating '/etc/hosts'...")
-            write_hosts(rootfs_dir)
+                log_info("Updating '/etc/hosts'...")
+                write_hosts_at(etc_fd)
 
-            if os.path.isfile(os.path.join(rootfs_dir, "etc", "passwd")):
-                log_info("Registering Android-specific UIDs and GIDs...")
-                register_android_ids(rootfs_dir)
+                # os.path.isfile() answered for the *target* of a link an
+                # image shipped under the name, while the append that
+                # follows refuses one (O_NOFOLLOW) -- so the guard said
+                # yes to exactly the entries the work then declined. The
+                # lstat describes the entry itself, which is what decides
+                # whether register_android_ids_at has a passwd to append
+                # to at all.
+                if _is_regular_at(etc_fd, "passwd"):
+                    log_info("Registering Android-specific UIDs and GIDs...")
+                    register_android_ids_at(etc_fd)
+            finally:
+                os.close(etc_fd)
 
         setup_fake_sysdata(rootfs_dir, container_fd=container_fd)
 
