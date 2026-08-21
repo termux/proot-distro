@@ -59,7 +59,7 @@ from proot_distro.compress import (
 )
 from proot_distro.l2s import open_l2s_backing, resolve_l2s_target
 from proot_distro.message import (
-    log_info, log_error, crit_error, quote_error, quote_path,
+    log_info, log_error, crit_error, quote_error, quote_path, warn,
 )
 from proot_distro.progress import (
     REDRAW_THRESHOLD_BYTES, clear_bar, draw_bytes_bar,
@@ -383,7 +383,7 @@ def _add_path(
         os.close(fd)
 
 
-def _relax_permissions(dir_fd, name, _arcname, _path, st) -> None:
+def _relax_permissions(dir_fd, name, arcname, _path, st) -> None:
     """Make one entry readable by its owner, best effort.
 
     Called for every entry *before* the walk descends into it, so a
@@ -396,6 +396,22 @@ def _relax_permissions(dir_fd, name, _arcname, _path, st) -> None:
     would hand the mode change to whatever a symlink planted since the
     lstat points at, which is a host file with bits of the guest's
     choosing.
+
+    A regular file carrying more than one link is left exactly as it is.
+    A hardlink is the file itself under a second name -- O_NOFOLLOW says
+    nothing about one and no descriptor can tell a link a guest made to a
+    *host* file from an ordinary rootfs entry -- so this pass, which is
+    the one place `backup` writes to an inode it did not create, would
+    hand the container owner bits on any file the host had put within its
+    reach. That the guest can reach it at all is what makes the link
+    possible, so the file may well be one it could chmod directly; the
+    rule the rest of the program follows is not to be the instrument
+    either way. The count is read twice, and each read has its own job:
+    the walk's lstat is what can still name the entry in a warning --
+    a file left unreadable is one the archiving pass cannot open and
+    drops silently -- while single_link=True re-reads it off the
+    descriptor chmod_at itself opens, which is what actually refuses,
+    since an entry can gain a link between the two.
     """
     m = st.st_mode
     if stat.S_ISDIR(m):
@@ -407,8 +423,17 @@ def _relax_permissions(dir_fd, name, _arcname, _path, st) -> None:
     else:
         return
     mode = stat.S_IMODE(m)
-    if mode | needed != mode:
-        dirfd.chmod_at(dir_fd, name, mode | needed)
+    if mode | needed == mode:
+        return
+    if stat.S_ISREG(m) and st.st_nlink != 1:
+        # The arcname carries names the guest chose; an ESC in one
+        # repaints the terminal.
+        warn(f"'{quote_path(arcname)}' is unreadable and has more than "
+             f"one hard link; leaving its permissions alone. It may be "
+             f"missing from the archive.")
+        return
+    dirfd.chmod_at(dir_fd, name, mode | needed,
+                   single_link=stat.S_ISREG(m))
 
 
 def _fix_permissions(container_fd: int, rootfs_dir: str) -> None:

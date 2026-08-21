@@ -100,6 +100,84 @@ def test_relax_permissions_still_opens_a_sealed_entry(env):
     assert stat.S_IMODE(f.stat().st_mode) & stat.S_IRUSR
 
 
+def test_relax_permissions_does_not_chmod_a_hardlinked_host_file(env):
+    root, secret = env
+    # A hardlink is the file itself under a second name: O_NOFOLLOW says
+    # nothing about it and the entry looks like any other rootfs file.
+    secret.chmod(0o000)
+    link = root / "f"
+    os.link(str(secret), str(link))
+    st = os.stat(str(link), follow_symlinks=False)
+
+    fd = _dir_fd(root)
+    try:
+        backup_mod._relax_permissions(fd, "f", "box/rootfs/f",
+                                      str(link), st)
+    finally:
+        os.close(fd)
+
+    assert stat.S_IMODE(secret.stat().st_mode) == 0o000
+
+
+def test_relax_permissions_does_not_chmod_a_link_made_after_the_lstat(env):
+    root, secret = env
+    # The walk's lstat says one link; the link appears before the chmod.
+    # chmod_at re-reads the count off the descriptor it opens.
+    secret.chmod(0o000)
+    f = root / "f"
+    f.write_text("x")
+    f.chmod(0o000)
+    st = os.stat(str(f), follow_symlinks=False)
+    assert st.st_nlink == 1
+    os.remove(str(f))
+    os.link(str(secret), str(f))
+
+    fd = _dir_fd(root)
+    try:
+        backup_mod._relax_permissions(fd, "f", "box/rootfs/f", str(f), st)
+    finally:
+        os.close(fd)
+
+    assert stat.S_IMODE(secret.stat().st_mode) == 0o000
+
+
+def test_relax_permissions_leaves_a_readable_hardlink_alone(env):
+    # Nothing to relax: an ordinary hardlinked binary (busybox and
+    # friends) is already owner-readable, so no warning and no chmod.
+    root, secret = env
+    secret.chmod(0o644)
+    link = root / "f"
+    os.link(str(secret), str(link))
+    st = os.stat(str(link), follow_symlinks=False)
+
+    fd = _dir_fd(root)
+    try:
+        backup_mod._relax_permissions(fd, "f", "box/rootfs/f",
+                                      str(link), st)
+    finally:
+        os.close(fd)
+
+    assert stat.S_IMODE(secret.stat().st_mode) == 0o644
+
+
+def test_relax_permissions_names_the_entry_it_skipped(env, capsys):
+    root, secret = env
+    secret.chmod(0o000)
+    os.link(str(secret), str(root / "f"))
+    st = os.stat(str(root / "f"), follow_symlinks=False)
+
+    fd = _dir_fd(root)
+    try:
+        backup_mod._relax_permissions(fd, "f", "box/rootfs/f",
+                                      str(root / "f"), st)
+    finally:
+        os.close(fd)
+
+    err = capsys.readouterr().err
+    assert "box/rootfs/f" in err
+    assert "hard link" in err
+
+
 # --- the archiving pass ----------------------------------------------------
 
 def _pack_one(root, name, path, st):

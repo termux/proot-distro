@@ -508,6 +508,10 @@ Top-level utilities (each owns a focused concern):
   `_chmod_fd()` (`fchmod`, falling back to the fd's `/proc` alias, since
   `fchmod` is **EBADF** on the `O_PATH` fds `pin_path` yields) and
   `rmtree_at`'s force path pins with `_make_readable_at()` first.
+  `single_link=True` adds the one thing the descriptor alone does not
+  settle — it `fstat`s the fd it just opened and refuses an entry
+  carrying more than one link, for a caller that must not relax an inode
+  it did not create (`backup`'s permission pass).
   **File type**: `O_NOFOLLOW` says nothing about a FIFO, and opening one
   waits for a peer a hostile guest never supplies, so regular-file
   endpoints go through `open_regular_at()` — `O_NONBLOCK` plus an
@@ -534,7 +538,9 @@ Top-level utilities (each owns a focused concern):
   planted hardlink handed the guest the mode (and, under `--checksum`, the
   timestamps) of any host file within its reach — no race required, and on
   Termux `$TERMUX_PREFIX` is bound into every non-isolated container by
-  default with `RUNTIME_DIR` underneath it.
+  default with `RUNTIME_DIR` underneath it. `backup`'s permission pass is
+  the same shape of write and declines the same way, through
+  `chmod_at(single_link=True)`.
 - `sysdata.py` — `setup_fake_sysdata`, `fake_sysdata_bindings`. The
   container's `sysdata/` directory is guest-writable (on Termux it sits
   under the bound `$TERMUX_PREFIX`), so every entry is made, chmod'ed
@@ -1759,9 +1765,20 @@ builds the `TarInfo` itself for a directory, a symlink and an l2s
 inline; a regular file goes through `tf.gettarinfo(fileobj=…)`, off the
 open descriptor, which keeps tarfile's `(dev, ino)` table so a second
 name for a file already in the archive stays a hard-link member instead
-of a second copy. A hardlink to a host file is still the file itself
-under a second name and no descriptor can tell it apart — the one thing
-the walk does not close.
+of a second copy.
+
+The permission pass is the one thing `backup` *writes*, and a hardlink is
+what a descriptor cannot vouch for: it is the file itself under a second
+name, and nothing tells one a guest made to a host file from an ordinary
+rootfs entry. So a regular file carrying more than one link is left
+exactly as it is — `dirfd.chmod_at(single_link=True)` refuses it off the
+descriptor it opens, closing the gap between the walk's `lstat` and the
+chmod, and the `lstat`'s own count is what names the entry in a warning,
+since an unreadable file is one the archiving pass then cannot open and
+drops. What that leaves is the *content* half: a hardlinked host file's
+bytes still go into the archive under an innocent name, which no
+descriptor can tell apart either — the one thing the walk does not
+close.
 
 Restore writes nothing by path either. `containers/<name>` is opened
 once — at the **commit point**, so an archive that never produces a

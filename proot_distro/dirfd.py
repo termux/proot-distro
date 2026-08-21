@@ -470,7 +470,7 @@ def make_writable(dir_fd: int) -> None:
 
 
 def chmod_at(dir_fd: int, name: str, mode: int, *,
-             only_dir: bool = False) -> None:
+             only_dir: bool = False, single_link: bool = False) -> bool:
     """Set *mode* on *name* under dir_fd, best effort, never following a link.
 
     The mode is applied to a descriptor, never to the name: os.chmod() on
@@ -489,16 +489,30 @@ def chmod_at(dir_fd: int, name: str, mode: int, *,
     A hardlink is still the file itself under a second name and cannot be
     told from an ordinary entry, so this reaches whatever inode the guest
     linked in. That is not something a descriptor can fix; writes avoid it
-    by creating a new inode (see open_new_at), but a chmod that exists to
-    relax an entry the caller must then read has no such alternative.
+    by creating a new inode (see open_new_at), and a caller that would
+    rather not relax an inode it did not create passes single_link=True,
+    which refuses an entry carrying more than one link -- the state a
+    planted hardlink to a host file is in, and one nothing else about the
+    entry shows. The count is taken from the descriptor just opened, not
+    from an lstat of the name, so a link made after the caller looked is
+    refused too.
+
+    Returns True when the mode was applied.
     """
     flags = (_O_PATH_DIR if only_dir else _O_PATH_ANY) | os.O_NOFOLLOW
     try:
         fd = os.open(name, flags, dir_fd=dir_fd)
     except OSError:
-        return
+        return False
     try:
-        _chmod_fd(fd, mode)
+        if single_link:
+            try:
+                st = os.fstat(fd)
+            except OSError:
+                return False
+            if not stat.S_ISDIR(st.st_mode) and st.st_nlink != 1:
+                return False
+        return _chmod_fd(fd, mode)
     finally:
         os.close(fd)
 
