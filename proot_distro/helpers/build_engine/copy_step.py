@@ -50,7 +50,6 @@ import re
 import shutil
 import stat
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -103,10 +102,21 @@ class _SourceTree:
     class returns is walked down from the root with O_NOFOLLOW instead,
     and the entries recorded in a file_map carry (root, components) so
     the reads that come later can do the same.
+
+    *root_fd* is the root itself when the caller has pinned it, and for
+    `COPY --from` the caller has: the source is another stage's rootfs,
+    or an image pulled into the build's scratch tree, and both are names
+    anything running as the invoking user can re-point -- which is what
+    a process a previous RUN step left behind is. Without it the root is
+    opened by name on every walk, which is what a build context, a
+    directory the user named on the command line, still gets. The
+    descriptor is borrowed for the life of the instruction; this class
+    does not close it.
     """
 
-    def __init__(self, root):
+    def __init__(self, root, *, root_fd=None):
         self.root = os.path.abspath(root)
+        self.root_fd = root_fd
 
     def resolve(self, parts):
         """Where *parts* lands beneath the root, as components, or None.
@@ -116,13 +126,16 @@ class _SourceTree:
         parts = [p for p in parts if p not in ("", os.curdir)]
         if not parts:
             return []
-        resolved = safe_resolve_parts(self.root, parts[:-1])
+        resolved = safe_resolve_parts(self.root, parts[:-1],
+                                      root_fd=self.root_fd)
         if resolved is None:
             return None
         return resolved + [parts[-1]]
 
     def opendir(self, parts):
         """A descriptor on the directory *parts* names. Raises OSError."""
+        if self.root_fd is not None:
+            return dirfd.descend_at(self.root_fd, parts)
         root_fd = dirfd.opendir(self.root)
         try:
             return dirfd.descend_at(root_fd, parts)
@@ -133,6 +146,8 @@ class _SourceTree:
         """What *parts* names, without following it. stat, or None."""
         if not parts:
             try:
+                if self.root_fd is not None:
+                    return os.fstat(self.root_fd)
                 return os.stat(self.root)
             except OSError:
                 return None
@@ -176,29 +191,65 @@ def _rel_name(parts):
     return "/".join(parts) if parts else os.curdir
 
 
-def _spool_dir(engine):
-    """The build's scratch directory for ADD content, created on demand."""
-    path = os.path.join(engine.tmp_root, "add-spool")
-    os.makedirs(path, exist_ok=True)
-    return path
+class _Spool:
+    """The build's scratch directory for ADD content, as a descriptor.
 
+    ADD parks a URL response, and every regular member of an archive it
+    auto-extracts, in a file here, and the file_map then names those
+    files as the source its two consumers read from. So the directory is
+    written to *and* read from long after it was made -- and
+    `<scratch>/add-spool` is a name anything running as the invoking
+    user can re-point, which is what a process a previous RUN step left
+    behind is. It is created off the scratch root's own descriptor and
+    every file below it is addressed as (dir_fd, name); nothing goes
+    through the path but the `src` string a message would print.
 
-def _spool_stream(fobj, spool):
-    """Copy *fobj* into a fresh file under *spool*; return its path."""
-    fd, path = tempfile.mkstemp(dir=spool, prefix="add-")
-    try:
-        with os.fdopen(fd, "wb") as out:
-            shutil.copyfileobj(fobj, out, _SPOOL_CHUNK)
-    except BaseException:
+    The descriptor is the instruction's for as long as the file_map
+    lives, which is why close() is called by _do_copy_or_add and not
+    here.
+    """
+
+    __slots__ = ("path", "fd", "_seq")
+
+    def __init__(self, engine):
+        self.path = os.path.join(engine.tmp_root, "add-spool")
+        self.fd = _open_scratch_dir(engine, "add-spool")
+        self._seq = 0
+
+    def stream(self, fobj):
+        """Copy *fobj* into a fresh file here; return its name.
+
+        O_EXCL off the directory's descriptor rather than
+        tempfile.mkstemp(dir=path), which resolves the directory by name
+        for every member of an ADD'd archive.
+        """
+        while True:
+            self._seq += 1
+            name = f"add-{self._seq}.{os.urandom(4).hex()}"
+            try:
+                fd, _st = dirfd.open_new_at(self.fd, name, 0o600)
+            except FileExistsError:
+                continue
+            break
         try:
-            os.unlink(path)
-        except OSError:
-            pass
-        raise
-    return path
+            with os.fdopen(fd, "wb") as out:
+                shutil.copyfileobj(fobj, out, _SPOOL_CHUNK)
+        except BaseException:
+            dirfd.unlink_quietly(self.fd, name)
+            raise
+        return name
+
+    def close(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
 
 
-def _file_entry(file_map, arcname, root, parts, mode, uid, gid, mtime, size):
+def _file_entry(file_map, arcname, root, parts, mode, uid, gid, mtime, size,
+                root_fd=None):
     """Record a regular file in *file_map* as (root, components).
 
     `src` is the joined form, for a message that has to name the source;
@@ -206,16 +257,21 @@ def _file_entry(file_map, arcname, root, parts, mode, uid, gid, mtime, size):
     from `root` (layer_diff.MapSources), and `size` is what the
     enumeration measured, which is all the progress bar's denominator
     needs — the pack sizes each file off the descriptor it reads.
+
+    *root_fd* is the tree's own descriptor when the recorder holds one,
+    and it is what that walk starts from: the entry is read twice, once
+    to materialise it and once to pack it, both of them long after the
+    root was named.
     """
     file_map[arcname] = {
         "kind": "file",
-        "root": root, "rel": tuple(parts),
+        "root": root, "root_fd": root_fd, "rel": tuple(parts),
         "src": os.path.join(root, *parts),
         "mode": mode, "uid": uid, "gid": gid, "mtime": mtime, "size": size,
     }
 
 
-def _spool_entry(file_map, arcname, path, mode, uid, gid, mtime):
+def _spool_entry(file_map, arcname, spool, name, mode, uid, gid, mtime):
     """Record a spooled file in *file_map* as an ordinary file entry.
 
     The timestamp goes on the spool file itself because that is where both
@@ -224,17 +280,22 @@ def _spool_entry(file_map, arcname, path, mode, uid, gid, mtime):
     value came out of an archive header or off the clock, so it can be any
     number at all -- os.utime() raises OverflowError, not OSError, on one
     the platform cannot store.
+
+    Both that and the size are taken as (dir_fd, name) off the spool's
+    own descriptor, and the entry records the descriptor too, so the
+    reads that come later start where the write did.
     """
     try:
-        os.utime(path, (mtime, mtime))
+        os.utime(name, (mtime, mtime), dir_fd=spool.fd,
+                 follow_symlinks=False)
     except (OSError, OverflowError, ValueError):
         pass
     try:
-        size = os.stat(path).st_size
+        size = dirfd.lstat_at(spool.fd, name).st_size
     except OSError:
         size = 0
-    root, name = os.path.split(path)
-    _file_entry(file_map, arcname, root, [name], mode, uid, gid, mtime, size)
+    _file_entry(file_map, arcname, spool.path, [name], mode, uid, gid,
+                mtime, size, root_fd=spool.fd)
 
 
 def do_copy(engine, instr):
@@ -276,12 +337,18 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
     chmod = flags.get("chmod")
     from_stage = flags.get("from")
     from_rootfs = None
+    from_rootfs_fd = None
+    # Owned by this instruction when the source tree is one this call
+    # pulled; borrowed (and not closed) when it is another stage's.
+    owned_fd = None
     if from_stage:
         ref_stage = engine.stages.get(from_stage)
         if ref_stage is None:
-            from_rootfs = _pull_throwaway_image(engine, from_stage)
+            from_rootfs, owned_fd = _pull_throwaway_image(engine, from_stage)
+            from_rootfs_fd = owned_fd
         else:
             from_rootfs = ref_stage.rootfs_dir
+            from_rootfs_fd = ref_stage.rootfs_fd
 
     resolved = []
     if from_rootfs is None:
@@ -309,37 +376,56 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
     if trailing and not dest.endswith("/"):
         dest += "/"
 
-    uid, gid = resolve_chown(stage.rootfs_dir, chown) if chown else (0, 0)
-    mode_override = (
-        int(chmod, 8) if chmod and re.match(r"^[0-7]+$", chmod) else None
-    )
+    # Bound before the try, so a failure to create either of them still
+    # meets a finally that can ask whether there is anything to release.
+    spool = None
+    try:
+        uid, gid = (resolve_chown(stage.rootfs_dir, chown,
+                                  root_fd=stage.rootfs_fd)
+                    if chown else (0, 0))
+        mode_override = (
+            int(chmod, 8) if chmod and re.match(r"^[0-7]+$", chmod) else None
+        )
 
-    file_map = {}
-    spool = _spool_dir(engine) if allow_url or auto_extract else None
-    for kind, src in resolved:
-        if kind == "url":
-            _copy_url(src, dest, file_map, uid, gid, mode_override, spool)
-        elif kind == "ctx":
-            _copy_from_context(
-                engine, src, dest, is_dir_dest, file_map,
-                uid, gid, mode_override, auto_extract, spool,
-            )
-        elif kind == "rootfs":
-            _copy_from_rootfs(
-                from_rootfs, src, dest, is_dir_dest, file_map,
-                uid, gid, mode_override,
-            )
+        file_map = {}
+        if allow_url or auto_extract:
+            spool = _Spool(engine)
+        for kind, src in resolved:
+            if kind == "url":
+                _copy_url(src, dest, file_map, uid, gid, mode_override, spool)
+            elif kind == "ctx":
+                _copy_from_context(
+                    engine, src, dest, is_dir_dest, file_map,
+                    uid, gid, mode_override, auto_extract, spool,
+                )
+            elif kind == "rootfs":
+                _copy_from_rootfs(
+                    from_rootfs, src, dest, is_dir_dest, file_map,
+                    uid, gid, mode_override, from_rootfs_fd,
+                )
 
-    if not file_map:
-        return
+        if not file_map:
+            return
 
-    _materialise_files(stage.rootfs_dir, file_map)
+        _materialise_files(stage.rootfs_dir, file_map,
+                           rootfs_fd=stage.rootfs_fd)
 
-    tmp_layer_path = os.path.join(
-        engine.tmp_root,
-        f"layer-{stage.index}-{len(stage.layers)}.tar.gz",
-    )
-    digest, size, diff_id = write_files_layer(file_map, tmp_layer_path)
+        tmp_layer_path = os.path.join(
+            engine.tmp_root,
+            f"layer-{stage.index}-{len(stage.layers)}.tar.gz",
+        )
+        digest, size, diff_id = write_files_layer(file_map, tmp_layer_path)
+    finally:
+        # Held for the whole instruction: the map is enumerated first and
+        # consumed twice afterwards, and every "file" entry in it names
+        # one of these descriptors as the tree its bytes come from.
+        if owned_fd is not None:
+            try:
+                os.close(owned_fd)
+            except OSError:
+                pass
+        if spool is not None:
+            spool.close()
     # See run_step: the layer cache is walked down to, not named.
     publish_file(tmp_layer_path, layer_cache_path(digest))
     stage.layers.append(
@@ -349,25 +435,53 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
 
 
 def _pull_throwaway_image(engine, image_ref):
-    """Pull an external image into a tmp rootfs for COPY --from."""
+    """Pull an external image into a tmp rootfs for COPY --from.
+
+    Returns (path, fd). The directory is made off the build scratch
+    root's own descriptor and kept as one, because it is where the
+    instruction then reads every byte from: composing
+    `<scratch>/copyfrom-<slot>` and opening it again is a second
+    resolution of a name a RUN step's leftovers can re-point, and what
+    comes out of the tree goes into the layer `push` uploads. The caller
+    owns the descriptor for the life of the instruction.
+    """
     slot = hashlib.sha256(image_ref.encode()).hexdigest()[:16]
-    rootfs = os.path.join(engine.tmp_root, "copyfrom-" + slot)
-    if os.path.isdir(rootfs) and os.listdir(rootfs):
-        return rootfs
-    os.makedirs(rootfs, exist_ok=True)
-    if not engine.quiet:
-        log_info(f"COPY --from='{image_ref}': fetching external image...")
+    name = "copyfrom-" + slot
+    rootfs = os.path.join(engine.tmp_root, name)
     try:
-        rootfs_fd = dirfd.opendir(rootfs)
+        rootfs_fd = _open_scratch_dir(engine, name)
     except OSError as exc:
         raise BuildError(f"COPY --from={image_ref}: {exc}") from exc
     try:
-        pull_image(image_ref, rootfs_fd, engine.target_arch_pd)
-    except RuntimeError as exc:
-        raise BuildError(f"COPY --from={image_ref}: {exc}") from exc
-    finally:
+        # Already fetched for an earlier instruction in this build.
+        if dirfd.listdir_at(rootfs_fd):
+            return rootfs, rootfs_fd
+        if not engine.quiet:
+            log_info(f"COPY --from='{image_ref}': fetching external image...")
+        try:
+            pull_image(image_ref, rootfs_fd, engine.target_arch_pd)
+        except RuntimeError as exc:
+            raise BuildError(f"COPY --from={image_ref}: {exc}") from exc
+    except BaseException:
         os.close(rootfs_fd)
-    return rootfs
+        raise
+    return rootfs, rootfs_fd
+
+
+def _open_scratch_dir(engine, name):
+    """Open (creating) *name* directly under the build's scratch root.
+
+    From the scratch root's descriptor when the engine has one, so the
+    directory is made under the inode the build created rather than
+    under a name anything running as the invoking user can re-point.
+    Raises OSError.
+    """
+    tmp_root_fd = getattr(engine, "tmp_root_fd", None)
+    if tmp_root_fd is not None:
+        return dirfd.descend_at(tmp_root_fd, (name,), create=True)
+    path = os.path.join(engine.tmp_root, name)
+    os.makedirs(path, exist_ok=True)
+    return dirfd.opendir(path)
 
 
 def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
@@ -431,7 +545,7 @@ def _copy_from_context(engine, src, dest, is_dir_dest, file_map,
 
 
 def _copy_from_rootfs(from_rootfs, src, dest, is_dir_dest,
-                      file_map, uid, gid, mode_override):
+                      file_map, uid, gid, mode_override, from_rootfs_fd=None):
     """COPY --from a stage or image rootfs, confined to that rootfs.
 
     The source tree here is image content outright, so the walk matters
@@ -440,8 +554,13 @@ def _copy_from_rootfs(from_rootfs, src, dest, is_dir_dest,
     layer, without the Dockerfile or the build context saying anything
     unusual. Clamped, the link means inside the image the way it does
     to the guest.
+
+    *from_rootfs_fd* is the source tree pinned: for `--from=<stage>` it
+    is that stage's own descriptor, and for `--from=<image>` the one the
+    throwaway pull opened. Either way the name it was made under sits in
+    the build's scratch tree, so the walks below must not start from it.
     """
-    tree = _SourceTree(from_rootfs)
+    tree = _SourceTree(from_rootfs, root_fd=from_rootfs_fd)
     raw = _spec_parts(src)
     if raw is None:
         raise BuildError(
@@ -478,11 +597,11 @@ def _copy_url(url, dest, file_map, uid, gid, mode_override, spool):
     opener = urllib.request.build_opener(AuthStrippingRedirectHandler)
     try:
         with opener.open(url) as resp:
-            path = _spool_stream(resp, spool)
+            spooled = spool.stream(resp)
     except (urllib.error.URLError, OSError) as exc:
         raise BuildError(f"ADD {url}: {exc}") from exc
     _spool_entry(
-        file_map, arcname, path,
+        file_map, arcname, spool, spooled,
         mode_override if mode_override is not None else 0o644,
         uid, gid, int(time.time()),
     )
@@ -522,7 +641,8 @@ def _add_regular(tree, parts, st, dest, is_dir_dest, file_map,
     if mode_override is not None:
         mode = mode_override
     _file_entry(file_map, arcname, tree.root, parts,
-                mode, uid, gid, int(st.st_mtime), st.st_size)
+                mode, uid, gid, int(st.st_mtime), st.st_size,
+                root_fd=tree.root_fd)
 
 
 def _add_symlink(tree, parts, st, dest, is_dir_dest, file_map, uid, gid):
@@ -628,6 +748,7 @@ def _add_directory_tree(tree, parts, dest, file_map,
                     (mode_override if mode_override is not None
                      else stat.S_IMODE(mode)),
                     uid, gid, int(st.st_mtime), st.st_size,
+                    root_fd=tree.root_fd,
                 )
             # Other types intentionally skipped (devices, FIFOs, sockets).
     except BaseException:
@@ -735,9 +856,9 @@ def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool, src):
                     fobj_m = tf.extractfile(m)
                     if fobj_m is None:
                         continue
-                    path = _spool_stream(fobj_m, spool)
+                    spooled = spool.stream(fobj_m)
                     _spool_entry(
-                        file_map, arc, path,
+                        file_map, arc, spool, spooled,
                         stat.S_IMODE(m.mode) or 0o644, uid, gid,
                         int(m.mtime),
                     )
@@ -756,7 +877,7 @@ def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool, src):
     return recorded
 
 
-def _materialise_files(rootfs_dir, file_map):
+def _materialise_files(rootfs_dir, file_map, *, rootfs_fd=None):
     """Apply file_map entries to rootfs_dir on disk.
 
     Sorting the arcnames guarantees every parent is materialised before
@@ -786,6 +907,12 @@ def _materialise_files(rootfs_dir, file_map):
     The reading half is the same bargain: a file entry's bytes come out
     of a descriptor MapSources walks down from the tree the source was
     found in, never out of a path composed from it.
+
+    *rootfs_fd* is where both walks start. The rootfs is the one
+    directory the O_NOFOLLOW descent cannot vouch for itself, and a
+    stage's is a name in the build's scratch tree -- so a process a
+    previous RUN step left running could move it aside and have the
+    whole instruction land somewhere else, resolve and all.
     """
     with MapSources() as sources:
         for arcname in sorted(file_map.keys()):
@@ -796,11 +923,12 @@ def _materialise_files(rootfs_dir, file_map):
             parts = layer_path_parts(arcname)
             if parts is None:
                 continue
-            resolved = safe_resolve_parts(rootfs_dir, parts[:-1])
+            resolved = safe_resolve_parts(rootfs_dir, parts[:-1],
+                                          root_fd=rootfs_fd)
             if resolved is None:
                 continue
 
-            dir_fd = dirfd.opendir_under(rootfs_dir, resolved, create=True)
+            dir_fd = _open_dest_dir(rootfs_dir, rootfs_fd, resolved)
             if dir_fd is None:
                 raise BuildError(
                     f"Failed to write '{arcname}' into rootfs: "
@@ -814,6 +942,21 @@ def _materialise_files(rootfs_dir, file_map):
                 ) from exc
             finally:
                 os.close(dir_fd)
+
+
+def _open_dest_dir(rootfs_dir, rootfs_fd, resolved):
+    """Open (creating) the resolved destination directory. Descriptor or None.
+
+    From the pinned rootfs when there is one -- descend_at raises where
+    opendir_under answers None, and both mean the same thing to the
+    caller: do not write here.
+    """
+    if rootfs_fd is None:
+        return dirfd.opendir_under(rootfs_dir, resolved, create=True)
+    try:
+        return dirfd.descend_at(rootfs_fd, resolved, create=True)
+    except OSError:
+        return None
 
 
 def _drop_entry_at(dir_fd, name):

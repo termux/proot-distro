@@ -28,8 +28,8 @@ def _workdir_engine(tmp_path):
     rootfs.mkdir(parents=True)
     tmp_root = tmp_path / "tmp"
     tmp_root.mkdir()
-    stage = SimpleNamespace(rootfs_dir=str(rootfs), workdir="/",
-                            image_config={}, index=0, layers=[])
+    stage = SimpleNamespace(rootfs_dir=str(rootfs), rootfs_fd=None,
+                            workdir="/", image_config={}, index=0, layers=[])
     return SimpleNamespace(current=stage, tmp_root=str(tmp_root)), stage, rootfs
 
 

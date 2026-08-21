@@ -58,6 +58,17 @@ def test_copy_from_rootfs_escape_rejected(tmp_path):
     assert "escapes the source rootfs" in str(exc.value)
 
 
+def _spool(tmp_path):
+    """A real _Spool on a scratch root standing in for a build's.
+
+    Every spooled file is created and read back through its descriptor,
+    so a test that hands the module a path is not exercising what runs.
+    """
+    return copy_step._Spool(
+        SimpleNamespace(tmp_root=str(tmp_path), tmp_root_fd=None)
+    )
+
+
 def test_add_tar_extract_drops_traversal(tmp_path, builders):
     arc = tmp_path / "payload.tar"
     builders.make_tar(str(arc), [
@@ -69,11 +80,10 @@ def test_add_tar_extract_drops_traversal(tmp_path, builders):
         {"name": "/abs", "type": "file", "data": b"A"},
     ])
     file_map = {}
-    spool = tmp_path / "spool"
-    spool.mkdir()
+    spool = _spool(tmp_path)
     with open(str(arc), "rb") as fh:
         copy_step._extract_tar_into_dest(
-            fh, "extracted", file_map, 0, 0, str(spool), "payload.tar")
+            fh, "extracted", file_map, 0, 0, spool, "payload.tar")
 
     keys = set(file_map.keys())
     # No key escapes via ".." and every key is confined under the dest prefix.
@@ -94,7 +104,7 @@ def _add_from_context(ctx, name, dest, spool):
     file_map = {}
     copy_step._copy_from_context(
         _engine(ctx), name, dest, False, file_map, 0, 0, None, True,
-        spool=str(spool),
+        spool=spool,
     )
     return file_map
 
@@ -112,8 +122,7 @@ def test_add_corrupt_archive_is_a_build_error(tmp_path, builders):
     ])
     whole = arc.read_bytes()
     arc.write_bytes(whole[:len(whole) // 2])       # truncated
-    spool = tmp_path / "spool"
-    spool.mkdir()
+    spool = _spool(tmp_path)
 
     with pytest.raises(BuildError) as exc:
         _add_from_context(ctx, "payload.tar", "/dest/", spool)
@@ -132,8 +141,7 @@ def test_add_of_a_plain_gzip_file_copies_it_verbatim(tmp_path):
     # Incompressible, so the file clears the 512 bytes is_tar_header
     # needs before it will even look at a signature.
     blob.write_bytes(gzip.compress(random.Random(0).randbytes(4096)))
-    spool = tmp_path / "spool"
-    spool.mkdir()
+    spool = _spool(tmp_path)
 
     file_map = _add_from_context(ctx, "data.gz", "/dest/data.gz", spool)
     assert list(file_map) == ["dest/data.gz"]
@@ -149,8 +157,7 @@ def test_add_of_an_empty_archive_copies_it_verbatim(tmp_path, builders):
     builders.make_tar(str(arc), [
         {"name": "sock", "type": "fifo"},
     ])
-    spool = tmp_path / "spool"
-    spool.mkdir()
+    spool = _spool(tmp_path)
 
     file_map = _add_from_context(ctx, "empty.tar", "/dest/empty.tar", spool)
     assert list(file_map) == ["dest/empty.tar"]
@@ -165,8 +172,7 @@ def test_add_of_a_real_archive_still_extracts(tmp_path, builders):
         {"name": "a", "type": "file", "data": b"A"},
         {"name": "d", "type": "dir"},
     ])
-    spool = tmp_path / "spool"
-    spool.mkdir()
+    spool = _spool(tmp_path)
 
     file_map = _add_from_context(ctx, "payload.tar", "/dest/", spool)
     assert set(file_map) == {"dest/a", "dest/d"}

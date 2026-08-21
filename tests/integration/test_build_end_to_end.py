@@ -41,14 +41,23 @@ def _build_args(ctx, **over):
     return SimpleNamespace(**base)
 
 
+def _open_fds():
+    return set(os.listdir("/proc/self/fd"))
+
+
 def test_build_to_cache_archive_and_install(tmp_path, builders):
     ctx = _make_context(tmp_path)
     out_oci = tmp_path / "out.oci.tar"
     arch = get_device_cpu_arch()
 
+    # A build now holds descriptors for the whole of its run -- the
+    # scratch root, and two per stage -- so the release has to be exact
+    # or a multi-stage Dockerfile would leak one pair per FROM.
+    before = _open_fds()
     command_build(_build_args(
         ctx, outputs=[str(out_oci)], install_as="builtbox",
     ))
+    assert _open_fds() - before == set()
 
     # 1) Manifest cache written so `install myimg:1` works offline.
     manifest, repo, image_config = load_manifest_cache("myimg:1", arch)

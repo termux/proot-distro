@@ -17,7 +17,7 @@ import shutil
 
 import pytest
 
-from proot_distro import statedir
+from proot_distro import dirfd, statedir
 from proot_distro.atomic import publish_file
 from proot_distro.commands.build import _make_build_tmp
 from proot_distro.constants import LAYER_CACHE_DIR, RUNTIME_DIR
@@ -87,31 +87,60 @@ def test_publish_leaves_a_user_destination_alone(blob, tmp_path, outside):
 # --- the build's scratch root ----------------------------------------------
 
 def test_build_tmp_is_made_inside_the_runtime_tree():
-    root = _make_build_tmp()
+    root, fd = _make_build_tmp()
     try:
         assert os.path.dirname(root) == os.path.join(RUNTIME_DIR, "build-tmp")
         assert os.path.isdir(root)
         assert statedir.is_state_path(root)
+        # The descriptor names the directory that was just created, not
+        # the name it was created under.
+        assert os.stat(root).st_ino == os.fstat(fd).st_ino
     finally:
+        os.close(fd)
         statedir.remove_state_tree(root)
 
 
 def test_build_tmp_does_not_follow_a_planted_name(outside):
     os.symlink(str(outside), os.path.join(RUNTIME_DIR, "build-tmp"))
-    root = _make_build_tmp()
+    root, fd = _make_build_tmp()
     try:
         # Refused, and the build falls back to the system temp dir the
         # way it always did when the runtime tree could not hold one.
         assert not root.startswith(RUNTIME_DIR + os.sep)
         assert sorted(os.listdir(str(outside))) == ["keepsake"]
     finally:
+        os.close(fd)
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_build_tmp_roots_are_distinct():
-    first, second = _make_build_tmp(), _make_build_tmp()
+    (first, first_fd), (second, second_fd) = (
+        _make_build_tmp(), _make_build_tmp(),
+    )
     try:
         assert first != second
     finally:
+        os.close(first_fd)
+        os.close(second_fd)
         statedir.remove_state_tree(first)
         statedir.remove_state_tree(second)
+
+
+def test_build_tmp_descriptor_survives_the_name_being_re_pointed(outside):
+    # What the descriptor is for: the run directory's name sits in a
+    # world the invoking user can write, and a RUN step's leftovers are
+    # the invoking user.
+    root, fd = _make_build_tmp()
+    try:
+        os.rename(root, root + ".moved")
+        os.symlink(str(outside), root)
+        try:
+            sub = dirfd.descend_at(fd, ("stage-0",), create=True)
+            os.close(sub)
+            assert os.path.isdir(os.path.join(root + ".moved", "stage-0"))
+            assert sorted(os.listdir(str(outside))) == ["keepsake"]
+        finally:
+            os.unlink(root)
+    finally:
+        os.close(fd)
+        statedir.remove_state_tree(root + ".moved")

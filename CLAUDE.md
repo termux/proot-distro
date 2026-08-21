@@ -627,7 +627,8 @@ Helpers (`helpers/`): `build_cache`, `dockerfile`, `download`,
 `layer_diff`, `oci_writer`, `rootfs`, `tar_extract`; subpackages
 `build_engine/{constants,copy_step,dockerignore,engine,errors,handlers,
 parsing,run_step,stage,users}` and `docker/{cache,layers,media,pull,
-push,refs,search,transport}`.
+push,refs,search,transport}`. `build_engine/stage.py` is where a build's
+per-FROM state lives, **and its two descriptors** — see "Run / build".
 
 ## Key paths
 
@@ -1835,8 +1836,57 @@ remove what it found there. `_make_build_tmp()` walks down to it and
 creates the run's directory with `mkdirat` off the validated descriptor
 (falling back to the system temp dir, as it always did when the runtime
 tree could not hold one); `statedir.remove_state_tree()` discards it.
-Everything *inside* is this process's own — a fresh 0700 name — so the
-stage trees below it need no walk of their own.
+
+It hands back that directory's **descriptor** along with the path,
+because what is *inside* it is named too. "This process's own — a fresh
+0700 name" is only the invoking user's own permission, and a process a
+RUN step left running is the invoking user: nothing kills one off Termux
+(`--kill-on-exit` is a Termux-only proot extension), and on Termux the
+whole runtime tree is bound read-write into every non-isolated container
+— which a cross-arch step guarantees by binding `$TERMUX_PREFIX` for the
+emulator's loader. So `engine.tmp_root_fd` is what every directory the
+build makes inside the scratch root is created off: each stage's
+(`_make_stage_dirs`), the ADD spool (`copy_step._Spool`), and a
+`COPY --from=<image>` throwaway tree (`_pull_throwaway_image`). The
+packed layer goes through `atomic.atomic_write()` like every other write
+inside the state tree, so `layer-i-j.tar.gz.tmp` — a fully predictable
+name — can no longer be a symlink the layer's bytes are written through
+and then published into the layer cache as a link.
+
+A **`Stage`** keeps two of those descriptors for the life of the build:
+`dir_fd` (its own directory, the parent the `sysdata/` and `shm/` stores
+proot binds are made in) and `rootfs_fd`. The path stays for what only a
+path can express — messages, `--bind` sources, `PROOT_L2S_DIR` — but
+nothing on the host side resolves it again. It used to, everywhere:
+`snapshot()` twice per RUN (straddling the step, so the name was one the
+step itself had had the run of), the cached-layer apply, `write_layer_tar`
+(including its `os.lstat(os.path.join(rootfs, rel))` size pre-pass),
+`_materialise_files`, `resolve_chown`/`resolve_user_for_proot`, `WORKDIR`,
+`write_resolv_conf`/`write_hosts`, and `FROM <stage>`'s re-apply. Moving
+`stage-N/rootfs` aside and leaving a symlink under the name was enough to
+make all of it read and write somewhere else — and what it reads goes into
+the layer `push` uploads. `COPY --from=<stage>` is the same name on the
+*source* side, so `_SourceTree` and the `root_fd` recorded in each
+`file_map` entry (read back by `layer_diff.MapSources`) take the
+descriptor too.
+
+The RUN launcher closes the last of it the way `login` does: the argv
+says `--rootfs=.` and a `preexec_fn` `fchdir`s into `stage.rootfs_fd`
+between the fork and the exec. proot resolves `--rootfs` by name long
+after every check here has run, so a path there could be re-pointed by
+the step before it; a relative root makes proot canonicalise against
+`getcwd()`, which the kernel answers from the directory's own parent
+chain. The `fchdir` is in the **child** rather than here because this
+process's working directory is what a relative `--output`, a relative
+build context and every message naming one resolve against — `login` does
+it in the process that becomes proot, which is the same place, it just
+has no parent left to protect. `preexec_fn`'s one caveat (unsafe with
+threads) does not apply; this program has none.
+
+Every one of those functions takes the descriptor as an **optional
+keyword**, the same shape `guestfile`, `shm`, `sysdata` and
+`open_l2s_backing` already use: production always passes it, and a caller
+working on a tree it made itself (a test) keeps the path form.
 
 Build cache: `compute_recipe_hash(parent_digest, instr, extra)` keys
 into `build_cache_index.json`. Hit ⇒ apply cached layer, skip proot.

@@ -115,7 +115,7 @@ def do_run(engine, instr):
                 cached_fd = None
             if cached_fd is not None:
                 try:
-                    rootfs_fd = dirfd.opendir(stage.rootfs_dir)
+                    rootfs_fd = _rootfs_fd(stage)
                     try:
                         apply_layer(cached_fd, rootfs_fd,
                                     digest=hit["layer_digest"])
@@ -132,7 +132,7 @@ def do_run(engine, instr):
                 return
 
     engine.log("Indexing rootfs state...")
-    before = snapshot(stage.rootfs_dir)
+    before = snapshot(stage.rootfs_dir, rootfs_fd=stage.rootfs_fd)
     exit_code = _exec_proot(engine, stage, command, stdin_input)
     if exit_code != 0:
         raise BuildError(
@@ -141,7 +141,7 @@ def do_run(engine, instr):
         )
 
     engine.log("Capturing filesystem changes...")
-    after = snapshot(stage.rootfs_dir)
+    after = snapshot(stage.rootfs_dir, rootfs_fd=stage.rootfs_fd)
     added, modified, deleted = diff_snapshots(before, after)
     paths_to_pack = added + modified
 
@@ -158,6 +158,7 @@ def do_run(engine, instr):
     )
     digest, size, diff_id = write_layer_tar(
         stage.rootfs_dir, paths_to_pack, deleted, tmp_layer_path,
+        rootfs_fd=stage.rootfs_fd,
     )
     # Published through the same walk every other cache writer uses:
     # os.makedirs(dirname) plus os.replace(tmp, final) resolved the layer
@@ -170,6 +171,19 @@ def do_run(engine, instr):
     )
     stage.parent_layer_digest = digest
     cache_record(recipe, digest, diff_id, size, {})
+
+
+def _rootfs_fd(stage):
+    """A private descriptor on *stage*'s rootfs. Raises OSError.
+
+    From the stage's own pinned one when it has it, so nothing here
+    re-resolves `<scratch>/stage-N/rootfs` -- the name every step of this
+    module used to hand back to open(), and the one a previous step's
+    leftovers are free to re-point.
+    """
+    if stage.rootfs_fd is not None:
+        return dirfd.reopen(stage.rootfs_fd)
+    return dirfd.opendir(stage.rootfs_dir)
 
 
 def _run_extra_inputs(engine):
@@ -206,9 +220,24 @@ def _exec_proot(engine, stage, command, stdin_input):
         )
         proot_args.append("-L")
 
-    uid, gid = resolve_user_for_proot(rootfs, stage.user)
+    # The uid and gid proot runs the step as come out of the stage's own
+    # /etc/passwd, read through the pinned rootfs (guestfile's walk), not
+    # through a name that could by now lead to the host's copy.
+    uid, gid = resolve_user_for_proot(rootfs, stage.user,
+                                      root_fd=stage.rootfs_fd)
     proot_args.append(f"--change-id={uid}:{gid}")
-    proot_args.append(f"--rootfs={rootfs}")
+    # "." plus a chdir into the pinned descriptor, the way `login` hands
+    # proot a container rootfs. proot resolves --rootfs by name, long
+    # after everything here has finished checking it, so the path form
+    # let a process a previous RUN step left running move
+    # `<scratch>/stage-N/rootfs` aside and leave a symlink under it --
+    # and the next step then ran with a directory of that process's
+    # choosing as its root, writing into it as the invoking user. A
+    # relative root makes proot canonicalise against getcwd(), which the
+    # kernel answers from the directory's own parent chain, so it names
+    # the inode this build created whatever now stands under the name.
+    rootfs_arg = os.curdir if stage.rootfs_fd is not None else rootfs
+    proot_args.append(f"--rootfs={rootfs_arg}")
     proot_args.append(f"--cwd={stage.workdir or '/'}")
     proot_args += ["--bind=/dev", "--bind=/proc", "--bind=/sys"]
 
@@ -219,8 +248,8 @@ def _exec_proot(engine, stage, command, stdin_input):
         for i, name in ((0, "stdin"), (1, "stdout"), (2, "stderr")):
             if not os.path.lexists(f"/dev/{name}") and os.path.exists(f"/proc/self/fd/{i}"):
                 proot_args.append(f"--bind=/proc/self/fd/{i}:/dev/{name}")
-        setup_fake_sysdata(rootfs)
-        proot_args += fake_sysdata_bindings(rootfs)
+        setup_fake_sysdata(rootfs, container_fd=stage.dir_fd)
+        proot_args += fake_sysdata_bindings(rootfs, container_fd=stage.dir_fd)
         # /dev/shm comes from the stage's own directory, next to the
         # rootfs rather than inside it: a bind source is a name proot
         # resolves when it mounts it, and a process an earlier RUN step
@@ -230,8 +259,8 @@ def _exec_proot(engine, stage, command, stdin_input):
         # /dev/shm out of the layer the step produces, which is what
         # Docker does with its tmpfs. `login` gives a container the same
         # two directories the same way; see proot_distro.shm.
-        make_guest_tmp(rootfs)
-        shm = make_shm_dir(rootfs)
+        make_guest_tmp(rootfs, rootfs_fd=stage.rootfs_fd)
+        shm = make_shm_dir(rootfs, container_fd=stage.dir_fd)
         if shm is not None:
             proot_args.append(f"--bind={shm}:/dev/shm")
         else:
@@ -272,6 +301,7 @@ def _exec_proot(engine, stage, command, stdin_input):
             env=child_env,
             stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
             start_new_session=True,
+            preexec_fn=_chdir_to(stage.rootfs_fd),
         )
     except FileNotFoundError as exc:
         raise BuildError(f"proot binary not available: {exc}") from exc
@@ -295,6 +325,30 @@ def _exec_proot(engine, stage, command, stdin_input):
         # step that cannot be settled must not hang the build either.
         proc.kill()
         return proc.wait()
+
+
+def _chdir_to(rootfs_fd):
+    """A preexec hook that fchdirs into *rootfs_fd*, or None.
+
+    The other half of `--rootfs=.`: the argv names a relative root, so
+    the process proot starts in has to be the rootfs. In the *child*
+    rather than here, because this process's own working directory is
+    where a relative --output, a relative build context and every
+    message that names one are resolved from, and a step must not move
+    it. `login` does the same fchdir in the process that becomes proot,
+    which is the same place -- it just has no parent left to protect.
+
+    preexec_fn runs after the fork and before the exec, and fchdir(2) is
+    one syscall; the caveat about it (unsafe with threads) does not
+    apply, this program having none. Nothing else is done there.
+    """
+    if rootfs_fd is None:
+        return None
+
+    def _hook():
+        os.fchdir(rootfs_fd)
+
+    return _hook
 
 
 def _stdin_file(engine, stdin_input):
@@ -581,7 +635,11 @@ def _build_child_env(stage):
         # directory it named. Unset rather than pointed somewhere
         # unvalidated -- proot then places each intermediate next to its
         # original, which is what it did before the pin existed.
-        l2s_dir = dirfd.makedirs_under(stage.rootfs_dir, (".l2s",))
+        l2s_dir = (
+            dirfd.makedirs_at(stage.rootfs_fd, stage.rootfs_dir, (".l2s",))
+            if stage.rootfs_fd is not None
+            else dirfd.makedirs_under(stage.rootfs_dir, (".l2s",))
+        )
         if l2s_dir is not None:
             env["PROOT_L2S_DIR"] = l2s_dir
         else:

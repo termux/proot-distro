@@ -456,8 +456,9 @@ def test_build_stage_inherit_refuses_a_poisoned_layer(tmp_path, builders):
     )
     child_root = tmp_path / "child"
     child_root.mkdir()
-    child = SimpleNamespace(rootfs_dir=str(child_root), image_config={},
-                            layers=[], parent_layer_digest="")
+    child = SimpleNamespace(rootfs_dir=str(child_root), rootfs_fd=None,
+                            image_config={}, layers=[],
+                            parent_layer_digest="")
     engine = BuildEngine.__new__(BuildEngine)
 
     with pytest.raises(BuildError, match="does not match its digest"):
@@ -471,7 +472,8 @@ def test_build_stage_inherit_refuses_a_poisoned_layer(tmp_path, builders):
 
 def _run_engine(tmp_path):
     stage = SimpleNamespace(
-        index=0, name="", rootfs_dir=str(tmp_path / "rootfs"), layers=[],
+        index=0, name="", rootfs_dir=str(tmp_path / "rootfs"),
+        dir_fd=None, rootfs_fd=None, layers=[],
         parent_layer_digest="", shell=["/bin/sh", "-c"], workdir="/",
     )
     os.makedirs(stage.rootfs_dir, exist_ok=True)

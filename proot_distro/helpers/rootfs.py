@@ -50,7 +50,7 @@ _ID_FILE_MODE = (
 )
 
 
-def _open_etc(rootfs: str):
+def _open_etc(rootfs: str, root_fd=None):
     """Open <rootfs>/etc as a directory fd, or None when there is no such dir.
 
     O_NOFOLLOW, because `etc` is image content like everything else below
@@ -61,9 +61,16 @@ def _open_etc(rootfs: str):
     None covers a missing `etc`, one that is a symlink, and one that is not
     a directory. Both call sites already skip the fixups when there is no
     `etc` to fix up, so there is nothing new to report here.
+
+    *root_fd* is the rootfs when the caller has pinned it. `build` has
+    one for every stage, and the rootfs there is a name inside the
+    build's scratch tree, which anything running as the invoking user
+    can re-point -- including whatever a previous RUN step left behind.
     """
+    own_fd = None
     try:
-        root_fd = os.open(rootfs, os.O_RDONLY | os.O_DIRECTORY)
+        if root_fd is None:
+            own_fd = root_fd = os.open(rootfs, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
         return None
     try:
@@ -71,7 +78,8 @@ def _open_etc(rootfs: str):
     except OSError:
         return None
     finally:
-        os.close(root_fd)
+        if own_fd is not None:
+            os.close(own_fd)
 
 
 def _replace_at(etc_fd: int, name: str, content: str) -> None:
@@ -155,9 +163,9 @@ def _chmod_at(etc_fd: int, name: str) -> None:
         os.close(fd)
 
 
-def write_resolv_conf(rootfs: str) -> None:
+def write_resolv_conf(rootfs: str, *, root_fd=None) -> None:
     """Replace /etc/resolv.conf with a plain file containing default DNS servers."""
-    etc_fd = _open_etc(rootfs)
+    etc_fd = _open_etc(rootfs, root_fd)
     if etc_fd is None:
         return
     try:
@@ -169,14 +177,14 @@ def write_resolv_conf(rootfs: str) -> None:
         os.close(etc_fd)
 
 
-def write_hosts(rootfs: str) -> None:
+def write_hosts(rootfs: str, *, root_fd=None) -> None:
     """Write a minimal /etc/hosts into the rootfs.
 
     Some images ship /etc/hosts as a symlink (to a runtime-provided path,
     say), so the name is unlinked and recreated rather than opened for
     write — see _replace_at.
     """
-    etc_fd = _open_etc(rootfs)
+    etc_fd = _open_etc(rootfs, root_fd)
     if etc_fd is None:
         return
     try:

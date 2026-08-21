@@ -112,7 +112,7 @@ def test_build_failure_quotes_a_name_from_an_added_archive(tmp_path, capsys):
     from proot_distro.helpers.build_engine import copy_step
     real = copy_step._materialise_files
 
-    def _boom(rootfs_dir, file_map):
+    def _boom(rootfs_dir, file_map, **kw):
         from proot_distro.helpers.build_engine.errors import BuildError
         arcname = next(iter(sorted(file_map)))
         raise BuildError(f"Failed to write '{arcname}' into rootfs: nope")

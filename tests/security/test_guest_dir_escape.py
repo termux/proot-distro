@@ -172,19 +172,38 @@ def test_the_guest_still_gets_a_tmp(env, tmp_path, monkeypatch):
 # symlink is the image's, not a guest's — the same hole with a shorter path
 # to it.
 
-def _run_stage(tmp_path, rootfs, monkeypatch):
+def _run_stage(tmp_path, rootfs, monkeypatch, request=None):
+    """A stand-in Stage, pinned the way the engine pins a real one."""
     monkeypatch.setattr(run_step, "IS_TERMUX", True)
-    monkeypatch.setattr(run_step, "setup_fake_sysdata", lambda r: None)
-    monkeypatch.setattr(run_step, "fake_sysdata_bindings", lambda r: [])
+    monkeypatch.setattr(run_step, "setup_fake_sysdata", lambda r, **k: None)
+    monkeypatch.setattr(run_step, "fake_sysdata_bindings", lambda r, **k: [])
     monkeypatch.setattr(run_step, "get_proot_bin", lambda: "proot")
     monkeypatch.setattr(run_step, "get_device_cpu_arch", lambda: HOST_ARCH)
     monkeypatch.setattr(run_step, "get_emulator_args", lambda *a: [])
-    monkeypatch.setattr(run_step, "resolve_user_for_proot", lambda *a: (0, 0))
+    monkeypatch.setattr(run_step, "resolve_user_for_proot",
+                        lambda *a, **k: (0, 0))
+    dir_fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
+    rootfs_fd = os.open(str(rootfs), os.O_RDONLY | os.O_DIRECTORY)
+    _OPEN_FDS.extend((dir_fd, rootfs_fd))
     return SimpleNamespace(
-        index=0, rootfs_dir=str(rootfs), layers=[], target_arch_pd=HOST_ARCH,
+        index=0, rootfs_dir=str(rootfs), dir_fd=dir_fd, rootfs_fd=rootfs_fd,
+        layers=[], target_arch_pd=HOST_ARCH,
         user="", workdir="/", shell=["/bin/sh", "-c"], env={},
         declared_args=[], args={},
     )
+
+
+_OPEN_FDS = []
+
+
+@pytest.fixture(autouse=True)
+def _close_stage_fds():
+    yield
+    while _OPEN_FDS:
+        try:
+            os.close(_OPEN_FDS.pop())
+        except OSError:
+            pass
 
 
 def _exec_proot_args(tmp_path, rootfs, monkeypatch):

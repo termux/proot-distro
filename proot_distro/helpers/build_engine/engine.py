@@ -85,6 +85,19 @@ def _strip_host_exec_env(image_config: dict) -> dict:
     return image_config
 
 
+def _stage_rootfs_fd(stage):
+    """A private descriptor on *stage*'s rootfs. Raises OSError.
+
+    From the stage's own pinned descriptor when it has one, so the
+    caller's walk starts at the inode the engine created rather than at
+    `<scratch>/stage-N/rootfs`, a name a previous step's leftovers can
+    have re-pointed. The caller owns and closes what comes back.
+    """
+    if stage.rootfs_fd is not None:
+        return dirfd.reopen(stage.rootfs_fd)
+    return dirfd.opendir(stage.rootfs_dir)
+
+
 class BuildEngine:
     """Walks a parsed Dockerfile and produces an OCI image in-place.
 
@@ -104,9 +117,17 @@ class BuildEngine:
                  verbose,
                  quiet,
                  no_cache,
-                 emulator):
+                 emulator,
+                 tmp_root_fd=None):
         self.build_dir = os.path.abspath(build_dir)
         self.tmp_root = tmp_root
+        # The scratch root as a descriptor. Every directory the build
+        # makes inside it -- a stage's, its rootfs -- is created off this
+        # and kept as a descriptor of its own, because the path form is
+        # a name anything running as the invoking user can re-point, and
+        # a RUN step's leftovers are exactly that. None is the shape a
+        # test hands in, and each consumer then keeps the path form.
+        self.tmp_root_fd = tmp_root_fd
         self.target_arch_pd = target_arch_pd
         self.target_arch_docker = ARCH_TO_DOCKER.get(
             target_arch_pd, (target_arch_pd, "")
@@ -133,6 +154,42 @@ class BuildEngine:
         # True only while the base image's ONBUILD triggers are running,
         # so do_env can tell a stranger's ENV from the author's.
         self._firing_onbuild = False
+
+    def _make_stage_dirs(self, idx):
+        """Create `stage-<idx>/rootfs` and return both descriptors.
+
+        Made off the scratch root's descriptor, one level at a time with
+        O_NOFOLLOW, so the two names cannot be resolved through anything
+        a previous stage left behind -- and what the stage keeps is the
+        descriptors, not the names it made them under.
+
+        Without a pinned scratch root (a test) this falls back to the
+        path form, and the stage carries no descriptors: every consumer
+        then behaves exactly as it did before.
+        """
+        if self.tmp_root_fd is None:
+            rootfs_dir = os.path.join(self.tmp_root, f"stage-{idx}", "rootfs")
+            os.makedirs(rootfs_dir, exist_ok=True)
+            return None, None
+
+        stage_fd = None
+        try:
+            stage_fd = dirfd.descend_at(
+                self.tmp_root_fd, (f"stage-{idx}",), create=True,
+            )
+            rootfs_fd = dirfd.descend_at(stage_fd, ("rootfs",), create=True)
+        except OSError as exc:
+            if stage_fd is not None:
+                os.close(stage_fd)
+            raise BuildError(
+                f"cannot create the scratch tree for stage {idx}: {exc}"
+            ) from exc
+        return stage_fd, rootfs_fd
+
+    def close(self):
+        """Release every stage's descriptors. Idempotent."""
+        for stage in self.stages_by_idx:
+            stage.close()
 
     # ----- public entry point ----------------------------------------------
 
@@ -351,18 +408,27 @@ class BuildEngine:
         idx = len(self.stages_by_idx)
         stage_dir = os.path.join(self.tmp_root, f"stage-{idx}")
         rootfs_dir = os.path.join(stage_dir, "rootfs")
-        os.makedirs(rootfs_dir, exist_ok=True)
+        stage_fd, rootfs_fd = self._make_stage_dirs(idx)
         stage = Stage(
             index=idx, name=stage_name, rootfs_dir=rootfs_dir,
             target_arch_pd=self.target_arch_pd,
+            dir_fd=stage_fd, rootfs_fd=rootfs_fd,
         )
 
-        if base_ref.lower() == "scratch":
-            stage.image_config = {"config": {}}
-        elif base_ref in self.stages:
-            self._inherit_from_stage(stage, self.stages[base_ref])
-        else:
-            self._pull_base_image(stage, base_ref)
+        # The stage is not registered until the bottom of this method, so
+        # a base image that will not resolve would otherwise take its two
+        # descriptors with it, past the close() that walks the registered
+        # ones.
+        try:
+            if base_ref.lower() == "scratch":
+                stage.image_config = {"config": {}}
+            elif base_ref in self.stages:
+                self._inherit_from_stage(stage, self.stages[base_ref])
+            else:
+                self._pull_base_image(stage, base_ref)
+        except BaseException:
+            stage.close()
+            raise
 
         cfg = stage.image_config.get("config") or {}
         env_list = cfg.get("Env") or []
@@ -390,13 +456,16 @@ class BuildEngine:
         self.stages[str(idx)] = stage
         self.current = stage
 
-        # Configure DNS so RUN apt-get etc. work.
-        if os.path.isdir(os.path.join(rootfs_dir, "etc")):
-            try:
-                write_resolv_conf(rootfs_dir)
-                write_hosts(rootfs_dir)
-            except OSError:
-                pass
+        # Configure DNS so RUN apt-get etc. work. Both writers descend
+        # from the stage's own descriptor; the isdir() probe is gone
+        # because _open_etc already answers "no etc here" by refusing to
+        # open it, and asking by name was one more resolution of a name
+        # this no longer trusts.
+        try:
+            write_resolv_conf(rootfs_dir, root_fd=stage.rootfs_fd)
+            write_hosts(rootfs_dir, root_fd=stage.rootfs_fd)
+        except OSError:
+            pass
 
         # Fire ONBUILD triggers from the base image's config.
         base_onbuild = (
@@ -439,11 +508,11 @@ class BuildEngine:
         new_stage.image_config = json.loads(
             json.dumps(parent.image_config)
         )
-        # The stage rootfs is this process's own -- a fresh directory
-        # under the build's 0700 scratch root -- so it is opened by name
-        # here; what the extractor needs is the descriptor, since every
-        # member below it goes in as (dir_fd, name).
-        rootfs_fd = dirfd.opendir(new_stage.rootfs_dir)
+        # The stage's own descriptor, not its name: the directory was
+        # made by this process, but by the time a second FROM re-applies
+        # layers into it a previous stage's RUN steps have run, and what
+        # they leave running is the invoking user.
+        rootfs_fd = _stage_rootfs_fd(new_stage)
         try:
             for layer in parent.layers:
                 # Verified, not merely present: these layers were produced
@@ -471,7 +540,7 @@ class BuildEngine:
         """Use helpers.docker.pull_image to populate the stage rootfs."""
         log_info(f"Pulling base image '{image_ref}' ({self.target_arch_pd})...")
         try:
-            rootfs_fd = dirfd.opendir(stage.rootfs_dir)
+            rootfs_fd = _stage_rootfs_fd(stage)
         except OSError as exc:
             raise BuildError(f"FROM {image_ref}: {exc}") from exc
         try:

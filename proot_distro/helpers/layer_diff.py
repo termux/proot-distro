@@ -45,6 +45,7 @@ import tarfile
 import zlib
 
 from proot_distro import dirfd
+from proot_distro.atomic import atomic_write
 from proot_distro.l2s import open_l2s_backing, resolve_l2s_target
 from proot_distro.progress import (
     clear_bar, draw_bytes_bar, progress_active,
@@ -125,19 +126,32 @@ class MapSources:
         "file" entry without a root and rel is a programming error, not
         a filesystem one, and raises KeyError rather than quietly
         reading a path.
+
+        An entry may also carry `root_fd`, a descriptor its recorder
+        holds on the tree for as long as the map lives. When it does,
+        that is what the components are walked from: the root itself is
+        a name otherwise, and for a stage rootfs it is a name inside the
+        build's scratch tree, which is guest-reachable on Termux.
         """
         root = entry["root"]
+        root_fd = entry.get("root_fd")
         rel = tuple(entry["rel"])
         if not rel:
             raise OSError(errno.EINVAL, "source entry names no file", root)
-        key = (root, rel[:-1])
+        key = (root, root_fd, rel[:-1])
         if key != self._key:
             self.close()
-            root_fd = dirfd.opendir(root)
-            try:
+            # A pinned root is descended from directly: going back to its
+            # path would re-resolve the very name the pin exists to
+            # settle -- a stage rootfs, for COPY --from=<stage>.
+            if root_fd is not None:
                 fd = dirfd.descend_at(root_fd, rel[:-1])
-            finally:
-                os.close(root_fd)
+            else:
+                opened = dirfd.opendir(root)
+                try:
+                    fd = dirfd.descend_at(opened, rel[:-1])
+                finally:
+                    os.close(opened)
             self._fd, self._key = fd, key
         return dirfd.open_regular_at(self._fd, rel[-1], os.O_RDONLY)
 
@@ -171,10 +185,17 @@ class _ParentFds:
     O_NOFOLLOW and the entry is addressed as (dir_fd, name). The rels
     arrive sorted, so caching the last parent covers a whole directory's
     worth of entries and the walk costs about one openat apiece.
+
+    *rootfs_fd* is the rootfs when the caller has pinned it, and a caller
+    that has one must pass it: the rootfs is the one directory this walk
+    cannot vouch for itself, and a build stage's is a name inside the
+    build's scratch tree -- 0700, but reachable by anything running as
+    the invoking user, which on Termux is every RUN step's guest.
     """
 
-    def __init__(self, rootfs):
-        self._root_fd = dirfd.opendir(rootfs)
+    def __init__(self, rootfs, *, rootfs_fd=None):
+        self._root_fd = (dirfd.reopen(rootfs_fd) if rootfs_fd is not None
+                         else dirfd.opendir(rootfs))
         self._rel = None
         self._fd = None
         self._owned = False
@@ -223,7 +244,7 @@ class _ParentFds:
 # Snapshot / diff
 # ---------------------------------------------------------------------------
 
-def snapshot(rootfs):
+def snapshot(rootfs, *, rootfs_fd=None):
     """Return {rel_path: fingerprint_tuple} for every entry under rootfs.
 
     Tuple kinds:
@@ -254,10 +275,15 @@ def snapshot(rootfs):
     is the image's business: one descriptor per level ran the process out
     of them partway down, and every entry below that point was left out
     of the snapshot -- and so out of the layer -- without a word.
+
+    *rootfs_fd* is the rootfs when the caller has pinned it, which the
+    build's RUN step has: its two snapshots straddle the step, so the
+    name they used to resolve was one the step itself had had the run of.
     """
     state = {}
     try:
-        root_fd = dirfd.opendir(rootfs)
+        root_fd = (dirfd.reopen(rootfs_fd) if rootfs_fd is not None
+                   else dirfd.opendir(rootfs))
     except OSError:
         return state
 
@@ -398,46 +424,46 @@ def _pack_stream(out_path, total_uncompressed, populate):
     Headers and padding add a small constant overhead beyond this.
 
     Returns (digest, gzipped_size, diff_id).
-    """
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    tmp = out_path + ".tmp"
 
+    Written through atomic.atomic_write(), which is what every other
+    writer inside the state tree uses: the layer lands in the build's
+    scratch root, and `open(out_path + ".tmp", "wb")` resolved that name
+    -- `RUNTIME_DIR/build-tmp/<run>/layer-i-j.tar.gz.tmp`, every
+    component of it predictable once the run directory is listed -- so a
+    symlink left under it had the layer's bytes written into whatever it
+    named, and the os.replace() that followed moved the *link* on to be
+    published into the layer cache. atomic_write walks down to the
+    directory with O_NOFOLLOW, creates the temporary O_EXCL off the
+    descriptor it validated, and never names it again.
+    """
     digest_h = hashlib.sha256()
     diff_id_h = hashlib.sha256()
     show, clear = _make_progress_callback(total_uncompressed)
 
-    out_fh = None
     gz = None
     tf = None
     digest_tee = None
     try:
-        out_fh = open(tmp, "wb")
-        digest_tee = _ProgressHashTee(out_fh, digest_h)
-        gz = gzip.GzipFile(fileobj=digest_tee, mode="wb", mtime=0)
-        diff_id_tee = _ProgressHashTee(gz, diff_id_h, on_progress=show)
-        tf = tarfile.open(fileobj=diff_id_tee, mode="w|")
-        populate(tf)
-        tf.close()
-        tf = None
-        gz.close()
-        gz = None
-        out_fh.flush()
-        out_fh.close()
-        out_fh = None
-        clear()
-        os.replace(tmp, out_path)
+        with atomic_write(out_path, "wb") as out_fh:
+            digest_tee = _ProgressHashTee(out_fh, digest_h)
+            gz = gzip.GzipFile(fileobj=digest_tee, mode="wb", mtime=0)
+            diff_id_tee = _ProgressHashTee(gz, diff_id_h, on_progress=show)
+            tf = tarfile.open(fileobj=diff_id_tee, mode="w|")
+            populate(tf)
+            tf.close()
+            tf = None
+            gz.close()
+            gz = None
+            out_fh.flush()
+            clear()
     except BaseException:
         clear()
-        for handle in (tf, gz, out_fh):
+        for handle in (tf, gz):
             if handle is not None:
                 try:
                     handle.close()
                 except OSError:
                     pass
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
         raise
 
     return (
@@ -452,7 +478,7 @@ def _pack_stream(out_path, total_uncompressed, populate):
 # ---------------------------------------------------------------------------
 
 def write_layer_tar(rootfs, paths_to_pack, deleted, out_path,
-                    opaque_dirs=()):
+                    opaque_dirs=(), *, rootfs_fd=None):
     """Write a gzipped OCI layer to `out_path`.
 
     paths_to_pack: rel paths whose current state in `rootfs` should be
@@ -460,38 +486,51 @@ def write_layer_tar(rootfs, paths_to_pack, deleted, out_path,
     deleted:       rel paths that disappeared since the snapshot.
     opaque_dirs:   rel paths of directories that survived but had all
                    children removed (emit `.wh..wh..opq` inside them).
+    rootfs_fd:     the rootfs as the caller pinned it. A caller that has
+                   one must pass it — everything below is addressed as
+                   (dir_fd, name) already, but the walk has to start
+                   somewhere, and `<scratch>/stage-N/rootfs` is a name
+                   whatever a RUN step left running can re-point.
 
     Returns (digest, size, diff_id) where digest is "sha256:<hex>" of
     the gzipped bytes, size is the gzipped byte count, and diff_id is
     "sha256:<hex>" of the uncompressed tar bytes.
     """
     sorted_paths = sorted(paths_to_pack)
+    try:
+        parents = _ParentFds(rootfs, rootfs_fd=rootfs_fd)
+    except OSError:
+        parents = None
+
+    # The progress denominator comes off the same descriptors the pack
+    # reads through: os.lstat(os.path.join(rootfs, rel)) resolved every
+    # component of every entry by name all over again.
     total = 0
-    for rel in sorted_paths:
-        full = os.path.join(rootfs, rel)
-        try:
-            st = os.lstat(full)
-        except OSError:
-            continue
-        if stat.S_ISREG(st.st_mode):
-            total += st.st_size
+    if parents is not None:
+        for rel in sorted_paths:
+            parent_rel, _, name = rel.rpartition("/")
+            dir_fd = parents.open(parent_rel)
+            if dir_fd is None:
+                continue
+            try:
+                st = dirfd.lstat_at(dir_fd, name)
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                total += st.st_size
 
     def _populate(tf):
-        try:
-            parents = _ParentFds(rootfs)
-        except OSError:
-            parents = None
-        try:
-            for rel in sorted_paths:
-                if parents is not None:
-                    _add_entry(tf, parents, rootfs, rel)
-            for wh in _whiteout_paths(deleted, opaque_dirs):
-                _add_whiteout(tf, wh)
-        finally:
+        for rel in sorted_paths:
             if parents is not None:
-                parents.close()
+                _add_entry(tf, parents, rootfs, rel, rootfs_fd=rootfs_fd)
+        for wh in _whiteout_paths(deleted, opaque_dirs):
+            _add_whiteout(tf, wh)
 
-    return _pack_stream(out_path, total, _populate)
+    try:
+        return _pack_stream(out_path, total, _populate)
+    finally:
+        if parents is not None:
+            parents.close()
 
 
 def layer_path_parts(arcname):
@@ -566,14 +605,17 @@ def write_files_layer(file_map, out_path):
 # Per-entry tar emitters
 # ---------------------------------------------------------------------------
 
-def _add_entry(tf, parents, rootfs, rel):
+def _add_entry(tf, parents, rootfs, rel, *, rootfs_fd=None):
     """Add the on-disk entry at <rootfs>/<rel> to the tar by arcname=rel.
 
     *parents* supplies the descriptor of the entry's parent directory, so
     every one of the calls below names the entry relative to a directory
     the walk itself opened — see _ParentFds. The joined path is still
-    needed for the l2s chain, which is resolved by name and then read
-    through open_l2s_backing's own descriptor walk.
+    needed for the l2s chain, whose containment is a question about paths
+    (resolve_l2s_target realpaths the whole chain). The *read* that
+    follows goes through open_l2s_backing, which re-walks the answer from
+    *rootfs_fd* when there is one — so however the path resolves, the
+    bytes can only come from inside the tree the caller pinned.
     """
     parent_rel, _, name = rel.rpartition("/")
     dir_fd = parents.open(parent_rel)
@@ -613,7 +655,7 @@ def _add_entry(tf, parents, rootfs, rel):
             # re-pointed after the resolve fails instead of being followed
             # (see l2s.open_l2s_backing). A layer is the worse place for
             # that to go unchecked: `push` uploads it to a registry.
-            opened = open_l2s_backing(rootfs, l2s_path)
+            opened = open_l2s_backing(rootfs, l2s_path, rootfs_fd=rootfs_fd)
             if opened is not None:
                 cfd, cst = opened
                 try:

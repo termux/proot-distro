@@ -10,6 +10,7 @@
 
 import io
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,9 +19,17 @@ from proot_distro.helpers.build_engine import copy_step
 
 @pytest.fixture
 def spool(tmp_path):
-    d = tmp_path / "spool"
-    d.mkdir()
-    return str(d)
+    """The real _Spool, on a scratch root standing in for a build's.
+
+    It owns a descriptor on the directory every spooled file is created
+    in and read back through, so the tests hold one too rather than
+    handing the module a path.
+    """
+    sp = copy_step._Spool(
+        SimpleNamespace(tmp_root=str(tmp_path), tmp_root_fd=None)
+    )
+    yield sp
+    sp.close()
 
 
 def _assert_no_bytes_held(file_map):

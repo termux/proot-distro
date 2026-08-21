@@ -41,7 +41,7 @@ from proot_distro.helpers.build_engine.parsing import (
 from proot_distro.helpers.build_engine.run_step import do_run
 from proot_distro.helpers.docker import layer_cache_path
 from proot_distro.helpers.layer_diff import write_files_layer
-from proot_distro.helpers.tar_extract import _safe_resolve
+from proot_distro.helpers.tar_extract import safe_resolve_parts
 
 
 def do_arg(engine, instr):
@@ -136,6 +136,42 @@ def do_user(engine, instr):
     cfg["User"] = engine.current.user
 
 
+def _missing_levels(rootfs, parts, rootfs_fd=None):
+    """The prefixes of *parts* that do not exist under the rootfs.
+
+    One descent rather than an os.path.lexists() per prefix: the answer
+    decides which directories the thin WORKDIR layer records, and each
+    prefix was a separate resolution of the same name. Once a level is
+    missing every level below it is too, which is what the old
+    prefix-by-prefix loop worked out the long way round.
+    """
+    missing = []
+    fd = None
+    try:
+        fd = (dirfd.reopen(rootfs_fd) if rootfs_fd is not None
+              else dirfd.opendir(rootfs))
+    except OSError:
+        return ["/".join(parts[:depth]) for depth in range(1, len(parts) + 1)]
+    try:
+        for depth in range(1, len(parts) + 1):
+            name = parts[depth - 1]
+            if fd is None or not dirfd.exists_at(fd, name):
+                missing.append("/".join(parts[:depth]))
+                nxt = None
+            else:
+                try:
+                    nxt = dirfd.opendir_at(fd, name)
+                except OSError:
+                    nxt = None      # a file or a symlink: nothing to descend
+            if fd is not None:
+                os.close(fd)
+            fd = nxt
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return missing
+
+
 def do_workdir(engine, instr):
     """WORKDIR PATH: set the cwd and create the directory on disk.
 
@@ -173,26 +209,34 @@ def do_workdir(engine, instr):
     # `WORKDIR /x/sub` create -- and chmod 0755 -- a directory on the
     # *host*, outside the rootfs entirely; a base image's `ONBUILD WORKDIR`
     # reaches that without the Dockerfile containing the line at all.
-    # _safe_resolve still follows the symlinks a legitimate image ships
-    # (`/var/run -> /run` is in nearly every distro image), it just
+    # safe_resolve_parts_at still follows the symlinks a legitimate image
+    # ships (`/var/run -> /run` is in nearly every distro image), it just
     # re-anchors each hop at the rootfs the way proot's own view of the
-    # guest does; makedirs_under then refuses a component planted after
-    # the resolve rather than following it. The arcnames come from the
+    # guest does; makedirs_at then refuses a component planted after the
+    # resolve rather than following it. The arcnames come from the
     # resolved path, which is where the directories really landed.
-    rootfs = engine.current.rootfs_dir
-    resolved = _safe_resolve(rootfs, path.strip("/").split("/"))
-    if resolved is None:
+    #
+    # The walk starts at the stage's pinned rootfs descriptor rather than
+    # at `<scratch>/stage-N/rootfs`: that name is inside the build's own
+    # scratch tree, which anything running as the invoking user can
+    # re-point -- a process a previous RUN step left behind, on Termux a
+    # session of another container -- and every level below it was only
+    # ever as safe as where the descent began.
+    stage = engine.current
+    rootfs = stage.rootfs_dir
+    rootfs_fd = stage.rootfs_fd
+    parts = safe_resolve_parts(
+        rootfs, path.strip("/").split("/"), root_fd=rootfs_fd,
+    )
+    if parts is None:
         return
-    rel = os.path.relpath(resolved, rootfs)
-    parts = [] if rel == os.curdir else rel.split(os.sep)
 
-    new_dirs = [
-        "/".join(parts[:depth])
-        for depth in range(1, len(parts) + 1)
-        if not os.path.lexists(os.path.join(rootfs, *parts[:depth]))
-    ]
+    new_dirs = _missing_levels(rootfs, parts, rootfs_fd)
 
-    if dirfd.makedirs_under(rootfs, parts, mode=0o755) is None:
+    made = (dirfd.makedirs_at(rootfs_fd, rootfs, parts, mode=0o755)
+            if rootfs_fd is not None
+            else dirfd.makedirs_under(rootfs, parts, mode=0o755))
+    if made is None:
         return
 
     if not new_dirs:

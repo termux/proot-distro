@@ -27,12 +27,13 @@
 
 import os
 import re
+import shutil
 import sys
 import tempfile
 from contextlib import ExitStack
 from types import SimpleNamespace
 
-from proot_distro import statedir
+from proot_distro import dirfd, statedir
 from proot_distro.commands.install import command_install
 
 from proot_distro.constants import (
@@ -214,25 +215,28 @@ def command_build(args):
             lock_stack.enter_context(lock)
 
         # ----- run the build -----
-        tmp_root = _make_build_tmp()
-
-        engine = BuildEngine(
-            build_dir=build_dir,
-            tmp_root=tmp_root,
-            target_arch_pd=target_arch,
-            user_build_args=build_args,
-            target_stage=target_stage,
-            verbose=verbose,
-            quiet=quiet,
-            no_cache=no_cache,
-            emulator=emulator,
-        )
+        tmp_root, tmp_root_fd = _make_build_tmp()
 
         # Single try/except/finally covers the whole post-setup work so
         # KeyboardInterrupt during any phase (engine, cache write, OCI
         # archive write, install-as) is reported cleanly and tmp_root is
-        # always removed.
+        # always removed. The engine is built inside it because it owns
+        # the stage descriptors, which have to be released even if it
+        # never gets as far as running.
+        engine = None
         try:
+            engine = BuildEngine(
+                build_dir=build_dir,
+                tmp_root=tmp_root,
+                tmp_root_fd=tmp_root_fd,
+                target_arch_pd=target_arch,
+                user_build_args=build_args,
+                target_stage=target_stage,
+                verbose=verbose,
+                quiet=quiet,
+                no_cache=no_cache,
+                emulator=emulator,
+            )
             try:
                 final_stage = engine.run(instructions)
             except BuildError as exc:
@@ -313,6 +317,16 @@ def command_build(args):
             # could not chmod its way into a sealed directory either.
             # The parent is walked down to for the same reason it was
             # walked down to when the scratch root was created.
+            #
+            # The stages' descriptors go with it: they are what every
+            # host-side step addressed the tree through, and they are
+            # this build's for exactly as long as the tree is.
+            if engine is not None:
+                engine.close()
+            try:
+                os.close(tmp_root_fd)
+            except OSError:
+                pass
             statedir.remove_state_tree(tmp_root)
 
 
@@ -320,8 +334,8 @@ def command_build(args):
 # helpers
 # ---------------------------------------------------------------------------
 
-def _make_build_tmp() -> str:
-    """Create the scratch root a build assembles its stages in.
+def _make_build_tmp():
+    """Create the scratch root a build assembles its stages in. (path, fd).
 
     RUNTIME_DIR/build-tmp is a predictable name inside the state tree, and
     tempfile.mkdtemp(dir=...) resolves it: a guest that left
@@ -337,20 +351,46 @@ def _make_build_tmp() -> str:
     A runtime tree that cannot hold one falls back to the system
     temporary directory, which is what the previous `build_tmp = None`
     did.
+
+    The descriptor comes back with the path because the *contents* of
+    the scratch root are named too: each stage's directory and rootfs,
+    the ADD spool, a COPY --from image's throwaway tree. Composing those
+    onto the path and opening them left every one of them re-resolvable
+    by anything running as the invoking user -- which is what a RUN
+    step's leftovers are. The caller owns the descriptor and closes it
+    when the run is over.
     """
     build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
     try:
         dir_fd = statedir.open_state_dir(build_tmp, create=True)
     except OSError:
-        return tempfile.mkdtemp(prefix="pd-build-")
+        return _fallback_build_tmp()
     try:
         name = f"pd-build-{os.getpid()}.{os.urandom(4).hex()}"
         os.mkdir(name, 0o700, dir_fd=dir_fd)
+        # Off the descriptor that walk validated, so what comes back
+        # names the directory just created and not whatever the name
+        # leads to by the time anything under it is used.
+        run_fd = dirfd.opendir_at(dir_fd, name)
     except OSError:
-        return tempfile.mkdtemp(prefix="pd-build-")
+        return _fallback_build_tmp()
     finally:
         os.close(dir_fd)
-    return os.path.join(build_tmp, name)
+    return os.path.join(build_tmp, name), run_fd
+
+
+def _fallback_build_tmp():
+    """The scratch root in the system temp dir, when the state tree fails.
+
+    mkdtemp() makes a fresh 0700 directory of its own, so opening it by
+    name is opening what this process just created.
+    """
+    path = tempfile.mkdtemp(prefix="pd-build-")
+    try:
+        return path, dirfd.opendir(path)
+    except OSError:
+        shutil.rmtree(path, ignore_errors=True)
+        raise
 
 
 def _parse_build_args(raw):
