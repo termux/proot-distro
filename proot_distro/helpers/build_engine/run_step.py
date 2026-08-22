@@ -56,6 +56,7 @@ from proot_distro.constants import (
 )
 from proot_distro import dirfd
 from proot_distro.atomic import publish_file
+from proot_distro.execenv import is_host_exec_var
 from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
@@ -280,7 +281,7 @@ def _exec_proot(engine, stage, command, stdin_input):
 
     proot_args.extend(command)
 
-    child_env = _build_child_env(stage)
+    child_env = _build_child_env(engine, stage)
 
     if not engine.quiet and not engine.verbose:
         log_info(f"Running step (user={stage.user or 'root'}, "
@@ -597,7 +598,53 @@ def _stop_step(pgid: int, baseline=(), *, skip_pid=None,
     return found
 
 
-def _build_child_env(stage):
+def _refuse_host_exec(engine, key):
+    """True when *key* is the host side's, so the Dockerfile may not set it.
+
+    proot has no way to set the guest's environment on its own: the dict
+    handed to Popen is proot's own, and proot passes it on to the tracee.
+    So one dict serves two masters, and LD_*/PROOT_* mean "a setting for
+    the process that has not confined anything yet" to the loader and to
+    proot -- read before the step exists, in the process this build
+    becomes.
+
+    proot_distro.execenv states the rule as one about provenance, and
+    that is what this applies: a `--env` flag or a variable in the user's
+    own shell is a choice about *this invocation*, while an ENV line is a
+    statement about the *image*, carried in a file that is as often
+    copied from upstream as written. It is the second kind here -- both
+    of the sources filtered are the Dockerfile's, `stage.env` (its ENV
+    lines) and the ARG values keyed by names it declared -- and the
+    build's own two knobs are read from os.environ afterwards, which is
+    the user's own environment and stays sovereign.
+
+    What made this more than a tidiness rule is where the exec starts
+    from. The argv says `--rootfs=.` and the child fchdir's into the
+    stage rootfs between the fork and the exec, so a *relative*
+    LD_LIBRARY_PATH or LD_AUDIT entry is resolved by the loader against
+    that rootfs -- a directory an earlier RUN step had the run of. `RUN`
+    dropping a libtalloc.so.2 under `lib/`, then `ENV LD_LIBRARY_PATH=lib`
+    on any later step, was the invoking user running the guest's code
+    outside any container, on a native build where nothing of the host is
+    bound in at all.
+
+    The value still goes into the image config: what the Dockerfile says
+    about the image it produces is its author's business, and only the
+    host-side exec is refused it. That is also what `login` does with the
+    same names when it starts a container from that image.
+    """
+    if not is_host_exec_var(key):
+        return False
+    warned = engine.warned_host_exec
+    if key not in warned:
+        warned.add(key)
+        warn(f"ignoring '{key}' for RUN steps: it is read by proot itself "
+             f"on the host side, not by the container. It stays in the "
+             f"image config.")
+    return True
+
+
+def _build_child_env(engine, stage):
     env = {}
     env["PATH"] = stage.env.get("PATH") or DEFAULT_PATH_ENV
     env["HOME"] = stage.env.get("HOME", "/root")
@@ -615,11 +662,13 @@ def _build_child_env(stage):
 
     # Declared ARGs in this stage.
     for k in stage.declared_args:
-        if k in stage.args:
+        if k in stage.args and not _refuse_host_exec(engine, k):
             env[k] = stage.args[k]
 
     # ENVs always win.
     for k, v in stage.env.items():
+        if _refuse_host_exec(engine, k):
+            continue
         env[k] = v
 
     # proot toggles inherited from host.
@@ -648,5 +697,10 @@ def _build_child_env(stage):
             env.pop("PROOT_L2S_DIR", None)
             warn("rootfs .l2s is not a plain directory; leaving "
                  "PROOT_L2S_DIR unset for this step.")
-    env.pop("LD_PRELOAD", None)
+    # LD_PRELOAD used to be popped here, alone among the LD_* names,
+    # because it is the one that breaks proot outright. The refusal above
+    # covers it and the rest of both namespaces, from every source this
+    # dict is built out of -- everything set after that refusal is either
+    # a name this module chose or one of the two toggles read from the
+    # user's own environment.
     return env

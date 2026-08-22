@@ -206,6 +206,11 @@ def _close_stage_fds():
             pass
 
 
+def _env_engine():
+    """The engine _build_child_env reads: only the warning's dedupe set."""
+    return SimpleNamespace(warned_host_exec=set())
+
+
 def _exec_proot_args(tmp_path, rootfs, monkeypatch):
     """Run _exec_proot with a stubbed Popen and return the proot argv."""
     stage = _run_stage(tmp_path, rootfs, monkeypatch)
@@ -224,7 +229,8 @@ def _exec_proot_args(tmp_path, rootfs, monkeypatch):
         return _Proc()
 
     monkeypatch.setattr(run_step.subprocess, "Popen", _popen)
-    engine = SimpleNamespace(quiet=True, verbose=False, emulator="")
+    engine = SimpleNamespace(quiet=True, verbose=False, emulator="",
+                             warned_host_exec=set())
     run_step._exec_proot(engine, stage, ["true"], None)
     return seen[0]
 
@@ -268,7 +274,7 @@ def test_build_symlinked_l2s_leaves_proot_l2s_dir_unset(env, tmp_path,
     os.symlink(str(outside), str(rootfs / ".l2s"))
     stage = _run_stage(tmp_path, rootfs, monkeypatch)
 
-    env_out = run_step._build_child_env(stage)
+    env_out = run_step._build_child_env(_env_engine(), stage)
 
     assert "PROOT_L2S_DIR" not in env_out
     assert os.listdir(str(outside)) == []
@@ -278,7 +284,7 @@ def test_build_plain_l2s_is_pinned(env, tmp_path, monkeypatch):
     rootfs, _outside = env
     stage = _run_stage(tmp_path, rootfs, monkeypatch)
 
-    env_out = run_step._build_child_env(stage)
+    env_out = run_step._build_child_env(_env_engine(), stage)
 
     assert env_out["PROOT_L2S_DIR"] == str(rootfs / ".l2s")
     assert os.path.isdir(str(rootfs / ".l2s"))

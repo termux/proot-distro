@@ -37,13 +37,19 @@
 # any container. That is not a race: `install` then `login` is enough.
 #
 # The rule this expresses is about *provenance*, not about the name. A
-# value the invoking user set -- `PROOT_NO_SECCOMP=1 proot-distro login
-# debian`, a `--env` flag, an ENV line in their own Dockerfile -- is
+# value the invoking user set for *this invocation* --
+# `PROOT_NO_SECCOMP=1 proot-distro login debian`, a `--env` flag -- is
 # their own choice about their own command, and they could have set it
 # on the command line anyway; those keep working and are applied from
-# their own sources. A value that came out of an image's config is a
-# stranger's, and the two callers that read one (login's env builders,
-# the build engine adopting a base image's config) drop it here.
+# their own sources. A value that came out of a file describing an
+# *image* is not that, whoever wrote the file: an image's config is a
+# stranger's outright, and an ENV line is a statement about the image
+# rather than about this command, carried in a Dockerfile as often
+# copied as written. Three callers read one -- login's env builders, the
+# build engine adopting a base image's config, and the build's RUN
+# launcher assembling the environment proot is exec'd with -- and all
+# three drop it here. The Dockerfile's line still reaches the image
+# config it is a statement about; only the host-side exec is refused it.
 
 _HOST_EXEC_PREFIXES = ("LD_", "PROOT_")
 
@@ -51,9 +57,11 @@ _HOST_EXEC_PREFIXES = ("LD_", "PROOT_")
 def is_host_exec_var(key: str) -> bool:
     """True when *key* changes what the host-side proot exec itself does.
 
-    Callers use it to refuse a value an *image* supplied. Nothing here
-    filters the user's own environment: see the note at the top of this
-    module for why the two are not the same question.
+    Callers use it to refuse a value that came out of a file describing
+    an image -- its config, or a Dockerfile's ENV line. Nothing here
+    filters the user's own environment or their `--env` flags: see the
+    note at the top of this module for why the two are not the same
+    question.
     """
     return key.startswith(_HOST_EXEC_PREFIXES)
 

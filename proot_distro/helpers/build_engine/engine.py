@@ -88,10 +88,12 @@ def _adopt_image_config(image_config, image_ref: str) -> dict:
     One pass, and every one of those is clean by construction.
 
     The first is the LD_*/PROOT_* filter over `Env`. An ENV line in the
-    user's own Dockerfile is untouched -- it goes through do_env, which
-    writes this same list afterwards. That is the point: the same name
-    arriving inside a base image is a stranger choosing what the
-    host-side proot exec loads (see proot_distro.execenv).
+    user's own Dockerfile still reaches the image config -- it goes
+    through do_env, which writes this same list afterwards, and what a
+    Dockerfile says about the image it produces is its author's
+    business. What no such name reaches from any source is the
+    environment proot itself is exec'd with, which run_step refuses
+    separately (see proot_distro.execenv for the one rule both apply).
 
     The second is the shape. Every field below is read back by this
     module or by a handler -- `User` and `Shell` decide what a RUN step
@@ -254,6 +256,10 @@ class BuildEngine:
         # True only while the base image's ONBUILD triggers are running,
         # so do_env can tell a stranger's ENV from the author's.
         self._firing_onbuild = False
+        # LD_*/PROOT_* names the Dockerfile set and the host-side proot
+        # exec was refused (run_step._refuse_host_exec). Kept per build
+        # so a name is named once rather than once per RUN step.
+        self.warned_host_exec = set()
 
     def _make_stage_dirs(self, idx):
         """Create `stage-<idx>/rootfs` and return both descriptors.

@@ -330,10 +330,16 @@ Top-level utilities (each owns a focused concern):
   path it also controls and runs its own code as the invoking user,
   outside any container — no race, no concurrent session, and in every
   mode, `--isolated` and `--minimal` included. The rule is about
-  **provenance**, not about the name: a value the *user* set (their
-  shell's environment, a `--env` flag, an `ENV` line in their own
-  Dockerfile) still applies, since they already control the command
-  line; a value out of an *image's* config does not.
+  **provenance**, not about the name: a value the *user* set for *this
+  invocation* — their shell's environment, a `--env` flag — still
+  applies, since they already control the command line; a value that
+  came out of a file describing an *image* does not. An `ENV` line is
+  the second kind, and the build refuses it for the host-side exec too
+  (`run_step._refuse_host_exec`): a Dockerfile is as often copied as
+  written, and the RUN launcher chdirs into the stage rootfs before the
+  exec, so a *relative* `LD_LIBRARY_PATH` or `LD_AUDIT` entry named a
+  directory an earlier RUN step had the run of. The line still reaches
+  the image config, which is what it is a statement about.
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes
@@ -1930,6 +1936,23 @@ passing one. A here-doc body is handed to the step as an unlinked
 temp file rather than through a pipe, since watching the step leaves no
 `communicate()` to feed one and a body past the pipe buffer would
 deadlock.
+
+The environment a RUN step is launched with is built in
+`_build_child_env`, and the two LD_*/PROOT_* namespaces are refused
+every Dockerfile-supplied value — an `ENV` line's, and an `ARG`'s under
+a name the Dockerfile declared. proot's environment *is* the tracee's,
+so the same dict is read by the host's dynamic loader before proot has
+confined anything, and the child fchdir's into the stage rootfs between
+the fork and the exec: a relative `LD_LIBRARY_PATH=lib` (or an
+`LD_AUDIT`) resolved against a directory an earlier `RUN` wrote, so
+dropping a `libtalloc.so.2` there and naming it in a later `ENV` ran the
+guest's code as the invoking user, outside any container, on a native
+build where nothing of the host is bound in at all. `PROOT_NO_SECCOMP`
+and `PROOT_VERBOSE` are still honoured from the **user's own**
+environment, the same rule `login` follows, and the refused name is
+warned about once per build and still recorded in the image config. The
+old lone `env.pop("LD_PRELOAD")` is gone with it: the namespace rule
+covers that name from every source this dict is built out of.
 
 RUN under Termux uses `--link2symlink`. To keep produced layers
 portable, `layer_diff.snapshot()` skips `<rootfs>/.l2s/`, and

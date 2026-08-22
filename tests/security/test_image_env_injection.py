@@ -25,6 +25,7 @@ from proot_distro.commands.build import command_build
 from proot_distro.commands.login import command_login
 from proot_distro.execenv import is_host_exec_var
 from proot_distro.helpers.build_engine.engine import _adopt_image_config
+from proot_distro.helpers.build_engine import run_step
 from proot_distro.helpers.build_engine.handlers import do_env
 
 
@@ -169,6 +170,10 @@ class _Stage:
     def __init__(self):
         self.image_config = {"config": {}}
         self.env = {}
+        self.args = {}
+        self.declared_args = set()
+        self.rootfs_dir = ""
+        self.rootfs_fd = None
 
 
 class _Engine:
@@ -215,3 +220,68 @@ def test_build_keeps_an_authors_env_in_the_produced_image(tmp_path, builders):
     from proot_distro.helpers.docker.cache import load_manifest_cache
     _m, _r, cfg = load_manifest_cache("envimg:1", HOST_ARCH)
     assert "LD_LIBRARY_PATH=/opt/lib" in (cfg.get("config") or {}).get("Env")
+
+
+# --- the env the host-side exec is actually handed -------------------------
+#
+# The refusal above is about where a value came from; this is about where
+# it lands. proot's environment is the tracee's too, so the same dict is
+# read by the host's dynamic loader before proot has confined anything --
+# and the child fchdir's into the stage rootfs between the fork and the
+# exec, so a *relative* entry names a directory an earlier RUN step wrote.
+
+
+def _child_env(env=None, args=None, quiet=True):
+    stage = _Stage()
+    stage.env = dict(env or {})
+    stage.args = dict(args or {})
+    stage.declared_args = set(stage.args)
+    engine = SimpleNamespace(warned_host_exec=set())
+    return run_step._build_child_env(engine, stage), engine
+
+
+def test_a_dockerfile_env_cannot_reach_the_host_side_exec(monkeypatch):
+    monkeypatch.delenv("PROOT_NO_SECCOMP", raising=False)
+    env, _engine = _child_env({
+        "LD_LIBRARY_PATH": "lib",
+        "LD_AUDIT": "lib/audit.so",
+        "LD_PRELOAD": "/evil/pre.so",
+        "PROOT_NO_SECCOMP": "1",
+        "SAFE": "1",
+    })
+    for key in ("LD_LIBRARY_PATH", "LD_AUDIT", "LD_PRELOAD"):
+        assert key not in env
+    assert env["SAFE"] == "1"
+    # proot's own knobs go the same way: what reaches the exec is what
+    # the invoking environment says, which here says nothing.
+    assert "PROOT_NO_SECCOMP" not in env
+
+
+def test_a_declared_arg_is_the_same_door():
+    env, _engine = _child_env(args={"LD_AUDIT": "lib/audit.so", "OK": "2"})
+    assert "LD_AUDIT" not in env
+    assert env["OK"] == "2"
+
+
+def test_the_users_own_proot_toggles_still_reach_the_exec(monkeypatch):
+    monkeypatch.setenv("PROOT_NO_SECCOMP", "1")
+    env, _engine = _child_env({"PROOT_NO_SECCOMP": "0"})
+    assert env["PROOT_NO_SECCOMP"] == "1"
+
+
+def test_the_refusal_is_reported_once_per_name(capsys):
+    stage = _Stage()
+    stage.env = {"LD_LIBRARY_PATH": "lib"}
+    engine = SimpleNamespace(warned_host_exec=set())
+    run_step._build_child_env(engine, stage)
+    run_step._build_child_env(engine, stage)
+    err = capsys.readouterr().err
+    assert err.count("LD_LIBRARY_PATH") == 1
+
+
+def test_the_dockerfiles_own_path_still_decides_the_guests(monkeypatch):
+    # PATH is the guest's to set and is deliberately not refused; what
+    # keeps it from choosing the binary this process becomes is that
+    # get_proot_bin() answers absolutely.
+    env, _engine = _child_env({"PATH": "/opt/bin"})
+    assert env["PATH"] == "/opt/bin"
