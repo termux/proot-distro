@@ -259,6 +259,18 @@ def get_emulator_args(
 
     When emulator_override is given it is used as the emulator path directly,
     bypassing default selection and native-run checks.
+
+    The path handed to proot is absolute, for the reason get_proot_bin()
+    gives: both callers exec proot from *inside* the rootfs -- `login`
+    fchdir's into the pinned container rootfs just before execvpe, the
+    build's RUN step does the same in the child between fork and exec --
+    while this runs earlier, in this process's own working directory. A
+    relative `--emulator qemu-arm` (or a relative PATH entry, which makes
+    shutil.which() answer relatively) is validated here against one
+    directory and resolved by proot against another: the guest's rootfs,
+    whose contents an earlier step or a previous session wrote. Resolved
+    while the cwd still means what the user meant by it, the answer names
+    the file this checked whatever proot's cwd is by then.
     """
     if emulator_override:
         emu_path = emulator_override
@@ -289,7 +301,7 @@ def get_emulator_args(
                        f"'{pkg}' which is not installed.")
             sys.exit(1)
 
-    args = ["-q", emu_path]
+    args = ["-q", os.path.abspath(emu_path)]
     # Extra bindings needed for QEMU to locate Android system libraries.
     for path in (
         "/apex", "/linkerconfig/ld.config.txt",

@@ -1344,7 +1344,16 @@ file never decides that either. `normalize_arch()` accepts native names, bare Do
 (`arm64`/`amd64`/`386`), and `linux/`-prefixed forms. Native 32-on-64:
 `aarch64` runs `arm` when `personality(PER_LINUX32)` succeeds; `x86_64`
 runs `i686` always. Otherwise `get_emulator_args()` selects
-`qemu-<arch>` and binds Android system paths for QEMU's loader. proot's
+`qemu-<arch>` and binds Android system paths for QEMU's loader. The
+path it hands `-q` is **absolute**, for the reason `get_proot_bin()`'s
+is: both callers exec proot from *inside* the rootfs — `login` fchdir's
+into the pinned container rootfs just before `execvpe`, the build's RUN
+step does it in the child between fork and exec — while the selection
+runs earlier, in this process's own working directory. A relative
+`--emulator qemu-arm`, or a relative PATH entry (which makes
+`shutil.which()` answer relatively), was checked against one directory
+and resolved by proot against another: the guest's rootfs, whose
+contents an earlier step or a previous session wrote. proot's
 `--kernel-release` `uname_m` field comes from `ARCH_UNAME_M`, not host
 uname, so emulated containers self-report correctly.
 

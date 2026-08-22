@@ -132,6 +132,39 @@ def test_emulator_override_used_when_valid(tmp_path):
     assert all(a.startswith("--bind=") for a in args[2:])
 
 
+def test_emulator_override_relative_is_made_absolute(tmp_path, monkeypatch):
+    # Both callers exec proot from inside the rootfs, so a relative
+    # emulator path would be resolved there rather than here.
+    emu = tmp_path / "qemu-fake"
+    emu.write_text("#!/bin/sh\n")
+    emu.chmod(emu.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.chdir(tmp_path)
+
+    args = arch.get_emulator_args("aarch64", "x86_64",
+                                  emulator_override="qemu-fake")
+    assert args[0] == "-q"
+    assert os.path.isabs(args[1])
+    assert os.path.samefile(args[1], str(emu))
+
+
+def test_emulator_from_a_relative_path_entry_is_made_absolute(
+    tmp_path, monkeypatch
+):
+    # A relative PATH entry makes shutil.which() answer relatively.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    emu = bin_dir / "qemu-aarch64"
+    emu.write_text("#!/bin/sh\n")
+    emu.chmod(emu.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "bin")
+
+    args = arch.get_emulator_args("aarch64", "x86_64")
+    assert args[0] == "-q"
+    assert os.path.isabs(args[1])
+    assert os.path.samefile(args[1], str(emu))
+
+
 # ---------------------------------------------------------------------------
 # get_proot_bin — the string both exec paths hand to a PATH the image sets
 # ---------------------------------------------------------------------------
