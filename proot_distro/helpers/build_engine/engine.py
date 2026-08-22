@@ -54,35 +54,135 @@ _FROM_AS_RE = re.compile(r"\s+AS\s+(\S+)\s*$", re.IGNORECASE)
 
 
 
-def _strip_host_exec_env(image_config: dict) -> dict:
-    """Drop LD_*/PROOT_* from a pulled image's config Env, in place.
+def _malformed(image_ref: str, what: str):
+    """The one refusal shape for a base image config that will not do."""
+    raise BuildError(
+        f"FROM {image_ref}: the image config is malformed: {what}."
+    )
 
-    Filtered where a stranger's config is *adopted*, not where it is
-    used, so nothing downstream can re-seed the values: a stage's env is
-    seeded from this list at FROM, `FROM <earlier stage>` deep-copies the
-    whole config, and what the build finally stores as its own image's
-    config comes from here too. One filter, and every one of those is
-    clean by construction.
 
-    An ENV line in the user's own Dockerfile is untouched -- it goes
-    through do_env, which writes this same list afterwards. That is the
-    point: `ENV LD_LIBRARY_PATH=/opt/lib` is an ordinary thing for a
-    Dockerfile to say and its author is the one running the build, while
-    the same line arriving inside a base image is a stranger choosing
-    what the host-side proot exec loads (see proot_distro.execenv).
+def _cfg_object(value, image_ref: str, what: str) -> dict:
+    if not isinstance(value, dict):
+        _malformed(image_ref, f"{what} is not an object")
+    return value
+
+
+def _cfg_str_list(value, image_ref: str, what: str) -> list:
+    if not isinstance(value, list):
+        _malformed(image_ref, f"{what} is not a list")
+    for entry in value:
+        if not isinstance(entry, str):
+            _malformed(image_ref, f"{what} holds an entry that is not "
+                                  f"a string")
+    return value
+
+
+def _adopt_image_config(image_config, image_ref: str) -> dict:
+    """Return a pulled image's config, held to the shapes read out of it.
+
+    Two things happen here, both at the point a stranger's config is
+    *adopted* rather than where it is used: nothing downstream can
+    re-seed a value, because a stage's env is seeded from this at FROM,
+    `FROM <earlier stage>` deep-copies the whole config, and what the
+    build finally stores as its own image's config comes from here too.
+    One pass, and every one of those is clean by construction.
+
+    The first is the LD_*/PROOT_* filter over `Env`. An ENV line in the
+    user's own Dockerfile is untouched -- it goes through do_env, which
+    writes this same list afterwards. That is the point: the same name
+    arriving inside a base image is a stranger choosing what the
+    host-side proot exec loads (see proot_distro.execenv).
+
+    The second is the shape. Every field below is read back by this
+    module or by a handler -- `User` and `Shell` decide what a RUN step
+    runs and who as, `WorkingDir` becomes proot's --cwd, `OnBuild` is
+    parsed as Dockerfile lines, `Env` seeds the stage, `Cmd` and
+    `Entrypoint` are what `run` later executes, `Labels`, `ExposedPorts`
+    and `Volumes` are merged into by their handlers, and `history` is
+    appended to once per instruction. All of it is a registry's JSON (or
+    a manifest-cache entry's, which on Termux sits under the bound
+    $TERMUX_PREFIX and is a guest's to compose), and every consumer
+    subscripted it as the type OCI says it is: `"config": "x"` was an
+    AttributeError at FROM, `"Labels": ["a"]` a ValueError in do_label,
+    `"OnBuild": 5` a TypeError, `"history": null` an AttributeError at
+    the first instruction -- and `build` catches none of those, so each
+    was a traceback.
+
+    A field of the wrong type is a refusal naming it, not a value
+    dropped quietly: two of them decide what runs, and the rest would
+    otherwise be carried into the image this build publishes. Absent and
+    JSON `null` are simply "not set", which is how registries spell an
+    empty field; a `null` is removed rather than left standing, since
+    `.get(key) or default` and `setdefault(key, default)` do not answer
+    alike for one.
     """
-    cfg = image_config.get("config")
-    if not isinstance(cfg, dict):
-        return image_config
-    env_list = cfg.get("Env")
-    if not isinstance(env_list, list):
-        return image_config
-    cfg["Env"] = [
-        e for e in env_list
-        if not (isinstance(e, str) and "=" in e
-                and is_host_exec_var(e.partition("=")[0]))
-    ]
-    return image_config
+    doc = _cfg_object(image_config, image_ref, "the document")
+
+    if doc.get("history") is None:
+        doc.pop("history", None)
+    elif not isinstance(doc["history"], list):
+        _malformed(image_ref, "'history' is not a list")
+
+    if doc.get("rootfs") is None:
+        doc.pop("rootfs", None)
+    else:
+        rootfs = _cfg_object(doc["rootfs"], image_ref, "'rootfs'")
+        if rootfs.get("diff_ids") is None:
+            rootfs.pop("diff_ids", None)
+        else:
+            _cfg_str_list(rootfs["diff_ids"], image_ref, "'rootfs.diff_ids'")
+
+    if doc.get("config") is None:
+        doc["config"] = {}
+        return doc
+    cfg = _cfg_object(doc["config"], image_ref, "'config'")
+
+    for key in ("Cmd", "Entrypoint", "OnBuild", "Shell"):
+        if cfg.get(key) is None:
+            cfg.pop(key, None)
+        else:
+            _cfg_str_list(cfg[key], image_ref, f"'config.{key}'")
+
+    for key in ("User", "WorkingDir"):
+        if cfg.get(key) is None:
+            cfg.pop(key, None)
+        elif not isinstance(cfg[key], str):
+            _malformed(image_ref, f"'config.{key}' is not a string")
+
+    for key in ("ExposedPorts", "Volumes"):
+        if cfg.get(key) is None:
+            cfg.pop(key, None)
+        else:
+            # The key set is the whole of what either field says: the
+            # spec's value is an empty object, and both handlers write
+            # one. Rewritten rather than checked, so an inherited value
+            # of any other shape cannot reach the built image either.
+            names = _cfg_object(cfg[key], image_ref, f"'config.{key}'")
+            cfg[key] = {name: {} for name in names}
+
+    if cfg.get("Labels") is None:
+        cfg.pop("Labels", None)
+    else:
+        labels = _cfg_object(cfg["Labels"], image_ref, "'config.Labels'")
+        for value in labels.values():
+            if value is not None and not isinstance(value, str):
+                _malformed(image_ref, "'config.Labels' holds a value that "
+                                      "is not a string")
+        # A null label value is the empty string, as it is to every
+        # other reader of a map of strings.
+        cfg["Labels"] = {k: (v if v is not None else "")
+                         for k, v in labels.items()}
+
+    if cfg.get("Env") is None:
+        cfg.pop("Env", None)
+    else:
+        env_list = _cfg_str_list(cfg["Env"], image_ref, "'config.Env'")
+        cfg["Env"] = [
+            e for e in env_list
+            if not ("=" in e and is_host_exec_var(e.partition("=")[0]))
+        ]
+
+    return doc
 
 
 def _stage_rootfs_fd(stage):
@@ -550,8 +650,8 @@ class BuildEngine:
         finally:
             os.close(rootfs_fd)
 
-        stage.image_config = _strip_host_exec_env(
-            meta.get("image_config") or {"config": {}}
+        stage.image_config = _adopt_image_config(
+            meta.get("image_config") or {"config": {}}, image_ref,
         )
         manifest = meta.get("manifest") or {}
         config_diff_ids = (
@@ -559,8 +659,16 @@ class BuildEngine:
         )
         stage.layers = []
         for i, layer in enumerate(manifest.get("layers", [])):
+            # pull_image has already held the manifest to manifest_layers'
+            # rule, so `layers` is a list of descriptors and each digest
+            # is a string. A `size` is not part of that promise, and this
+            # one is copied into the manifest the build publishes: read a
+            # non-int as absent, the way every other reader of the field
+            # does.
             digest = layer.get("digest", "")
             size = layer.get("size", 0)
+            if not isinstance(size, int) or isinstance(size, bool):
+                size = 0
             diff_id = (
                 config_diff_ids[i]
                 if i < len(config_diff_ids) else digest

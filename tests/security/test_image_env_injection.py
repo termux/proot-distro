@@ -24,7 +24,7 @@ from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
 from proot_distro.commands.login import command_login
 from proot_distro.execenv import is_host_exec_var
-from proot_distro.helpers.build_engine.engine import _strip_host_exec_env
+from proot_distro.helpers.build_engine.engine import _adopt_image_config
 from proot_distro.helpers.build_engine.handlers import do_env
 
 
@@ -154,14 +154,15 @@ def test_pulled_base_config_is_filtered_at_adoption():
     built image's own config comes from it — so one filter keeps all of
     them clean.
     """
-    cfg = _strip_host_exec_env({"config": {"Env": list(HOSTILE_ENV)}})
+    cfg = _adopt_image_config({"config": {"Env": list(HOSTILE_ENV)}}, "img")
     assert cfg["config"]["Env"] == ["LANG=C.UTF-8"]
 
 
-def test_strip_tolerates_configs_that_are_not_shaped_like_one():
-    for weird in ({}, {"config": None}, {"config": {"Env": "nope"}},
-                  {"config": {}}):
-        _strip_host_exec_env(json.loads(json.dumps(weird)))
+def test_adopt_tolerates_the_shapes_a_registry_really_sends():
+    for weird in ({}, {"config": None}, {"config": {}},
+                  {"config": {"Env": None, "Cmd": None, "Labels": None}}):
+        adopted = _adopt_image_config(json.loads(json.dumps(weird)), "img")
+        assert isinstance(adopted["config"], dict)
 
 
 class _Stage:

@@ -1705,7 +1705,7 @@ or `do_copy_or_add`. FROM resolves `scratch`, named stages (re-apply
 cached layers), or external images via `pull_image()`. Base image
 `OnBuild` triggers fire after FROM.
 
-A pulled base image's config is filtered by `_strip_host_exec_env()`
+A pulled base image's config goes through `_adopt_image_config()`
 where it is **adopted**, not where it is used: the stage's env is seeded
 from that `Env` list at FROM, `FROM <earlier stage>` deep-copies the
 whole config, and what the build stores as its own image's config comes
@@ -1718,6 +1718,31 @@ records one for whoever builds *from* the result), so the engine sets
 `_firing_onbuild` around that loop and `do_env` drops a host-exec name
 with a warning, from the produced config as well as from the live
 scope.
+
+The same function is where that config's **shape** is settled, and for
+the same reason: everything downstream reads it back. `User` and `Shell`
+decide what a RUN step runs and who as, `WorkingDir` becomes proot's
+`--cwd`, `OnBuild` is parsed as Dockerfile lines, `Env` seeds the stage,
+`Cmd`/`Entrypoint` are what `run` later executes, `Labels`,
+`ExposedPorts` and `Volumes` are merged into by their handlers, and
+`history` is appended to once per instruction — and every one of those
+consumers subscripted the field as the type OCI gives it. All of it is a
+registry's JSON, or a manifest-cache entry's, which on Termux sits under
+the bound `$TERMUX_PREFIX` and so is a guest's to compose: `"config":
+"x"` was an `AttributeError` at FROM, `"Labels": ["a"]` a `ValueError`
+in `do_label`, `"OnBuild": 5` a `TypeError`, `"history": null` an
+`AttributeError` at the first instruction — and `build` catches none of
+those, so a traceback. A field of the wrong type is a **refusal** naming
+it (`BuildError`, so the handler's message), not a value dropped
+quietly: two of them decide what runs, and the rest would otherwise be
+carried into the image this build publishes. Absent and JSON `null` are
+"not set", which is how registries spell an empty field, and a `null` is
+**removed** rather than left standing, since `.get(k) or default` and
+`setdefault(k, default)` do not answer alike for one. A layer
+descriptor's `size` is read the same way it is everywhere else — a
+non-int as absent — since `manifest_layers()` vouches for a manifest's
+digests but not for that field, and this one is copied into the manifest
+the build publishes.
 
 `build_engine/users.py` resolves `USER` and `COPY --chown` against the
 rootfs's own `/etc/passwd` and `/etc/group` through `guestfile`, the
