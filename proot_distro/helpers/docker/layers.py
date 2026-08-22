@@ -30,7 +30,9 @@ import urllib.request
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
-from proot_distro.helpers.download import retry_http
+from proot_distro.helpers.download import (
+    declared_length, require_complete_body, retry_http,
+)
 from proot_distro.helpers.docker.cache import (
     layer_cache_path, open_verified_layer, split_digest,
 )
@@ -80,7 +82,7 @@ def download_blob(
             with atomic_replace(dest) as tmp_fd:
                 with opener(insecure).open(req) as resp, \
                         open(tmp_fd, "wb", closefd=False) as fh:
-                    total = int(resp.headers.get("Content-Length", 0))
+                    total = declared_length(resp)
                     downloaded = 0
                     while True:
                         chunk = resp.read(65536)
@@ -90,6 +92,13 @@ def download_blob(
                         hasher.update(chunk)
                         downloaded += len(chunk)
                         draw_bytes_bar(downloaded, total, noun="downloaded")
+                    # Before the digest, so a connection that ended early
+                    # is reported as what it is and retried, instead of
+                    # surfacing as the registry serving the wrong bytes --
+                    # which is not retried, being no fault of the wire.
+                    require_complete_body(
+                        downloaded, total, f"Downloading blob {digest[:19]}",
+                    )
                 actual_hex = hasher.hexdigest()
                 if actual_hex != expected_hex.lower():
                     raise RuntimeError(

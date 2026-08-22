@@ -239,6 +239,8 @@ class _FakeOpener:
         body = json.dumps(self.payload).encode()
 
         class _Resp(io.BytesIO):
+            headers = {"Content-Length": str(len(body))}
+
             def __enter__(self_inner):
                 return self_inner
 
@@ -300,6 +302,8 @@ def test_fetch_page_malformed_json(monkeypatch):
     class _BadOpener(_FakeOpener):
         def open(self, req, timeout=None):
             class _Resp(io.BytesIO):
+                headers = {}
+
                 def __enter__(self_inner):
                     return self_inner
 

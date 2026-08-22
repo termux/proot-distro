@@ -24,6 +24,7 @@
 # backup/restore code paths.
 
 import hashlib
+import http.client
 import os
 import ssl
 import time
@@ -38,15 +39,88 @@ from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
 __all__ = (
+    "IncompleteResponse",
+    "NETWORK_ERRORS",
     "certificate_error_msg",
+    "declared_length",
     "download_file",
     "insecure_ssl_context",
     "is_cert_verification_error",
     "is_plaintext_http_tls_error",
     "is_retryable_http_error",
+    "require_complete_body",
     "retry_http",
     "sha256_file",
 )
+
+
+# What a failed HTTP request raises, in one name. urllib wraps what it
+# can into URLError (itself an OSError), and a socket failure is an
+# OSError outright -- but http.client raises its own family for a
+# response that is malformed or cut short, and HTTPException is **not**
+# an OSError. A chunked body whose peer disappears mid-chunk is the
+# ordinary way to meet one: HTTPResponse.read() raises IncompleteRead,
+# which walked straight through every `except (URLError, OSError)` in
+# this program and ended `install`, `build` or `push` in a traceback.
+# Every net that guards a request uses this tuple, so there is one place
+# to add the next family rather than a dozen to remember.
+NETWORK_ERRORS = (urllib.error.URLError, OSError, http.client.HTTPException)
+
+
+class IncompleteResponse(http.client.HTTPException):
+    """A response body that ended before the length it declared.
+
+    Raised by require_complete_body(). An HTTPException so it travels
+    with the rest of them -- caught by every net, retried by retry_http
+    -- because that is exactly what it is: the same failure http.client
+    reports for a truncated *chunked* body, at the one framing where it
+    reports nothing at all.
+    """
+
+
+def declared_length(resp) -> int:
+    """The body length *resp* declares, or 0 when it declares none.
+
+    A header is a string the server chose, and `int()` on it was the
+    program's own contribution to the problem: `Content-Length: abc` is
+    a ValueError, which no net here catches. http.client itself already
+    treats an unparsable length as absent (it falls back to reading
+    until the connection closes), so this answers the same way.
+    """
+    try:
+        value = int(resp.headers.get("Content-Length", 0))
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
+def require_complete_body(received: int, declared: int,
+                          what: str = "") -> None:
+    """Raise IncompleteResponse when less arrived than *declared*.
+
+    The other half of a truncated response, and the quiet one. A cut
+    *chunked* body raises IncompleteRead on its own; a cut
+    **Content-Length** body raises nothing at all -- CPython's
+    HTTPResponse.read(amt) deliberately does not, for compatibility --
+    so the short bytes were simply what the caller got. For a layer blob
+    the digest caught it after the fact; for `install <url>` and
+    `ADD <url>` nothing did, and the truncated file was published as the
+    real one.
+
+    Callers pass the length they already read for the progress bar, so
+    nothing here reads the header twice. A caller that deliberately
+    reads only part of a body (a probe) must not call this.
+
+    *what* names the request for a caller whose exception surfaces as it
+    is; one that already wraps it in a message naming the URL leaves it
+    out rather than saying so twice.
+    """
+    if declared and received < declared:
+        prefix = f"{what}: " if what else ""
+        raise IncompleteResponse(
+            f"{prefix}the response ended after {received} of {declared} "
+            f"bytes."
+        )
 
 
 def insecure_ssl_context() -> ssl.SSLContext:
@@ -126,15 +200,20 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     Deterministic failures are not retried — they cannot succeed on a repeat
     request: an HTTP client error (4xx, except 408 Request Timeout and 429 Too
     Many Requests, which mean "retry later"), a TLS certificate verification
-    failure, or a plaintext-HTTP reply to an https:// URL. Everything else —
-    5xx server errors, connection resets, timeouts, DNS failures — is treated
-    as transient and retried.
+    failure, a plaintext-HTTP reply to an https:// URL, or a URL http.client
+    will not put on the wire at all. Everything else — 5xx server errors,
+    connection resets, timeouts, DNS failures, and a response body that ended
+    early — is treated as transient and retried.
     """
     if isinstance(exc, urllib.error.HTTPError):
         return not (400 <= exc.code < 500 and exc.code not in (408, 429))
     if isinstance(exc, urllib.error.URLError):
         if is_cert_verification_error(exc) or is_plaintext_http_tls_error(exc):
             return False
+    if isinstance(exc, http.client.InvalidURL):
+        # A control character in the URL, or a port that is not a number:
+        # the request never left, and will not next time either.
+        return False
     return True
 
 
@@ -155,7 +234,7 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
             return operation()
         except KeyboardInterrupt:
             raise
-        except (urllib.error.URLError, OSError) as exc:
+        except NETWORK_ERRORS as exc:
             if not is_retryable_http_error(exc) or attempt >= max_retries - 1:
                 raise
             log_info(
@@ -199,7 +278,7 @@ def download_file(
     def _attempt():
         with atomic_write(dest, "wb") as fh:
             with urllib.request.urlopen(req, context=context) as resp:
-                total = int(resp.headers.get("Content-Length", 0))
+                total = declared_length(resp)
                 downloaded = 0
                 while True:
                     chunk = resp.read(65536)
@@ -208,6 +287,10 @@ def download_file(
                     fh.write(chunk)
                     downloaded += len(chunk)
                     draw_bytes_bar(downloaded, total, noun="downloaded")
+                # Inside atomic_write, so a short answer takes the
+                # temporary with it instead of publishing part of an
+                # archive as the whole of one.
+                require_complete_body(downloaded, total)
         clear_bar()
         log_info(f"Finished downloading ({fmt_size(downloaded)}).")
 
@@ -217,7 +300,7 @@ def download_file(
     except KeyboardInterrupt:
         clear_bar()
         raise
-    except (urllib.error.URLError, OSError) as exc:
+    except NETWORK_ERRORS as exc:
         clear_bar()
         # retry_http re-raises deterministic failures (and the last transient
         # one once retries are spent); translate them into a meaningful error

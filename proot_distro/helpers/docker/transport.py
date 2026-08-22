@@ -51,10 +51,13 @@ import urllib.request
 
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
 from proot_distro.helpers.download import (
+    NETWORK_ERRORS,
     certificate_error_msg,
+    declared_length,
     insecure_ssl_context,
     is_cert_verification_error,
     is_plaintext_http_tls_error,
+    require_complete_body,
     retry_http,
 )
 
@@ -152,11 +155,16 @@ def _request_body(open_fn, req, what: str, limit: int = None) -> bytes:
     def _attempt():
         with open_fn(req) as resp:
             data = resp.read(cap + 1)
+            declared = declared_length(resp)
         if len(data) > cap:
             raise RuntimeError(
                 f"{what}: the registry's response is larger than "
                 f"{cap} bytes; refusing to read it."
             )
+        # After the cap, never before it: a body larger than the cap is
+        # short of its own Content-Length by construction, and that is
+        # the refusal above rather than a truncated answer.
+        require_complete_body(len(data), declared, what)
         return data
     return retry_http(_attempt, what=what)
 
@@ -246,7 +254,7 @@ def _http_registry_reachable(registry: str, timeout: float = 6.0) -> bool:
         return True
     except urllib.error.HTTPError:
         return True
-    except (urllib.error.URLError, OSError):
+    except NETWORK_ERRORS:
         return False
 
 

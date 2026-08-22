@@ -635,6 +635,12 @@ Helpers (`helpers/`): `build_cache`, `dockerfile`, `download`,
 parsing,run_step,stage,users}` and `docker/{cache,layers,media,pull,
 push,refs,search,transport}`. `build_engine/stage.py` is where a build's
 per-FROM state lives, **and its two descriptors** — see "Run / build".
+`helpers/download.py` owns everything both HTTP users share: the retry
+policy (`retry_http`, `is_retryable_http_error`), the TLS-failure
+classifiers, and the three names every net and every whole-body read
+goes through — `NETWORK_ERRORS`, `declared_length()`,
+`require_complete_body()` — see "Docker / OCI registry" for what a
+response that ends early does without them.
 
 ## Key paths
 
@@ -1548,6 +1554,35 @@ and no command handler catches those, so a hostile mirror, an
 `--allow-insecure` MITM, or a manifest-cache entry a guest wrote (the
 cache is under the bound `$TERMUX_PREFIX` on Termux) ended the command
 in a traceback.
+
+**Framing** is the third of those, and it is not the body's contents but
+the way it ends. `download.NETWORK_ERRORS` is the one name for what a
+failed request raises: urllib wraps what it can into `URLError` (an
+`OSError`), but `http.client` has its own family for a response that is
+malformed or cut short, and `HTTPException` is **not** an `OSError` — so
+a chunked body whose peer disappears mid-chunk raises `IncompleteRead`
+and walked through every `except (URLError, OSError)` in the program,
+ending `install`, `build` or `push` in a traceback. Every net that
+guards a request uses that tuple, so there is one place to add the next
+family. Its mirror is `require_complete_body()`, for the framing that
+reports *nothing*: a **Content-Length** body cut short raises no error
+at all (CPython's `read(amt)` declines to, for compatibility), so the
+short bytes were simply what the caller got — the digest caught it for a
+layer blob, and nothing did for `install <url>` or `ADD <url>`, which
+published the truncated file as the real one. Every site that reads a
+body **whole** checks what arrived against what was declared and raises
+`IncompleteResponse` (an `HTTPException`, so it is caught by the same
+nets and retried by `retry_http`); a site that reads only part of one on
+purpose — the plaintext `/v2/` probe — must not. `declared_length()` is
+where the header is read, because `int()` on one was the program's own
+contribution: `Content-Length: abc` is a `ValueError`, and no net caught
+that either. In the layer download the check comes **before** the
+digest, so a connection that ended early is retried as what it is rather
+than surfacing as the registry serving the wrong bytes, which is not
+retried. And every network failure now leaves `pull_image` as a
+`RuntimeError`: the layer loop used to let one out as itself, which
+`install` reported (a `URLError` being an `OSError`) and `build`'s FROM
+did not catch at all.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise

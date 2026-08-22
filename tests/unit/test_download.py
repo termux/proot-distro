@@ -3,6 +3,7 @@
 # actually served over plain HTTP (urlopen mocked; no network).
 
 import email.message
+import http.client
 import ssl
 
 import urllib.error
@@ -106,6 +107,12 @@ def test_is_retryable_http_error():
     assert not download.is_retryable_http_error(
         urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
     )
+    # A body that ended early is the wire's fault, not the request's.
+    assert download.is_retryable_http_error(http.client.IncompleteRead(b"ab"))
+    assert download.is_retryable_http_error(download.IncompleteResponse("x"))
+    assert download.is_retryable_http_error(http.client.BadStatusLine("x"))
+    # A URL http.client will not put on the wire cannot succeed on a repeat.
+    assert not download.is_retryable_http_error(http.client.InvalidURL("port"))
 
 
 def test_retry_http_retries_then_succeeds(monkeypatch):
@@ -317,3 +324,113 @@ def test_download_file_insecure_passes_unverified_context(tmp_path, monkeypatch)
     assert ctx is not None
     assert ctx.verify_mode == ssl.CERT_NONE
     assert dest.read_bytes() == b"payload"
+
+
+# ----- a response that ends early -----------------------------------------
+#
+# Two framings, two failures. A **chunked** body whose peer disappears
+# raises http.client.IncompleteRead, which is not an OSError and so walked
+# through every `except (URLError, OSError)` in the program. A
+# **Content-Length** body cut short raises nothing at all — CPython's
+# HTTPResponse.read(amt) deliberately does not — so the short bytes were
+# simply what the caller got, and `install <url>` published them.
+
+
+def test_network_errors_covers_the_http_client_family():
+    assert http.client.HTTPException in download.NETWORK_ERRORS
+    assert issubclass(download.IncompleteResponse, http.client.HTTPException)
+    # IncompleteRead is the one a truncated chunked body really raises.
+    assert isinstance(
+        http.client.IncompleteRead(b"ab"), download.NETWORK_ERRORS
+    )
+    # ... and it is not an OSError, which is why the old nets missed it.
+    assert not isinstance(http.client.IncompleteRead(b"ab"), OSError)
+
+
+class _Headers(dict):
+    """Enough of email.message.Message for declared_length()."""
+
+
+@pytest.mark.parametrize("value,expected", [
+    ({"Content-Length": "12"}, 12),
+    ({"Content-Length": "0"}, 0),
+    ({}, 0),
+    ({"Content-Length": "abc"}, 0),      # a header is the server's string
+    ({"Content-Length": "-5"}, 0),
+    ({"Content-Length": None}, 0),
+])
+def test_declared_length_never_raises_on_a_header(value, expected):
+    resp = type("R", (), {"headers": _Headers(value)})()
+    assert download.declared_length(resp) == expected
+
+
+def test_require_complete_body():
+    download.require_complete_body(10, 10, "x")     # exact
+    download.require_complete_body(10, 0, "x")      # nothing declared
+    download.require_complete_body(0, 0, "x")
+    with pytest.raises(download.IncompleteResponse) as exc:
+        download.require_complete_body(3, 10, "Downloading u")
+    assert "3 of 10" in str(exc.value)
+    assert "Downloading u" in str(exc.value)
+    # No label for a caller that already names the URL in its own message.
+    with pytest.raises(download.IncompleteResponse) as exc:
+        download.require_complete_body(3, 10)
+    assert str(exc.value).startswith("the response ended")
+
+
+def test_retry_http_retries_a_body_that_ended_early(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(download, "log_info", lambda text: None)
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise http.client.IncompleteRead(b"partial")
+        return "ok"
+
+    assert download.retry_http(op, what="Job", max_retries=5) == "ok"
+    assert attempts["n"] == 3
+
+
+def test_download_file_body_short_of_its_length_is_a_message(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(download, "log_info", lambda text: None)
+
+    class _Short(_FakeDownloadResp):
+        def __init__(self):
+            super().__init__(b"half")
+            self.headers = {"Content-Length": "1000"}
+
+    monkeypatch.setattr(
+        download.urllib.request, "urlopen", lambda *a, **k: _Short(),
+    )
+    dest = tmp_path / "out.tar"
+    with pytest.raises(RuntimeError) as exc:
+        download.download_file("http://h/x.tar", str(dest), max_retries=2)
+    assert "4 of 1000" in str(exc.value)
+    # The temporary went with the failure: nothing publishes half an archive.
+    assert not dest.exists()
+
+
+def test_download_file_incomplete_read_is_a_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(download, "log_info", lambda text: None)
+
+    class _Cut(_FakeDownloadResp):
+        def __init__(self):
+            super().__init__(b"")
+            self.headers = {}
+
+        def read(self, n=-1):
+            raise http.client.IncompleteRead(b"partial", 900)
+
+    monkeypatch.setattr(
+        download.urllib.request, "urlopen", lambda *a, **k: _Cut(),
+    )
+    dest = tmp_path / "out.tar"
+    with pytest.raises(RuntimeError):
+        download.download_file("http://h/x.tar", str(dest), max_retries=2)
+    assert not dest.exists()

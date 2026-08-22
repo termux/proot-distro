@@ -125,6 +125,10 @@ def test_build_add_url_spools_to_disk(tmp_path, builders, monkeypatch):
     body = b"N" * (1 << 20)
 
     class _Resp(io.BytesIO):
+        # A real response declares its length, and ADD now holds the
+        # answer to it: short of that is a truncated download.
+        headers = {"Content-Length": str(len(body))}
+
         def __enter__(self):
             return self
 

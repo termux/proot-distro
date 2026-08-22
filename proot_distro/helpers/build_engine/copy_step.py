@@ -51,11 +51,13 @@ import shutil
 import stat
 import tarfile
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 
 from proot_distro.message import log_info
+from proot_distro.helpers.download import (
+    NETWORK_ERRORS, declared_length, require_complete_body,
+)
 from proot_distro.helpers.build_engine.dockerignore import (
     is_ignored, simple_glob,
 )
@@ -217,11 +219,14 @@ class _Spool:
         self._seq = 0
 
     def stream(self, fobj):
-        """Copy *fobj* into a fresh file here; return its name.
+        """Copy *fobj* into a fresh file here; return (name, bytes copied).
 
         O_EXCL off the directory's descriptor rather than
         tempfile.mkstemp(dir=path), which resolves the directory by name
         for every member of an ADD'd archive.
+
+        The count comes back because one caller has something to compare
+        it against: a URL response that declared a Content-Length.
         """
         while True:
             self._seq += 1
@@ -234,10 +239,11 @@ class _Spool:
         try:
             with os.fdopen(fd, "wb") as out:
                 shutil.copyfileobj(fobj, out, _SPOOL_CHUNK)
+                written = out.tell()
         except BaseException:
             dirfd.unlink_quietly(self.fd, name)
             raise
-        return name
+        return name, written
 
     def close(self):
         if self.fd is not None:
@@ -597,8 +603,15 @@ def _copy_url(url, dest, file_map, uid, gid, mode_override, spool):
     opener = urllib.request.build_opener(AuthStrippingRedirectHandler)
     try:
         with opener.open(url) as resp:
-            spooled = spool.stream(resp)
-    except (urllib.error.URLError, OSError) as exc:
+            declared = declared_length(resp)
+            spooled, written = spool.stream(resp)
+            # A body cut short of the length it declared is not the file
+            # the Dockerfile asked for. Nothing downstream would notice:
+            # there is no digest to check an ADD against, so the short
+            # bytes went into the rootfs and into the layer `push`
+            # uploads, under the name of the whole file.
+            require_complete_body(written, declared)
+    except NETWORK_ERRORS as exc:
         raise BuildError(f"ADD {url}: {exc}") from exc
     _spool_entry(
         file_map, arcname, spool, spooled,
@@ -856,7 +869,7 @@ def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool, src):
                     fobj_m = tf.extractfile(m)
                     if fobj_m is None:
                         continue
-                    spooled = spool.stream(fobj_m)
+                    spooled, _written = spool.stream(fobj_m)
                     _spool_entry(
                         file_map, arc, spool, spooled,
                         stat.S_IMODE(m.mode) or 0o644, uid, gid,

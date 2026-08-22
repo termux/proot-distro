@@ -45,7 +45,7 @@ import urllib.request
 from proot_distro.compress import ZSTD_AVAILABLE, unsupported_msg
 from proot_distro.message import log_info, log_error
 from proot_distro.progress import fmt_size
-from proot_distro.helpers.download import retry_http
+from proot_distro.helpers.download import NETWORK_ERRORS, retry_http
 from proot_distro.helpers.docker.cache import (
     annotate_manifest_cache,
     load_manifest_cache,
@@ -376,7 +376,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 token, base = get_auth_token(
                     repo, registry, insecure=insecure
                 )
-            except (urllib.error.URLError, OSError) as net_err:
+            except NETWORK_ERRORS as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
                     if net_err.code in (401, 403):
                         raise RuntimeError(
@@ -396,7 +396,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
             manifest, token, repo, base = _resolve_single_manifest(
                 image_ref, arch, insecure
             )
-        except (urllib.error.URLError, OSError) as net_err:
+        except NETWORK_ERRORS as net_err:
             if isinstance(net_err, urllib.error.HTTPError):
                 if net_err.code in (401, 403):
                     raise RuntimeError(
@@ -464,12 +464,25 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 layer_fd = download_blob(
                     repo, digest, token or "", base, insecure
                 )
-            except urllib.error.HTTPError as dl_err:
-                if dl_err.code in (401, 403):
+            except NETWORK_ERRORS as dl_err:
+                # Read the same way as the two nets above: an HTTPError
+                # carrying 401/403 is the registry refusing this account,
+                # and everything else is the wire. Both leave as a
+                # RuntimeError, because that is what this function
+                # promises and what both callers rely on -- `install`
+                # reports one, `build`'s FROM turns one into a BuildError.
+                # A reset connection used to come out of the layer loop as
+                # itself, which `install` reported (URLError being an
+                # OSError) and `build` did not catch at all; a body that
+                # ended early is not even an OSError, so neither did. The
+                # blob's own integrity failure is a RuntimeError already
+                # and passes through untouched.
+                if (isinstance(dl_err, urllib.error.HTTPError)
+                        and dl_err.code in (401, 403)):
                     raise RuntimeError(
                         auth_denied_msg(image_ref, dl_err.code)
                     ) from dl_err
-                raise
+                raise RuntimeError(f"Network error: {dl_err}") from dl_err
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
         try:

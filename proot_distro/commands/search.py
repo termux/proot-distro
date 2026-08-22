@@ -35,12 +35,12 @@
 # so the only text this module adds escapes to is the user's own query.
 
 import sys
-import urllib.error
 
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import (
     C, msg, crit_error, log_error, log_info, quote_path, terminal_width,
 )
+from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.helpers.docker import (
     SEARCH_DEFAULT_LIMIT,
     SEARCH_LIMIT_MAX,
@@ -87,7 +87,7 @@ def command_search(args) -> None:
     except KeyboardInterrupt:
         log_error("Aborted by user.")
         sys.exit(1)
-    except (urllib.error.URLError, OSError) as exc:
+    except NETWORK_ERRORS as exc:
         log_error(f"Network error: {exc}")
         sys.exit(1)
     except RuntimeError as exc:

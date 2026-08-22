@@ -8,6 +8,7 @@
 # same time. A single ADD of a large tarball was enough to take the build
 # process out. Content that is not already a file is spooled to one.
 
+import http.client
 import io
 import os
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro.helpers.build_engine import copy_step
+from proot_distro.helpers.build_engine.errors import BuildError
 
 
 @pytest.fixture
@@ -99,6 +101,10 @@ def test_url_response_is_spooled(spool):
     body = b"N" * (1 << 20)
 
     class _Resp(io.BytesIO):
+        # A real response declares its length, and ADD now holds the
+        # answer to it: short of that is a truncated download.
+        headers = {"Content-Length": str(len(body))}
+
         def __enter__(self):
             return self
 
@@ -124,3 +130,64 @@ def test_url_response_is_spooled(spool):
     _assert_no_bytes_held(file_map)
     with open(file_map["opt/blob.bin"]["src"], "rb") as fh:
         assert fh.read() == body
+
+
+# --- a response that ends early --------------------------------------------
+#
+# ADD has no digest to check its download against, so a truncated body is
+# not caught anywhere downstream: the short bytes go into the rootfs and
+# into the layer `push` uploads, under the name of the whole file.
+
+
+def _add_url(spool, resp_factory):
+    file_map = {}
+    class _Opener:
+        def open(self, url):
+            return resp_factory()
+
+    orig = copy_step.urllib.request.build_opener
+    copy_step.urllib.request.build_opener = lambda *a: _Opener()
+    try:
+        copy_step._copy_url(
+            "https://example.invalid/blob.bin", "/opt/blob.bin",
+            file_map, 0, 0, None, spool,
+        )
+    finally:
+        copy_step.urllib.request.build_opener = orig
+    return file_map
+
+
+def test_a_body_short_of_its_declared_length_is_refused(spool):
+    class _Short(io.BytesIO):
+        headers = {"Content-Length": "1048576"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    with pytest.raises(BuildError) as exc:
+        _add_url(spool, lambda: _Short(b"N" * 4096))
+    assert "4096 of 1048576" in str(exc.value)
+
+
+def test_a_body_cut_mid_chunk_is_a_build_error(spool):
+    # http.client.IncompleteRead is not an OSError: it used to walk out of
+    # _copy_url, out of the engine, and out of command_build as a traceback.
+    class _Cut(io.BytesIO):
+        headers = {}
+
+        def read(self, *a):
+            raise http.client.IncompleteRead(b"partial", 900)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    with pytest.raises(BuildError):
+        _add_url(spool, lambda: _Cut(b""))

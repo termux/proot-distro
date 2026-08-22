@@ -27,11 +27,11 @@
 # is optional for self-hosted registries that allow anonymous push.
 
 import sys
-import urllib.error
 
 from proot_distro.message import C, msg, log_info, log_error, crit_error
 from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
+from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.helpers.docker import (
     load_manifest_cache,
     parse_image_ref,
@@ -93,7 +93,7 @@ def command_push(args):
             sys.stderr.flush()
         log_error("Aborted by user.")
         sys.exit(1)
-    except (urllib.error.URLError, OSError) as exc:
+    except NETWORK_ERRORS as exc:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()

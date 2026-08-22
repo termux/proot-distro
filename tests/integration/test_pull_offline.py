@@ -1,6 +1,7 @@
 # Integration tests for the fully-offline branch of pull_image (manifest +
 # all layers cached -> no network), plus the no-network and zstd failure paths.
 
+import http.client
 import os
 
 import urllib.error
@@ -98,3 +99,58 @@ def test_pull_zstd_layer_rejected(tmp_path, builders, monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         pull_image_into("x:zstd", str(root), "x86_64")
     assert "zstd" in str(exc.value)
+
+
+def test_a_layer_download_that_fails_is_a_runtime_error(tmp_path, builders,
+                                                        monkeypatch):
+    """Everything pull_image raises for a network failure is a RuntimeError.
+
+    Both callers rely on it: `install` reports one, and `build`'s FROM
+    turns one into a BuildError. The layer loop used to let a reset
+    connection out as itself — a message from install (URLError being an
+    OSError), a traceback from build — and a body that ended early is not
+    even an OSError, so it was a traceback from both.
+    """
+    manifest = {
+        "schemaVersion": 2,
+        "layers": [{"digest": "sha256:" + "1" * 64, "size": 10,
+                    "mediaType": OCI_LAYER_MEDIA}],
+    }
+    save_manifest_cache("x:cut", "x86_64", manifest, "library/x", {"config": {}})
+    monkeypatch.setattr(pull_mod, "get_auth_token", lambda *a, **k: ("t", "b"))
+
+    def _cut(*a, **k):
+        raise http.client.IncompleteRead(b"partial", 900)
+
+    monkeypatch.setattr(pull_mod, "download_blob", _cut)
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    with pytest.raises(RuntimeError) as exc:
+        pull_image_into("x:cut", str(root), "x86_64")
+    assert "Network error" in str(exc.value)
+
+
+def test_a_blob_that_fails_its_digest_is_not_a_network_error(tmp_path,
+                                                             monkeypatch):
+    # download_blob's own integrity refusal is a RuntimeError already and
+    # must travel unchanged: it is the registry serving the wrong bytes,
+    # not the wire, and nothing about it is worth retrying.
+    manifest = {
+        "schemaVersion": 2,
+        "layers": [{"digest": "sha256:" + "2" * 64, "size": 10,
+                    "mediaType": OCI_LAYER_MEDIA}],
+    }
+    save_manifest_cache("x:bad-blob", "x86_64", manifest, "library/x",
+                        {"config": {}})
+    monkeypatch.setattr(pull_mod, "get_auth_token", lambda *a, **k: ("t", "b"))
+
+    def _mismatch(*a, **k):
+        raise RuntimeError("Layer integrity check failed for digest 'x'.")
+
+    monkeypatch.setattr(pull_mod, "download_blob", _mismatch)
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    with pytest.raises(RuntimeError) as exc:
+        pull_image_into("x:bad-blob", str(root), "x86_64")
+    assert "integrity check failed" in str(exc.value)
+    assert "Network error" not in str(exc.value)

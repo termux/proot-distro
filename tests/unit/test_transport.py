@@ -4,6 +4,7 @@
 
 import base64
 import email.message
+import http.client
 import io
 import json
 import ssl
@@ -94,8 +95,13 @@ def test_redirect_keeps_auth_same_host():
 # ----- token exchange (mocked) --------------------------------------------
 
 class _FakeResp:
-    def __init__(self, payload):
-        self._buf = io.BytesIO(json.dumps(payload).encode())
+    def __init__(self, payload, headers=None):
+        body = json.dumps(payload).encode()
+        self._buf = io.BytesIO(body)
+        # A real response carries them, and _request_body reads the
+        # declared length off them to tell a whole answer from a cut one.
+        self.headers = {"Content-Length": str(len(body))} \
+            if headers is None else headers
 
     def read(self, *a):
         return self._buf.read(*a)
@@ -185,8 +191,10 @@ def test_get_auth_token_open_registry_returns_empty(monkeypatch):
 class _RawResp:
     """A response whose body is whatever bytes the test chose."""
 
-    def __init__(self, body: bytes):
+    def __init__(self, body: bytes, headers=None):
         self._buf = io.BytesIO(body)
+        self.headers = {"Content-Length": str(len(body))} \
+            if headers is None else headers
 
     def read(self, *a):
         return self._buf.read(*a)
@@ -431,3 +439,50 @@ def test_denied_messages_mention_auth_env(monkeypatch):
     assert "PD_DOCKER_AUTH" in transport.push_denied_msg("me/app", 403)
     monkeypatch.setenv("PD_DOCKER_AUTH", "u:p")
     assert "correct" in transport.auth_denied_msg("ubuntu", 403)
+
+
+def test_a_metadata_body_short_of_its_declared_length_is_refused(monkeypatch):
+    # The registry said how many bytes there were and sent fewer. A short
+    # token grant used to parse as far as it went (or fail as "not JSON");
+    # it is now the transport's business, and retried like any other
+    # connection that ended early.
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(
+            b'{"token": "TKN"}', headers={"Content-Length": "9999"},
+        ),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(download.IncompleteResponse):
+        transport.get_auth_token("library/ubuntu")
+
+
+def test_the_size_refusal_still_wins_over_the_length_check(monkeypatch):
+    # A body past the cap is short of its own Content-Length by
+    # construction — the read stops one byte over — so the order matters:
+    # "larger than" is the answer, not "ended early".
+    body = b"x" * (transport.MAX_METADATA_BYTES + 10)
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen",
+        lambda req, *a, **k: _RawResp(
+            body, headers={"Content-Length": str(len(body))},
+        ),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(RuntimeError, match="larger than"):
+        transport.get_auth_token("library/ubuntu")
+
+
+def test_a_response_that_is_cut_mid_chunk_is_not_a_traceback(monkeypatch):
+    # What a truncated *chunked* body really raises. It is not an OSError,
+    # so it used to walk through every net between here and the command.
+    class _Cut(_RawResp):
+        def read(self, *a):
+            raise http.client.IncompleteRead(b"partial", 900)
+
+    monkeypatch.setattr(
+        transport.urllib.request, "urlopen", lambda req, *a, **k: _Cut(b""),
+    )
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    with pytest.raises(http.client.IncompleteRead):
+        transport.get_auth_token("library/ubuntu")

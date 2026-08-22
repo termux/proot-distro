@@ -55,7 +55,9 @@ import urllib.request
 from proot_distro.message import quote_path
 from proot_distro.helpers.download import (
     certificate_error_msg,
+    declared_length,
     is_cert_verification_error,
+    require_complete_body,
     retry_http,
 )
 from proot_distro.helpers.docker.transport import (
@@ -154,11 +156,13 @@ def _fetch_page(query: str, page: int, page_size: int) -> dict:
         # response is read through.
         with opener().open(req, timeout=_TIMEOUT) as resp:
             data = resp.read(MAX_METADATA_BYTES + 1)
+            declared = declared_length(resp)
         if len(data) > MAX_METADATA_BYTES:
             raise RuntimeError(
                 f"Docker Hub's search response is larger than "
                 f"{MAX_METADATA_BYTES} bytes; refusing to read it."
             )
+        require_complete_body(len(data), declared, "Searching Docker Hub")
         return data
 
     try:
