@@ -57,6 +57,7 @@ from proot_distro.helpers.docker.transport import (
     get_auth_token,
     opener,
     push_denied_msg,
+    same_auth_origin,
     _ua,
 )
 
@@ -72,6 +73,24 @@ def _resolve_upload_url(base: str, location: str) -> str:
     if location.startswith("/"):
         return base + location
     return base.rstrip("/") + "/" + location
+
+
+def _headers_for(headers: dict, base: str, url: str) -> dict:
+    """*headers* for a request to *url*: the token only on the registry.
+
+    The Bearer token was issued for the registry at *base*, and the
+    upload Location is a header the registry's answer named -- an
+    absolute one can point anywhere. Reusing the same headers for the
+    PUT sent the token to whatever host it named; verified with a
+    `Location: https://evil.example/upload/1`. Docker's client keys its
+    authorizer on the registry it pinged and sends nothing to another
+    origin, and so does this: the request still goes (a registry may
+    legitimately hand out a pre-signed upload URL on a store of its
+    own), it simply goes without the credential.
+    """
+    if same_auth_origin(base, url):
+        return headers
+    return {k: v for k, v in headers.items() if k != "Authorization"}
 
 
 def _blob_exists(
@@ -167,7 +186,7 @@ def _upload_blob_bytes(
             data=data,
             method="PUT",
             headers={
-                **headers,
+                **_headers_for(headers, base, put_url),
                 "Content-Type": "application/octet-stream",
                 "Content-Length": str(len(data)),
             },
@@ -219,7 +238,7 @@ def _upload_blob_fd(
                     data=reader,
                     method="PUT",
                     headers={
-                        **headers,
+                        **_headers_for(headers, base, put_url),
                         "Content-Type": "application/octet-stream",
                         "Content-Length": str(size),
                     },

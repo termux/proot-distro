@@ -1615,7 +1615,12 @@ Push (`push.py`) loads `(manifest, repo, image_config)` from the local
 cache, re-canonicalises and verifies SHA against `manifest.config.digest`,
 HEAD-probes each blob, uploads the missing via POST-uploads + monolithic
 PUT (no chunked, no cross-repo mount, no multi-arch index). 401/403 ⇒
-`push_denied_msg`.
+`push_denied_msg`. The upload `Location` is a header the registry's
+answer named and an absolute one can point anywhere, so `_headers_for()`
+puts the Bearer token on the PUT only when `same_auth_origin(base, url)`
+says the URL is the registry's own — the PUT still goes elsewhere (a
+pre-signed upload URL on a store of the registry's own is legitimate),
+it goes without the credential, which is what Docker's client does too.
 
 Search (`search.py`) is the odd one out: Docker Hub only, anonymous, no
 token exchange, no cache — see the `search` notes under "Commands and

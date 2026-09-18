@@ -5,6 +5,7 @@
 
 import email.message
 import hashlib
+import os
 
 import urllib.error
 import urllib.request
@@ -177,6 +178,75 @@ def test_upload_blob_bytes_4xx_fails_fast(monkeypatch):
         push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
     assert exc.value.code == 403
     assert calls == ["POST"]  # deterministic -> no retry
+
+
+# ----- upload Location: the token stays on the registry -------------------
+
+def _capture_put_auth(monkeypatch, location):
+    """Drive one upload session; return the PUT's URL and Authorization."""
+    seen = {}
+
+    def fake(req, *a, **k):
+        if req.get_method() == "POST":
+            assert req.get_header("Authorization") == "Bearer TKN"
+            return _FakeResp(202, {"Location": location})
+        seen["url"] = req.full_url
+        seen["auth"] = req.get_header("Authorization")
+        return _FakeResp(201)
+
+    _patch_opener(monkeypatch, fake)
+    return seen
+
+
+@pytest.mark.parametrize("location", [
+    "https://evil.example/upload/1",     # another host
+    "http://reg.example/upload/1",       # the registry, in clear
+    "https://reg.example:8443/upload/1", # the registry, another port
+])
+def test_upload_put_off_the_registry_origin_carries_no_token(
+    monkeypatch, location, tmp_path,
+):
+    # The Location is a header the registry's answer named; an absolute
+    # one can point anywhere, and the PUT used to reuse the POST's
+    # headers, token included. Docker's client sends nothing to another
+    # origin; neither does this.
+    seen = _capture_put_auth(monkeypatch, location)
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
+    assert seen["url"].startswith(location)
+    assert seen["auth"] is None
+
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"data")
+    fd = os.open(str(blob), os.O_RDONLY)
+    try:
+        seen = _capture_put_auth(monkeypatch, location)
+        push._upload_blob_fd("me/app", "sha256:cc", fd, "TKN", _BASE)
+    finally:
+        os.close(fd)
+    assert seen["url"].startswith(location)
+    assert seen["auth"] is None
+
+
+@pytest.mark.parametrize("location", [
+    "/v2/me/app/blobs/uploads/1",             # relative, as most send it
+    "https://reg.example/v2/me/app/uploads/1", # absolute, same origin
+    "https://reg.example:443/uploads/1",       # the default port spelled out
+])
+def test_upload_put_on_the_registry_keeps_the_token(monkeypatch, location):
+    seen = _capture_put_auth(monkeypatch, location)
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
+    assert seen["url"].startswith("https://reg.example")
+    assert seen["auth"] == "Bearer TKN"
+
+
+def test_upload_put_keeps_the_token_on_an_https_upgrade(monkeypatch):
+    # An --allow-insecure push resolved to an http base whose registry
+    # sends uploads to its own https endpoint: the same server, more
+    # securely, so the token goes along.
+    seen = _capture_put_auth(monkeypatch, "https://reg.example/uploads/1")
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN",
+                            "http://reg.example", insecure=True)
+    assert seen["auth"] == "Bearer TKN"
 
 
 # ----- push_image: --allow-insecure threading -----------------------------
