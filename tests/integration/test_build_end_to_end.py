@@ -2,6 +2,7 @@
 # a `FROM scratch` Dockerfile with COPY/ENV/WORKDIR/CMD is built, written to
 # an OCI archive, and installed as a container (offline, via the cache).
 
+import io
 import json
 import os
 import tarfile
@@ -219,3 +220,53 @@ def test_build_refuses_a_bad_copy_chmod_with_a_message(tmp_path, capsys,
     err = capsys.readouterr().err
     assert "Build failed" in err
     assert "--chmod" in err and "line 2" in err
+
+
+def test_build_reads_the_dockerfile_from_stdin(tmp_path, monkeypatch):
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    (ctx / "tool").write_text("x")
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(
+        b"FROM scratch\r\nCOPY tool /tool\r\n"   # CRLF: the parser's to fix
+    )))
+    command_build(_build_args(ctx, dockerfile="-", tags=["stdinimg:1"],
+                              install_as="stdinbox"))
+    assert os.path.isfile(os.path.join(container_rootfs("stdinbox"), "tool"))
+
+
+def test_build_refuses_a_dockerfile_over_the_cap(tmp_path, monkeypatch,
+                                                  capsys):
+    # The file is read whole, and it is as often copied as written;
+    # everything else this program parses out of a stranger's file goes
+    # through a ceiling. The bound is on the bytes read, so a file (or a
+    # pipe) has no size to lie about.
+    from proot_distro.commands import build as build_mod
+    monkeypatch.setattr(build_mod, "MAX_DOCKERFILE_BYTES", 64)
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    (ctx / "Dockerfile").write_text(
+        "FROM scratch\n" + "# " + "x" * 200 + "\n"
+    )
+    with pytest.raises(SystemExit) as exc:
+        command_build(_build_args(ctx, tags=["bigdf:1"], quiet=False))
+    assert exc.value.code == 1
+    assert "larger than 64 bytes" in capsys.readouterr().err
+
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(
+        b"FROM scratch\n# " + b"y" * 200 + b"\n"
+    )))
+    with pytest.raises(SystemExit) as exc:
+        command_build(_build_args(ctx, dockerfile="-", tags=["bigdf:1"],
+                                  quiet=False))
+    assert exc.value.code == 1
+    assert "larger than 64 bytes" in capsys.readouterr().err
+
+
+def test_build_reads_a_dockerfile_at_the_cap(tmp_path, monkeypatch):
+    from proot_distro.commands import build as build_mod
+    text = "FROM scratch\n" + "#" * 50 + "\n"
+    monkeypatch.setattr(build_mod, "MAX_DOCKERFILE_BYTES", len(text))
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    (ctx / "Dockerfile").write_text(text)
+    command_build(_build_args(ctx, tags=["capdf:1"]))

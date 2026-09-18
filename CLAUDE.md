@@ -1760,6 +1760,13 @@ both standard OCI layout **and** Docker-legacy `manifest.json` so
 `helpers/dockerfile.py` handles continuations, parser directives
 (`syntax`/`escape`), here-docs in ADD/COPY/RUN, JSON exec form
 detection, and `expand_vars()` for `$VAR`/`${VAR:-default}` family.
+It also owns `MAX_DOCKERFILE_BYTES` (16 MiB, the ceiling every other
+whole-file parse shares), which `build._read_dockerfile()` applies to
+the **bytes actually read** — from the file or from stdin, both read as
+bytes and decoded alike, the parser normalising line endings itself —
+one byte over being the refusal. A Dockerfile is kilobytes and the
+parser holds the text plus a record per instruction, so its size is the
+parser's memory, and the file is as often copied as written.
 
 Shell-form operands — COPY/ADD's source list, EXPOSE's ports, VOLUME's
 mount points — are split by `parsing.split_operands()`, which turns

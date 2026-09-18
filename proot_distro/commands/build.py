@@ -48,6 +48,7 @@ from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.helpers.dockerfile import (
     DockerfileSyntaxError,
+    MAX_DOCKERFILE_BYTES,
     parse_dockerfile,
 )
 from proot_distro.helpers.build_engine import (
@@ -68,6 +69,24 @@ from proot_distro.progress import fmt_size
 # ---------------------------------------------------------------------------
 # Top-level command
 # ---------------------------------------------------------------------------
+
+def _read_dockerfile(dockerfile: str):
+    """The Dockerfile's bytes, or None when there are more than the cap.
+
+    "-" is stdin, read as bytes like the file so both decode the same
+    way (the parser normalises line endings itself). One byte more than
+    MAX_DOCKERFILE_BYTES is read and its presence is the refusal, so the
+    bound is on what arrives rather than on a size the file declares.
+    """
+    if dockerfile == "-":
+        data = sys.stdin.buffer.read(MAX_DOCKERFILE_BYTES + 1)
+    else:
+        with open(dockerfile, "rb") as fh:
+            data = fh.read(MAX_DOCKERFILE_BYTES + 1)
+    if len(data) > MAX_DOCKERFILE_BYTES:
+        return None
+    return data
+
 
 def command_build(args):
     """Implements `proot-distro build`."""
@@ -119,14 +138,17 @@ def command_build(args):
 
     # ----- read + parse Dockerfile -----
     try:
-        if dockerfile == "-":
-            text = sys.stdin.read()
-        else:
-            with open(dockerfile, "rb") as fh:
-                text = fh.read().decode("utf-8", errors="replace")
+        raw = _read_dockerfile(dockerfile)
     except OSError as exc:
         crit_error(f"cannot read Dockerfile: {exc}")
         sys.exit(1)
+    if raw is None:
+        crit_error(
+            f"Dockerfile is larger than {MAX_DOCKERFILE_BYTES} bytes; "
+            f"refusing to read it."
+        )
+        sys.exit(1)
+    text = raw.decode("utf-8", errors="replace")
 
     try:
         _directives, instructions = parse_dockerfile(text)
