@@ -182,3 +182,40 @@ def test_build_syntax_error_reported(tmp_path):
     with pytest.raises(SystemExit) as exc:
         command_build(_build_args(ctx))
     assert exc.value.code == 1
+
+
+def test_build_copy_chmod_reaches_tree_and_layer(tmp_path):
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    (ctx / "tool").write_text("#!/bin/sh\n")
+    (ctx / "Dockerfile").write_text(
+        "FROM scratch\n"
+        "COPY --chmod=4755 tool /usr/bin/tool\n"
+        'CMD ["/usr/bin/tool"]\n'
+    )
+    command_build(_build_args(ctx, tags=["chmodimg:1"], install_as="chmodbox"))
+
+    root = container_rootfs("chmodbox")
+    st = os.lstat(os.path.join(root, "usr", "bin", "tool"))
+    assert st.st_mode & 0o7777 == 0o4755
+
+
+@pytest.mark.parametrize("value", ["u+x", "0x755", "77777777777777", ""])
+def test_build_refuses_a_bad_copy_chmod_with_a_message(tmp_path, capsys,
+                                                       value):
+    # `--chmod=u+x` used to build the image with the source's own mode
+    # and say nothing; `--chmod=77777777777777` reached os.fchmod() and
+    # ended the build in an OverflowError traceback.
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    (ctx / "tool").write_text("x")
+    (ctx / "Dockerfile").write_text(
+        "FROM scratch\n"
+        f"COPY --chmod={value} tool /tool\n"
+    )
+    with pytest.raises(SystemExit) as exc:
+        command_build(_build_args(ctx, tags=["badchmod:1"], quiet=False))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Build failed" in err
+    assert "--chmod" in err and "line 2" in err

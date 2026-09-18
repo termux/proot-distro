@@ -1767,7 +1767,15 @@ mount points — are split by `parsing.split_operands()`, which turns
 into a `BuildError` naming the line. `build` catches only `BuildError`
 and `OSError`, so a mistyped line used to end it in a traceback;
 `parse_kv_list` (ENV/LABEL) already did this and is where the shape
-comes from.
+comes from. COPY/ADD's `--chmod` goes through `parsing.parse_chmod()`
+the same way — Docker's rule, an octal string between 0 and
+`MAX_FILE_MODE` (`07777`), checked before anything is read or written.
+A value that was not all octal digits used to be quietly "no override"
+(`--chmod=u+x` built the image with the sources' own modes and said
+nothing), and one that was had no upper bound: `os.fchmod()` raises
+`OverflowError`, not `OSError`, on an int C cannot hold, which neither
+net catches, while a smaller excess was masked by the kernel in the tree
+and recorded whole in the layer.
 
 `BuildEngine` pre-scans for global ARGs and named stages (validates
 `--target` early), then dispatches to `HANDLERS` (metadata), `do_run`,

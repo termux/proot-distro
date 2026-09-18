@@ -95,3 +95,45 @@ def test_is_tar_header_short_file(tmp_path):
     p.write_bytes(b"abc")
     assert parsing.is_tar_header(_head(p)) is False
     assert parsing.is_tar_header(b"") is False
+
+
+# ----- COPY/ADD --chmod ---------------------------------------------------
+
+def _instr(name="COPY", lineno=3):
+    return {"name": name, "lineno": lineno}
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("644", 0o644),
+    ("0755", 0o755),
+    ("0", 0),
+    ("7777", 0o7777),
+    ("07777", 0o7777),
+    ("00000644", 0o644),
+])
+def test_parse_chmod_accepts_octal_up_to_07777(value, expected):
+    assert parsing.parse_chmod(value, _instr()) == expected
+
+
+@pytest.mark.parametrize("value", [
+    "",              # `--chmod=` and a bare `--chmod`
+    "u+x",           # symbolic
+    "0x1ed",         # hex
+    "755 ",          # stray whitespace
+    "8",             # not octal
+    "17777",         # more than a mode can carry (the kernel masked it)
+    "77777777777777",  # more than a C int can hold (OverflowError)
+    "-1",
+])
+def test_parse_chmod_refuses_anything_else(value):
+    # Both halves of the old behaviour were wrong: a value that was not
+    # all octal digits was quietly "no override", so the image was built
+    # with the sources' own modes and nothing said so; and one that was
+    # had no upper bound, so it reached os.fchmod() as an int C cannot
+    # hold, an OverflowError neither of build's nets catches.
+    from proot_distro.helpers.build_engine.errors import BuildError
+    with pytest.raises(BuildError) as exc:
+        parsing.parse_chmod(value, _instr("ADD", 7))
+    assert "ADD --chmod" in str(exc.value)
+    assert "line 7" in str(exc.value)
+    assert repr(value)[1:-1] in str(exc.value)

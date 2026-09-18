@@ -46,7 +46,6 @@
 
 import hashlib
 import os
-import re
 import shutil
 import stat
 import tarfile
@@ -63,7 +62,8 @@ from proot_distro.helpers.build_engine.dockerignore import (
 )
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.parsing import (
-    TAR_HEADER_BYTES, is_tar_header, looks_like_url, split_operands,
+    TAR_HEADER_BYTES, is_tar_header, looks_like_url, parse_chmod,
+    split_operands,
 )
 from proot_distro.helpers.build_engine.users import resolve_chown
 from proot_distro.helpers.docker import (
@@ -389,8 +389,10 @@ def _do_copy_or_add(engine, instr, allow_url, auto_extract):
         uid, gid = (resolve_chown(stage.rootfs_dir, chown,
                                   root_fd=stage.rootfs_fd)
                     if chown else (0, 0))
+        # Validated before anything is read or written, since it is
+        # applied to every entry and reaches os.fchmod() as it is.
         mode_override = (
-            int(chmod, 8) if chmod and re.match(r"^[0-7]+$", chmod) else None
+            parse_chmod(chmod, instr) if chmod is not None else None
         )
 
         file_map = {}
