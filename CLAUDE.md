@@ -1572,8 +1572,12 @@ layer blob, and nothing did for `install <url>` or `ADD <url>`, which
 published the truncated file as the real one. Every site that reads a
 body **whole** checks what arrived against what was declared and raises
 `IncompleteResponse` (an `HTTPException`, so it is caught by the same
-nets and retried by `retry_http`); a site that reads only part of one on
-purpose — the plaintext `/v2/` probe — must not. `declared_length()` is
+nets and retried by `retry_http`) — the token grant and search page,
+and pull's manifest and image config, which were left out at first: a
+manifest fetched by *tag* has no digest to catch a short body, and a
+short config surfaced as a digest mismatch, fatal and not retried,
+instead of the network failure it was. A site that reads only part of
+one on purpose — the plaintext `/v2/` probe — must not. `declared_length()` is
 where the header is read, because `int()` on one was the program's own
 contribution: `Content-Length: abc` is a `ValueError`, and no net caught
 that either. In the layer download the check comes **before** the

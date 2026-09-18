@@ -45,7 +45,9 @@ import urllib.request
 from proot_distro.compress import ZSTD_AVAILABLE, unsupported_msg
 from proot_distro.message import log_info, log_error
 from proot_distro.progress import fmt_size
-from proot_distro.helpers.download import NETWORK_ERRORS, retry_http
+from proot_distro.helpers.download import (
+    NETWORK_ERRORS, declared_length, require_complete_body, retry_http,
+)
 from proot_distro.helpers.docker.cache import (
     annotate_manifest_cache,
     load_manifest_cache,
@@ -103,12 +105,20 @@ def _get_manifest(
             # much of it there is is the registry's choice, so one byte
             # past the ceiling is the refusal.
             body = resp.read(MAX_METADATA_BYTES + 1)
+            declared = declared_length(resp)
             ct = resp.headers.get("Content-Type", "")
         if len(body) > MAX_METADATA_BYTES:
             raise RuntimeError(
                 f"Manifest for '{repo}' is larger than "
                 f"{MAX_METADATA_BYTES} bytes; refusing to read it."
             )
+        # A Content-Length body cut short raises nothing on its own (see
+        # download.require_complete_body); a manifest fetched by tag has
+        # no digest to catch it either, and one that still parses as
+        # JSON is then the image installed. After the cap, never before
+        # it: a body past the cap is short of its own length by
+        # construction, and that is the refusal above.
+        require_complete_body(len(body), declared, f"Manifest for '{repo}'")
         return body, ct
 
     body, ct = retry_http(_attempt, what=f"Fetching manifest {ref}")
@@ -247,11 +257,17 @@ def _fetch_config_blob(
             # so its size is the registry's choice of allocation.
             with opener(insecure).open(req) as resp:
                 data = resp.read(MAX_METADATA_BYTES + 1)
+                declared = declared_length(resp)
             if len(data) > MAX_METADATA_BYTES:
                 raise RuntimeError(
                     f"Image config blob is larger than "
                     f"{MAX_METADATA_BYTES} bytes; refusing to read it."
                 )
+            # Before the digest check below, as in the layer download:
+            # a connection that ended early is retried as what it is
+            # rather than surfacing as the registry serving the wrong
+            # bytes, which is fatal and not retried.
+            require_complete_body(len(data), declared, "Image config blob")
             return data
 
         body = retry_http(_attempt, what="Fetching image config")
