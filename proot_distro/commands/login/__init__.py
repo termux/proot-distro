@@ -43,7 +43,7 @@ from proot_distro.constants import (
 )
 from proot_distro import dirfd
 from proot_distro.guestfile import guest_file_exists
-from proot_distro.message import C, msg, crit_error, warn
+from proot_distro.message import C, msg, crit_error, quote_error, warn
 from proot_distro.arch import (
     detect_installed_arch,
     get_device_cpu_arch,
@@ -59,7 +59,8 @@ from proot_distro.paths import (
 )
 
 from proot_distro.commands.login.env import (
-    ANDROID_HOST_ENV_VARS, image_env_pairs, inject_termux_profile,
+    ANDROID_HOST_ENV_VARS, identity_env_pairs, image_env_pairs,
+    inject_termux_profile,
 )
 from proot_distro.commands.login.detach import spawn_detached
 from proot_distro.commands.login.migrate import migrate_legacy_rootfs
@@ -210,6 +211,12 @@ def _build_termux_env(container_name, extra_env, minimal, isolated):
     for key, val in image_env_pairs(container_name):
         env[key] = val
 
+    # So do the identity variables: they describe the container, not the
+    # host. After the image's Env, which image_env_pairs() has already
+    # refused these names to; before --env, which is the user's to say.
+    for key, val in identity_env_pairs(container_name):
+        env[key] = val
+
     # Android system vars are inherited from the host only in the default
     # mode; isolated and minimal sessions keep just the image's values.
     if IS_TERMUX and not isolated and not minimal:
@@ -247,6 +254,12 @@ def _build_normal_env(container_name, login_user, login_home,
     # Image manifest Env applies in every mode (including isolated and
     # minimal); image_env_pairs() is where what it may set is decided.
     for key, val in image_env_pairs(container_name):
+        env[key] = val
+
+    # So do the identity variables: they describe the container, not the
+    # host. After the image's Env, which image_env_pairs() has already
+    # refused these names to; before --env, which is the user's to say.
+    for key, val in identity_env_pairs(container_name):
         env[key] = val
 
     # Android system vars are inherited from the host only in the default
@@ -404,8 +417,17 @@ def _login_with_rootfs(container_name: str, args, lock,
         components.append(termux_bin)
         child_env["PATH"] = ":".join(components)
 
-    if dist_type == "normal" and IS_TERMUX and not isolated and not minimal:
-        inject_termux_profile(rootfs, child_env, rootfs_fd=rootfs_fd)
+    # Every session writes the snippet, so what `su -` re-exports is what
+    # *this* session was handed: written only by a default-mode Termux
+    # login, it outlived that and an --isolated session after a rename
+    # had `su -` announce the previous container's name. Only the PATH
+    # append is mode-bound, since the prefix it names is bound into the
+    # guest only in the default mode on Termux.
+    if dist_type == "normal":
+        inject_termux_profile(
+            rootfs, child_env, rootfs_fd=rootfs_fd,
+            termux_path=IS_TERMUX and not isolated and not minimal,
+        )
 
     # Architecture detection.
     target_arch = detect_installed_arch(rootfs, rootfs_fd=rootfs_fd)
@@ -599,9 +621,23 @@ def _exec_proot(proot_bin, proot_args, child_env, rootfs_fd: int) -> None:
     is handed to proot or to the guest beyond the chdir. A rootfs deleted
     out from under us makes getcwd() fail and proot refuse to start,
     which is the right way for that to end.
+
+    The exec itself can still be refused, and the reasons are the
+    environment's as much as the binary's: E2BIG when the strings
+    together exceed what execve(2) takes (each one is held to
+    MAX_ENV_STRING_BYTES, their *number* is the image's), ENOMEM, an
+    EACCES on a proot that lost its mode since get_proot_bin() looked.
+    And ValueError is what Python raises before the syscall for a NUL
+    or an unencodable code point in the argv -- an image's Cmd, which
+    `run` checks for shape but not for content. Each of those was a
+    traceback; all of them are one line now.
     """
     os.fchdir(rootfs_fd)
-    os.execvpe(proot_bin, proot_args, child_env)
+    try:
+        os.execvpe(proot_bin, proot_args, child_env)
+    except (OSError, ValueError) as exc:
+        crit_error(f"cannot execute proot: {quote_error(exc)}")
+        sys.exit(1)
 
 
 __all__ = ("command_login",)

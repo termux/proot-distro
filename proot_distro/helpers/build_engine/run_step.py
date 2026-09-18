@@ -56,7 +56,9 @@ from proot_distro.constants import (
 )
 from proot_distro import dirfd
 from proot_distro.atomic import publish_file
-from proot_distro.execenv import is_host_exec_var
+from proot_distro.execenv import (
+    CONTAINER_MARKER, is_exportable, is_host_exec_var,
+)
 from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
@@ -188,10 +190,39 @@ def _rootfs_fd(stage):
 
 
 def _run_extra_inputs(engine):
-    """Encode env + ARG state visible to RUN for the recipe hash."""
-    scope = engine.expansion_scope()
+    """Encode env + ARG state visible to RUN for the recipe hash.
+
+    The identity variables are part of that state: a step can read
+    $PD_IMAGE the way it reads any ENV, so two stages whose base is
+    spelled differently (`debian:12`, `debian:bookworm`) do not share a
+    layer that may have baked the spelling in. The marker is constant
+    and adds nothing to the key, but it is what the step sees, and the
+    rule is simpler stated whole.
+    """
+    scope = dict(engine.expansion_scope())
+    scope.update(_identity_env(engine.current))
     items = sorted(scope.items())
     return "\n".join(f"{k}={v}" for k, v in items)
+
+
+def _identity_env(stage) -> dict:
+    """What a RUN step is told about where it is running.
+
+    The container session's four, less PD_CONTAINER: a build has no
+    container. `container=proot-distro` always; PD_IMAGE and
+    PD_IMAGE_ID for the stage's base image when there is one (see
+    Stage.base_ref for why it is the base and not a tag). These win
+    over the stage's own ENV in the *process* environment -- Fedora's
+    `ENV container=oci` is a statement about the image, kept in its
+    config, and less true of the process than the marker -- which is
+    the same precedence `login` gives an installed image's Env.
+    """
+    env = {"container": CONTAINER_MARKER}
+    if stage.base_ref and is_exportable("PD_IMAGE", stage.base_ref):
+        env["PD_IMAGE"] = stage.base_ref
+    if stage.base_image_id:
+        env["PD_IMAGE_ID"] = stage.base_image_id
+    return env
 
 
 def _exec_proot(engine, stage, command, stdin_input):
@@ -306,6 +337,12 @@ def _exec_proot(engine, stage, command, stdin_input):
         )
     except FileNotFoundError as exc:
         raise BuildError(f"proot binary not available: {exc}") from exc
+    except (OSError, ValueError) as exc:
+        # E2BIG when the environment is too large in total (each string
+        # is bounded, their number is the image's), ENOMEM -- and the
+        # ValueError Python raises before the syscall for a NUL in the
+        # argv, which is a Dockerfile's RUN line and was a traceback.
+        raise BuildError(f"cannot start proot for the step: {exc}") from exc
     finally:
         if stdin_file is not None:
             stdin_file.close()
@@ -660,16 +697,24 @@ def _build_child_env(engine, stage):
         if v:
             env[k] = v
 
-    # Declared ARGs in this stage.
+    # Declared ARGs in this stage. An entry that cannot be an
+    # environment string (a NUL byte in the Dockerfile, a value past
+    # what execve(2) takes) is left out rather than handed to Popen,
+    # which raised ValueError past every net in the build.
     for k in stage.declared_args:
         if k in stage.args and not _refuse_host_exec(engine, k):
-            env[k] = stage.args[k]
+            if is_exportable(k, stage.args[k]):
+                env[k] = stage.args[k]
 
     # ENVs always win.
     for k, v in stage.env.items():
-        if _refuse_host_exec(engine, k):
+        if _refuse_host_exec(engine, k) or not is_exportable(k, v):
             continue
         env[k] = v
+
+    # Over the ENVs, under the user's own toggles below: what the step
+    # is told about where it runs is this program's to say.
+    env.update(_identity_env(stage))
 
     # proot toggles inherited from host.
     for var in ("PROOT_NO_SECCOMP", "PROOT_VERBOSE"):

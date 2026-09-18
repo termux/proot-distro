@@ -29,6 +29,15 @@
 #       │ waitpid      ▼ (reaped; grandchild   │ register_session()
 #       │ read pid ◀────  reparented to init)  │ write pid to pipe
 #       ▼ return pid                           └ execvpe(proot)
+#                                                 │ (refused: write the
+#                                                 ▼  reason, _exit)
+#
+# The pipe is the daemon's only way of saying anything -- its standard
+# streams are /dev/null by then -- and the write end is CLOEXEC, so a
+# successful exec closes it and the foreground reads the PID alone. A
+# refused exec (E2BIG from an environment too large in total, ENOMEM,
+# a NUL in the argv) writes the reason after the PID instead, and the
+# foreground reports that rather than a session that never started.
 #
 # setsid() puts the daemon in a new session with no controlling
 # terminal, so closing the launching terminal won't SIGHUP it; the
@@ -42,6 +51,7 @@
 
 import os
 
+from proot_distro.message import log_error, quote_path
 from proot_distro.session import register_session
 
 
@@ -80,7 +90,7 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
         raw = b""
         try:
             while True:
-                chunk = os.read(read_fd, 64)
+                chunk = os.read(read_fd, 4096)
                 if not chunk:
                     break
                 raw += chunk
@@ -91,9 +101,15 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
             os.waitpid(pid1, 0)
         except OSError:
             pass
+        # The PID on the first line; a second line is the daemon saying
+        # its exec was refused, which is not a session.
+        pid_text, _, reason = raw.decode(errors="replace").partition("\n")
+        if reason:
+            log_error(f"cannot execute proot: {quote_path(reason.strip())}")
+            return None
         try:
-            return int(raw.decode().strip())
-        except (UnicodeDecodeError, ValueError):
+            return int(pid_text.strip())
+        except ValueError:
             return None
 
     # Intermediate child. Detach into a new session, then fork the
@@ -123,13 +139,24 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
         # inherited flock) is not closed early. Best-effort.
         _session_fd = register_session(**register_kwargs)  # noqa: F841
         try:
-            os.write(write_fd, str(os.getpid()).encode())
+            os.write(write_fd, f"{os.getpid()}\n".encode())
         except OSError:
             pass
-        _safe_close(write_fd)
-        os.execvpe(proot_bin, proot_args, child_env)
+        # The write end stays open across the exec on purpose: it is
+        # CLOEXEC, so success closes it and the foreground sees EOF,
+        # while a refusal is reported through it below. Closing it here
+        # first was what let a refused exec pass for a started session.
+        try:
+            os.execvpe(proot_bin, proot_args, child_env)
+        except (OSError, ValueError) as exc:
+            reason = getattr(exc, "strerror", None) or str(exc)
+            try:
+                os.write(write_fd, reason.encode(errors="replace"))
+            except OSError:
+                pass
     except BaseException:
         pass
+    _safe_close(write_fd)
     os._exit(127)
 
 

@@ -340,6 +340,24 @@ Top-level utilities (each owns a focused concern):
   exec, so a *relative* `LD_LIBRARY_PATH` or `LD_AUDIT` entry named a
   directory an earlier RUN step had the run of. The line still reaches
   the image config, which is what it is a statement about.
+  The module also holds the two things both execs share besides that
+  rule. `IDENTITY_ENV_KEYS` / `CONTAINER_MARKER` are what a guest is
+  told about where it runs (see "Login env" and "Run / build"). And
+  `is_exportable(key, value)` is what may be one string of an exec's
+  environment at all: no NUL (`os.execvpe` and `Popen` raise
+  `ValueError` before the syscall), nothing the filesystem encoding
+  cannot carry (JSON's `"\ud800"` is a `UnicodeEncodeError`), and no
+  `NAME=value` at or past `MAX_ENV_STRING_BYTES` — 128 KiB, the
+  kernel's `MAX_ARG_STRLEN` on 4 KiB pages, which it answers with
+  `E2BIG` for the *whole* exec. Every source of such a string that is a
+  stranger's is held to it — `login`'s image Env and identity pairs,
+  the base image's Env at `_adopt_image_config`, and the ENV/ARG values
+  `run_step._build_child_env` hands to Popen — so an entry decides
+  whether *it* is exported, never whether the session or the step
+  runs. The total is the image's to choose (the number of entries is
+  not bounded), so the exec itself is guarded as well: `_exec_proot`
+  in login and the detached daemon report `E2BIG`/`ENOMEM`/a `ValueError`
+  from the argv as one line, and the RUN launcher raises `BuildError`.
 - `names.py` — `_NAME_RE`, `is_valid_name`, `require_valid_name`.
 - `parser.py` — argparse, `ALIAS_TO_CANONICAL`, `REQUIRED_ARGS`,
   `required_args_for()` (refines the message when a positional changes
@@ -1639,12 +1657,47 @@ re-typed out of the JSON before it leaves the module.
 precedence (later wins): PATH/MOZ_FAKE_NO_SANDBOX/PULSE_SERVER baseline
 (non-minimal only) → image `Env` (via `env.image_env_pairs()`, the one
 place the image's own Env becomes variables: `IMAGE_ENV_BLOCKED`
-— Android vars, MOZ/PULSE, TERM/COLORTERM — plus the `LD_*`/`PROOT_*`
-namespaces `execenv.is_host_exec_var()` names) → Android host vars
+— Android vars, MOZ/PULSE, TERM/COLORTERM, the identity keys — plus
+the `LD_*`/`PROOT_*` namespaces `execenv.is_host_exec_var()` names) →
+identity (`env.identity_env_pairs()`) → Android host vars
 (`ANDROID_HOST_ENV_VARS`, Termux + neither isolated nor minimal) →
 user `--env` → HOME/USER (non-minimal only) → TERM/COLORTERM. Image
-`Env` and `--env` apply in **every** mode (isolated and minimal
-included); only the Android host vars are gated on the default mode.
+`Env`, identity and `--env` apply in **every** mode (isolated and
+minimal included); only the Android host vars are gated on the default
+mode.
+
+**Identity** is what a guest may ask about where it is running:
+`PD_CONTAINER` (the name, already through `require_valid_name`),
+`container=proot-distro` (the lowercase marker systemd/podman/lxc set),
+and out of `manifest.json` `PD_IMAGE` (`image_ref` **verbatim** — not
+normalised, since a URL install records the URL and
+`with_explicit_tag()` would make `…/x.tar:latest` of it) and
+`PD_IMAGE_ID` (`manifest.config.digest`, held to `validate_digest`).
+The last two are simply absent for a plain-tarball container or a field
+of the wrong type; the file is a guest's to write. `IDENTITY_ENV_KEYS`
+are in `IMAGE_ENV_BLOCKED` — an image does not get to say which
+container it is in, and the `container=oci` Fedora/UBI images ship is
+replaced — while `--env` still overrides them, the command line being
+the user's. The `PD_` prefix is the program's own (`PD_DOCKER_AUTH`,
+`PD_PROOT_BIN`); `PROOT_DISTRO_*` was not an option, since
+`is_host_exec_var` classes the whole `PROOT_*` namespace as host-side
+and the injection test asserts no such name reaches the exec. They ride
+the profile.d snippet like every other proot-distro-set variable, so
+`su - user` keeps them. A value from the manifest — identity and image
+`Env` alike — is held to `execenv.is_exportable()` (see that entry).
+A build's `RUN` step is told the same things less the container — see
+"Run / build".
+
+`inject_termux_profile()` runs for **every** session of a normal-type
+container — every mode, every host — with only the `$PREFIX/bin` PATH
+append gated (`termux_path=IS_TERMUX and not isolated and not
+minimal`), since that is the one line naming a directory the guest
+sees only in the default mode on Termux. It used to run only for that
+mode, and the file outlived it: an `--isolated` session after a
+`rename` had `su -` announce the previous container's name, and every
+other value a default-mode session had been handed. The snippet now
+says what the session that wrote it was given, whichever session that
+was.
 On non-Termux hosts no host vars are inherited. PATH is not blocked but
 `TERMUX_PREFIX/bin` is deduped + appended after image Env (non-isolated,
 non-minimal). `termux`-type uses the same image-Env + Android-host-var
@@ -1714,7 +1767,12 @@ delegates the final exec to `commands/login/detach.spawn_detached`
 instead of `register_session` + `execvpe`. It is a double-fork daemon
 (`setsid`, std fds → `/dev/null`); `register_session` runs in the
 grandchild so `getpid()` already equals the future proot PID, and a
-pipe relays that PID back so the foreground can print it. The grandchild
+pipe relays that PID back so the foreground can print it. The pipe's
+write end is CLOEXEC and stays open across the exec on purpose: a
+successful exec closes it and the foreground reads the PID alone,
+while a refused one (`E2BIG`, `ENOMEM`, a `ValueError` for the argv)
+writes its reason after the PID, which the foreground reports instead
+of announcing a session that `_exit`ed before it started. The grandchild
 inherits the foreground's container-lock fd, so the foreground calls
 `lock.disown()` (skip `LOCK_UN`) to leave the lock held by the daemon.
 `--get-proot-cmd` short-circuits before the detach branch. The session
@@ -2027,9 +2085,26 @@ temp file rather than through a pipe, since watching the step leaves no
 deadlock.
 
 The environment a RUN step is launched with is built in
-`_build_child_env`, and the two LD_*/PROOT_* namespaces are refused
-every Dockerfile-supplied value — an `ENV` line's, and an `ARG`'s under
-a name the Dockerfile declared. proot's environment *is* the tracee's,
+`_build_child_env`. It carries what a container session's identity
+variables say, less `PD_CONTAINER` (`run_step._identity_env`): the
+`container=proot-distro` marker always, and `PD_IMAGE` / `PD_IMAGE_ID`
+for the stage's **base** image — `Stage.base_ref` (the FROM reference
+as written) and `Stage.base_image_id` (`cache.manifest_config_digest`
+of the pulled manifest), both `''` for `FROM scratch` and inherited by
+a stage built `FROM <earlier stage>`, whose rootfs is still that image
+plus layers. Not the tag being built: `-t` is optional and repeatable,
+and the recipe hash (`_run_extra_inputs`) covers what a step can read,
+so a value that differed between two builds of one Dockerfile would
+either replay a cached layer that had baked it in or, if hashed,
+rebuild everything on a retag. The identity pairs *are* in that hash —
+two stages whose base is spelled differently (`debian:12`,
+`debian:bookworm`) do not share a layer — which stranded every
+existing entry once, when they were added. They are applied over the
+stage's ENVs (Fedora's `ENV container=oci` stays in the image config,
+a statement about the image, and is less true of the process than the
+marker) and under the user's own proot toggles. The two LD_*/PROOT_*
+namespaces are refused every Dockerfile-supplied value — an `ENV`
+line's, and an `ARG`'s under a name the Dockerfile declared. proot's environment *is* the tracee's,
 so the same dict is read by the host's dynamic loader before proot has
 confined anything, and the child fchdir's into the stage rootfs between
 the fork and the exec: a relative `LD_LIBRARY_PATH=lib` (or an

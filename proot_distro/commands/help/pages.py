@@ -28,6 +28,18 @@ from proot_distro.constants import (
 )
 
 
+# What a guest may ask about where it is running. Both `login` and `run`
+# say it, so it is written once.
+_IDENTITY_NOTE = (
+    "The guest environment carries PD_CONTAINER (the container's name), "
+    "PD_IMAGE (the image reference it was installed from), PD_IMAGE_ID "
+    "(the image's config digest) and container=proot-distro, in every "
+    "mode. PD_IMAGE and PD_IMAGE_ID are unset for a container installed "
+    "from a plain rootfs tarball, which carries no image metadata. Your "
+    "own --env entries override them; the image's Env cannot."
+)
+
+
 HELP_PAGES = {
     "build": {
         "usage": "build [OPTIONS] [PATH]",
@@ -111,6 +123,17 @@ HELP_PAGES = {
                     "HEALTHCHECK, SHELL, MAINTAINER, and "
                     "ONBUILD<non-RUN> build in pure-Python mode and "
                     "do not require proot."
+                    "\n\n"
+                    "Each RUN step's environment carries "
+                    "container=proot-distro and, for a stage with a "
+                    "base image, PD_IMAGE (the FROM reference) and "
+                    "PD_IMAGE_ID (that image's config digest); a "
+                    "stage built FROM an earlier stage inherits that "
+                    "stage's. There is no PD_CONTAINER, and no "
+                    "variable names the tag being built: the build "
+                    "cache is keyed on what a step can read, and a "
+                    "tag would differ between two builds of one "
+                    "Dockerfile."
                 ),
             },
             {
@@ -701,6 +724,8 @@ HELP_PAGES = {
                     "emulator to be able execute 32-bit programs because "
                     "this architecture no longer include necessary "
                     "instruction set."
+                    "\n\n"
+                    + _IDENTITY_NOTE
                 ),
             },
         ],
@@ -962,6 +987,8 @@ HELP_PAGES = {
                     "emulator to be able execute 32-bit programs because "
                     "this architecture no longer include necessary "
                     "instruction set."
+                    "\n\n"
+                    + _IDENTITY_NOTE
                 ),
             },
         ],

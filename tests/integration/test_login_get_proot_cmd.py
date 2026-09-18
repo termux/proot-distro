@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import _builders
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.login import command_login, _detect_dist_type
 from proot_distro.commands.login import proot_cmd
@@ -101,6 +102,148 @@ def test_run_uses_image_cmd(builders, capsys):
     out = capsys.readouterr().out
     assert "/bin/echo" in out
     assert "hi" in out
+
+
+# --- identity variables ------------------------------------------------------
+#
+# What a guest may ask about where it is running: the container's name,
+# the image it was installed from, that image's ID, and the
+# `container=` marker systemd and podman set. Every mode, login and run.
+
+_DIGEST = "sha256:" + "cd" * 32
+
+
+def _identity_container(builders, name="box"):
+    manifest = builders.simple_image_manifest(image_ref="debian:bookworm")
+    manifest["manifest"]["config"] = {"digest": _DIGEST}
+    builders.make_container(name, arch=HOST_ARCH, manifest=manifest)
+
+
+def _identity_env(capsys, name="box", **over):
+    return _builders.login_child_env(
+        command_login, _builders.login_args(name, **over), capsys,
+    )
+
+
+def test_identity_vars_reach_the_guest(builders, capsys):
+    _identity_container(builders)
+    env = _identity_env(capsys)
+    assert env["PD_CONTAINER"] == "box"
+    assert env["PD_IMAGE"] == "debian:bookworm"
+    assert env["PD_IMAGE_ID"] == _DIGEST
+    assert env["container"] == "proot-distro"
+
+
+def test_identity_vars_without_an_image_manifest(builders, capsys):
+    # A plain-tarball container: the name and the marker are still
+    # there, the image is simply not known.
+    builders.make_container("tarbox", arch=HOST_ARCH)
+    env = _identity_env(capsys, "tarbox")
+    assert env["PD_CONTAINER"] == "tarbox"
+    assert env["container"] == "proot-distro"
+    assert "PD_IMAGE" not in env
+    assert "PD_IMAGE_ID" not in env
+
+
+@pytest.mark.parametrize("mode", [
+    dict(isolated=True), dict(minimal=True),
+])
+def test_identity_vars_in_every_mode(builders, capsys, mode):
+    _identity_container(builders)
+    env = _identity_env(capsys, **mode)
+    assert env["PD_CONTAINER"] == "box"
+    assert env["PD_IMAGE"] == "debian:bookworm"
+    assert env["PD_IMAGE_ID"] == _DIGEST
+    assert env["container"] == "proot-distro"
+
+
+def test_users_env_flag_overrides_identity(builders, capsys):
+    # The user controls the command line; the image does not (see the
+    # security test), but --env is theirs.
+    _identity_container(builders)
+    env = _identity_env(capsys, env=["PD_CONTAINER=other", "container=x"])
+    assert env["PD_CONTAINER"] == "other"
+    assert env["container"] == "x"
+    assert env["PD_IMAGE"] == "debian:bookworm"
+
+
+def test_run_carries_identity_vars(builders, capsys):
+    manifest = builders.simple_image_manifest(
+        image_ref="debian:bookworm", cmd=["/bin/echo", "hi"],
+    )
+    manifest["manifest"]["config"] = {"digest": _DIGEST}
+    builders.make_container("runbox", arch=HOST_ARCH, manifest=manifest)
+    args = SimpleNamespace(
+        container_name="runbox", run_args=[], get_proot_cmd=True,
+        work_dir=None, user="root",
+    )
+    env = _builders.login_child_env(command_run, args, capsys)
+    assert env["PD_CONTAINER"] == "runbox"
+    assert env["PD_IMAGE"] == "debian:bookworm"
+    assert env["PD_IMAGE_ID"] == _DIGEST
+    assert env["container"] == "proot-distro"
+
+
+# --- the profile.d snippet says what *this* session was handed -------------
+
+def _snippet(name):
+    path = os.path.join(container_rootfs(name), "etc", "profile.d",
+                        "termux-profile.sh")
+    with open(path) as fh:
+        return fh.read()
+
+
+def test_snippet_is_written_by_every_mode_and_host(builders, capsys):
+    _identity_container(builders)
+    for mode in (dict(isolated=True), dict(minimal=True), {}):
+        mark = "-".join(sorted(mode)) or "default"
+        _identity_env(capsys, env=[f"MARK={mark}"], **mode)
+        content = _snippet("box")
+        assert "export PD_CONTAINER='box'" in content
+        assert "export PD_IMAGE='debian:bookworm'" in content
+        assert f"export MARK='{mark}'" in content
+        # Off Termux the prefix is never bound, so no PATH append.
+        assert "PATH" not in content
+
+
+def test_snippet_follows_a_rename(builders, capsys):
+    from proot_distro.commands.rename import command_rename
+
+    _identity_container(builders)
+    _identity_env(capsys)
+    assert "export PD_CONTAINER='box'" in _snippet("box")
+
+    command_rename(SimpleNamespace(orig_name="box", new_name="crate"))
+    # An --isolated session used to leave the previous login's snippet
+    # in place, so `su -` inside it announced the old name.
+    _identity_env(capsys, "crate", isolated=True)
+    content = _snippet("crate")
+    assert "export PD_CONTAINER='crate'" in content
+    assert "'box'" not in content
+
+
+# --- a refused exec is a message -------------------------------------------
+
+def test_a_refused_exec_is_a_message(builders, capsys, monkeypatch):
+    import errno
+    from proot_distro.commands import login as login_mod
+
+    _identity_container(builders)
+    cwd = os.getcwd()
+
+    def _execvpe(*a, **k):
+        raise OSError(errno.E2BIG, "Argument list too long")
+
+    monkeypatch.setattr(login_mod.os, "execvpe", _execvpe)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            command_login(_builders.login_args("box", get_proot_cmd=False))
+    finally:
+        os.chdir(cwd)      # _exec_proot fchdir'ed into the rootfs
+    assert exc.value.code == 1
+    assert "cannot execute proot: Argument list too long" in (
+        capsys.readouterr().err
+    )
 
 
 def test_detect_dist_type_normal(builders):

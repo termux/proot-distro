@@ -189,7 +189,7 @@ def _run_stage(tmp_path, rootfs, monkeypatch, request=None):
         index=0, rootfs_dir=str(rootfs), dir_fd=dir_fd, rootfs_fd=rootfs_fd,
         layers=[], target_arch_pd=HOST_ARCH,
         user="", workdir="/", shell=["/bin/sh", "-c"], env={},
-        declared_args=[], args={},
+        declared_args=[], args={}, base_ref="", base_image_id="",
     )
 
 

@@ -475,6 +475,7 @@ def _run_engine(tmp_path):
         index=0, name="", rootfs_dir=str(tmp_path / "rootfs"),
         dir_fd=None, rootfs_fd=None, layers=[],
         parent_layer_digest="", shell=["/bin/sh", "-c"], workdir="/",
+        base_ref="", base_image_id="",
     )
     os.makedirs(stage.rootfs_dir, exist_ok=True)
     engine = SimpleNamespace(

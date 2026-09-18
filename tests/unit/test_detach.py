@@ -64,3 +64,41 @@ def test_spawn_detached_registers_then_prunes_on_kill():
 
     # Death drops the inherited flock; the next listing prunes the entry.
     assert _wait_for(lambda: _find(pid) is None) is True
+
+
+def test_spawn_detached_reports_a_refused_exec(capsys):
+    """A daemon whose exec is refused is not a session.
+
+    The PID used to be written before the exec and the pipe closed, so
+    the foreground reported "Started detached session" with a PID that
+    had already _exit'ed. Now the reason follows the PID and the
+    foreground answers None and says why.
+    """
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+           "X": "a\x00b"}                       # ValueError before execve
+    pid = spawn_detached(
+        "sleep", ["sleep", "30"], env,
+        register_kwargs=dict(
+            container="ubuntu", kind="run",
+            command_argv=["sleep", "30"], user="root", detach=True,
+        ),
+    )
+    assert pid is None
+    assert "cannot execute proot" in capsys.readouterr().err
+
+
+def test_spawn_detached_reports_e2big(capsys):
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    # Each string is within execve's per-string limit; together they are
+    # past ARG_MAX, which is the case a per-entry cap cannot cover.
+    for i in range(64):
+        env[f"V{i}"] = "x" * 100_000
+    pid = spawn_detached(
+        "sleep", ["sleep", "30"], env,
+        register_kwargs=dict(
+            container="ubuntu", kind="run",
+            command_argv=["sleep", "30"], user="root", detach=True,
+        ),
+    )
+    assert pid is None
+    assert "Argument list too long" in capsys.readouterr().err

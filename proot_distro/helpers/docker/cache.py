@@ -323,6 +323,33 @@ def load_manifest_cache(image_ref: str, arch: str):
 _BLOB_CHUNK = 1024 * 1024
 
 
+def manifest_config_digest(manifest) -> str:
+    """The config digest an image manifest names, or ''.
+
+    This is the image's ID -- what `list --image` shows and what a
+    session exports as PD_IMAGE_ID -- and the manifest is a registry's
+    JSON persisted into a file a guest can write, so the shape is
+    checked at every level rather than subscripted: an object, whose
+    `config` is a descriptor, whose `digest` is a string that parses as
+    one. Anything else is "no image ID". _entry_manifest keeps its own
+    stricter reading for the cache inventory, where a descriptor of the
+    wrong shape marks the whole entry unreadable rather than ID-less.
+    """
+    if not isinstance(manifest, dict):
+        return ""
+    config = manifest.get("config")
+    if not isinstance(config, dict):
+        return ""
+    digest = config.get("digest")
+    if not isinstance(digest, str):
+        return ""
+    try:
+        validate_digest(digest)
+    except RuntimeError:
+        return ""
+    return digest
+
+
 def split_digest(digest: str) -> tuple:
     """Return ``(algorithm, lowercase hex)`` for a hashable *digest*.
 

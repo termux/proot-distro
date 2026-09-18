@@ -422,3 +422,50 @@ def tree_snapshot(root):
                 with open(full, "rb") as fh:
                     snap[rel] = ("file", fh.read())
     return snap
+
+
+# ---------------------------------------------------------------------------
+# login / run: the environment handed to proot
+# ---------------------------------------------------------------------------
+
+def login_args(name, **over):
+    """A `login` argparse namespace with --get-proot-cmd set.
+
+    Every flag `_login_with_rootfs` reads is present, so a test overrides
+    only the ones it is about.
+    """
+    from types import SimpleNamespace
+    base = dict(container_name=name, get_proot_cmd=True, user="root",
+                kernel=None, hostname="localhost", work_dir="",
+                redirect_ports=False, isolated=False, minimal=False,
+                shared_home=False, shared_tmp=False, shared_x11=False,
+                no_link2symlink=False, no_sysvipc=False, no_kill_on_exit=False,
+                detach=False, bind=[], env=[], login_cmd=[], emulator=None)
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def parse_proot_cmd_env(out):
+    """The K=V assignments `--get-proot-cmd` printed, as a dict.
+
+    The printed line is `env -i K=V ... <proot> --flag ...`, so the
+    assignments are everything between `env -i` and the binary.
+    """
+    env = {}
+    for token in out.replace("\\\n", " ").split():
+        if token.endswith("proot") or token.startswith("--"):
+            break
+        if "=" in token and not token.startswith("env"):
+            key, _, val = token.partition("=")
+            env[key] = val.strip('"')
+    return env
+
+
+def login_child_env(command, args, capsys):
+    """Run *command* (command_login / command_run) with --get-proot-cmd set
+    and return the environment it would have exec'd proot with."""
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        command(args)
+    assert exc.value.code == 0
+    return parse_proot_cmd_env(capsys.readouterr().out)

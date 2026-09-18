@@ -31,11 +31,12 @@ import os
 import re
 
 from proot_distro import dirfd
-from proot_distro.execenv import is_host_exec_var
+from proot_distro.execenv import is_exportable, is_host_exec_var
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.message import C, log_info
 from proot_distro.helpers.docker import (
-    ARCH_TO_DOCKER, apply_layer, open_required_layer, pull_image,
+    ARCH_TO_DOCKER, apply_layer, manifest_config_digest, open_required_layer,
+    pull_image,
 )
 from proot_distro.helpers.dockerfile import expand_vars
 from proot_distro.helpers.rootfs import write_hosts, write_resolv_conf
@@ -179,9 +180,19 @@ def _adopt_image_config(image_config, image_ref: str) -> dict:
         cfg.pop("Env", None)
     else:
         env_list = _cfg_str_list(cfg["Env"], image_ref, "'config.Env'")
+        # An entry that cannot be an environment string at all -- a
+        # NUL, a lone surrogate, a value past what execve(2) takes --
+        # is dropped here too, the one place a stranger's Env is
+        # adopted: it would otherwise reach the RUN launcher's Popen
+        # (ValueError, not caught as a build error) and the produced
+        # image's config, and a value that was never exportable is not
+        # a statement about the image worth carrying on.
         cfg["Env"] = [
             e for e in env_list
-            if not ("=" in e and is_host_exec_var(e.partition("=")[0]))
+            if not ("=" in e and (
+                is_host_exec_var(e.partition("=")[0])
+                or not is_exportable(*e.partition("=")[::2])
+            ))
         ]
 
     return doc
@@ -641,6 +652,10 @@ class BuildEngine:
             os.close(rootfs_fd)
         new_stage.layers = list(parent.layers)
         new_stage.parent_layer_digest = parent.parent_layer_digest
+        # The rootfs is still that image plus layers, so a RUN step in
+        # this stage is told the same thing about where it came from.
+        new_stage.base_ref = parent.base_ref
+        new_stage.base_image_id = parent.base_image_id
 
     def _pull_base_image(self, stage, image_ref):
         """Use helpers.docker.pull_image to populate the stage rootfs."""
@@ -660,6 +675,11 @@ class BuildEngine:
             meta.get("image_config") or {"config": {}}, image_ref,
         )
         manifest = meta.get("manifest") or {}
+        # What a RUN step is told about the image under it: the reference
+        # as the Dockerfile wrote it (expanded), and the config digest
+        # when the manifest names one it can vouch for.
+        stage.base_ref = image_ref
+        stage.base_image_id = manifest_config_digest(manifest)
         config_diff_ids = (
             (stage.image_config.get("rootfs") or {}).get("diff_ids") or []
         )

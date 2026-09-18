@@ -442,13 +442,29 @@ doesn't have `proot` available.
 | OCI tarball | `-o`/`--output FILE` | Standard OCI image-layout tarball (`oci-layout`, `index.json`, `blobs/sha256/*`). Installable via `proot-distro install ./FILE`; also consumable by `docker load`. |
 | Container | `--install-as NAME` | Installed container at `containers/<NAME>/`. Performed after the build by invoking the install command with the just-built tag. |
 
+**`RUN` step environment:**
+
+A `RUN` step is told where it is running the way a container session
+is (see [Guest environment](#guest-environment)): `container=proot-distro`
+always, and for a stage with a base image `PD_IMAGE` (the `FROM`
+reference as written) and `PD_IMAGE_ID` (that image's config digest).
+A stage built `FROM <earlier stage>` inherits that stage's; `FROM
+scratch` has neither. There is no `PD_CONTAINER`, and nothing names the
+tag being built — `-t` is optional and repeatable, and a value that
+differed between two builds of one Dockerfile would either replay a
+cached layer that had baked it in or rebuild everything on a retag.
+These win over the base image's own `Env` in the step's environment
+(Fedora's `container=oci` stays in the image config, where it is a
+statement about the image).
+
 **Build cache:**
 
 Each instruction is keyed by a recipe hash combining the parent layer
 digest, the instruction text (with flags and here-doc bodies), and
-the relevant inputs (file digests for `COPY`/`ADD`, env+ARG state for
-`RUN`). A cache hit applies the previously-built layer instead of
-re-running the instruction. Pass `--no-cache` to skip cache lookups.
+the relevant inputs (file digests for `COPY`/`ADD`, env+ARG state and
+the identity variables for `RUN`). A cache hit applies the
+previously-built layer instead of re-running the instruction. Pass
+`--no-cache` to skip cache lookups.
 
 The build cache index lives at
 `$BASE_CACHE_DIR/build_cache_index.json`; layer blobs themselves are
@@ -641,7 +657,7 @@ proot-distro login ubuntu --get-proot-cmd
 | `--kernel STRING` | Customize the kernel release string reported by `uname -r`. Default: `6.17.0-PRoot-Distro`. |
 | `--hostname STRING` | Customize the hostname inside the container. Default: `localhost`. |
 | `-w`, `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
-| `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env` and the baseline defaults. |
+| `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env`, the baseline defaults and the [identity variables](#guest-environment). |
 | `-d`, `--detach` | Start the session in the background and return to the prompt immediately. The session is daemonized (double-fork + `setsid`, detached from the controlling terminal) and its stdin/stdout/stderr are redirected to `/dev/null`, so output is discarded — redirect inside your own command if you need logs. A detached `login` with no `-- COMMAND` exits at once (the shell reads EOF). Track it with [`proot-distro ps`](#ps--list-active-sessions) and stop it with [`proot-distro kill`](#kill--stop-active-sessions). |
 | `--get-proot-cmd` | Print the fully assembled `env` + `proot` command line (escaped, with line continuations) and exit without running. |
 
@@ -650,7 +666,7 @@ proot-distro login ubuntu --get-proot-cmd
 | Option | Description |
 |---|---|
 | `--isolated` | Skip non-essential host bindings (Android system dirs, Termux `$HOME`, `/sdcard`, Termux app paths). Keeps the link2symlink/sysvipc/kill-on-exit proot extensions and the kernel-release override. Mutually exclusive with `--minimal`. |
-| `--minimal` | Bare-minimum proot: only `/dev`, `/proc`, `/sys` are bound, `--sysvipc` is disabled, no fake `/proc` stubs, no `--kernel-release`. Guest env contains only your `--env` entries plus `TERM`/`COLORTERM`. Mutually exclusive with `--isolated`. |
+| `--minimal` | Bare-minimum proot: only `/dev`, `/proc`, `/sys` are bound, `--sysvipc` is disabled, no fake `/proc` stubs, no `--kernel-release`. Guest env contains only the image `Env`, the identity variables, your `--env` entries and `TERM`/`COLORTERM`. Mutually exclusive with `--isolated`. |
 | `--no-link2symlink` | Disable proot's hard-link emulation. Only safe on devices with SELinux in permissive mode. |
 | `--no-sysvipc` | Disable System V IPC emulation. Only useful on kernels that already implement it. |
 | `--no-kill-on-exit` | Wait for all child processes before exiting the session. |
@@ -697,26 +713,55 @@ builds a clean environment dict and passes it to `os.execvpe("proot",
 1. Baseline: `PATH` (from `DEFAULT_PATH_ENV`), `MOZ_FAKE_NO_SANDBOX=1`,
    `PULSE_SERVER=127.0.0.1` (Termux only).
 2. Image-defined `Env` from `manifest.json`. Cannot override Android
-   system vars, `MOZ_FAKE_NO_SANDBOX`, `PULSE_SERVER`, `TERM`, or
-   `COLORTERM`.
-3. Android system vars (`ANDROID_*`, `BOOTCLASSPATH`, etc.), Termux
+   system vars, `MOZ_FAKE_NO_SANDBOX`, `PULSE_SERVER`, `TERM`,
+   `COLORTERM`, the identity variables below, or anything in the
+   `LD_*`/`PROOT_*` namespaces.
+3. Identity variables — what the guest may ask about where it is
+   running (see the table below).
+4. Android system vars (`ANDROID_*`, `BOOTCLASSPATH`, etc.), Termux
    only, when not `--isolated` and not `--minimal`.
-4. Your `--env VAR=VALUE` entries.
-5. `HOME`, `USER`, `TERM` (defaulting to `xterm-256color`),
+5. Your `--env VAR=VALUE` entries.
+6. `HOME`, `USER`, `TERM` (defaulting to `xterm-256color`),
    `COLORTERM` (only when set on the host).
+
+The identity variables are exported by both `login` and `run`, in every
+mode (`--isolated` and `--minimal` included), because they describe the
+container rather than the host:
+
+| Variable | Value |
+|---|---|
+| `PD_CONTAINER` | The container's name — the `NAME` you pass to `login`, `run`, `copy NAME:PATH`, and so on. |
+| `PD_IMAGE` | The image reference the container was installed from, exactly as recorded at install time (`debian:bookworm`, `ghcr.io/foo/bar`, or the URL for a URL install). Unset for a container installed from a plain rootfs tarball, which carries no image metadata. |
+| `PD_IMAGE_ID` | The image's ID: the config digest, `sha256:<hex>` — the value `list --image` shows as `ID`. Unset when the container has no image metadata. |
+| `container` | Always `proot-distro`. The lowercase marker `systemd`, `podman` and `lxc` set (`container=podman`), for scripts that only need to know they are inside a container. An image's own `container=oci` (Fedora, UBI) is replaced. |
+
+Your own `--env` entries override them; the image's `Env` cannot. A
+`build`'s `RUN` steps carry the same variables less `PD_CONTAINER`
+(there is no container), with `PD_IMAGE`/`PD_IMAGE_ID` naming the
+stage's **base** image — see [build](#build--build-an-image-from-a-dockerfile).
+
+A value that cannot be an environment string at all — one holding a
+NUL byte, a code point the filesystem encoding cannot carry, or a
+`NAME=value` longer than the 128 KiB `execve(2)` accepts for one
+string — is left out, whichever of the sources above it came from.
 
 After the precedence pass, `$PREFIX/bin` is appended to `PATH` so
 Termux host tools stay reachable inside the guest. A snippet at
 `/etc/profile.d/termux-profile.sh` re-applies every login-time
-environment variable (PATH, image Env, Android system vars, `--env`
-flags) after the distro's `/etc/profile` resets the environment on
-login — without it, running `su - someuser` inside the container
-would silently drop those values. Per-session vars (`HOME`, `USER`,
-`TERM`, `COLORTERM`) and proot-internal vars are excluded.
+environment variable (PATH, image Env, identity variables, Android
+system vars, `--env` flags) after the distro's `/etc/profile` resets
+the environment on login — without it, running `su - someuser` inside
+the container would silently drop those values. Per-session vars
+(`HOME`, `USER`, `TERM`, `COLORTERM`) and proot-internal vars are
+excluded. Every session of a `normal`-type container rewrites the
+snippet, in every mode and on every host, so what `su -` re-exports is
+what the current session was given; only the `PATH` append is limited
+to the default mode on Termux, where the prefix it names is actually
+bound.
 
-In `--minimal` mode steps 1–3 and the `PATH` post-processing are
-skipped; only your `--env` entries plus `TERM`/`COLORTERM` are
-exported.
+In `--minimal` mode steps 1 and 4 and the `PATH` post-processing are
+skipped; only the image `Env`, the identity variables, your `--env`
+entries and `TERM`/`COLORTERM` are exported.
 
 #### Legacy migration
 
@@ -1502,6 +1547,10 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
 | `COLUMNS` | Fallback terminal width for `--help` rendering. |
 | `TERM`, `COLORTERM` | Inherited from the host and exported into the guest (always; even in `--minimal`). In `normal`-type containers, `TERM` defaults to `xterm-256color` when unset on the host. |
+
+These are the variables PRoot-Distro *reads*. The ones it *exports* into
+a container — `PD_CONTAINER`, `PD_IMAGE`, `PD_IMAGE_ID` and `container`
+— are described under [Guest environment](#guest-environment).
 
 ---
 

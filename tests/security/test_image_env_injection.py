@@ -20,10 +20,14 @@ from types import SimpleNamespace
 
 import pytest
 
+import _builders
+
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
 from proot_distro.commands.login import command_login
-from proot_distro.execenv import is_host_exec_var
+from proot_distro.execenv import (
+    MAX_ENV_STRING_BYTES, is_exportable, is_host_exec_var,
+)
 from proot_distro.helpers.build_engine.engine import _adopt_image_config
 from proot_distro.helpers.build_engine import run_step
 from proot_distro.helpers.build_engine.handlers import do_env
@@ -61,33 +65,34 @@ def test_ordinary_vars_are_not(key):
     assert not is_host_exec_var(key)
 
 
+@pytest.mark.parametrize("key,value", [
+    ("A", "b\x00c"),                              # ValueError at execve
+    ("A\x00", "b"),
+    ("A", "\ud800"),                              # UnicodeEncodeError
+    ("A", "x" * MAX_ENV_STRING_BYTES),           # E2BIG, one string
+    ("A", "x" * (MAX_ENV_STRING_BYTES - 2)),     # "A=" + x's + NUL: one over
+])
+def test_what_cannot_be_an_environment_string(key, value):
+    assert not is_exportable(key, value)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("A", ""), ("A", "b=c"), ("A", "\udcff"),     # surrogateescape's own
+    ("A", "x" * (MAX_ENV_STRING_BYTES - 3)),     # exactly fits
+])
+def test_what_can(key, value):
+    assert is_exportable(key, value)
+
+
 # --- login -----------------------------------------------------------------
 
 def _login_env(container_name, capsys, *, extra_env=(), **over):
     """Return the child environment login would exec proot with."""
-    args = dict(
-        container_name=container_name, get_proot_cmd=True, user="root",
-        kernel=None, hostname="localhost", work_dir="",
-        redirect_ports=False, isolated=False, minimal=False,
-        shared_home=False, shared_tmp=False, shared_x11=False,
-        no_link2symlink=False, no_sysvipc=False, no_kill_on_exit=False,
-        detach=False, bind=[], env=list(extra_env), login_cmd=[],
-        emulator=None,
+    return _builders.login_child_env(
+        command_login,
+        _builders.login_args(container_name, env=list(extra_env), **over),
+        capsys,
     )
-    args.update(over)
-    with pytest.raises(SystemExit) as exc:
-        command_login(SimpleNamespace(**args))
-    assert exc.value.code == 0
-    out = capsys.readouterr().out
-    # `env -i K=V ... proot ...`: the assignments precede the binary.
-    env = {}
-    for token in out.replace("\\\n", " ").split():
-        if token.endswith("proot") or token.startswith("--"):
-            break
-        if "=" in token and not token.startswith("env"):
-            key, _, val = token.partition("=")
-            env[key] = val.strip('"')
-    return env
 
 
 @pytest.fixture
@@ -145,6 +150,29 @@ def test_ld_preload_stays_dropped_from_every_source(hostile_image, capsys):
     assert "LD_PRELOAD" not in env
 
 
+def test_image_env_cannot_forge_the_identity_vars(builders, capsys):
+    """An image does not get to say which container it is running in.
+
+    PD_CONTAINER / PD_IMAGE / PD_IMAGE_ID / container are the program's
+    answer to the guest, read from the container's own name and its
+    manifest; an Env entry under any of those names is refused like
+    TERM is. `container=oci` is a real one -- Fedora and UBI images ship
+    it -- and it is less true here than the marker this program sets.
+    """
+    manifest = builders.simple_image_manifest(env=[
+        "PD_CONTAINER=evil", "PD_IMAGE=evil", "PD_IMAGE_ID=evil",
+        "container=oci", "LANG=C.UTF-8",
+    ])
+    manifest["manifest"]["config"] = {"digest": "sha256:" + "ab" * 32}
+    builders.make_container("box", arch=HOST_ARCH, manifest=manifest)
+    env = _login_env("box", capsys)
+    assert env["PD_CONTAINER"] == "box"
+    assert env["PD_IMAGE"] == "test:latest"
+    assert env["PD_IMAGE_ID"] == "sha256:" + "ab" * 32
+    assert env["container"] == "proot-distro"
+    assert env["LANG"] == "C.UTF-8"
+
+
 # --- build -----------------------------------------------------------------
 
 def test_pulled_base_config_is_filtered_at_adoption():
@@ -157,6 +185,13 @@ def test_pulled_base_config_is_filtered_at_adoption():
     """
     cfg = _adopt_image_config({"config": {"Env": list(HOSTILE_ENV)}}, "img")
     assert cfg["config"]["Env"] == ["LANG=C.UTF-8"]
+
+
+def test_pulled_base_env_that_cannot_be_exported_is_dropped_at_adoption():
+    cfg = _adopt_image_config({"config": {"Env": [
+        "NUL=a\x00b", "SUR=\ud800", "BIG=" + "x" * 200_000, "OK=1",
+    ]}}, "img")
+    assert cfg["config"]["Env"] == ["OK=1"]
 
 
 def test_adopt_tolerates_the_shapes_a_registry_really_sends():
@@ -173,6 +208,8 @@ class _Stage:
         self.args = {}
         self.declared_args = set()
         self.rootfs_dir = ""
+        self.base_ref = ""
+        self.base_image_id = ""
         self.rootfs_fd = None
 
 

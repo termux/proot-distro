@@ -65,6 +65,17 @@ class Stage:
     released by close(). A caller with no descriptors to give (a test
     working on a tree it made itself) leaves them None, and every
     consumer falls back to the path form it had before.
+
+    *base_ref* and *base_image_id* are what a RUN step is told about the
+    image its rootfs was materialised from (PD_IMAGE, PD_IMAGE_ID -- see
+    proot_distro.execenv): the FROM reference as written and the base
+    image's config digest, '' for `FROM scratch`, and a stage built
+    `FROM <earlier stage>` inherits that stage's, since its rootfs is
+    still the same image plus layers. A build has no tags a step could
+    be told about -- `-t` is optional and repeatable, and the build
+    cache is keyed on what a step can read, so a value that differed
+    between two builds of one Dockerfile would either replay a stale
+    layer or rebuild everything on a retag.
     """
 
     __slots__ = (
@@ -72,6 +83,7 @@ class Stage:
         "image_config", "layers",
         "parent_layer_digest", "env", "args", "declared_args",
         "workdir", "user", "shell", "target_arch_pd",
+        "base_ref", "base_image_id",
     )
 
     def __init__(self, index, name, rootfs_dir, target_arch_pd,
@@ -91,6 +103,8 @@ class Stage:
         self.user = ""
         self.shell = ["/bin/sh", "-c"]
         self.target_arch_pd = target_arch_pd
+        self.base_ref = ""
+        self.base_image_id = ""
 
     def close(self):
         """Release the two descriptors. Idempotent."""
