@@ -1936,6 +1936,16 @@ so an image shipping `etc -> <host dir>` plus an ADD'd tar carrying an
 chmod behind it land on the host directory — and the tree then disagreed
 with the layer, which records a plain directory at that name. It now
 drops the link the way `tar_extract` does when the same layer is applied.
+A **non-directory that is not a link** standing there — the base
+image's regular file where the instruction puts a directory — is a
+`BuildError` naming the entry, not something written around: the
+mkdir's `EEXIST` used to be passed over and `chmod_at(only_dir=True)`
+declined quietly, so the tree kept the file while the layer recorded a
+directory. Replacing it would not do either, since this program's own
+extractor refuses a directory member over a plain file when the layer
+is applied back (`FROM <stage>`, `--install-as`), and BuildKit refuses
+the same instruction ("cannot copy to non-directory"). An existing
+*directory* is merged into, as before.
 
 That resolve says where the entry *belongs*; it does not make writing
 there safe, because it decides by name and everything after it used the

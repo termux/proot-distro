@@ -948,7 +948,8 @@ def _materialise_files(rootfs_dir, file_map, *, rootfs_fd=None):
                     f"'{'/'.join(resolved)}' is not a directory inside it"
                 )
             try:
-                _materialise_entry(dir_fd, parts[-1], entry, sources)
+                _materialise_entry(dir_fd, parts[-1], entry, sources,
+                                   arcname)
             except OSError as exc:
                 raise BuildError(
                     f"Failed to write '{arcname}' into rootfs: {exc}"
@@ -980,7 +981,18 @@ def _drop_entry_at(dir_fd, name):
         pass
 
 
-def _materialise_entry(dir_fd, name, entry, sources):
+def _entry_kind(st) -> str:
+    """What an lstat says stands at a name, for a message."""
+    if st is None:
+        return "entry that could not be examined"
+    if stat.S_ISREG(st.st_mode):
+        return "regular file"
+    if stat.S_ISLNK(st.st_mode):
+        return "symbolic link"
+    return "special file"
+
+
+def _materialise_entry(dir_fd, name, entry, sources, arcname):
     """Write one file_map entry into the directory dir_fd refers to."""
     kind = entry["kind"]
     if kind == "dir":
@@ -1002,7 +1014,25 @@ def _materialise_entry(dir_fd, name, entry, sources):
         try:
             os.mkdir(name, 0o777, dir_fd=dir_fd)
         except FileExistsError:
-            pass
+            # A directory already there is merged into. Anything else --
+            # a regular file the base image put at this name, say -- is
+            # a refusal: the mkdir's EEXIST used to be passed over and
+            # the chmod (only_dir) declined quietly, so the tree kept the
+            # file while the layer packed from the same file_map recorded
+            # a directory. BuildKit refuses the same instruction ("cannot
+            # copy to non-directory"), and so does this program's own
+            # extractor when the layer is applied back, so replacing the
+            # file here would only move the failure to `--install-as`.
+            try:
+                existing = dirfd.lstat_at(dir_fd, name)
+            except OSError:
+                existing = None
+            if existing is None or not stat.S_ISDIR(existing.st_mode):
+                raise BuildError(
+                    f"Cannot write directory '{arcname}' into the rootfs: "
+                    f"a non-directory ({_entry_kind(existing)}) already "
+                    f"exists at that path."
+                )
         # chmod_at opens O_PATH|O_NOFOLLOW and sets the mode on the
         # descriptor: fchmodat(2) has no AT_SYMLINK_NOFOLLOW, so naming
         # the entry would hand the mode to a link planted since the mkdir.

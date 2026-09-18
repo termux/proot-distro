@@ -16,6 +16,7 @@ import pytest
 
 from _builders import file_map_entry
 from proot_distro.helpers.build_engine import copy_step, handlers
+from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.build_engine.stage import Stage
 
 
@@ -152,6 +153,42 @@ def test_materialise_dir_keeps_an_existing_real_directory(tmp_path):
     })
 
     assert (rootfs / "etc" / "kept").read_text() == "x"
+
+
+def test_materialise_dir_over_a_regular_file_is_a_refusal(tmp_path):
+    # The mkdir's EEXIST used to be passed over and the chmod declined
+    # quietly, so the tree kept the base image's file while the layer
+    # packed from the same file_map recorded a directory at that name.
+    # The two halves of a COPY/ADD have to agree on what the instruction
+    # produced; BuildKit refuses the same instruction, and this program's
+    # extractor refuses the resulting layer, so the answer is a message
+    # at the build rather than a broken image at --install-as.
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    (rootfs / "etc").write_text("I am a file")
+
+    with pytest.raises(BuildError, match="non-directory .regular file."):
+        copy_step._materialise_files(str(rootfs), {
+            "etc": {"kind": "dir", "mode": 0o755, "uid": 0, "gid": 0,
+                    "mtime": 0},
+        })
+
+    # Refused, not replaced: the file is exactly as it was.
+    assert (rootfs / "etc").read_text() == "I am a file"
+
+
+def test_materialise_dir_over_a_fifo_is_a_refusal(tmp_path):
+    # The rule is "not a directory", not "a regular file".
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    os.mkfifo(str(rootfs / "etc"))
+
+    with pytest.raises(BuildError, match="non-directory .special file."):
+        copy_step._materialise_files(str(rootfs), {
+            "etc": {"kind": "dir", "mode": 0o755, "uid": 0, "gid": 0,
+                    "mtime": 0},
+        })
+    assert stat.S_ISFIFO(os.lstat(str(rootfs / "etc")).st_mode)
 
 
 def test_materialise_tar_dir_member_lands_inside_the_rootfs(tmp_path):
