@@ -75,6 +75,7 @@ from proot_distro.helpers.docker.transport import (
     insecure_registry_msg,
     push_denied_msg,
     registry_base_url,
+    same_auth_origin,
 )
 from proot_distro.helpers.docker.layers import (
     apply_layer,
@@ -123,6 +124,7 @@ __all__ = (
     "push_image",
     "referenced_blob_digests",
     "registry_base_url",
+    "same_auth_origin",
     "require_data_digest",
     "open_required_layer",
     "save_manifest_cache",

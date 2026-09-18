@@ -1586,10 +1586,30 @@ did not catch at all.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise
-`RuntimeError`). `AuthStrippingRedirectHandler` drops `Authorization`
-on cross-host redirects (Docker Hub CDN blob URLs reject Bearer with
-HTTP 400). `get_auth_token(repo, registry, actions)` takes `"pull"`
-(default) or `"pull,push"`.
+`RuntimeError`). `get_auth_token(repo, registry, actions)` takes `"pull"`
+(default) or `"pull,push"`. A credential goes only where it was
+addressed, and `same_auth_origin()` is the one rule for that — scheme,
+host and effective port, with an http→https upgrade on the default
+ports the single scheme change allowed. `AuthStrippingRedirectHandler`
+asks it before carrying `Authorization` to the next hop (Docker Hub CDN
+blob URLs reject Bearer with HTTP 400, and a same-host https→http
+redirect used to pass the old netloc comparison and put the token on
+the wire in clear), and `push` asks it before carrying the Bearer token
+to an upload `Location` (see push below). The **Docker Hub** token
+exchange rides that same opener, never `urllib.request.urlopen()`: the
+default redirect handler keeps every header across hosts, and this is
+the one request with the user's password in it. For a custom registry
+the challenge's `realm` is the registry's to place — Hub's is
+`auth.docker.io`, GitLab's is `gitlab.com` for `registry.gitlab.com`, so
+the *host* is not restricted, which is also what Docker does — but
+`_require_usable_realm()` holds the *scheme* to the registry's own rule:
+`https://`, or `http://` under `--allow-insecure`, anything else refused
+before a byte is sent. The opener speaks `file://`, `ftp://` and `data:`
+too, so an unchecked realm was a challenge's way of having the process
+open whatever it liked; and a plaintext realm off an HTTPS registry
+was the password in clear without the user having asked for plaintext
+anything. The rule applies to anonymous exchanges as well — the token
+that comes back authenticates every later request.
 
 Push (`push.py`) loads `(manifest, repo, image_config)` from the local
 cache, re-canonicalises and verifies SHA against `manifest.config.digest`,

@@ -25,10 +25,23 @@
 #   - Authorization-stripping redirect handler — Docker Hub blob URLs
 #     redirect to CDN hosts that reject Bearer tokens with HTTP 400.
 #     Python's default redirect handler keeps headers across hops, so
-#     we subclass it to drop the header when the host changes.
+#     we subclass it to drop the header when the origin changes.
 #   - Token-exchange flow: PD_DOCKER_AUTH (username:password) is the
 #     single auth contract; the registry's WWW-Authenticate header
 #     tells us where to redeem it for a Bearer token.
+#
+# A credential goes only where it was addressed. same_auth_origin() is
+# the one rule for that: the redirect handler asks it before carrying a
+# header on to the next hop, and push asks it before carrying the Bearer
+# token to the upload Location a registry hands back. The token exchange
+# is the other side of the same coin -- PD_DOCKER_AUTH is sent as Basic
+# to whatever realm the registry's challenge names, since that is how
+# the protocol works (Docker Hub's realm is auth.docker.io, GitLab's is
+# gitlab.com for registry.gitlab.com, so the host is legitimately the
+# registry's to choose), but the realm has to be an https:// URL, or an
+# http:// one under --allow-insecure. The default opener speaks file://,
+# ftp:// and data: too, and a plaintext realm is a password on the wire
+# without the user having asked for plaintext anything.
 #
 # Everything a registry says about itself arrives here first, and none of
 # it is this program's to trust: how many bytes a metadata response holds
@@ -80,23 +93,59 @@ def _ua() -> dict:
     return {"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"}
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def same_auth_origin(from_url: str, to_url: str) -> bool:
+    """Whether a credential sent with *from_url* may also go to *to_url*.
+
+    An Authorization header is addressed to an origin -- scheme, host and
+    port -- and carrying it to another is handing the secret to whoever
+    answers there. The comparison used to be of the two netlocs, which
+    let a same-host redirect (or upload Location) that changed only the
+    scheme keep the header: https://reg.example -> http://reg.example
+    put the Bearer token, or the Basic password behind it, on the wire
+    in clear. The one scheme change allowed is an upgrade to HTTPS on the
+    default ports, which reaches the same server more securely; an
+    explicit port has to match the other side's default, since a port
+    the URL leaves out is the scheme's.
+
+    A URL that cannot be read -- a port that is not a number, no host at
+    all -- is not the same origin as anything.
+    """
+    try:
+        src = urllib.parse.urlsplit(from_url)
+        dst = urllib.parse.urlsplit(to_url)
+        src_host, dst_host = src.hostname, dst.hostname
+        src_port, dst_port = src.port, dst.port
+    except ValueError:
+        return False
+    if not src_host or src_host != dst_host:
+        return False
+    if src.scheme == dst.scheme:
+        default = _DEFAULT_PORTS.get(src.scheme)
+        return (src_port or default) == (dst_port or default)
+    return (
+        src.scheme == "http" and dst.scheme == "https"
+        and src_port in (None, 80) and dst_port in (None, 443)
+    )
+
+
 class AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Strip the Authorization header when following a cross-host redirect.
+    """Strip the Authorization header when a redirect leaves the origin.
 
     Docker Hub blob endpoints redirect to CDN pre-signed URLs. Those CDN
     hosts return HTTP 400 when they receive a Bearer token. Python's
     default redirect handler forwards all headers unchanged, so we
-    override it to drop Authorization whenever the redirect target
-    host differs from the source host.
+    override it to drop Authorization whenever the redirect target is
+    not the origin the request was addressed to (same_auth_origin).
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new_req is None:
             return None
-        orig_host = urllib.parse.urlparse(req.full_url).netloc
-        new_host = urllib.parse.urlparse(newurl).netloc
-        if orig_host != new_host:
+        if not same_auth_origin(req.full_url, newurl):
             new_req.headers.pop("Authorization", None)
         return new_req
 
@@ -329,6 +378,43 @@ def env_basic_auth() -> str:
     return "Basic " + base64.b64encode(raw.encode()).decode()
 
 
+def _require_usable_realm(realm: str, registry: str, insecure: bool) -> None:
+    """Refuse a Bearer realm this program must not send credentials to.
+
+    The realm is a URL out of the registry's own challenge, and the token
+    request that follows carries PD_DOCKER_AUTH as a Basic header. Which
+    *host* it names is the registry's to choose -- the protocol puts the
+    token service wherever the operator likes, and Docker Hub, GitLab and
+    the rest all put it somewhere other than the registry -- but the
+    scheme is not. Only https:// keeps the password off the wire, and
+    http:// is what --allow-insecure means, for the registry and for its
+    realm alike. Anything else is refused outright: the opener the
+    request goes through speaks file://, ftp:// and data: as well, so an
+    unchecked realm was a challenge's way of having this process open
+    whatever it liked and parse the result as a token grant.
+    """
+    parts = urllib.parse.urlsplit(realm)
+    scheme = parts.scheme.lower()
+    if scheme == "https" and parts.hostname:
+        return
+    if scheme == "http" and parts.hostname:
+        if insecure:
+            return
+        raise RuntimeError(
+            f"Registry '{registry}' directs authentication to '{realm}', "
+            f"which is served over plain HTTP, not HTTPS. proot-distro "
+            f"enforces TLS by default and will not send credentials in "
+            f"clear. If you trust this registry and the network path to "
+            f"it, re-run with '--allow-insecure' to permit the "
+            f"unencrypted connection."
+        )
+    raise RuntimeError(
+        f"Registry '{registry}' directs authentication to '{realm}', "
+        f"which is not an https:// URL (or an http:// one under "
+        f"'--allow-insecure'). Refusing to send credentials there."
+    )
+
+
 def get_auth_token(
     repo: str, registry: str = "", actions: str = "pull",
     insecure: bool = False,
@@ -360,6 +446,9 @@ def get_auth_token(
       * A registry that answers the HTTPS probe with plaintext is HTTP-only:
         under *insecure* it is retried over http://; otherwise a RuntimeError
         points the user at ``--allow-insecure``.
+      * The realm the challenge names must be an https:// URL -- or an
+        http:// one under *insecure* -- before anything is sent to it
+        (see _require_usable_realm).
     """
     basic_auth = env_basic_auth()
 
@@ -372,8 +461,13 @@ def get_auth_token(
         if basic_auth:
             req.add_header("Authorization", basic_auth)
         what = f"Authenticating {repo}"
+        # Through the auth-stripping opener, never urlopen(): the default
+        # redirect handler carries the Basic header to whatever host a
+        # redirect names, and this is the one request that has the user's
+        # password in it. Docker Hub is always verified HTTPS, so it is
+        # the verifying opener whatever `insecure` says.
         data = decode_json_object(
-            _request_body(urllib.request.urlopen, req, what), what,
+            _request_body(auth_opener().open, req, what), what,
         )
         return _grant_token(data, what), REGISTRY_URL
 
@@ -399,6 +493,7 @@ def get_auth_token(
             realm = params.get("realm", "")
             if not realm:
                 return "", base
+            _require_usable_realm(realm, registry, insecure)
             service = params.get("service", "")
             qs_parts = []
             if service:
