@@ -28,7 +28,9 @@
 # only under RedirectPolicyHandler's rule -- never off TLS unless the user
 # asked for insecure transport, and never to another scheme at all. The
 # registry transport builds its openers here too, with the handler that
-# also strips credentials across origins.
+# also strips credentials across origins. Requests are built by
+# new_request(), and a request urllib cannot build or send is an
+# InvalidRequest -- one of NETWORK_ERRORS -- never a bare ValueError.
 
 import hashlib
 import http.client
@@ -47,6 +49,7 @@ from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 __all__ = (
     "IncompleteResponse",
+    "InvalidRequest",
     "NETWORK_ERRORS",
     "RedirectPolicyHandler",
     "RedirectRefused",
@@ -59,6 +62,7 @@ __all__ = (
     "is_cert_verification_error",
     "is_plaintext_http_tls_error",
     "is_retryable_http_error",
+    "new_request",
     "require_complete_body",
     "retry_http",
     "sha256_file",
@@ -132,6 +136,54 @@ def require_complete_body(received: int, declared: int,
             f"{prefix}the response ended after {received} of {declared} "
             f"bytes."
         )
+
+
+class InvalidRequest(http.client.HTTPException):
+    """A request that cannot be built or put on the wire as it stands.
+
+    urllib and http.client answer much of what is wrong with a URL by
+    raising ValueError -- or its UnicodeError subclass -- out of the
+    middle of the request, not a URLError: brackets that do not close a
+    valid IPv6 address (`http://[`, the registry of a `[:5000/img`
+    reference), a host the IDNA codec refuses (an empty label as in
+    `..example`, a label past 63 characters), a path that is not ASCII,
+    a header value with a line break in it. None of those is an OSError
+    or an HTTPException, so each walked through every net in the program
+    and ended `install`, `build` or `push` in a traceback -- from a URL
+    on the command line, a Dockerfile, a registry's challenge or upload
+    Location, or a redirect. new_request() and the opener's open() turn
+    all of it into this: an HTTPException, so every net catches it, and
+    never retried, since the same request fails the same way again.
+    """
+
+
+def _reason(exc: BaseException) -> str:
+    """What urllib or a codec said was wrong, safe to print.
+
+    Their messages already repr() whatever they quote -- a codec names a
+    character as '\\xe4', ipaddress an address as 'x' -- and escaping
+    that again would only double the backslashes. The exception is the
+    NFKC check, which names the host raw; a message holding a character
+    that is not printable is escaped whole.
+    """
+    text = str(exc)
+    return text if text.isprintable() else quote_path(text)
+
+
+def new_request(url: str, **kwargs) -> urllib.request.Request:
+    """urllib.request.Request(*url*, ...), a malformed URL an InvalidRequest.
+
+    The constructor already parses the URL's host (for origin_req_host),
+    so a malformed one fails here, before any opener sees it. Every
+    request in the program is built through this.
+    """
+    try:
+        return urllib.request.Request(url, **kwargs)
+    except ValueError as exc:
+        raise InvalidRequest(
+            f"'{quote_path(url)}' is not a valid URL: "
+            f"{_reason(exc)}"
+        ) from exc
 
 
 class RedirectRefused(http.client.HTTPException):
@@ -254,6 +306,32 @@ class RedirectPolicyHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _Opener(urllib.request.OpenerDirector):
+    """An OpenerDirector whose open() reports an unsendable request as one.
+
+    What new_request() does for the constructor, done for everything
+    after it: a URL handed over as a string is parsed in here, a host is
+    IDNA-encoded on the way to the resolver, a path and the headers are
+    encoded on the way to the socket, and a redirect's target goes
+    through all of it again -- each of them a ValueError when it fails.
+    The request that failed is named, which for a redirect is the hop.
+    """
+
+    def open(self, fullurl, data=None, *args, **kwargs):
+        if isinstance(fullurl, str):
+            # What OpenerDirector.open() would build, built the way every
+            # other request is, so a URL that does not parse says so.
+            fullurl, data = new_request(fullurl, data=data), None
+        try:
+            return super().open(fullurl, data, *args, **kwargs)
+        except ValueError as exc:
+            url = getattr(fullurl, "full_url", fullurl)
+            raise InvalidRequest(
+                f"cannot send a request for '{quote_path(str(url))}': "
+                f"{_reason(exc)}"
+            ) from exc
+
+
 def http_opener(*, insecure: bool = False, redirect=None):
     """Return an opener for HTTP(S) requests under the redirect policy.
 
@@ -263,7 +341,8 @@ def http_opener(*, insecure: bool = False, redirect=None):
     fetches is legitimately anything but HTTP(S), so the opener built here
     has the default handler set minus those three -- another scheme is
     refused as an unknown URL type wherever it came from -- and a
-    RedirectPolicyHandler in place of urllib's redirect handler.
+    RedirectPolicyHandler in place of urllib's redirect handler. A
+    request it cannot send is an InvalidRequest, not a ValueError.
 
     With *insecure* the HTTPS handler skips certificate verification and
     the redirect policy lets HTTPS step down to plain HTTP: both are what
@@ -275,7 +354,7 @@ def http_opener(*, insecure: bool = False, redirect=None):
     if redirect is None:
         redirect = RedirectPolicyHandler(allow_plaintext=insecure)
     context = insecure_ssl_context() if insecure else None
-    opener = urllib.request.OpenerDirector()
+    opener = _Opener()
     for handler in (
         urllib.request.ProxyHandler(),
         urllib.request.UnknownHandler(),
@@ -367,7 +446,8 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     request: an HTTP client error (4xx, except 408 Request Timeout and 429 Too
     Many Requests, which mean "retry later"), a TLS certificate verification
     failure, a plaintext-HTTP reply to an https:// URL, a URL http.client
-    will not put on the wire at all, or a redirect the policy refuses.
+    will not put on the wire at all (InvalidURL, InvalidRequest), or a
+    redirect the policy refuses.
     Everything else — 5xx server errors, connection resets, timeouts, DNS
     failures, and a response body that ended early — is treated as transient
     and retried.
@@ -383,6 +463,9 @@ def is_retryable_http_error(exc: BaseException) -> bool:
         return False
     if isinstance(exc, RedirectRefused):
         # The server's answer, and it will be the same one next time.
+        return False
+    if isinstance(exc, InvalidRequest):
+        # The request never left: nothing about it changes on a repeat.
         return False
     return True
 
@@ -440,13 +523,17 @@ def download_file(
     expired/self-signed certificate, or redirects to plain HTTP — the
     opt-in behaviour behind the install command's ``--allow-insecure``.
     """
-    req = urllib.request.Request(
-        url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
-    )
     opener = http_opener(insecure=insecure)
-    host = urllib.parse.urlparse(url).netloc or url
+    try:
+        host = urllib.parse.urlsplit(url).netloc or url
+    except ValueError:
+        # Not a URL at all; the request below says so, inside the net.
+        host = url
 
     def _attempt():
+        req = new_request(
+            url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
+        )
         with atomic_write(dest, "wb") as fh:
             with opener.open(req) as resp:
                 total = declared_length(resp)

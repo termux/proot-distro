@@ -50,13 +50,13 @@ import json
 import re
 import urllib.error
 import urllib.parse
-import urllib.request
 
 from proot_distro.message import quote_path
 from proot_distro.helpers.download import (
     certificate_error_msg,
     declared_length,
     is_cert_verification_error,
+    new_request,
     require_complete_body,
     retry_http,
 )
@@ -148,7 +148,7 @@ def _fetch_page(query: str, page: int, page_size: int) -> dict:
     params = urllib.parse.urlencode(
         {"q": query, "n": page_size, "page": page}
     )
-    req = urllib.request.Request(f"{SEARCH_URL}?{params}", headers=_ua())
+    req = new_request(f"{SEARCH_URL}?{params}", headers=_ua())
 
     def _attempt():
         # A page is parsed whole, so how much of it there is is Hub's
@@ -208,6 +208,16 @@ def search_images(query: str, limit: int = SEARCH_DEFAULT_LIMIT) -> tuple:
     query = query.strip()
     if not query:
         raise RuntimeError("The search query is empty.")
+    try:
+        query.encode("utf-8")
+    except UnicodeError:
+        # A byte on the command line that is not UTF-8 arrives as a lone
+        # surrogate, and urlencode() raised UnicodeEncodeError out of
+        # building the request -- past every net, a traceback.
+        raise RuntimeError(
+            "The search query is not valid text: it holds bytes that are "
+            "not UTF-8."
+        ) from None
 
     limit = max(1, min(int(limit), SEARCH_LIMIT_MAX))
     page_size = min(limit, SEARCH_PAGE_MAX)

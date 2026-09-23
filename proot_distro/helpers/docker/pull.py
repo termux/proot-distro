@@ -40,13 +40,13 @@
 import json
 import os
 import urllib.error
-import urllib.request
 
 from proot_distro.compress import ZSTD_AVAILABLE, unsupported_msg
 from proot_distro.message import log_info, log_error
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.download import (
-    NETWORK_ERRORS, declared_length, require_complete_body, retry_http,
+    NETWORK_ERRORS, declared_length, new_request, require_complete_body,
+    retry_http,
 )
 from proot_distro.helpers.docker.cache import (
     annotate_manifest_cache,
@@ -97,7 +97,7 @@ def _get_manifest(
     headers = {**_ua(), "Accept": _ACCEPT_HEADER}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, headers=headers)
+    req = new_request(url, headers=headers)
 
     def _attempt():
         with opener(insecure).open(req) as resp:
@@ -250,7 +250,7 @@ def _fetch_config_blob(
         headers = {**_ua()}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(url, headers=headers)
+        req = new_request(url, headers=headers)
 
         def _attempt():
             # A config blob is metadata: parsed whole, never streamed,

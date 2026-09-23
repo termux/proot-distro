@@ -374,3 +374,29 @@ def test_open_required_layer_refuses_without_deleting(builders):
 
     with pytest.raises(RuntimeError, match="missing"):
         cache.open_required_layer("sha256:" + "0" * 64)
+
+
+# ----- the manifest-cache key is total ------------------------------------
+
+def test_manifest_cache_key_is_unchanged_for_ordinary_references():
+    # surrogatepass must not move a key that strict UTF-8 could derive:
+    # every entry already in a cache is named by one.
+    import hashlib
+    for ref in ("ubuntu", "ghcr.io/foo/bar:1", "reg.example/täg:1"):
+        expected = hashlib.sha256(
+            f"{cache.canonical_ref(ref)}_x86_64".encode()
+        ).hexdigest()[:16]
+        assert cache.manifest_cache_key(ref, "x86_64") == expected
+
+
+@pytest.mark.parametrize("ref", [
+    "reg.example/\udcffimg",    # a byte on the command line that is not UTF-8
+    "reg\udcff.example/img",
+    "img:\ud800",               # a lone surrogate out of a JSON document
+])
+def test_manifest_cache_key_accepts_a_lone_surrogate(ref):
+    # Strict UTF-8 raised UnicodeEncodeError out of the key's derivation,
+    # before any request could say the reference was no good.
+    key = cache.manifest_cache_key(ref, "x86_64")
+    assert len(key) == 16
+    assert cache.load_manifest_cache(ref, "x86_64")[0] is None

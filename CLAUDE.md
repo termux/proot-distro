@@ -658,8 +658,9 @@ policy (`retry_http`, `is_retryable_http_error`), the TLS-failure
 classifiers, the three names every net and every whole-body read
 goes through — `NETWORK_ERRORS`, `declared_length()`,
 `require_complete_body()` — see "Docker / OCI registry" for what a
-response that ends early does without them, and `http_opener()`, the
-one way a request is sent (see "Redirects" there).
+response that ends early does without them, and `new_request()` /
+`http_opener()`, the one way a request is built and sent (see
+"Redirects" and "Malformed requests" there).
 
 ## Key paths
 
@@ -1641,6 +1642,40 @@ target is `quote_path`ed in the message: it is the server's text.
 `AuthStrippingRedirectHandler` is a `RedirectPolicyHandler`, so a
 redirect a registry opener does follow under `--allow-insecure` still
 loses the `Authorization` header when it leaves the origin.
+
+**Malformed requests** are the fifth. urllib answers much of what is
+wrong with a URL by raising `ValueError` — or its `UnicodeError`
+subclass — out of the middle of the request, not a `URLError`: `http://[`
+and the registry of a `[:5000/img` reference fail in `Request()`'s own
+constructor (it parses the host for `origin_req_host`), a host the IDNA
+codec refuses (`..example`, a label past 63 characters) on the way to the
+resolver, a path that is not ASCII or a header value with a line break in
+it on the way to the socket. None of that is in `NETWORK_ERRORS`, so each
+walked out of `install` (past its cleanup), `build` (FROM catches only
+`RuntimeError`, ADD only the network family) and `push` as a traceback —
+from the command line, a Dockerfile, a `--build-arg`, a registry's
+challenge or upload `Location`, or a redirect. Every request is built by
+`download.new_request()` and sent by an `http_opener()`, whose
+`_Opener.open()` also routes a URL given as a string through
+`new_request()`; both turn the `ValueError` into `InvalidRequest`, an
+`HTTPException` every net catches and `retry_http` never repeats. The
+reason text is printed as urllib or the codec wrote it (both already
+`repr` what they quote) unless it holds something unprintable — the NFKC
+check names the host raw — and the URL goes through `quote_path`. Three
+things are settled before a request is ever built, because they fail
+first: `_require_usable_realm()` answers a realm `urlsplit` cannot parse
+with the same refusal as a wrong scheme; `_grant_token()` refuses a token
+holding a control character or anything past Latin-1, since
+`http.client`'s `ValueError` for that header quotes the value — the token
+— into the message; and `search_images()` refuses a query that is not
+UTF-8. `ADD`'s destination name, taken from the URL for `ADD <url> /dir/`,
+is parsed inside a `BuildError` the same way. A byte on the command line
+that is not UTF-8 arrives as a lone surrogate, and the three hashes an
+image reference is keyed by — `cache.manifest_cache_key`, the `BuildLock`
+path, `COPY --from=<image>`'s scratch slot — encode it `surrogatepass`:
+strict UTF-8 raised `UnicodeEncodeError` before any request could refuse
+the reference, and a string strict UTF-8 accepted hashes exactly as it
+always did, so no existing key moved.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise

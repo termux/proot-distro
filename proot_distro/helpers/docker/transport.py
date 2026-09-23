@@ -62,9 +62,9 @@ import os
 import re
 import urllib.error
 import urllib.parse
-import urllib.request
 
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
+from proot_distro.message import quote_path
 from proot_distro.helpers.download import (
     NETWORK_ERRORS,
     RedirectPolicyHandler,
@@ -73,6 +73,7 @@ from proot_distro.helpers.download import (
     http_opener,
     is_cert_verification_error,
     is_plaintext_http_tls_error,
+    new_request,
     require_complete_body,
     retry_http,
 )
@@ -241,6 +242,18 @@ def _grant_token(data: dict, what: str) -> str:
         raise RuntimeError(
             f"{what}: the registry's token grant is not a string."
         )
+    # Nor may the string hold what a header cannot carry: a control
+    # character (a line break most of all) or anything past Latin-1.
+    # http.client refuses both with a ValueError from the middle of the
+    # next request, and its message quotes the header value -- so the
+    # refusal is made here, where it can say what is wrong without
+    # printing the token.
+    if any(ord(ch) < 0x20 or 0x7f <= ord(ch) < 0xa0 or ord(ch) > 0xff
+           for ch in token):
+        raise RuntimeError(
+            f"{what}: the registry's token grant holds characters an "
+            f"HTTP header cannot carry."
+        )
     return token
 
 
@@ -303,8 +316,10 @@ def _http_registry_reachable(registry: str, timeout: float = 6.0) -> bool:
     unreachable. Any HTTP-level response — including 401/404 — confirms the
     host speaks HTTP on that endpoint.
     """
-    req = urllib.request.Request(f"http://{registry}/v2/", headers=_ua())
     try:
+        # Built inside the net, so a registry the URL cannot hold is "not
+        # reachable" rather than the question's own traceback.
+        req = new_request(f"http://{registry}/v2/", headers=_ua())
         # The program's own opener, like every other request: urlopen()
         # would follow a redirect to ftp:// as readily as to http://.
         with http_opener().open(req, timeout=timeout) as resp:
@@ -404,15 +419,26 @@ def _require_usable_realm(realm: str, registry: str, insecure: bool) -> None:
     http_opener), which makes this the message rather than the only
     thing standing in the way.
     """
-    parts = urllib.parse.urlsplit(realm)
+    # The realm is the registry's text, and it goes to the terminal.
+    shown = quote_path(realm)
+    try:
+        parts = urllib.parse.urlsplit(realm)
+        host = parts.hostname
+    except ValueError:
+        # `https://[` and the like: urlsplit's ValueError used to come
+        # out of the middle of the pull as a traceback.
+        raise RuntimeError(
+            f"Registry '{registry}' directs authentication to '{shown}', "
+            f"which is not a valid URL. Refusing to send credentials there."
+        ) from None
     scheme = parts.scheme.lower()
-    if scheme == "https" and parts.hostname:
+    if scheme == "https" and host:
         return
-    if scheme == "http" and parts.hostname:
+    if scheme == "http" and host:
         if insecure:
             return
         raise RuntimeError(
-            f"Registry '{registry}' directs authentication to '{realm}', "
+            f"Registry '{registry}' directs authentication to '{shown}', "
             f"which is served over plain HTTP, not HTTPS. proot-distro "
             f"enforces TLS by default and will not send credentials in "
             f"clear. If you trust this registry and the network path to "
@@ -420,7 +446,7 @@ def _require_usable_realm(realm: str, registry: str, insecure: bool) -> None:
             f"unencrypted connection."
         )
     raise RuntimeError(
-        f"Registry '{registry}' directs authentication to '{realm}', "
+        f"Registry '{registry}' directs authentication to '{shown}', "
         f"which is not an https:// URL (or an http:// one under "
         f"'--allow-insecure'). Refusing to send credentials there."
     )
@@ -468,7 +494,7 @@ def get_auth_token(
             f"{AUTH_URL}?service=registry.docker.io"
             f"&scope=repository:{repo}:{actions}"
         )
-        req = urllib.request.Request(url, headers=_ua())
+        req = new_request(url, headers=_ua())
         if basic_auth:
             req.add_header("Authorization", basic_auth)
         what = f"Authenticating {repo}"
@@ -490,7 +516,7 @@ def get_auth_token(
     scheme = "https"
     while True:
         base = f"{scheme}://{registry}"
-        probe_req = urllib.request.Request(f"{base}/v2/", headers=_ua())
+        probe_req = new_request(f"{base}/v2/", headers=_ua())
         try:
             _request_body(op.open, probe_req, f"Probing {base}/v2/")
             return "", base  # registry is wide open; no token required
@@ -513,7 +539,7 @@ def get_auth_token(
                 )
             qs_parts.append(f"scope=repository:{repo}:{actions}")
             sep = "&" if "?" in realm else "?"
-            token_req = urllib.request.Request(
+            token_req = new_request(
                 f"{realm}{sep}{'&'.join(qs_parts)}", headers=_ua()
             )
             if basic_auth:

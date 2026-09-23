@@ -415,6 +415,65 @@ def test_an_anonymous_request_to_a_plaintext_realm_is_refused_too(monkeypatch):
     assert sent == []
 
 
+def test_a_realm_that_does_not_parse_is_a_message(monkeypatch):
+    # urlsplit's ValueError came out of the middle of the pull, past every
+    # net, as a traceback.
+    for insecure in (False, True):
+        sent = []
+        _patch_opener(monkeypatch, _challenge_opener("https://[x/token", sent))
+        monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+        with pytest.raises(RuntimeError, match="not a valid URL"):
+            transport.get_auth_token(
+                "x/y", registry="reg.example", insecure=insecure
+            )
+        assert sent == []
+
+
+def test_a_realm_is_quoted_in_the_message(monkeypatch):
+    # The challenge is the registry's text, and the message is printed.
+    sent = []
+    _patch_opener(monkeypatch,
+                  _challenge_opener("http://auth.example/\x1b[2J", sent))
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert "\x1b" not in str(exc.value)
+    assert sent == []
+
+
+@pytest.mark.parametrize("token", ["abc\ndef", "abc\r\n", "t\x00k",
+                                   "tok\u20ac"])
+def test_a_token_no_header_can_carry_is_refused_unprinted(monkeypatch,
+                                                           token):
+    # http.client refuses it with a ValueError from the next request --
+    # a traceback, and one whose message quotes the header, token and all.
+    _patch_hub(monkeypatch, lambda req, *a, **k: _FakeResp({"token": token}))
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("library/x")
+    assert "cannot carry" in str(exc.value)
+    assert token not in str(exc.value)
+
+
+def test_an_ordinary_token_is_accepted(monkeypatch):
+    jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln-_+/=="
+    _patch_hub(monkeypatch, lambda req, *a, **k: _FakeResp({"token": jwt}))
+    assert transport.get_auth_token("library/x")[0] == jwt
+
+
+@pytest.mark.parametrize("registry", ["[:5000", "[::1", "[x]"])
+def test_a_registry_the_url_cannot_hold_is_an_invalid_request(monkeypatch,
+                                                              registry):
+    # The host of a `[:5000/img` reference: urllib's ValueError at the
+    # request's construction walked out of install, build and push.
+    _patch_opener(monkeypatch,
+                  lambda req, *a, **k: pytest.fail("nothing is sent"))
+    with pytest.raises(download.InvalidRequest):
+        transport.get_auth_token("img", registry=registry)
+
+
+def test_the_plaintext_probe_answers_no_for_a_malformed_registry():
+    assert transport._http_registry_reachable("[:5000") is False
+
+
 # ----- malformed and oversized registry answers ---------------------------
 
 class _RawResp:

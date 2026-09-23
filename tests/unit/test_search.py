@@ -216,6 +216,15 @@ def test_empty_query_refused(query):
         hub.search_images(query)
 
 
+def test_query_that_is_not_text_refused(monkeypatch):
+    # A byte on the command line that is not UTF-8 is a lone surrogate,
+    # and urlencode() raised UnicodeEncodeError out of building the URL.
+    monkeypatch.setattr(hub, "_fetch_page",
+                        lambda *a: pytest.fail("nothing is sent"))
+    with pytest.raises(RuntimeError, match="not UTF-8"):
+        hub.search_images("ub\udcffuntu")
+
+
 def test_malformed_results_field(monkeypatch):
     monkeypatch.setattr(
         hub, "_fetch_page", lambda *a: {"results": "not a list"}

@@ -180,6 +180,39 @@ def test_upload_blob_bytes_4xx_fails_fast(monkeypatch):
     assert calls == ["POST"]  # deterministic -> no retry
 
 
+@pytest.mark.parametrize("location", [
+    "https://[x/upload/1",               # urllib: Invalid IPv6 URL
+    "https://[::1/upload/1",
+])
+def test_upload_location_that_is_not_a_url_is_an_invalid_request(
+    monkeypatch, location, tmp_path,
+):
+    # The Location is the registry's text. One urllib cannot parse was a
+    # ValueError out of the upload -- past push's net, a traceback -- and
+    # it is not worth a retry: the same session answers the same way.
+    methods = []
+
+    def fake(req, *a, **k):
+        methods.append(req.get_method())
+        return _FakeResp(202, {"Location": location})
+
+    _patch_opener(monkeypatch, fake)
+    with pytest.raises(download.InvalidRequest):
+        push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
+    assert methods == ["POST"]
+
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"data")
+    fd = os.open(str(blob), os.O_RDONLY)
+    methods.clear()
+    try:
+        with pytest.raises(download.InvalidRequest):
+            push._upload_blob_fd("me/app", "sha256:cc", fd, "TKN", _BASE)
+    finally:
+        os.close(fd)
+    assert methods == ["POST"]
+
+
 # ----- upload Location: the token stays on the registry -------------------
 
 def _capture_put_auth(monkeypatch, location):

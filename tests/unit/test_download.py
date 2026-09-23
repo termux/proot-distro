@@ -634,3 +634,96 @@ def test_download_file_refused_scheme_offers_no_flag(tmp_path, monkeypatch):
         download.download_file("https://example.com/rootfs.tar",
                                str(tmp_path / "o"), retry_delay=0)
     assert "--allow-insecure" not in str(exc.value)
+
+
+# ----- a request urllib cannot build or send ------------------------------
+#
+# urllib answers much of what is wrong with a URL by raising ValueError (or
+# UnicodeError) out of the middle of the request. None of it is an OSError
+# or an HTTPException, so every net let it through as a traceback.
+
+@pytest.fixture
+def no_proxy(monkeypatch):
+    # The opener reads proxies from the environment; a request routed to a
+    # proxy would fail somewhere else, or not at all.
+    for var in ("http_proxy", "https_proxy", "all_proxy",
+                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.mark.parametrize("url", [
+    "http://[", "https://[:5000/v2/", "https://[::1/x", "http://[x]/",
+    "http://exa℀mple/",           # NFKC folds a '/' into the host
+])
+def test_new_request_refuses_a_malformed_url(url):
+    with pytest.raises(download.InvalidRequest) as exc:
+        download.new_request(url, headers={"User-Agent": "pd"})
+    assert "not a valid URL" in str(exc.value)
+    assert not download.is_retryable_http_error(exc.value)
+    assert isinstance(exc.value, download.NETWORK_ERRORS)
+
+
+def test_new_request_builds_an_ordinary_request():
+    req = download.new_request("https://a.example/x", method="HEAD",
+                                headers={"User-Agent": "pd"})
+    assert req.full_url == "https://a.example/x"
+    assert req.get_method() == "HEAD"
+
+
+def test_the_opener_refuses_a_malformed_url_given_as_a_string():
+    # A string is parsed inside open(); ADD hands its URL over that way.
+    with pytest.raises(download.InvalidRequest):
+        download.http_opener().open("http://[")
+
+
+@pytest.mark.parametrize("url", [
+    "http://..example/",               # IDNA: empty label
+    "http://" + "a" * 70 + ".example/",  # IDNA: label too long
+    "http://127.0.0.1:9/tä.tar",  # a path http.client cannot encode
+])
+def test_the_opener_refuses_what_it_cannot_send(no_proxy, url):
+    # Each fails before a byte leaves: the host is encoded on the way to
+    # the resolver, the request line before the connection is made.
+    with pytest.raises(download.InvalidRequest) as exc:
+        download.http_opener().open(url)
+    assert "cannot send a request for" in str(exc.value)
+    assert not download.is_retryable_http_error(exc.value)
+
+
+def test_a_value_error_from_a_redirect_hop_names_the_hop():
+    class _Hop(_Canned):
+        def _answer(self, req):
+            if req.full_url == "https://b.example/x":
+                raise UnicodeError("label empty or too long")
+            return super()._answer(req)
+
+        http_open = https_open = _answer
+
+    canned = _Hop({"https://a.example/x": (302, "https://b.example/x", b"")})
+    opener = download.http_opener()
+    opener.add_handler(canned)
+    with pytest.raises(download.InvalidRequest) as exc:
+        opener.open("https://a.example/x")
+    assert "https://b.example/x" in str(exc.value)
+
+
+def test_retry_http_does_not_repeat_an_invalid_request(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    calls = []
+
+    def op():
+        calls.append(1)
+        raise download.InvalidRequest("x")
+
+    with pytest.raises(download.InvalidRequest):
+        download.retry_http(op, what="Job", max_retries=5)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("url", ["http://[", "https://[::1/x.tar"])
+def test_download_file_malformed_url_is_a_message(tmp_path, url):
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError) as exc:
+        download.download_file(url, str(dest), retry_delay=0)
+    assert "not a valid URL" in str(exc.value)
+    assert not dest.exists()

@@ -71,3 +71,16 @@ def test_disown_clears_held_exclusive_registry():
     lock.disown()
     lock.release()
     assert path not in locking._held_exclusive
+
+
+def test_build_lock_key_accepts_a_lone_surrogate():
+    # The reference comes off the command line (push, build -t via a
+    # --build-arg), where a byte that is not UTF-8 is a lone surrogate;
+    # the key is derived the same total way the manifest-cache key is.
+    path = locking._build_lock_path("reg.example/\udcffimg:1", "x86_64")
+    assert path.endswith(".lock")
+    import hashlib
+    ordinary = locking._build_lock_path("reg.example/img:1", "x86_64")
+    assert os.path.basename(ordinary) == hashlib.sha256(
+        b"reg.example/img:1_x86_64"
+    ).hexdigest()[:16] + ".lock"

@@ -166,9 +166,18 @@ def layer_cache_path(digest: str) -> str:
 
 
 def manifest_cache_key(image_ref: str, arch: str) -> str:
-    """Return the manifest-cache key for (*image_ref*, *arch*)."""
+    """Return the manifest-cache key for (*image_ref*, *arch*).
+
+    Total over every string, which strict UTF-8 is not: a byte on the
+    command line that is not UTF-8 arrives as a lone surrogate (a
+    `--build-arg` expanded into FROM, an `install` argument), and so can
+    one in a JSON document, and deriving the key raised
+    UnicodeEncodeError before any request could say the reference was
+    no good. `surrogatepass` changes nothing for a string that encoded
+    before, so no existing key moves.
+    """
     return hashlib.sha256(
-        f"{canonical_ref(image_ref)}_{arch}".encode()
+        f"{canonical_ref(image_ref)}_{arch}".encode("utf-8", "surrogatepass")
     ).hexdigest()[:16]
 
 

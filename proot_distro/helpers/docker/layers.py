@@ -26,12 +26,11 @@
 
 import hashlib
 import os
-import urllib.request
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
 from proot_distro.helpers.download import (
-    declared_length, require_complete_body, retry_http,
+    declared_length, new_request, require_complete_body, retry_http,
 )
 from proot_distro.helpers.docker.cache import (
     layer_cache_path, open_verified_layer, split_digest,
@@ -72,7 +71,7 @@ def download_blob(
     headers = {**_ua()}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, headers=headers)
+    req = new_request(url, headers=headers)
 
     def _attempt():
         # Fresh hasher per attempt: a retry re-downloads the whole blob, so

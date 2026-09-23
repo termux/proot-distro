@@ -112,9 +112,13 @@ def _build_lock_path(image_ref: str, arch: str) -> str:
     """Return the lock-file path for a build of (image_ref, arch).
 
     The key matches the manifest-cache key (16-hex-char sha256 prefix)
-    so a build lock identifies the same artifact the build writes to.
+    so a build lock identifies the same artifact the build writes to,
+    and is derived the same total way (see cache.manifest_cache_key):
+    a reference off the command line can hold a lone surrogate.
     """
-    key = hashlib.sha256(f"{image_ref}_{arch}".encode()).hexdigest()[:16]
+    key = hashlib.sha256(
+        f"{image_ref}_{arch}".encode("utf-8", "surrogatepass")
+    ).hexdigest()[:16]
     return os.path.join(_BUILD_LOCKS_DIR, f"{key}.lock")
 
 

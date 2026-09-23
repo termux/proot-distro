@@ -35,7 +35,6 @@ import os
 import sys
 import urllib.error
 import urllib.parse
-import urllib.request
 
 from proot_distro.message import (
     C, is_quiet, log_info,
@@ -50,7 +49,7 @@ from proot_distro.helpers.docker.cache import (
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
 )
-from proot_distro.helpers.download import retry_http
+from proot_distro.helpers.download import new_request, retry_http
 from proot_distro.helpers.docker.refs import parse_image_ref
 from proot_distro.helpers.docker.transport import (
     auth_note,
@@ -101,7 +100,7 @@ def _blob_exists(
     headers = {**_ua()}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, method="HEAD", headers=headers)
+    req = new_request(url, method="HEAD", headers=headers)
 
     def _attempt():
         with opener(insecure).open(req) as resp:
@@ -170,7 +169,7 @@ def _upload_blob_bytes(
         # A retry re-opens the upload session: the POST yields a fresh upload
         # Location, then the monolithic (content-addressed) PUT re-sends the
         # same bytes — safe to repeat.
-        post_req = urllib.request.Request(
+        post_req = new_request(
             f"{base}/v2/{repo}/blobs/uploads/",
             data=b"",
             method="POST",
@@ -181,7 +180,7 @@ def _upload_blob_bytes(
         put_url = _resolve_upload_url(base, location)
         sep = "&" if "?" in put_url else "?"
         put_url = f"{put_url}{sep}digest={urllib.parse.quote(digest, safe='')}"
-        put_req = urllib.request.Request(
+        put_req = new_request(
             put_url,
             data=data,
             method="PUT",
@@ -218,7 +217,7 @@ def _upload_blob_fd(
     def _attempt():
         # A retry re-opens the upload session and re-streams the file from the
         # start, so each attempt is a complete, self-contained upload.
-        post_req = urllib.request.Request(
+        post_req = new_request(
             f"{base}/v2/{repo}/blobs/uploads/",
             data=b"",
             method="POST",
@@ -233,7 +232,7 @@ def _upload_blob_fd(
             os.lseek(src_fd, 0, os.SEEK_SET)
             with open(src_fd, "rb", closefd=False) as fh:
                 reader = _ProgressReader(fh, size, label or digest[:19])
-                put_req = urllib.request.Request(
+                put_req = new_request(
                     put_url,
                     data=reader,
                     method="PUT",
@@ -268,7 +267,7 @@ def _put_manifest(
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, data=body, method="PUT", headers=headers)
+    req = new_request(url, data=body, method="PUT", headers=headers)
 
     def _attempt():
         with opener(insecure).open(req) as resp:
