@@ -376,7 +376,7 @@ def _refresh_file_metadata(src_st, dst_fd, dst_name):
         os.close(fd)
 
 
-def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, rel):
+def _sync_file(src_fd, src_name, dst_fd, dst_name, ctx, rel):
     """Copy a regular file, preserving mode and mtime.
 
     Returns True when the destination now matches the source, False when
@@ -390,6 +390,12 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, rel):
     there is removed rather than written into — it may be a hardlink to a
     file outside the container, which nothing about the entry would show.
 
+    Mode and times come from the descriptor the bytes are read through,
+    not from the lstat the caller decided on. The two are a moment apart,
+    and a source replaced in between used to have its new content written
+    out under the old entry's mode: a file swapped from 0644 to a 0600 one
+    arrived at the destination readable by everyone.
+
     Every failure here is per-entry: reported, counted, and stepped over.
     A failed write used to end the whole command, so one unwritable file
     left every later entry untransferred — and a container could arrange
@@ -398,7 +404,6 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, rel):
     """
     where = ctx.shown(rel)
     tmp = dirfd.temp_name(dst_name, _TMP_SUFFIX)
-    mode = stat.S_IMODE(src_st.st_mode)
 
     # A directory standing where the source has a regular file. rsync refuses
     # this too (it takes --force to clear one out of the way), and renaming
@@ -425,6 +430,7 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, rel):
         ctx.note_failure(rel)
         return False
 
+    mode = stat.S_IMODE(sfd_st.st_mode)
     try:
         try:
             try:
@@ -434,7 +440,7 @@ def _sync_file(src_fd, src_name, src_st, dst_fd, dst_name, ctx, rel):
                 tfd, _ = dirfd.open_new_at(dst_fd, tmp, mode)
             try:
                 dirfd.copy_data(sfd, tfd, sfd_st)
-                dirfd.copy_metadata(sfd, tfd, src_st)
+                dirfd.copy_metadata(sfd, tfd, sfd_st)
             finally:
                 os.close(tfd)
             os.replace(tmp, dst_name, src_dir_fd=dst_fd, dst_dir_fd=dst_fd)
@@ -639,7 +645,7 @@ def _mirror_entries(src_fd, dst_fd, rel, ctx):
                        else _refresh_file_metadata(src_st, dst_fd, name))
             if outcome == _META_REWRITE:
                 op = "Modified" if dirfd.exists_at(dst_fd, name) else "New"
-                if _sync_file(src_fd, name, src_st, dst_fd, name, ctx,
+                if _sync_file(src_fd, name, dst_fd, name, ctx,
                               child) and ctx.verbose:
                     log_info(f"({ctx.done + 1}/{ctx.total}) {op} file: "
                              f"{ctx.shown(child)}")
@@ -969,7 +975,7 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
             if src_is_dir:
                 _sync_directory(src_pin, dest_pin, ctx, delete)
             else:
-                _sync_single(src_pin, dest_pin, src_st, ctx)
+                _sync_single(src_pin, dest_pin, ctx)
         except KeyboardInterrupt:
             clear_bar()
             log_error("Aborted by user.")
@@ -998,17 +1004,35 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
     log_info("Finished synchronizing.")
 
 
-def _sync_single(src_pin, dest_pin, src_st, ctx):
+def _sync_single(src_pin, dest_pin, ctx):
     """Sync a source that is a single file or symlink.
 
-    The type was settled in _do_sync; the tests below are what is left if
-    it changed since, in which case there is nothing to transfer.
+    The entry is looked at again here, off the pinned directory, rather
+    than judged by the lstat _do_sync took of the path: that one came
+    before the resolve of the destination, the overlap check and the pin
+    itself, and a source replaced anywhere in between had its type, size
+    and mtime answer for the file that is there now. A newer file with the
+    old one's size then compared as up to date and was never transferred,
+    while the command said it had finished. This is the stat every entry
+    of a tree sync is judged by too — taken off its directory's descriptor
+    at the moment it is used.
+
+    _do_sync chose this path for a regular file (or a link it could not
+    resolve); anything else found here now was put there since, and there
+    is nothing to transfer.
     """
+    try:
+        src_st = dirfd.lstat_at(src_pin.dir_fd, src_pin.leaf)
+    except OSError as exc:
+        log_error(f"Warning: cannot stat '{ctx.src_shown('')}': "
+                  f"{quote_path(str(exc))}")
+        ctx.note_failure("")
+        return
     mode = src_st.st_mode
     shown = ctx.shown("")
-    if _is_special(mode) or not (stat.S_ISLNK(mode) or stat.S_ISREG(mode)):
+    if not (stat.S_ISLNK(mode) or stat.S_ISREG(mode)):
         log_error(f"Warning: source '{ctx.src_shown('')}' is no longer a "
-                  f"regular file or directory, skipping.")
+                  f"regular file, skipping.")
         ctx.note_failure("")
         return
     if stat.S_ISLNK(mode):
@@ -1030,7 +1054,7 @@ def _sync_single(src_pin, dest_pin, src_st, ctx):
                else _refresh_file_metadata(src_st, dest_pin.dir_fd,
                                            dest_pin.leaf))
     if outcome == _META_REWRITE:
-        _sync_file(src_pin.dir_fd, src_pin.leaf, src_st,
+        _sync_file(src_pin.dir_fd, src_pin.leaf,
                    dest_pin.dir_fd, dest_pin.leaf, ctx, "")
 
 

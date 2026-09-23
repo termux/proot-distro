@@ -338,7 +338,7 @@ def _copy_hardlink(rootfs_fd, parents, dest_parts, src_parts) -> None:
         dirfd.unlink_quietly(dst_fd, dest_resolved[-1])
         try:
             dirfd.copy_file_at(src_fd, src_resolved[-1],
-                               dst_fd, dest_resolved[-1], st)
+                               dst_fd, dest_resolved[-1])
         except OSError:
             pass
     finally:

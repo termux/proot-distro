@@ -391,10 +391,8 @@ def test_copy_recursive_swap_below_root_does_not_escape(
     real_copy = dirfd.copy_file_at
     fired = []
 
-    def racing(src_dir_fd, src_name, dst_dir_fd, dst_name, src_st=None,
-               **kwargs):
-        real_copy(src_dir_fd, src_name, dst_dir_fd, dst_name, src_st,
-                  **kwargs)
+    def racing(src_dir_fd, src_name, dst_dir_fd, dst_name, **kwargs):
+        real_copy(src_dir_fd, src_name, dst_dir_fd, dst_name, **kwargs)
         target = os.path.join(rootfs, "dest", "sub")
         if not fired and os.path.isdir(target):
             fired.append(True)

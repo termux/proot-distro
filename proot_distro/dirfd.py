@@ -652,7 +652,7 @@ def copy_data(src_fd: int, dst_fd: int, src_st=None) -> None:
 
 
 def copy_file_at(src_dir_fd: int, src_name: str,
-                 dst_dir_fd: int, dst_name: str, src_st=None, *,
+                 dst_dir_fd: int, dst_name: str, *,
                  replace: bool = False) -> None:
     """Copy one regular file between two pinned directories.
 
@@ -660,6 +660,14 @@ def copy_file_at(src_dir_fd: int, src_name: str,
     planted at either name is followed, written through, or waited on, and
     the destination is always a new inode (see open_new_at) so neither is a
     hardlink.
+
+    Mode and times are the open source descriptor's, never a stat the
+    caller took of the name beforehand. Every caller has one — the walk
+    decides what an entry *is* by lstat — but that is a moment earlier,
+    and a file replaced in between had its new content written out under
+    the old entry's mode: swapped from 0644 to 0600, it arrived readable
+    by everyone. What is stamped on the copy has to describe the inode
+    whose bytes went into it.
 
     Pass replace=True when the destination may already exist — a copy onto
     a named file. The content then goes to a sibling temp file that is
@@ -682,8 +690,6 @@ def copy_file_at(src_dir_fd: int, src_name: str,
     """
     sfd, sfd_st = open_regular_at(src_dir_fd, src_name, os.O_RDONLY)
     try:
-        if src_st is None:
-            src_st = sfd_st
         if replace:
             try:
                 dst_st = lstat_at(dst_dir_fd, dst_name)
@@ -696,10 +702,10 @@ def copy_file_at(src_dir_fd: int, src_name: str,
         name = temp_name(dst_name, TMP_SUFFIX) if replace else dst_name
         try:
             dfd, _ = open_new_at(dst_dir_fd, name,
-                                 stat.S_IMODE(src_st.st_mode))
+                                 stat.S_IMODE(sfd_st.st_mode))
             try:
                 copy_data(sfd, dfd, sfd_st)
-                copy_metadata(sfd, dfd, src_st)
+                copy_metadata(sfd, dfd, sfd_st)
             finally:
                 os.close(dfd)
             if replace:
@@ -1082,8 +1088,7 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
                         # copy_metadata puts it back on the way up.
                         make_writable(sub_dst)
                 elif stat.S_ISREG(mode):
-                    copy_file_at(src_fd, name, dst_fd, name, src_st,
-                                 replace=merge)
+                    copy_file_at(src_fd, name, dst_fd, name, replace=merge)
                     if on_entry:
                         on_entry(child)
                 elif on_skip:

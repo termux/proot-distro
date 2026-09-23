@@ -982,6 +982,20 @@ content means no rewrite, so was a changed timestamp. Times are compared
 at whole-second granularity, the same as `_needs_update`, or a filesystem
 storing less precision than the source is found wanting on every run.
 
+What a file is judged by and what its copy is stamped with both come from
+a stat of the **entry as it is now**. A sync of a single file re-`lstat`s
+the pinned leaf in `_sync_single()` rather than reusing the path `lstat`
+`_do_sync` took before the destination resolve, the overlap check and the
+pin: a source replaced in between was compared by the old file's size and
+mtime, so a newer file of the same size came out up to date and was never
+transferred while the command reported success. And the mode and times
+written onto a copy are the `fstat` of the descriptor its bytes are read
+through — `_sync_file` and `dirfd.copy_file_at` (so `copy -r` and the tar
+extractor's hard-link pass too), neither of which takes a caller's stat any
+more. The walk's `lstat` is a moment older than the open, and a file
+swapped in that moment had its new content written out under the old
+entry's mode: a `0600` replacement arrived readable by everyone.
+
 Destination directories are created **writable** (`0o700`) and given the
 source's mode only once their contents are in — `copy_tree_at` via
 `copy_metadata`, sync via `_apply_dir_mode`, both `fchmod` on the
