@@ -22,6 +22,13 @@
 # Both use proot_distro.progress for TTY progress output so the bar looks
 # identical to the one drawn by the Docker pull, OCI extraction, and
 # backup/restore code paths.
+#
+# Every request this program makes goes through an opener built by
+# http_opener(): HTTP and HTTPS and nothing else, and redirects followed
+# only under RedirectPolicyHandler's rule -- never off TLS unless the user
+# asked for insecure transport, and never to another scheme at all. The
+# registry transport builds its openers here too, with the handler that
+# also strips credentials across origins.
 
 import hashlib
 import http.client
@@ -34,16 +41,20 @@ import urllib.request
 
 from proot_distro.atomic import atomic_write
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
-from proot_distro.message import msg, log_info, log_error
+from proot_distro.message import msg, log_info, log_error, quote_path
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
 __all__ = (
     "IncompleteResponse",
     "NETWORK_ERRORS",
+    "RedirectPolicyHandler",
+    "RedirectRefused",
     "certificate_error_msg",
+    "check_redirect",
     "declared_length",
     "download_file",
+    "http_opener",
     "insecure_ssl_context",
     "is_cert_verification_error",
     "is_plaintext_http_tls_error",
@@ -123,6 +134,161 @@ def require_complete_body(received: int, declared: int,
         )
 
 
+class RedirectRefused(http.client.HTTPException):
+    """A redirect this program will not follow.
+
+    Raised by check_redirect(). An HTTPException so it travels with the
+    rest of them -- every net catches it through NETWORK_ERRORS -- and one
+    retry_http never repeats, since the server gives the same answer
+    every time. *plaintext* is True when the refusal is a step down from
+    HTTPS to plain HTTP, the one kind insecure transport permits, so a
+    caller that has an `--allow-insecure` to offer can say so.
+    """
+
+    def __init__(self, message: str, plaintext: bool = False):
+        super().__init__(message)
+        self.plaintext = plaintext
+
+
+# The schemes a redirect may lead to. The same two every URL this program
+# accepts from the user is held to (`install <url>`, `ADD <url>`), so a
+# server cannot take a request anywhere the user could not have sent it.
+_FOLLOWED_SCHEMES = ("http", "https")
+
+
+def check_redirect(from_url: str, location: str, *,
+                   allow_plaintext: bool = False) -> None:
+    """Raise RedirectRefused unless a redirect to *location* may be followed.
+
+    *location* is the header as the server sent it, relative or not, and
+    is resolved against *from_url* -- the request that was answered with
+    it -- the way the redirect itself will be. Three answers are refusals:
+
+      * a target that is not a URL at all: urllib parses it on the way to
+        following it, and a ValueError out of the middle of a request is
+        a traceback in every caller;
+      * any scheme but http or https, or no host: urllib's own handler
+        permits ftp:// as well, which is plaintext by another name and a
+        protocol nothing here was ever asked to speak;
+      * HTTPS to plain HTTP, unless *allow_plaintext*: the user asked for
+        a verified connection and the server answered with a way around
+        it. Nothing pins a tag's manifest, an `install <url>` archive or
+        an `ADD <url>` file to a digest, so whoever sits on the plaintext
+        hop decides what is installed or built, and the user was never
+        told TLS had stopped. Under --allow-insecure the user accepted
+        insecure transport and the redirect is followed.
+
+    Plain HTTP to HTTPS is an upgrade and HTTP to HTTP is what the user
+    already chose, so both are followed. The rule is per hop: once a
+    chain has reached HTTPS it stays there.
+    """
+    try:
+        target = urllib.parse.urljoin(from_url, location)
+        src = urllib.parse.urlsplit(from_url)
+        dst = urllib.parse.urlsplit(target)
+    except ValueError:
+        raise RedirectRefused(
+            f"Refusing to follow a redirect from '{quote_path(from_url)}': "
+            f"its target '{quote_path(location)}' is not a valid URL."
+        ) from None
+    if dst.scheme not in _FOLLOWED_SCHEMES or not dst.hostname:
+        raise RedirectRefused(
+            f"Refusing to follow a redirect from '{quote_path(from_url)}' "
+            f"to '{quote_path(target)}': only http:// and https:// URLs "
+            f"naming a host are followed."
+        )
+    if src.scheme == "https" and dst.scheme == "http" and not allow_plaintext:
+        raise RedirectRefused(
+            f"Refusing to follow a redirect from '{quote_path(from_url)}' "
+            f"to '{quote_path(target)}': it leaves HTTPS for plain HTTP, "
+            f"so what arrives would no longer be protected by TLS.",
+            plaintext=True,
+        )
+
+
+class RedirectPolicyHandler(urllib.request.HTTPRedirectHandler):
+    """urllib's redirect handler, following only what check_redirect allows.
+
+    The check runs twice, both times on purpose. http_error_30x runs it on
+    the raw Location before urllib's own handling touches it, because
+    that handling parses the header first -- a malformed one is a bare
+    ValueError -- and refuses a scheme it dislikes with an HTTPError whose
+    3xx code retry_http reads as transient. redirect_request runs it on
+    the absolute URL the new request is actually built for, which is what
+    a subclass (and a unit test) calls directly.
+
+    *allow_plaintext* is the insecure-transport opt-in: an opener built
+    for --allow-insecure passes True so HTTPS may redirect to plain HTTP.
+    """
+
+    def __init__(self, allow_plaintext: bool = False):
+        super().__init__()
+        self.allow_plaintext = allow_plaintext
+
+    def _refuse(self, fp, from_url: str, location: str) -> None:
+        try:
+            check_redirect(from_url, location,
+                           allow_plaintext=self.allow_plaintext)
+        except RedirectRefused:
+            # The 3xx response is not handed on to anyone (urllib's own
+            # refusal gives it to the HTTPError it raises), so release its
+            # connection here.
+            if fp is not None:
+                fp.close()
+            raise
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        # The header urllib itself will read: `location`, else `uri`.
+        location = headers.get("location")
+        if location is None:
+            location = headers.get("uri")
+        if location is not None:
+            self._refuse(fp, req.full_url, location)
+        return super().http_error_302(req, fp, code, msg, headers)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_302
+    http_error_308 = http_error_302
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self._refuse(fp, req.full_url, newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def http_opener(*, insecure: bool = False, redirect=None):
+    """Return an opener for HTTP(S) requests under the redirect policy.
+
+    urllib.request.urlopen() and build_opener() also install handlers for
+    ftp://, file:// and data:, and a default redirect handler that follows
+    HTTPS to plain HTTP (or to FTP) without a word. Nothing this program
+    fetches is legitimately anything but HTTP(S), so the opener built here
+    has the default handler set minus those three -- another scheme is
+    refused as an unknown URL type wherever it came from -- and a
+    RedirectPolicyHandler in place of urllib's redirect handler.
+
+    With *insecure* the HTTPS handler skips certificate verification and
+    the redirect policy lets HTTPS step down to plain HTTP: both are what
+    --allow-insecure means. *redirect* substitutes a handler of the
+    caller's own (a RedirectPolicyHandler subclass carrying its own
+    *allow_plaintext*), which is how the registry transport adds its
+    credential stripping.
+    """
+    if redirect is None:
+        redirect = RedirectPolicyHandler(allow_plaintext=insecure)
+    context = insecure_ssl_context() if insecure else None
+    opener = urllib.request.OpenerDirector()
+    for handler in (
+        urllib.request.ProxyHandler(),
+        urllib.request.UnknownHandler(),
+        urllib.request.HTTPHandler(),
+        urllib.request.HTTPSHandler(context=context),
+        urllib.request.HTTPDefaultErrorHandler(),
+        redirect,
+        urllib.request.HTTPErrorProcessor(),
+    ):
+        opener.add_handler(handler)
+    return opener
+
+
 def insecure_ssl_context() -> ssl.SSLContext:
     """Return an SSL context that skips certificate and hostname checks.
 
@@ -200,10 +366,11 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     Deterministic failures are not retried — they cannot succeed on a repeat
     request: an HTTP client error (4xx, except 408 Request Timeout and 429 Too
     Many Requests, which mean "retry later"), a TLS certificate verification
-    failure, a plaintext-HTTP reply to an https:// URL, or a URL http.client
-    will not put on the wire at all. Everything else — 5xx server errors,
-    connection resets, timeouts, DNS failures, and a response body that ended
-    early — is treated as transient and retried.
+    failure, a plaintext-HTTP reply to an https:// URL, a URL http.client
+    will not put on the wire at all, or a redirect the policy refuses.
+    Everything else — 5xx server errors, connection resets, timeouts, DNS
+    failures, and a response body that ended early — is treated as transient
+    and retried.
     """
     if isinstance(exc, urllib.error.HTTPError):
         return not (400 <= exc.code < 500 and exc.code not in (408, 429))
@@ -213,6 +380,9 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     if isinstance(exc, http.client.InvalidURL):
         # A control character in the URL, or a port that is not a number:
         # the request never left, and will not next time either.
+        return False
+    if isinstance(exc, RedirectRefused):
+        # The server's answer, and it will be the same one next time.
         return False
     return True
 
@@ -264,20 +434,21 @@ def download_file(
 ) -> None:
     """Download *url* to *dest* with progress output, redirects, and retries.
 
-    HTTPS certificates are verified by default. When *insecure* is set the
-    download proceeds even if the server presents an untrusted/expired/
-    self-signed certificate — the opt-in behaviour behind the install
-    command's ``--allow-insecure``.
+    HTTPS certificates are verified by default, and a redirect from HTTPS
+    to plain HTTP is refused (see check_redirect). When *insecure* is set
+    the download proceeds even if the server presents an untrusted/
+    expired/self-signed certificate, or redirects to plain HTTP — the
+    opt-in behaviour behind the install command's ``--allow-insecure``.
     """
     req = urllib.request.Request(
         url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
     )
-    context = insecure_ssl_context() if insecure else None
+    opener = http_opener(insecure=insecure)
     host = urllib.parse.urlparse(url).netloc or url
 
     def _attempt():
         with atomic_write(dest, "wb") as fh:
-            with urllib.request.urlopen(req, context=context) as resp:
+            with opener.open(req) as resp:
                 total = declared_length(resp)
                 downloaded = 0
                 while True:
@@ -305,6 +476,12 @@ def download_file(
         # retry_http re-raises deterministic failures (and the last transient
         # one once retries are spent); translate them into a meaningful error
         # instead of leaking a raw SSL/HTTP error to the user.
+        if isinstance(exc, RedirectRefused) and exc.plaintext:
+            raise RuntimeError(
+                f"Cannot download {url}: {exc} If you trust this source "
+                f"and the network path to it, re-run with "
+                f"'--allow-insecure' to follow the redirect."
+            ) from exc
         if isinstance(exc, urllib.error.URLError):
             # An untrusted/expired/self-signed certificate.
             if not insecure and is_cert_verification_error(exc):

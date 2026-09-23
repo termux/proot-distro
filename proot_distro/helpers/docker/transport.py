@@ -25,7 +25,10 @@
 #   - Authorization-stripping redirect handler — Docker Hub blob URLs
 #     redirect to CDN hosts that reject Bearer tokens with HTTP 400.
 #     Python's default redirect handler keeps headers across hops, so
-#     we subclass it to drop the header when the origin changes.
+#     we subclass it to drop the header when the origin changes. It is
+#     a download.RedirectPolicyHandler, so which redirects are followed
+#     at all -- never off HTTPS unless --allow-insecure, never to another
+#     scheme -- is the rule every other request in the program obeys.
 #   - Token-exchange flow: PD_DOCKER_AUTH (username:password) is the
 #     single auth contract; the registry's WWW-Authenticate header
 #     tells us where to redeem it for a Bearer token.
@@ -39,9 +42,8 @@
 # the protocol works (Docker Hub's realm is auth.docker.io, GitLab's is
 # gitlab.com for registry.gitlab.com, so the host is legitimately the
 # registry's to choose), but the realm has to be an https:// URL, or an
-# http:// one under --allow-insecure. The default opener speaks file://,
-# ftp:// and data: too, and a plaintext realm is a password on the wire
-# without the user having asked for plaintext anything.
+# http:// one under --allow-insecure. A plaintext realm is a password on
+# the wire without the user having asked for plaintext anything.
 #
 # Everything a registry says about itself arrives here first, and none of
 # it is this program's to trust: how many bytes a metadata response holds
@@ -65,9 +67,10 @@ import urllib.request
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
 from proot_distro.helpers.download import (
     NETWORK_ERRORS,
+    RedirectPolicyHandler,
     certificate_error_msg,
     declared_length,
-    insecure_ssl_context,
+    http_opener,
     is_cert_verification_error,
     is_plaintext_http_tls_error,
     require_complete_body,
@@ -131,7 +134,7 @@ def same_auth_origin(from_url: str, to_url: str) -> bool:
     )
 
 
-class AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
+class AuthStrippingRedirectHandler(RedirectPolicyHandler):
     """Strip the Authorization header when a redirect leaves the origin.
 
     Docker Hub blob endpoints redirect to CDN pre-signed URLs. Those CDN
@@ -139,6 +142,11 @@ class AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
     default redirect handler forwards all headers unchanged, so we
     override it to drop Authorization whenever the redirect target is
     not the origin the request was addressed to (same_auth_origin).
+
+    Whether a redirect is followed at all is the base class's question,
+    asked first: a redirect from HTTPS to plain HTTP is refused unless
+    *allow_plaintext* (--allow-insecure), and one that is followed there
+    still loses the header, since it is not the same origin.
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -153,16 +161,15 @@ class AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _build_opener(insecure: bool):
     """Build an opener that strips Auth across hosts.
 
-    The *insecure* variant additionally installs an HTTPS handler whose SSL
-    context skips certificate verification, so HTTPS endpoints presenting an
-    untrusted certificate can be reached under ``--allow-insecure``.
+    The *insecure* variant skips certificate verification, so HTTPS
+    endpoints presenting an untrusted certificate can be reached under
+    ``--allow-insecure``, and lets a redirect step down from HTTPS to
+    plain HTTP, which the verifying one refuses (download.check_redirect).
     """
-    handlers = [AuthStrippingRedirectHandler]
-    if insecure:
-        handlers.append(
-            urllib.request.HTTPSHandler(context=insecure_ssl_context())
-        )
-    return urllib.request.build_opener(*handlers)
+    return http_opener(
+        insecure=insecure,
+        redirect=AuthStrippingRedirectHandler(allow_plaintext=insecure),
+    )
 
 
 _verified_opener = _build_opener(False)
@@ -298,7 +305,9 @@ def _http_registry_reachable(registry: str, timeout: float = 6.0) -> bool:
     """
     req = urllib.request.Request(f"http://{registry}/v2/", headers=_ua())
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # The program's own opener, like every other request: urlopen()
+        # would follow a redirect to ftp:// as readily as to http://.
+        with http_opener().open(req, timeout=timeout) as resp:
             resp.read(64)
         return True
     except urllib.error.HTTPError:
@@ -388,10 +397,12 @@ def _require_usable_realm(realm: str, registry: str, insecure: bool) -> None:
     the rest all put it somewhere other than the registry -- but the
     scheme is not. Only https:// keeps the password off the wire, and
     http:// is what --allow-insecure means, for the registry and for its
-    realm alike. Anything else is refused outright: the opener the
-    request goes through speaks file://, ftp:// and data: as well, so an
-    unchecked realm was a challenge's way of having this process open
-    whatever it liked and parse the result as a token grant.
+    realm alike. Anything else is refused outright: an unchecked realm
+    was a challenge's way of having this process open whatever it liked
+    -- file://, ftp://, data: -- and parse the result as a token grant.
+    The opener no longer speaks those schemes at all (download.
+    http_opener), which makes this the message rather than the only
+    thing standing in the way.
     """
     parts = urllib.parse.urlsplit(realm)
     scheme = parts.scheme.lower()

@@ -200,10 +200,11 @@ HELP_PAGES = {
              "architecture."),
             ("--allow-insecure",
              "Permit insecure transport to the target registry: a custom "
-             "registry served over plain HTTP, or an HTTPS registry whose "
+             "registry served over plain HTTP, an HTTPS registry whose "
              "TLS certificate is untrusted, expired, self-signed, or for a "
-             "different hostname. Use only for trusted registries on a "
-             "network path you control."),
+             "different hostname, or a redirect from HTTPS to plain HTTP. "
+             "Use only for trusted registries on a network path you "
+             "control."),
             ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [
@@ -431,10 +432,11 @@ HELP_PAGES = {
              "linux/386, linux/riscv64)."),
             ("--allow-insecure",
              "Permit insecure transport: a custom registry served over "
-             "plain HTTP, or an HTTPS endpoint (registry or download URL) "
+             "plain HTTP, an HTTPS endpoint (registry or download URL) "
              "whose TLS certificate is untrusted, expired, self-signed, or "
-             "for a different hostname. Use only for trusted sources on a "
-             "network path you control."),
+             "for a different hostname, or a redirect from HTTPS to plain "
+             "HTTP. Use only for trusted sources on a network path you "
+             "control."),
             ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [

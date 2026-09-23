@@ -63,8 +63,10 @@ def test_env_basic_auth_requires_colon(monkeypatch):
 
 # ----- cross-host Authorization stripping ---------------------------------
 
-def _make_redirect(orig_url, new_url):
-    handler = transport.AuthStrippingRedirectHandler()
+def _make_redirect(orig_url, new_url, allow_plaintext=False):
+    handler = transport.AuthStrippingRedirectHandler(
+        allow_plaintext=allow_plaintext,
+    )
     req = urllib.request.Request(
         orig_url,
         headers={"Authorization": "Bearer TOKEN", "User-Agent": "pd"},
@@ -95,11 +97,49 @@ def test_redirect_keeps_auth_same_host():
 def test_redirect_strips_auth_on_a_scheme_downgrade():
     # Same host, but https -> http: the token would go over the wire in
     # clear. The netloc comparison this used to be could not see it.
+    # Only --allow-insecure follows such a redirect at all, and even then
+    # the header does not go with it.
     new_req = _make_redirect(
         "https://reg.example/v2/foo/blobs/sha256:aa",
         "http://reg.example/v2/foo/blobs/sha256:aa",
+        allow_plaintext=True,
     )
     assert new_req.get_header("Authorization") is None
+
+
+def test_redirect_off_https_is_refused_without_insecure():
+    # The same redirect on the verifying opener is not followed: the
+    # registry answered a TLS request with a way around TLS, and a tag's
+    # manifest has no digest to catch what the plaintext hop serves.
+    with pytest.raises(download.RedirectRefused) as exc:
+        _make_redirect(
+            "https://reg.example/v2/foo/manifests/latest",
+            "http://reg.example/v2/foo/manifests/latest",
+        )
+    assert exc.value.plaintext
+
+
+def test_redirect_to_ftp_is_refused_even_under_insecure():
+    with pytest.raises(download.RedirectRefused) as exc:
+        _make_redirect(
+            "http://reg.example/v2/foo/blobs/sha256:aa",
+            "ftp://cdn.example/blob",
+            allow_plaintext=True,
+        )
+    assert not exc.value.plaintext
+
+
+@pytest.mark.parametrize("insecure", [False, True])
+def test_registry_openers_carry_the_policy(insecure):
+    # Both openers are built by download.http_opener, around the handler
+    # that also strips credentials, with --allow-insecure deciding
+    # whether HTTPS may step down to plain HTTP.
+    op = transport._build_opener(insecure)
+    handlers = [h for h in op.handlers
+                if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], transport.AuthStrippingRedirectHandler)
+    assert handlers[0].allow_plaintext is insecure
 
 
 def test_redirect_strips_auth_on_a_port_change():

@@ -655,10 +655,11 @@ push,refs,search,transport}`. `build_engine/stage.py` is where a build's
 per-FROM state lives, **and its two descriptors** — see "Run / build".
 `helpers/download.py` owns everything both HTTP users share: the retry
 policy (`retry_http`, `is_retryable_http_error`), the TLS-failure
-classifiers, and the three names every net and every whole-body read
+classifiers, the three names every net and every whole-body read
 goes through — `NETWORK_ERRORS`, `declared_length()`,
 `require_complete_body()` — see "Docker / OCI registry" for what a
-response that ends early does without them.
+response that ends early does without them, and `http_opener()`, the
+one way a request is sent (see "Redirects" there).
 
 ## Key paths
 
@@ -1606,6 +1607,41 @@ retried. And every network failure now leaves `pull_image` as a
 `install` reported (a `URLError` being an `OSError`) and `build`'s FROM
 did not catch at all.
 
+**Redirects** are the fourth, and they are the server choosing where the
+rest of the request goes. Every request is sent through an opener
+`download.http_opener()` builds — `download_file`, `ADD <url>`, the
+plaintext `/v2/` probe, and (through `transport._build_opener`) every
+registry request — and it differs from `urlopen()`'s in two ways.
+Its handler set is the default one **minus** `ftp://`, `file://` and
+`data:`, since nothing here is legitimately anything but HTTP(S).
+And its redirect handler is a `RedirectPolicyHandler`, which asks
+`check_redirect()` before following anything: a target that is not a
+URL, one whose scheme is not `http`/`https` or that names no host, and
+— unless `--allow-insecure` — one that steps down from HTTPS to plain
+HTTP are all `RedirectRefused`. urllib's own handler followed an HTTPS
+request to `http://` or `ftp://` without a word, and nothing pins what
+arrives: a tag's manifest, an `install <url>` archive and an `ADD
+<url>` file have no digest, so whoever sat on the plaintext hop decided
+what was installed or built — verified with a local HTTPS server
+redirecting to an HTTP one, for `install <url>`, `ADD` and a registry
+manifest alike. HTTP→HTTPS is an upgrade and HTTP→HTTP is what the user
+chose, so both are followed; the rule is per hop, so once a chain is on
+TLS it stays there. The check runs twice on purpose: in `http_error_30x`
+on the raw `Location`, before urllib parses it (a malformed one was a
+bare `ValueError`, and urllib's refusal of a scheme it dislikes is an
+`HTTPError` carrying the 3xx, which `retry_http` reads as transient),
+and in `redirect_request` on the absolute URL the new request is built
+for. `RedirectRefused` is an `HTTPException`, so every net catches it,
+and `is_retryable_http_error` refuses to repeat it; its `plaintext`
+flag says the refusal is the one `--allow-insecure` would lift, which
+`download_file` names as the remedy (the build has no such flag — a
+Dockerfile that means plain HTTP writes `ADD http://`). The refused
+3xx's connection is closed rather than left to the collector. The
+target is `quote_path`ed in the message: it is the server's text.
+`AuthStrippingRedirectHandler` is a `RedirectPolicyHandler`, so a
+redirect a registry opener does follow under `--allow-insecure` still
+loses the `Authorization` header when it leaves the origin.
+
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise
 `RuntimeError`). `get_auth_token(repo, registry, actions)` takes `"pull"`
@@ -1626,12 +1662,14 @@ the challenge's `realm` is the registry's to place — Hub's is
 the *host* is not restricted, which is also what Docker does — but
 `_require_usable_realm()` holds the *scheme* to the registry's own rule:
 `https://`, or `http://` under `--allow-insecure`, anything else refused
-before a byte is sent. The opener speaks `file://`, `ftp://` and `data:`
-too, so an unchecked realm was a challenge's way of having the process
-open whatever it liked; and a plaintext realm off an HTTPS registry
-was the password in clear without the user having asked for plaintext
-anything. The rule applies to anonymous exchanges as well — the token
-that comes back authenticates every later request.
+before a byte is sent. An unchecked realm was a challenge's way of
+having the process open whatever it liked (`file://`, `ftp://`,
+`data:` — the opener no longer speaks those at all, see "Redirects",
+which leaves this check as the message rather than the only guard); and
+a plaintext realm off an HTTPS registry was the password in clear
+without the user having asked for plaintext anything. The rule applies
+to anonymous exchanges as well — the token that comes back
+authenticates every later request.
 
 Push (`push.py`) loads `(manifest, repo, image_config)` from the local
 cache, re-canonicalises and verifies SHA against `manifest.config.digest`,

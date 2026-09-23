@@ -141,8 +141,7 @@ def test_build_add_url_spools_to_disk(tmp_path, builders, monkeypatch):
         def open(self, url):
             return _Resp(body)
 
-    monkeypatch.setattr(copy_step.urllib.request, "build_opener",
-                        lambda *a: _Opener())
+    monkeypatch.setattr(copy_step, "http_opener", lambda **k: _Opener())
 
     ctx = tmp_path / "ctx"
     ctx.mkdir()

@@ -51,11 +51,10 @@ import stat
 import tarfile
 import time
 import urllib.parse
-import urllib.request
 
 from proot_distro.message import log_info
 from proot_distro.helpers.download import (
-    NETWORK_ERRORS, declared_length, require_complete_body,
+    NETWORK_ERRORS, declared_length, http_opener, require_complete_body,
 )
 from proot_distro.helpers.build_engine.dockerignore import (
     is_ignored, simple_glob,
@@ -66,9 +65,7 @@ from proot_distro.helpers.build_engine.parsing import (
     split_operands,
 )
 from proot_distro.helpers.build_engine.users import resolve_chown
-from proot_distro.helpers.docker import (
-    AuthStrippingRedirectHandler, layer_cache_path, pull_image,
-)
+from proot_distro.helpers.docker import layer_cache_path, pull_image
 from proot_distro.helpers.layer_diff import (
     MapSources, layer_path_parts, write_files_layer,
 )
@@ -594,6 +591,13 @@ def _copy_url(url, dest, file_map, uid, gid, mode_override, spool):
     Streamed onto disk rather than read whole: how much a URL answers with
     is the remote's choice, and the response used to be held in memory
     until the whole instruction was packed.
+
+    Fetched through the program's own opener (download.http_opener), so a
+    redirect is followed only where check_redirect allows: an `ADD
+    https://...` never quietly continues over plain HTTP. The build has no
+    --allow-insecure, and nothing pins the file to a digest, so a
+    plaintext hop would decide what goes into the layer `push` uploads.
+    A Dockerfile that means plain HTTP says `ADD http://...`.
     """
     if dest.endswith("/"):
         name = os.path.basename(
@@ -602,7 +606,7 @@ def _copy_url(url, dest, file_map, uid, gid, mode_override, spool):
         arcname = (dest.lstrip("/") + name)
     else:
         arcname = dest.lstrip("/")
-    opener = urllib.request.build_opener(AuthStrippingRedirectHandler)
+    opener = http_opener()
     try:
         with opener.open(url) as resp:
             declared = declared_length(resp)

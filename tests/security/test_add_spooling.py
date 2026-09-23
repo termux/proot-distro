@@ -117,15 +117,15 @@ def test_url_response_is_spooled(spool):
             return _Resp(body)
 
     file_map = {}
-    orig = copy_step.urllib.request.build_opener
-    copy_step.urllib.request.build_opener = lambda *a: _Opener()
+    orig = copy_step.http_opener
+    copy_step.http_opener = lambda **k: _Opener()
     try:
         copy_step._copy_url(
             "https://example.invalid/blob.bin", "/opt/blob.bin",
             file_map, 0, 0, None, spool,
         )
     finally:
-        copy_step.urllib.request.build_opener = orig
+        copy_step.http_opener = orig
 
     _assert_no_bytes_held(file_map)
     with open(file_map["opt/blob.bin"]["src"], "rb") as fh:
@@ -145,15 +145,15 @@ def _add_url(spool, resp_factory):
         def open(self, url):
             return resp_factory()
 
-    orig = copy_step.urllib.request.build_opener
-    copy_step.urllib.request.build_opener = lambda *a: _Opener()
+    orig = copy_step.http_opener
+    copy_step.http_opener = lambda **k: _Opener()
     try:
         copy_step._copy_url(
             "https://example.invalid/blob.bin", "/opt/blob.bin",
             file_map, 0, 0, None, spool,
         )
     finally:
-        copy_step.urllib.request.build_opener = orig
+        copy_step.http_opener = orig
     return file_map
 
 

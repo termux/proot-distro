@@ -1,13 +1,16 @@
 # Tests for proot_distro.helpers.download — the shared plaintext-HTTP TLS
-# error classifier and download_file's handling of an https:// URL that is
-# actually served over plain HTTP (urlopen mocked; no network).
+# error classifier, download_file's handling of an https:// URL that is
+# actually served over plain HTTP (the opener mocked; no network), and the
+# redirect policy every opener in the program is built with.
 
 import email.message
 import http.client
+import io
 import ssl
 
 import urllib.error
 import urllib.request
+import urllib.response
 
 import pytest
 
@@ -39,6 +42,26 @@ class _FakeDownloadResp:
 
     def __exit__(self, *a):
         return False
+
+
+class _FakeOpener:
+    """Stand-in for the opener download.http_opener() returns."""
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def open(self, req, *a, **k):
+        return self._fn(req, *a, **k)
+
+
+def _patch_open(monkeypatch, fn, seen=None):
+    """Route download_file's requests to *fn*; record the opener's flags."""
+    def fake_http_opener(**kwargs):
+        if seen is not None:
+            seen.update(kwargs)
+        return _FakeOpener(fn)
+
+    monkeypatch.setattr(download, "http_opener", fake_http_opener)
 
 
 # ----- error classifiers --------------------------------------------------
@@ -168,11 +191,11 @@ def test_download_file_plaintext_https_meaningful_error(tmp_path, monkeypatch):
     # raw SSL error after exhausting all retries.
     calls = []
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         calls.append(req.full_url)
         raise urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
 
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, fake_open)
     dest = tmp_path / "rootfs.tar"
     with pytest.raises(RuntimeError) as exc:
         download.download_file(
@@ -194,13 +217,13 @@ def test_download_file_cert_error_meaningful(tmp_path, monkeypatch):
     # exhausting all retries.
     calls = []
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         calls.append(req.full_url)
         raise urllib.error.URLError(
             ssl.SSLCertVerificationError(1, "self-signed certificate")
         )
 
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, fake_open)
     dest = tmp_path / "rootfs.tar"
     with pytest.raises(RuntimeError) as exc:
         download.download_file(
@@ -222,13 +245,13 @@ def test_download_file_404_fails_fast(tmp_path, monkeypatch):
     # meaningful HTTP error.
     calls = []
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         calls.append(req.full_url)
         raise urllib.error.HTTPError(
             req.full_url, 404, "Not Found", email.message.Message(), None
         )
 
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, fake_open)
     dest = tmp_path / "rootfs.tar"
     with pytest.raises(RuntimeError) as exc:
         download.download_file(
@@ -246,14 +269,14 @@ def test_download_file_server_error_retries(tmp_path, monkeypatch):
     # limit before failing (i.e. fail-fast applies to client errors only).
     calls = []
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         calls.append(req.full_url)
         raise urllib.error.HTTPError(
             req.full_url, 503, "Service Unavailable",
             email.message.Message(), None
         )
 
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, fake_open)
     dest = tmp_path / "rootfs.tar"
     with pytest.raises(RuntimeError):
         download.download_file(
@@ -270,10 +293,10 @@ def test_download_file_retry_is_logged(tmp_path, monkeypatch):
     logged = []
     monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         raise urllib.error.URLError("connection reset")
 
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, fake_open)
     dest = tmp_path / "rootfs.tar"
     with pytest.raises(RuntimeError):
         download.download_file(
@@ -291,12 +314,12 @@ def test_download_file_no_retry_log_on_fail_fast(tmp_path, monkeypatch):
     logged = []
     monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
 
-    def fake_urlopen(req, *a, **k):
+    def fake_open(req, *a, **k):
         raise urllib.error.HTTPError(
             req.full_url, 404, "Not Found", email.message.Message(), None
         )
 
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, fake_open)
     dest = tmp_path / "rootfs.tar"
     with pytest.raises(RuntimeError):
         download.download_file(
@@ -306,24 +329,47 @@ def test_download_file_no_retry_log_on_fail_fast(tmp_path, monkeypatch):
     assert not [t for t in logged if "retrying" in t.lower()]
 
 
-def test_download_file_insecure_passes_unverified_context(tmp_path, monkeypatch):
-    # With insecure=True the download is performed with an SSL context that
-    # skips verification, so a bad certificate no longer blocks it.
+def test_download_file_insecure_uses_the_insecure_opener(tmp_path, monkeypatch):
+    # With insecure=True the download goes through the opener built for
+    # --allow-insecure, so a bad certificate no longer blocks it.
     seen = {}
-
-    def fake_urlopen(req, *a, **k):
-        seen["context"] = k.get("context")
-        return _FakeDownloadResp(b"payload")
-
-    monkeypatch.setattr(download.urllib.request, "urlopen", fake_urlopen)
+    _patch_open(monkeypatch, lambda req, *a, **k: _FakeDownloadResp(b"payload"),
+                seen)
     dest = tmp_path / "rootfs.tar"
     download.download_file(
         "https://example.com/rootfs.tar", str(dest), insecure=True,
     )
-    ctx = seen["context"]
+    assert seen == {"insecure": True}
+    assert dest.read_bytes() == b"payload"
+
+
+def test_download_file_verifies_by_default(tmp_path, monkeypatch):
+    seen = {}
+    _patch_open(monkeypatch, lambda req, *a, **k: _FakeDownloadResp(b"x"),
+                seen)
+    download.download_file("https://example.com/r.tar", str(tmp_path / "o"))
+    assert seen == {"insecure": False}
+
+
+def _https_handler(opener):
+    return next(h for h in opener.handlers
+                if isinstance(h, urllib.request.HTTPSHandler))
+
+
+def test_insecure_opener_skips_certificate_verification():
+    ctx = _https_handler(download.http_opener(insecure=True))._context
     assert ctx is not None
     assert ctx.verify_mode == ssl.CERT_NONE
-    assert dest.read_bytes() == b"payload"
+
+
+def test_verifying_opener_uses_the_default_context():
+    # What urlopen() itself gets: older interpreters keep None and let
+    # http.client build the default context per connection, newer ones
+    # build it in the handler. Either way it verifies.
+    ctx = _https_handler(download.http_opener())._context
+    assert ctx is None or (
+        ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+    )
 
 
 # ----- a response that ends early -----------------------------------------
@@ -404,9 +450,7 @@ def test_download_file_body_short_of_its_length_is_a_message(
             super().__init__(b"half")
             self.headers = {"Content-Length": "1000"}
 
-    monkeypatch.setattr(
-        download.urllib.request, "urlopen", lambda *a, **k: _Short(),
-    )
+    _patch_open(monkeypatch, lambda *a, **k: _Short())
     dest = tmp_path / "out.tar"
     with pytest.raises(RuntimeError) as exc:
         download.download_file("http://h/x.tar", str(dest), max_retries=2)
@@ -427,10 +471,166 @@ def test_download_file_incomplete_read_is_a_message(tmp_path, monkeypatch):
         def read(self, n=-1):
             raise http.client.IncompleteRead(b"partial", 900)
 
-    monkeypatch.setattr(
-        download.urllib.request, "urlopen", lambda *a, **k: _Cut(),
-    )
+    _patch_open(monkeypatch, lambda *a, **k: _Cut())
     dest = tmp_path / "out.tar"
     with pytest.raises(RuntimeError):
         download.download_file("http://h/x.tar", str(dest), max_retries=2)
     assert not dest.exists()
+
+
+# ----- the redirect policy ------------------------------------------------
+#
+# Driven through a real opener from http_opener(): a canned handler sits in
+# front of the HTTP(S) handlers and answers from a route table, so the
+# redirect travels urllib's whole error-processing chain -- the path a live
+# 302 takes -- without a socket being opened.
+
+class _Canned(urllib.request.BaseHandler):
+    handler_order = 100  # ahead of HTTPHandler/HTTPSHandler
+
+    def __init__(self, routes):
+        self.routes = routes
+        self.seen = []
+        self.bodies = []
+
+    def _answer(self, req):
+        self.seen.append(req.full_url)
+        code, location, body = self.routes[req.full_url]
+        headers = email.message.Message()
+        if location is not None:
+            headers["Location"] = location
+        headers["Content-Length"] = str(len(body))
+        fp = io.BytesIO(body)
+        self.bodies.append(fp)
+        resp = urllib.response.addinfourl(fp, headers, req.full_url, code)
+        resp.msg = "Found" if 300 <= code < 400 else "OK"
+        return resp
+
+    http_open = https_open = _answer
+
+
+def _open_through(routes, url, **opener_kw):
+    canned = _Canned(routes)
+    opener = download.http_opener(**opener_kw)
+    opener.add_handler(canned)
+    try:
+        with opener.open(url) as resp:
+            return canned, resp.read()
+    except BaseException as exc:
+        exc.canned = canned
+        raise
+
+
+def test_https_to_http_redirect_is_refused():
+    routes = {
+        "https://a.example/x.tar": (302, "http://b.example/x.tar", b""),
+        "http://b.example/x.tar": (200, None, b"tampered"),
+    }
+    with pytest.raises(download.RedirectRefused) as exc:
+        _open_through(routes, "https://a.example/x.tar")
+    assert exc.value.plaintext
+    assert "plain HTTP" in str(exc.value)
+    # Refused before the plaintext hop was ever requested, and the 3xx
+    # response's connection was released rather than left open.
+    assert exc.value.canned.seen == ["https://a.example/x.tar"]
+    assert exc.value.canned.bodies[0].closed
+
+
+def test_https_to_http_redirect_is_followed_under_insecure():
+    routes = {
+        "https://a.example/x.tar": (302, "http://b.example/x.tar", b""),
+        "http://b.example/x.tar": (200, None, b"payload"),
+    }
+    canned, body = _open_through(routes, "https://a.example/x.tar",
+                                 insecure=True)
+    assert body == b"payload"
+    assert canned.seen[-1] == "http://b.example/x.tar"
+
+
+@pytest.mark.parametrize("start,location,final", [
+    # An upgrade, and what the user already chose, are both followed.
+    ("http://a.example/x", "https://b.example/x", "https://b.example/x"),
+    ("http://a.example/x", "http://b.example/x", "http://b.example/x"),
+    ("https://a.example/x", "https://cdn.example/x", "https://cdn.example/x"),
+    # Relative and scheme-relative targets keep the scheme they came from.
+    ("https://a.example/v2/x", "/blobs/y", "https://a.example/blobs/y"),
+    ("https://a.example/x", "//cdn.example/y", "https://cdn.example/y"),
+])
+def test_redirects_that_keep_or_gain_tls_are_followed(start, location, final):
+    routes = {start: (302, location, b""), final: (200, None, b"ok")}
+    canned, body = _open_through(routes, start)
+    assert body == b"ok"
+    assert canned.seen == [start, final]
+
+
+@pytest.mark.parametrize("location", [
+    "ftp://b.example/x.tar",       # urllib's own handler would follow it
+    "file:///etc/passwd",
+    "data:,hello",
+    "gopher://b.example/x",
+    "https:///no-host",            # a scheme change naming no host
+])
+@pytest.mark.parametrize("insecure", [False, True])
+def test_redirects_off_http_are_refused(location, insecure):
+    # Never retried: the stdlib's own refusal was an HTTPError carrying
+    # the 3xx, which retry_http reads as transient and repeated.
+    routes = {"http://a.example/x.tar": (302, location, b"")}
+    with pytest.raises(download.RedirectRefused) as exc:
+        _open_through(routes, "http://a.example/x.tar", insecure=insecure)
+    assert not exc.value.plaintext
+    assert not download.is_retryable_http_error(exc.value)
+
+
+@pytest.mark.parametrize("location", ["http://[/x", "https://[::1/x"])
+def test_a_malformed_location_is_a_refusal_not_a_value_error(location):
+    # urllib parses the header on the way to following it, and its
+    # ValueError came out of the middle of the request as a traceback.
+    routes = {"https://a.example/x": (301, location, b"")}
+    with pytest.raises(download.RedirectRefused) as exc:
+        _open_through(routes, "https://a.example/x")
+    assert "not a valid URL" in str(exc.value)
+
+
+def test_a_redirect_target_is_quoted_in_the_message():
+    # The Location header is the server's text and goes to the terminal.
+    routes = {"https://a.example/x": (302, "http://b.example/\x1b[2J", b"")}
+    with pytest.raises(download.RedirectRefused) as exc:
+        _open_through(routes, "https://a.example/x")
+    assert "\x1b" not in str(exc.value)
+
+
+def test_the_opener_speaks_only_http_and_https():
+    for url in ("file:///etc/passwd", "ftp://a.example/x", "data:,hi"):
+        with pytest.raises(urllib.error.URLError, match="unknown url type"):
+            download.http_opener().open(url)
+
+
+def test_download_file_refused_downgrade_names_the_remedy(tmp_path,
+                                                          monkeypatch):
+    calls = []
+
+    def fake_open(req, *a, **k):
+        calls.append(req.full_url)
+        raise download.RedirectRefused("Refusing to follow ...",
+                                       plaintext=True)
+
+    _patch_open(monkeypatch, fake_open)
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError) as exc:
+        download.download_file("https://example.com/rootfs.tar", str(dest),
+                               max_retries=5, retry_delay=0)
+    assert "--allow-insecure" in str(exc.value)
+    assert len(calls) == 1
+    assert not dest.exists()
+
+
+def test_download_file_refused_scheme_offers_no_flag(tmp_path, monkeypatch):
+    # --allow-insecure does not permit ftp://, so it is not suggested.
+    def fake_open(req, *a, **k):
+        raise download.RedirectRefused("Refusing to follow ...")
+
+    _patch_open(monkeypatch, fake_open)
+    with pytest.raises(RuntimeError) as exc:
+        download.download_file("https://example.com/rootfs.tar",
+                               str(tmp_path / "o"), retry_delay=0)
+    assert "--allow-insecure" not in str(exc.value)
