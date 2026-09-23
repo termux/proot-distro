@@ -11,7 +11,6 @@
 
 import ctypes
 import os
-import shutil
 import sys
 import tempfile
 
@@ -50,7 +49,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import pytest  # noqa: E402
 
 # Safe now: constants resolves into the sandbox on first import.
-from proot_distro import constants, locking, message  # noqa: E402
+from proot_distro import constants, dirfd, locking, message  # noqa: E402
 
 import _builders  # noqa: E402
 
@@ -73,8 +72,28 @@ def _assert_sandboxed():
 _assert_sandboxed()
 
 
+def _remove_tree(path):
+    """Remove *path* and everything under it; the paths that would not go.
+
+    Not shutil.rmtree: a deep tree is exactly what much of this suite
+    builds, and rmtree recurses. RecursionError is not an OSError, so
+    ignore_errors=True never caught it -- one tree a test left behind
+    turned every later test's setup into an error and the end of the
+    session into a traceback that took the report with it, burying the
+    failure that left the tree there. dirfd.remove_tree walks on an
+    explicit stack with a bounded number of descriptors, and relaxes a
+    directory a test sealed on its way in.
+    """
+    left = []
+    dirfd.remove_tree(
+        path, on_error=lambda rel, exc: left.append(
+            f"{os.path.join(path, rel) if rel else path}: {exc}"))
+    return left
+
+
 def pytest_sessionfinish(session, exitstatus):
-    shutil.rmtree(_SANDBOX, ignore_errors=True)
+    # Best effort: an exception here would replace the session's report.
+    _remove_tree(_SANDBOX)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -120,7 +139,14 @@ def _clean_runtime():
     locking._held_exclusive.clear()
     _clear_child_subreaper()
     for d in (constants.RUNTIME_DIR, constants.BASE_CACHE_DIR):
-        shutil.rmtree(d, ignore_errors=True)
+        left = _remove_tree(d)
+        if left:
+            # The test is about to run on whatever an earlier one left
+            # behind; say so here rather than let it fail for no reason
+            # of its own.
+            raise RuntimeError(
+                "cannot reset the sandbox before this test:\n  "
+                + "\n  ".join(left))
     os.makedirs(constants.CONTAINERS_DIR, exist_ok=True)
     os.makedirs(constants.BASE_CACHE_DIR, exist_ok=True)
     os.makedirs(constants.LAYER_CACHE_DIR, exist_ok=True)

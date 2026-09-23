@@ -253,17 +253,17 @@ def test_snapshot_skips_the_l2s_store(tree):
 
 def test_snapshot_handles_a_deep_tree(tree):
     rootfs, _outside = tree
-    fd = os.open(str(rootfs), os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for _ in range(1200):
-            os.mkdir("d", dir_fd=fd)
-            nxt = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+        fd = os.open(str(rootfs), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for _ in range(1200):
+                os.mkdir("d", dir_fd=fd)
+                nxt = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+                os.close(fd)
+                fd = nxt
+        finally:
             os.close(fd)
-            fd = nxt
-    finally:
-        os.close(fd)
 
-    try:
         snap = layer_diff.snapshot(str(rootfs))
         assert "/".join(["d"] * 1200) in snap
     finally:

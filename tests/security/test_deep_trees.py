@@ -65,61 +65,96 @@ def _sync(source, destination, **over):
     command_sync(SimpleNamespace(**base))
 
 
+# The helpers below hold one descriptor at a time, never one per level:
+# DEPTH is past the soft limit most systems start a shell with (1024), and a
+# helper that needed more than that failed before the code under test ran,
+# leaving a half-built tree too deep for anything recursive to clear.
+
+def _open_dir(name, dir_fd=None):
+    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                   dir_fd=dir_fd)
+
+
 def _make_deep(base, depth=DEPTH):
-    """Build base/d/d/d/... with a file at the bottom, without recursing."""
+    """Build base/d/d/d/... with a file at the bottom, without recursing.
+
+    A build that fails partway takes down what it made before the error
+    propagates: nothing else can be relied on to. The runtime tree is
+    reset between tests, but a tree under tmp_path is left to pytest's own
+    reaper, which is shutil.rmtree and recurses.
+    """
     os.makedirs(base, exist_ok=True)
-    fds = [os.open(base, os.O_RDONLY | os.O_DIRECTORY)]
     try:
-        for _ in range(depth):
-            os.mkdir("d", 0o755, dir_fd=fds[-1])
-            fds.append(os.open("d", os.O_RDONLY | os.O_DIRECTORY,
-                               dir_fd=fds[-1]))
-        os.close(os.open("leaf", os.O_WRONLY | os.O_CREAT, 0o644,
-                         dir_fd=fds[-1]))
-    finally:
-        for fd in fds:
+        fd = _open_dir(base)
+        try:
+            for _ in range(depth):
+                os.mkdir("d", 0o755, dir_fd=fd)
+                nxt = _open_dir("d", fd)
+                os.close(fd)
+                fd = nxt
+            os.close(os.open("leaf", os.O_WRONLY | os.O_CREAT, 0o644,
+                             dir_fd=fd))
+        finally:
             os.close(fd)
+    except BaseException:
+        _remove_deep(base)
+        raise
 
 
 def _remove_deep(base):
-    """Tear one down again; shutil.rmtree would hit the same limit."""
-    if not os.path.isdir(base):
+    """Tear one down again, bottom up; shutil.rmtree would hit the same limit.
+
+    Down to the deepest `d` it can open, then back up through each level's
+    own "..", emptying it and removing the (now empty) `d` below it.
+    """
+    try:
+        fd = _open_dir(base)
+    except OSError:
         return
-    fds = [os.open(base, os.O_RDONLY | os.O_DIRECTORY)]
+    depth = 0
     try:
         while True:
             try:
-                fds.append(os.open("d", os.O_RDONLY | os.O_DIRECTORY,
-                                   dir_fd=fds[-1]))
+                nxt = _open_dir("d", fd)
             except OSError:
                 break
-        for fd in reversed(fds):
+            os.close(fd)
+            fd = nxt
+            depth += 1
+        while True:
             for name in os.listdir(fd):
                 try:
                     os.unlink(name, dir_fd=fd)
                 except OSError:
                     with contextlib.suppress(OSError):
                         os.rmdir(name, dir_fd=fd)
-    finally:
-        for fd in fds:
+            if not depth:
+                break
+            up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
             os.close(fd)
+            fd = up
+            depth -= 1
+    finally:
+        os.close(fd)
     with contextlib.suppress(OSError):
         os.rmdir(base)
 
 
 def _depth_of(base):
     """How many levels of `d` are under *base*, counted without recursing."""
-    fds = [os.open(base, os.O_RDONLY | os.O_DIRECTORY)]
+    fd = _open_dir(base)
+    depth = 0
     try:
         while True:
             try:
-                fds.append(os.open("d", os.O_RDONLY | os.O_DIRECTORY,
-                                   dir_fd=fds[-1]))
+                nxt = _open_dir("d", fd)
             except OSError:
-                return len(fds) - 1
-    finally:
-        for fd in fds:
+                return depth
             os.close(fd)
+            fd = nxt
+            depth += 1
+    finally:
+        os.close(fd)
 
 
 def _open_fds():
@@ -361,21 +396,9 @@ def test_clear_cache_removes_a_tree_deeper_than_the_stack(tmp_path):
 FD_DEPTH = 400
 
 
-def _make_chain(base, depth=FD_DEPTH, leaf="leaf"):
-    """base/d/d/d/... with a file at the bottom, holding one fd at a time."""
-    os.makedirs(base, exist_ok=True)
-    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for _ in range(depth):
-            os.mkdir("d", 0o755, dir_fd=fd)
-            nxt = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
-            os.close(fd)
-            fd = nxt
-        with open(leaf, "wb",
-                  opener=lambda p, f: os.open(p, f, 0o644, dir_fd=fd)) as fh:
-            fh.write(b"BOTTOM")
-    finally:
-        os.close(fd)
+def _make_chain(base, depth=FD_DEPTH):
+    """base/d/d/d/... with a file at the bottom (see _make_deep)."""
+    _make_deep(base, depth)
 
 
 class _fd_limit:

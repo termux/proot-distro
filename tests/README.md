@@ -40,6 +40,20 @@ the Termux/auth environment *before* importing any proot_distro module, then
 wipes the runtime/cache trees between tests. A guard refuses to run if the
 resolved paths are not inside the sandbox or if `IS_TERMUX` is True.
 
+Several tests build trees deeper than the interpreter's recursion limit on
+purpose, so two rules keep one from taking the rest of the run with it:
+
+- Nothing in the harness removes a tree with `shutil.rmtree()`, which
+  recurses and raises `RecursionError` — not an `OSError`, so
+  `ignore_errors=True` does not catch it. The sandbox is reset with
+  `dirfd.remove_tree()`, and a reset that leaves something behind fails the
+  next test's setup, naming what is left, rather than letting it run on an
+  earlier test's leftovers. A deep tree under `tmp_path` has to be removed
+  by the test itself, since pytest's own reaper is `shutil.rmtree()`.
+- A helper that builds or walks a deep tree holds one descriptor at a time.
+  One per level runs out at the 1024 soft limit most systems default to,
+  before the code under test has done anything.
+
 Shared builders live in `_builders.py`: `make_tar` (arbitrary, incl. hostile,
 members), `make_oci_archive`, `make_layer_blob` / `seed_cached_layer`,
 `elf_bytes`, `make_rootfs`, `make_container`, `tree_snapshot`.

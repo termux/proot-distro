@@ -622,20 +622,23 @@ def test_remove_tree_survives_a_tree_deeper_than_the_stack(tmp_path):
     depth = 1200
     assert depth > sys.getrecursionlimit()
     os.mkdir(str(root))
-    fds = [os.open(str(root), os.O_RDONLY | os.O_DIRECTORY)]
     try:
-        for _ in range(depth):
-            os.mkdir("d", 0o755, dir_fd=fds[-1])
-            fds.append(os.open("d", os.O_RDONLY | os.O_DIRECTORY,
-                               dir_fd=fds[-1]))
-        os.close(os.open("leaf", os.O_WRONLY | os.O_CREAT, 0o644,
-                         dir_fd=fds[-1]))
-    finally:
-        for fd in fds:
+        # One descriptor at a time: one per level is past the soft limit
+        # most systems default to, and a build that stops partway must
+        # still be taken down by the `finally` below.
+        fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for _ in range(depth):
+                os.mkdir("d", 0o755, dir_fd=fd)
+                nxt = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+                os.close(fd)
+                fd = nxt
+            os.close(os.open("leaf", os.O_WRONLY | os.O_CREAT, 0o644,
+                             dir_fd=fd))
+        finally:
             os.close(fd)
 
-    before = set(os.listdir("/proc/self/fd"))
-    try:
+        before = set(os.listdir("/proc/self/fd"))
         assert dirfd.remove_tree(str(root)) is True
         assert not root.exists()
         assert len(set(os.listdir("/proc/self/fd")) - before) == 0
