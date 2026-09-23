@@ -273,7 +273,7 @@ def _delete_images(targets: list, verbose: bool) -> None:
     """
     for record in targets:
         log_info(f"Removing image '{_display(record)}' "
-                 f"({record['arch'] or 'unknown arch'})...")
+                 f"({_arch(record)})...")
 
     try:
         manifest_fd = open_manifest_cache_dir()
@@ -430,15 +430,28 @@ def _print_image_list(records: list) -> None:
     msg()
     for record in records:
         msg(f"  {C['CYAN']}* {C['GREEN']}{_display(record)}"
-            f"{C['CYAN']} ({record['arch'] or 'unknown arch'}, "
-            f"ID {record['image_id'][:12] or record['key']}){C['RST']}")
+            f"{C['CYAN']} ({_arch(record)}, "
+            f"ID {quote_path(record['image_id'][:12] or record['key'])})"
+            f"{C['RST']}")
 
+
+# A record's text is a manifest-cache entry's, which is guest-writable on
+# Termux, so every field a message names passes through quote_path: an
+# `arch` holding an OSC sequence retitled the user's terminal from the
+# near-miss list above.
 
 def _display(record: dict) -> str:
-    """Return the reference to name *record* by in messages."""
+    """Return the reference to name *record* by in messages, quoted."""
     if record["image_ref"]:
-        return record["image_ref"]
-    return f"{record['repo']}:<none>" if record["repo"] else record["key"]
+        return quote_path(record["image_ref"])
+    if record["repo"]:
+        return f"{quote_path(record['repo'])}:<none>"
+    return quote_path(record["key"])
+
+
+def _arch(record: dict) -> str:
+    """Return *record*'s architecture for a message, quoted."""
+    return quote_path(record["arch"]) if record["arch"] else "unknown arch"
 
 
 def _entry_size(dir_fd: int, name: str) -> int:

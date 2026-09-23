@@ -132,11 +132,17 @@ def _list_images(quiet: bool) -> None:
 
     now = time.time()
     any_incomplete = any(image["missing"] for image in images)
+    # The first three cells are a manifest-cache entry's own text -- its
+    # reference, its architecture, its config digest or else its file
+    # name -- and that directory is guest-writable on Termux, so each is
+    # quoted before it is measured or printed: an entry saying ESC put
+    # the escape sequence on the user's terminal as it stood.
     rows = [
         (
-            image_display_ref(image) + ("*" if image["missing"] else ""),
-            image["arch"] or "?",
-            image["image_id"][:12] or image["key"],
+            quote_path(image_display_ref(image))
+            + ("*" if image["missing"] else ""),
+            quote_path(image["arch"] or "?"),
+            quote_path(image["image_id"][:12] or image["key"]),
             fmt_size(image["size"]),
             _fmt_created(image, now),
         )

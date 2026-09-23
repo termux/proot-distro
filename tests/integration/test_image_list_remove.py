@@ -387,3 +387,43 @@ def test_list_quiet_prints_a_hostile_reference_quoted(builders, monkeypatch):
     assert "evil/\\udcffimg:1" in out
     assert "evil/\\e[31mred:1" in out
     assert "\x1b" not in out
+
+
+def _plant_hostile_entry(builders, ref, arch):
+    """A manifest-cache entry whose text is a guest's to write (Termux)."""
+    digest, size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/p", "type": "file", "data": ref.encode(
+            "utf-8", "surrogatepass")}]
+    )
+    manifest = {"schemaVersion": 2,
+                "layers": [{"digest": digest, "size": size,
+                            "mediaType": OCI_LAYER_MEDIA}]}
+    save_manifest_cache(ref, arch, manifest, "evil", {})
+
+
+def test_list_image_table_quotes_an_entrys_text(builders, capsys):
+    # Reference and architecture are the entry's own text; ESC in either
+    # used to reach the terminal from the table as it stood.
+    _plant_hostile_entry(builders, "evil/\x1b[31mred:1", "x86\x1b]0;PWNED\x07")
+    _list_image()
+    err = capsys.readouterr().err
+    assert "\x1b" not in err and "\x07" not in err
+    assert "evil/\\e[31mred:1" in err
+    assert "x86\\e]0;PWNED\\x07" in err
+
+
+def test_remove_image_messages_quote_an_entrys_text(builders, capsys):
+    _plant_hostile_entry(builders, "evil/app:2", "x86\x1b]0;PWNED\x07")
+    # The near-miss list: the architecture held an OSC sequence that
+    # retitled the terminal.
+    with pytest.raises(SystemExit):
+        _remove_image("evil/app:9")
+    err = capsys.readouterr().err
+    assert "Cached images with that name" in err
+    assert "\x1b" not in err and "\x07" not in err
+    # And the line announcing the removal itself.
+    _plant_hostile_entry(builders, "evil/\x1b[2Jwipe:1", "x86_64")
+    _remove_image("evil/\x1b[2Jwipe:1", override_arch="x86_64")
+    err = capsys.readouterr().err
+    assert "Removing image 'evil/\\e[2Jwipe:1'" in err
+    assert "\x1b" not in err

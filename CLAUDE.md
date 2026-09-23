@@ -1549,7 +1549,13 @@ splits the reference into registry/repo/tag, `iter_cached_images()`
 sorts on the reference and the architecture, and `_created_epoch()`
 hands the value straight to a regex. `_ref_hints()` holds a container's
 own `manifest.json` to the same rule, since `parse_image_ref()` splits
-whatever it is given.
+whatever it is given. A string of the right type is still anyone's text,
+so what a record says is `quote_path`ed wherever it is shown: the
+`list --image` table's IMAGE, ARCH and ID cells (quoted before they are
+measured, so the columns still line up), `list --image --quiet`, and
+`remove --image`'s "Removing image" line and near-miss list (`_display`,
+`_arch`). An entry's `arch` holding an OSC sequence retitled the user's
+terminal from that list, and a reference holding ESC repainted the table.
 
 Nothing a registry says about itself is read unbounded or believed
 unchecked. **Size**: a manifest, an index, an image config, a token
