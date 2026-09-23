@@ -727,3 +727,95 @@ def test_download_file_malformed_url_is_a_message(tmp_path, url):
         download.download_file(url, str(dest), retry_delay=0)
     assert "not a valid URL" in str(exc.value)
     assert not dest.exists()
+
+
+# ----- no request waits forever --------------------------------------------
+
+def test_the_opener_gives_every_request_the_network_timeout():
+    canned = _Canned({"https://a.example/x": (200, None, b"ok")})
+    opener = download.http_opener()
+    opener.add_handler(canned)
+
+    seen = []
+    orig = canned._answer
+
+    def record(req):
+        seen.append(req.timeout)
+        return orig(req)
+
+    canned.http_open = canned.https_open = record
+    with opener.open("https://a.example/x") as resp:
+        resp.read()
+    # urllib's own default is the socket module's: none at all.
+    assert seen == [download.NETWORK_TIMEOUT]
+    assert download.NETWORK_TIMEOUT > 0
+
+
+def test_a_timeout_the_caller_names_is_kept():
+    canned = _Canned({"https://a.example/x": (200, None, b"ok")})
+    opener = download.http_opener()
+    opener.add_handler(canned)
+    seen = []
+    orig = canned._answer
+    canned.https_open = lambda req: (seen.append(req.timeout), orig(req))[1]
+    with opener.open("https://a.example/x", timeout=7.5) as resp:
+        resp.read()
+    assert seen == [7.5]
+
+
+def test_a_redirect_hop_keeps_the_timeout():
+    routes = {
+        "https://a.example/x": (302, "https://cdn.example/x", b""),
+        "https://cdn.example/x": (200, None, b"ok"),
+    }
+    canned = _Canned(routes)
+    opener = download.http_opener()
+    opener.add_handler(canned)
+    seen = []
+    orig = canned._answer
+    canned.https_open = lambda req: (seen.append(req.timeout), orig(req))[1]
+    with opener.open("https://a.example/x") as resp:
+        resp.read()
+    assert seen == [download.NETWORK_TIMEOUT, download.NETWORK_TIMEOUT]
+
+
+@pytest.fixture
+def silent_server():
+    """A loopback listener that accepts the connection and never answers.
+
+    The kernel completes the handshake from the backlog, so the request
+    goes out and the client then waits on a peer that says nothing: the
+    shape that used to hold a command for good.
+    """
+    import socket
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    try:
+        yield f"http://127.0.0.1:{srv.getsockname()[1]}"
+    finally:
+        srv.close()
+
+
+def test_a_peer_that_never_answers_times_out(no_proxy, silent_server,
+                                             monkeypatch):
+    import time as _time
+    monkeypatch.setattr(download, "NETWORK_TIMEOUT", 0.3)
+    started = _time.monotonic()
+    with pytest.raises(download.NETWORK_ERRORS) as exc:
+        download.http_opener().open(silent_server + "/x.tar")
+    assert _time.monotonic() - started < 10
+    # A timeout is transient: worth the retries the policy gives it.
+    assert download.is_retryable_http_error(exc.value)
+
+
+def test_download_file_from_a_silent_peer_ends(no_proxy, silent_server,
+                                               tmp_path, monkeypatch):
+    monkeypatch.setattr(download, "NETWORK_TIMEOUT", 0.3)
+    monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(download, "log_info", lambda text: None)
+    dest = tmp_path / "rootfs.tar"
+    with pytest.raises(RuntimeError, match="timed out"):
+        download.download_file(silent_server + "/x.tar", str(dest),
+                               max_retries=2, retry_delay=0)
+    assert not dest.exists()

@@ -49,7 +49,9 @@ from proot_distro.helpers.docker.cache import (
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
 )
-from proot_distro.helpers.download import new_request, retry_http
+from proot_distro.helpers.download import (
+    NETWORK_TIMEOUT, new_request, retry_http,
+)
 from proot_distro.helpers.docker.refs import parse_image_ref
 from proot_distro.helpers.docker.transport import (
     auth_note,
@@ -59,6 +61,30 @@ from proot_distro.helpers.docker.transport import (
     same_auth_origin,
     _ua,
 )
+
+
+# The slowest rate at which a registry is assumed to commit a blob it has
+# received, in bytes per second. The PUT that completes an upload is
+# answered only once the blob is verified and moved into place -- a
+# re-hash of the whole thing where the registry keeps no running digest,
+# and on an object store a server-side copy -- so its silence grows with
+# the blob's size, and a large layer behind a slow backend can take
+# minutes. 1 MiB/s is far below any real storage, so this only ever
+# errs long.
+_COMMIT_RATE = 1024 * 1024
+
+
+def _upload_timeout(size: int) -> float:
+    """The timeout for the PUT completing an upload of *size* bytes.
+
+    download.NETWORK_TIMEOUT, or as long as committing that much would
+    take at _COMMIT_RATE, whichever is longer. A socket timeout is one
+    number for the whole request, so the sends of the body get it too;
+    that only makes a stalled upload slower to give up on, while a flat
+    one would give up on a large layer every registry legitimately
+    takes a while to accept -- and retry it, and give up again.
+    """
+    return max(NETWORK_TIMEOUT, size / _COMMIT_RATE)
 
 
 def _resolve_upload_url(base: str, location: str) -> str:
@@ -242,7 +268,9 @@ def _upload_blob_fd(
                         "Content-Length": str(size),
                     },
                 )
-                with opener(insecure).open(put_req) as resp:
+                with opener(insecure).open(
+                    put_req, timeout=_upload_timeout(size),
+                ) as resp:
                     if not 200 <= resp.status < 300:
                         raise RuntimeError(
                             f"Blob upload failed for {digest}: HTTP {resp.status}"

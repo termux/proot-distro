@@ -31,6 +31,8 @@
 # also strips credentials across origins. Requests are built by
 # new_request(), and a request urllib cannot build or send is an
 # InvalidRequest -- one of NETWORK_ERRORS -- never a bare ValueError.
+# And no request waits forever: the opener gives every one of them
+# NETWORK_TIMEOUT unless its caller names a timeout of its own.
 
 import hashlib
 import http.client
@@ -51,6 +53,7 @@ __all__ = (
     "IncompleteResponse",
     "InvalidRequest",
     "NETWORK_ERRORS",
+    "NETWORK_TIMEOUT",
     "RedirectPolicyHandler",
     "RedirectRefused",
     "certificate_error_msg",
@@ -80,6 +83,34 @@ __all__ = (
 # Every net that guards a request uses this tuple, so there is one place
 # to add the next family rather than a dozen to remember.
 NETWORK_ERRORS = (urllib.error.URLError, OSError, http.client.HTTPException)
+
+
+# How long a request may go with nothing moving before it is given up on,
+# in seconds. It is a socket timeout, so it bounds each step rather than
+# the whole: the connect and TLS handshake, every send, and every read --
+# the wait for the response and then each wait for more of the body. A
+# download that keeps moving may take as long as it takes.
+#
+# Without one, urllib blocks for as long as the peer keeps the connection
+# open without a word, and nothing is raised for retry_http to act on: an
+# endpoint that accepted the connection and never answered held `install`,
+# `build` or `push` for good. What it raises instead (TimeoutError, or a
+# URLError wrapping one) is an OSError, so every net catches it and
+# retry_http tries again.
+#
+# Two minutes with not one byte either way is a dead peer, not a slow one,
+# and it is long enough for a mobile connection to come back from a gap:
+# where the old behaviour was to wait forever, a timeout that fired on a
+# slow but live link would be the regression. The one wait that
+# legitimately runs longer is a registry committing an uploaded blob
+# before it answers the PUT, and push gives that request a timeout of its
+# own.
+NETWORK_TIMEOUT = 120.0
+
+# Stands for "the caller named no timeout" in _Opener.open(), so the
+# default is looked up when the request is made rather than frozen into
+# the signature.
+_DEFAULT_TIMEOUT = object()
 
 
 class IncompleteResponse(http.client.HTTPException):
@@ -315,15 +346,22 @@ class _Opener(urllib.request.OpenerDirector):
     encoded on the way to the socket, and a redirect's target goes
     through all of it again -- each of them a ValueError when it fails.
     The request that failed is named, which for a redirect is the hop.
+
+    It is also where a request gets its timeout: NETWORK_TIMEOUT, unless
+    the caller passes one. urllib's own default is the socket module's,
+    which is none at all. A redirect's hop is opened with the timeout of
+    the request it answers, so the whole chain has it.
     """
 
-    def open(self, fullurl, data=None, *args, **kwargs):
+    def open(self, fullurl, data=None, timeout=_DEFAULT_TIMEOUT):
+        if timeout is _DEFAULT_TIMEOUT:
+            timeout = NETWORK_TIMEOUT
         if isinstance(fullurl, str):
             # What OpenerDirector.open() would build, built the way every
             # other request is, so a URL that does not parse says so.
             fullurl, data = new_request(fullurl, data=data), None
         try:
-            return super().open(fullurl, data, *args, **kwargs)
+            return super().open(fullurl, data, timeout)
         except ValueError as exc:
             url = getattr(fullurl, "full_url", fullurl)
             raise InvalidRequest(
@@ -342,7 +380,8 @@ def http_opener(*, insecure: bool = False, redirect=None):
     has the default handler set minus those three -- another scheme is
     refused as an unknown URL type wherever it came from -- and a
     RedirectPolicyHandler in place of urllib's redirect handler. A
-    request it cannot send is an InvalidRequest, not a ValueError.
+    request it cannot send is an InvalidRequest, not a ValueError, and a
+    request whose caller names no timeout gets NETWORK_TIMEOUT.
 
     With *insecure* the HTTPS handler skips certificate verification and
     the redirect policy lets HTTPS step down to plain HTTP: both are what

@@ -352,3 +352,39 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
     assert captured["manifest_base"] == "http://reg.example"
     assert captured["manifest_insecure"] is True
     assert result["manifest_digest"] == "sha256:dd"
+
+
+# ----- timeouts -----------------------------------------------------------
+
+def test_upload_timeout_grows_with_the_blob():
+    # The PUT completing an upload is answered once the registry has
+    # committed the blob, which takes longer the larger it is; a flat
+    # timeout would give up on a large layer every time.
+    assert push._upload_timeout(0) == download.NETWORK_TIMEOUT
+    assert push._upload_timeout(10 * 1024 * 1024) == download.NETWORK_TIMEOUT
+    big = 4 * 1024 ** 3
+    assert push._upload_timeout(big) == big / push._COMMIT_RATE
+    assert push._upload_timeout(big) > download.NETWORK_TIMEOUT
+
+
+def test_blob_put_carries_the_upload_timeout(monkeypatch, tmp_path):
+    timeouts = {}
+
+    def fake(req, *a, **k):
+        timeouts[req.get_method()] = k.get("timeout")
+        if req.get_method() == "POST":
+            return _FakeResp(202, {"Location": "https://reg.example/up/1"})
+        return _FakeResp(201)
+
+    _patch_opener(monkeypatch, fake)
+    monkeypatch.setattr(push, "_upload_timeout", lambda size: 1234.0 + size)
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"data")
+    fd = os.open(str(blob), os.O_RDONLY)
+    try:
+        push._upload_blob_fd("me/app", "sha256:cc", fd, "TKN", _BASE)
+    finally:
+        os.close(fd)
+    # The session's POST keeps the opener's default; the PUT that waits
+    # on the commit gets the one sized for the blob.
+    assert timeouts == {"POST": None, "PUT": 1238.0}

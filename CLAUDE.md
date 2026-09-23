@@ -660,7 +660,7 @@ goes through — `NETWORK_ERRORS`, `declared_length()`,
 `require_complete_body()` — see "Docker / OCI registry" for what a
 response that ends early does without them, and `new_request()` /
 `http_opener()`, the one way a request is built and sent (see
-"Redirects" and "Malformed requests" there).
+"Redirects", "Malformed requests" and "Timeouts" there).
 
 ## Key paths
 
@@ -1676,6 +1676,28 @@ path, `COPY --from=<image>`'s scratch slot — encode it `surrogatepass`:
 strict UTF-8 raised `UnicodeEncodeError` before any request could refuse
 the reference, and a string strict UTF-8 accepted hashes exactly as it
 always did, so no existing key moved.
+
+**Timeouts** are the sixth. urllib's default is the socket module's —
+none — so an endpoint that accepted the connection and never answered
+held `install`, `build` or `push` for good, and nothing was raised for
+`retry_http` to act on; only `search` (30 s) and the plaintext `/v2/`
+probe (6 s) named one. `_Opener.open()` now gives every request
+`download.NETWORK_TIMEOUT` (120 s) unless the caller passes its own, and
+a redirect hop inherits it (urllib reopens with `req.timeout`). It is a
+socket timeout, so it bounds each step — connect and handshake, every
+send, every read — rather than the whole: a download that keeps moving
+takes as long as it takes, and two minutes of nothing is a dead peer,
+long enough for a mobile link to come back from a gap. What it raises
+(`TimeoutError`, or a `URLError` wrapping one) is an `OSError`, so every
+net catches it and `retry_http` retries it. The default is read when the
+request is made, not frozen into the signature, which is what lets a test
+shorten it. The one wait that legitimately runs longer is a registry
+committing an uploaded blob before it answers the PUT (a full re-hash
+where it keeps no running digest, a server-side copy on an object store),
+so `push._upload_timeout(size)` gives that PUT `NETWORK_TIMEOUT` or
+`size / _COMMIT_RATE` (1 MiB/s), whichever is longer: a flat two minutes
+would give up on a large layer, retry it, and give up again. DNS is the
+one wait no socket timeout reaches; the resolver's own timeouts bound it.
 
 Auth (`transport.py`): `PD_DOCKER_AUTH=user:pass` forwarded as HTTP
 Basic to the token endpoint; colon is mandatory (bare tokens raise
