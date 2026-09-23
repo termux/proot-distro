@@ -1728,6 +1728,20 @@ without the user having asked for plaintext anything. The rule applies
 to anonymous exchanges as well — the token that comes back
 authenticates every later request.
 
+`--allow-insecure` is Docker's `--insecure-registry`: it reaches a
+registry the user names, never **Docker Hub** (the empty registry, which
+`docker.io` and `index.docker.io` parse to). `transport.insecure_for(
+registry, insecure)` is that rule, and `pull_image` and `push_image` each
+ask it once, where they start, and pass the answer down. Hub's token
+exchange was always verified, but its manifests and blobs were not: the
+flag went to `opener()` whatever the registry, so `install
+--allow-insecure alpine` fetched the tag's manifest — which no digest pins
+— and every layer with certificate checks off and the Bearer token on
+each request (verified against real Hub with a CA bundle nothing of
+Hub's chains to), and a Hub redirect could step down to plain HTTP under
+the redirect policy's insecure allowance. The help for `install` and
+`push` says so.
+
 Push (`push.py`) loads `(manifest, repo, image_config)` from the local
 cache, re-canonicalises and verifies SHA against `manifest.config.digest`,
 HEAD-probes each blob, uploads the missing via POST-uploads + monolithic

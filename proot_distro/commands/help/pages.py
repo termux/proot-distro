@@ -203,8 +203,8 @@ HELP_PAGES = {
              "registry served over plain HTTP, an HTTPS registry whose "
              "TLS certificate is untrusted, expired, self-signed, or for a "
              "different hostname, or a redirect from HTTPS to plain HTTP. "
-             "Use only for trusted registries on a network path you "
-             "control."),
+             "Docker Hub is always reached over verified HTTPS. Use only "
+             "for trusted registries on a network path you control."),
             ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [
@@ -435,8 +435,8 @@ HELP_PAGES = {
              "plain HTTP, an HTTPS endpoint (registry or download URL) "
              "whose TLS certificate is untrusted, expired, self-signed, or "
              "for a different hostname, or a redirect from HTTPS to plain "
-             "HTTP. Use only for trusted sources on a network path you "
-             "control."),
+             "HTTP. Docker Hub is always reached over verified HTTPS. Use "
+             "only for trusted sources on a network path you control."),
             ("-q, --quiet", "Suppress non-error output."),
         ],
         "examples": [

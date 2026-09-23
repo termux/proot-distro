@@ -388,3 +388,47 @@ def test_blob_put_carries_the_upload_timeout(monkeypatch, tmp_path):
     # The session's POST keeps the opener's default; the PUT that waits
     # on the commit gets the one sized for the blob.
     assert timeouts == {"POST": None, "PUT": 1238.0}
+
+
+# ----- Docker Hub is always verified --------------------------------------
+
+@pytest.mark.parametrize("ref,registry,expected", [
+    ("me/app:latest", "", False),                  # Docker Hub
+    ("reg.example/me/app:latest", "reg.example", True),
+])
+def test_push_image_keeps_docker_hub_verified(monkeypatch, ref, registry,
+                                              expected):
+    # --allow-insecure is Docker's --insecure-registry: it reaches a
+    # registry the user names, never Docker Hub. push handed it to every
+    # upload helper whatever the registry, so a Hub push ran its blob
+    # probes, uploads and manifest PUT -- Bearer token and all -- with
+    # certificate checks off.
+    cfg_bytes = b"CFG"
+    manifest = {
+        "config": {"digest": "sha256:" + hashlib.sha256(cfg_bytes).hexdigest()},
+        "layers": [{"digest": "sha256:" + "a" * 64}],
+    }
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda r, a: (manifest, "me/app", {"k": "v"}))
+    monkeypatch.setattr(push, "canonical_json", lambda d: cfg_bytes)
+    monkeypatch.setattr(push, "blob_present", lambda d: True)
+    seen = []
+
+    def fake_auth(repo, reg, actions="pull", insecure=False):
+        assert reg == registry
+        seen.append(insecure)
+        return "TKN", "https://x"
+
+    def fake_exists(repo, digest, token, base, insecure=False):
+        seen.append(insecure)
+        return True
+
+    def fake_put(repo, tag, body, media, token, base, insecure=False):
+        seen.append(insecure)
+        return ""
+
+    monkeypatch.setattr(push, "get_auth_token", fake_auth)
+    monkeypatch.setattr(push, "_blob_exists", fake_exists)
+    monkeypatch.setattr(push, "_put_manifest", fake_put)
+    push.push_image(ref, "x86_64", insecure=True)
+    assert seen and all(flag is expected for flag in seen)

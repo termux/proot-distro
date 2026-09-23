@@ -70,6 +70,7 @@ from proot_distro.helpers.docker.transport import (
     MAX_METADATA_BYTES,
     decode_json_object,
     get_auth_token,
+    insecure_for,
     opener,
     _ua,
 )
@@ -362,6 +363,9 @@ def pull_image(
 
     manifest, repo, image_config = load_manifest_cache(image_ref, arch)
     registry = parse_image_ref(image_ref)[0]
+    # Docker Hub is verified HTTPS whatever --allow-insecure says; decided
+    # here, once, so no request below can be made on the insecure opener.
+    insecure = insecure_for(registry, insecure)
     try:
         return _pull_layers(
             image_ref, rootfs_fd, arch, insecure,

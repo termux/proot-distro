@@ -110,3 +110,29 @@ def test_a_complete_config_blob_is_verified_and_read(monkeypatch):
     _serve(monkeypatch, body, declared=len(body))
     assert pull_mod._fetch_config_blob(
         "library/x", digest, "T", "https://r") == {"architecture": "amd64"}
+
+
+# ----- Docker Hub is always verified --------------------------------------
+
+@pytest.mark.parametrize("ref,expected", [
+    ("alpine", False),                     # Docker Hub
+    ("docker.io/library/alpine", False),   # its aliases parse to the same
+    ("index.docker.io/library/alpine", False),
+    ("reg.example/alpine", True),
+    ("localhost:5000/alpine", True),
+])
+def test_pull_image_keeps_docker_hub_verified(monkeypatch, ref, expected):
+    # --allow-insecure used to reach Hub's manifests and blobs: the tag's
+    # manifest, which no digest pins, was fetched with certificate checks
+    # off and the Bearer token on it. Only the token exchange was always
+    # verified. Decided once, where the pull starts.
+    seen = []
+
+    def fake_layers(image_ref, rootfs_fd, arch, insecure, *rest):
+        seen.append(insecure)
+        return {}
+
+    monkeypatch.setattr(pull_mod, "_pull_layers", fake_layers)
+    pull_mod.pull_image(ref, -1, "x86_64", insecure=True)
+    pull_mod.pull_image(ref, -1, "x86_64", insecure=False)
+    assert seen == [expected, False]

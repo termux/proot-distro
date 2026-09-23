@@ -282,6 +282,25 @@ def decode_json_object(body: bytes, what: str) -> dict:
     return data
 
 
+def insecure_for(registry: str, insecure: bool) -> bool:
+    """Whether --allow-insecure reaches *registry* at all.
+
+    The flag is Docker's --insecure-registry: an opt-in for a registry
+    the user names, served over plain HTTP or behind a certificate that
+    does not verify. Docker Hub -- the empty registry, which `docker.io`
+    and `index.docker.io` also parse to -- is never one of those, and is
+    reached over verified HTTPS whatever the flag says, as Docker reaches
+    its official index. Its token exchange always was. Its manifests and
+    blobs were not: pull and push handed the flag to opener() whatever
+    the registry, so `install --allow-insecure alpine` fetched the tag's
+    manifest -- which no digest pins -- with certificate checks off and
+    the Bearer token on the request, and let a Hub redirect step down to
+    plain HTTP. Both pipelines ask this once, where they start, and pass
+    the answer down.
+    """
+    return bool(insecure and registry)
+
+
 def registry_base_url(registry: str, insecure: bool = False) -> str:
     """Return the base URL for *registry* (empty string ⇒ Docker Hub).
 

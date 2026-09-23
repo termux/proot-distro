@@ -56,6 +56,7 @@ from proot_distro.helpers.docker.refs import parse_image_ref
 from proot_distro.helpers.docker.transport import (
     auth_note,
     get_auth_token,
+    insecure_for,
     opener,
     push_denied_msg,
     same_auth_origin,
@@ -365,6 +366,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         )
 
     registry, _, tag = parse_image_ref(image_ref)
+    # Docker Hub is verified HTTPS whatever --allow-insecure says (see
+    # transport.insecure_for); every upload helper below gets this answer.
+    insecure = insecure_for(registry, insecure)
 
     # Re-canonicalize the image config and verify the digest. The manifest
     # carries config.digest, which the registry verifies against the bytes
