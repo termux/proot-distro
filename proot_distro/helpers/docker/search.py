@@ -47,11 +47,11 @@
 # on the last request would re-fetch results already held.
 
 import json
-import re
 import urllib.error
 import urllib.parse
 
 from proot_distro.message import quote_path
+from proot_distro.helpers.docker.refs import is_repository_path
 from proot_distro.helpers.download import (
     certificate_error_msg,
     declared_length,
@@ -82,13 +82,6 @@ SEARCH_LIMIT_MAX = 1000
 # stalled connection must not hang the command indefinitely.
 _TIMEOUT = 30.0
 
-# Docker's repository-name grammar (distribution/reference): lowercase
-# alphanumeric path components, separated by '.', '_', '__' or runs of
-# '-', joined by '/'. A name failing this is not addressable by any
-# client, so such an entry is not a result worth returning.
-_NAME_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|[-]*)[a-z0-9]+)*"
-_REPO_NAME_RE = re.compile(rf"^{_NAME_COMPONENT}(?:/{_NAME_COMPONENT})*$")
-_NAME_MAX = 255
 
 
 def _count(value) -> int:
@@ -119,10 +112,13 @@ def _normalize(entry) -> dict:
     if not isinstance(entry, dict):
         return None
 
+    # Docker's repository-name grammar (refs.is_repository_path): a name
+    # failing it is not addressable by any client, so such an entry is
+    # not a result worth returning. It used to be matched with `$`,
+    # which also matches before a trailing newline, so `ubuntu\n` passed
+    # and was printed bare under --quiet.
     name = entry.get("name")
-    if not isinstance(name, str) or len(name) > _NAME_MAX:
-        return None
-    if not _REPO_NAME_RE.match(name):
+    if not is_repository_path(name):
         return None
 
     description = entry.get("description")

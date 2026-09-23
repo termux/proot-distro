@@ -52,7 +52,7 @@ from proot_distro.helpers.docker.media import (
 from proot_distro.helpers.download import (
     NETWORK_TIMEOUT, new_request, retry_http,
 )
-from proot_distro.helpers.docker.refs import parse_image_ref
+from proot_distro.helpers.docker.refs import parse_tag_reference
 from proot_distro.helpers.docker.transport import (
     auth_note,
     get_auth_token,
@@ -334,7 +334,17 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     RuntimeError pointing the user at ``--allow-insecure`` — the same handling
     as the install command.
     """
-    manifest, repo, image_config = load_manifest_cache(image_ref, arch)
+    # The grammar first, as pull_image does, and a digest is no name to
+    # push under. The repository comes from the reference and not from
+    # the cache entry's `repo`: the entry is a file a guest can write on
+    # Termux, and the repository is where the upload, the push-scoped
+    # token and the tag all go -- so the entry used to decide which of
+    # the user's repositories `push <ref>` overwrote.
+    parsed = parse_tag_reference(image_ref)
+    registry, repo, tag = parsed.registry, parsed.repo, parsed.tag
+
+    manifest, _cached_repo, image_config = load_manifest_cache(
+        image_ref, arch)
     if manifest is None:
         raise RuntimeError(
             f"No cached manifest for '{image_ref}' ({arch}). Build image "
@@ -365,7 +375,6 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
             f"Rebuild the image to repopulate the cache."
         )
 
-    registry, _, tag = parse_image_ref(image_ref)
     # Docker Hub is verified HTTPS whatever --allow-insecure says (see
     # transport.insecure_for); every upload helper below gets this answer.
     insecure = insecure_for(registry, insecure)

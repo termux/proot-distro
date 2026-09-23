@@ -111,13 +111,21 @@ def container_lock_path(name: str) -> str:
 def _build_lock_path(image_ref: str, arch: str) -> str:
     """Return the lock-file path for a build of (image_ref, arch).
 
-    The key matches the manifest-cache key (16-hex-char sha256 prefix)
-    so a build lock identifies the same artifact the build writes to,
-    and is derived the same total way (see cache.manifest_cache_key):
-    a reference off the command line can hold a lone surrogate.
+    The key *is* the manifest-cache key (16-hex-char sha256 prefix of the
+    canonical reference and the arch), so a build lock identifies the
+    same artifact the build writes to, and is derived the same total way
+    (see cache.manifest_cache_key): a reference off the command line can
+    hold a lone surrogate. It used to hash the reference as spelled, so
+    `build -t myapp` and `push docker.io/library/myapp` -- one cache
+    entry -- took two different locks and ran side by side.
+
+    Imported here rather than at the top: the docker package reaches
+    `paths`, which imports this module.
     """
+    from proot_distro.helpers.docker.refs import canonical_ref
+
     key = hashlib.sha256(
-        f"{image_ref}_{arch}".encode("utf-8", "surrogatepass")
+        f"{canonical_ref(image_ref)}_{arch}".encode("utf-8", "surrogatepass")
     ).hexdigest()[:16]
     return os.path.join(_BUILD_LOCKS_DIR, f"{key}.lock")
 

@@ -316,8 +316,6 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
                         lambda ref, arch: (manifest, "me/app", {"k": "v"}))
     monkeypatch.setattr(push, "canonical_json", lambda d: cfg_bytes)
     monkeypatch.setattr(push, "blob_present", lambda d: True)
-    monkeypatch.setattr(push, "parse_image_ref",
-                        lambda ref: ("reg.example", "me/app", "latest"))
 
     captured = {}
 
@@ -432,3 +430,56 @@ def test_push_image_keeps_docker_hub_verified(monkeypatch, ref, registry,
     monkeypatch.setattr(push, "_put_manifest", fake_put)
     push.push_image(ref, "x86_64", insecure=True)
     assert seen and all(flag is expected for flag in seen)
+
+
+# ----- the repository is the reference's, never the cache entry's ----------
+
+def test_push_image_uploads_to_the_references_repository(monkeypatch):
+    # The entry's `repo` is a file a guest can write on Termux, and it
+    # used to decide where the blobs, the push-scoped token and the tag
+    # went: `push me/app:1` could overwrite `me/important:1`.
+    cfg_bytes = b"CFG"
+    cfg_digest = "sha256:" + hashlib.sha256(cfg_bytes).hexdigest()
+    manifest = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"digest": cfg_digest},
+        "layers": [{"digest": "sha256:" + "a" * 64}],
+    }
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda ref, arch: (manifest, "me/important",
+                                           {"k": "v"}))
+    monkeypatch.setattr(push, "canonical_json", lambda d: cfg_bytes)
+    monkeypatch.setattr(push, "blob_present", lambda d: True)
+
+    repos = []
+
+    def fake_auth(repo, registry, actions="pull", insecure=False):
+        repos.append(("auth", repo))
+        return "TKN", "https://reg.example"
+
+    def fake_blob_exists(repo, digest, token, base, insecure=False):
+        repos.append(("blob", repo))
+        return True
+
+    def fake_put_manifest(repo, ref, body, media, token, base,
+                          insecure=False):
+        repos.append(("manifest", repo, ref))
+        return "sha256:dd"
+
+    monkeypatch.setattr(push, "get_auth_token", fake_auth)
+    monkeypatch.setattr(push, "_blob_exists", fake_blob_exists)
+    monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
+
+    result = push.push_image("reg.example/me/app:1", "x86_64")
+    assert {entry[1] for entry in repos} == {"me/app"}
+    assert ("manifest", "me/app", "1") in repos
+    assert result["repo"] == "me/app"
+
+
+def test_push_image_refuses_a_digest_before_reading_the_cache(monkeypatch):
+    def no_cache(*_a):
+        raise AssertionError("the cache was consulted")
+
+    monkeypatch.setattr(push, "load_manifest_cache", no_cache)
+    with pytest.raises(RuntimeError, match="use a tag"):
+        push.push_image("reg.example/me/app@sha256:" + "a" * 64, "x86_64")

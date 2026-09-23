@@ -41,8 +41,14 @@
 #
 #   manifests/<sha256-prefix>.json
 #       { "image_ref": ..., "arch": ...,
-#         "manifest": ..., "repo": ..., "image_config": ... }
+#         "manifest": ..., "repo": ..., "image_config": ...,
+#         "documents": { "<digest>": "<base64>", ... } }
 #       Key is the first 16 hex chars of sha256("<canonical_ref>_<arch>").
+#       `documents` is there only for a reference pinned by digest: the
+#       exact bytes of the pinned document, of the arch's manifest when
+#       the pin names an index, and of the config -- what a later hit
+#       re-verifies against the pin, since a tag's entry has to be taken
+#       at its word and a pin's need not be (see pull._cached_pin).
 #
 # Neither directory is reached by name. Both sit below BASE_CACHE_DIR,
 # which on Termux is under the $TERMUX_PREFIX bound read-write into
@@ -66,6 +72,7 @@
 # repaired in place by annotate_manifest_cache() on the next pull, and
 # named on a best-effort basis from installed containers meanwhile.
 
+import base64
 import hashlib
 import json
 import os
@@ -249,12 +256,18 @@ def _load_entry(dir_fd: int, name: str):
 def save_manifest_cache(
     image_ref: str, arch: str,
     manifest: dict, repo: str, image_config: dict,
+    documents=None,
 ) -> str:
     """Persist a manifest + image-config pair under the canonical cache key.
 
     The reference and architecture are stored alongside the payload:
     the file name is a hash, so they are the only record of which image
     the entry describes. Returns the path written.
+
+    *documents* maps a digest to the raw bytes it names, for a pinned
+    reference (see load_manifest_documents). Base64, because the digest
+    covers the bytes exactly as the registry sent them, and a JSON string
+    is text that re-encodes however the next writer chooses.
     """
     payload = {
         "image_ref": image_ref,
@@ -263,6 +276,11 @@ def save_manifest_cache(
         "repo": repo,
         "image_config": image_config,
     }
+    if documents:
+        payload["documents"] = {
+            digest: base64.b64encode(body).decode("ascii")
+            for digest, body in documents.items()
+        }
     path = manifest_cache_path(image_ref, arch)
     with atomic_write(path, "w") as fh:
         json.dump(payload, fh)
@@ -321,6 +339,30 @@ def load_manifest_cache(image_ref: str, arch: str):
             payload.get("image_config", {})
     except KeyError:
         return None, None, {}
+
+
+def load_manifest_documents(image_ref: str, arch: str) -> dict:
+    """The raw documents a pinned pull recorded, by digest; {} for none.
+
+    Nothing here is checked against anything -- the entry is a file a
+    guest can write on Termux -- and nothing is meant to be: every
+    document is re-verified against the digest that names it by the
+    caller, which is the whole reason they are kept (pull._cached_pin).
+    A value that is not base64 is simply not a document.
+    """
+    payload = _read_entry(image_ref, arch)
+    stored = payload.get("documents") if payload is not None else None
+    if not isinstance(stored, dict):
+        return {}
+    documents = {}
+    for digest, encoded in stored.items():
+        if not isinstance(encoded, str):
+            continue
+        try:
+            documents[digest] = base64.b64decode(encoded, validate=True)
+        except ValueError:          # binascii.Error, or not ASCII at all
+            continue
+    return documents
 
 
 # ---------------------------------------------------------------------------

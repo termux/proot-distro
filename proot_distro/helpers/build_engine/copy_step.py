@@ -65,7 +65,9 @@ from proot_distro.helpers.build_engine.parsing import (
     split_operands,
 )
 from proot_distro.helpers.build_engine.users import resolve_chown
-from proot_distro.helpers.docker import layer_cache_path, pull_image
+from proot_distro.helpers.docker import (
+    InvalidReference, layer_cache_path, parse_reference, pull_image,
+)
 from proot_distro.helpers.layer_diff import (
     MapSources, layer_path_parts, write_files_layer,
 )
@@ -450,6 +452,12 @@ def _pull_throwaway_image(engine, image_ref):
     comes out of the tree goes into the layer `push` uploads. The caller
     owns the descriptor for the life of the instruction.
     """
+    # Refused before anything is made for it or said about it, as FROM's
+    # is: the reference is the Dockerfile's text after ARG expansion.
+    try:
+        parse_reference(image_ref)
+    except InvalidReference as exc:
+        raise BuildError(f"COPY --from={image_ref}: {exc}") from exc
     # Total, like the manifest-cache key: `--from=$IMG` can expand a
     # --build-arg holding a byte that is not UTF-8 (a lone surrogate).
     slot = hashlib.sha256(

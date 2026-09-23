@@ -42,7 +42,7 @@ from proot_distro.constants import (
 )
 from proot_distro.paths import container_is_installed
 from proot_distro.message import (
-    C, msg, log_info, log_error, crit_error, quote_error,
+    C, msg, log_info, log_error, crit_error, quote_error, quote_path,
 )
 from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
@@ -61,7 +61,9 @@ from proot_distro.helpers.oci_writer import (
     store_in_cache,
     write_oci_archive,
 )
-from proot_distro.helpers.docker import ARCH_TO_DOCKER, with_explicit_tag
+from proot_distro.helpers.docker import (
+    ARCH_TO_DOCKER, InvalidReference, parse_tag_reference, with_explicit_tag,
+)
 from proot_distro.names import is_valid_name, require_valid_name
 from proot_distro.progress import fmt_size
 
@@ -201,14 +203,16 @@ def command_build(args):
             sys.exit(1)
         tags = [derived]
 
+    # Docker's reference grammar, not a check of the alias alone: the tag
+    # becomes the manifest-cache key, the build lock, the name `push`
+    # uploads under and the RepoTags an --output archive carries. The old
+    # check looked at the last component only, so `../../x:1` was taken
+    # (with `..` for a registry) and `localhost:5000/app` refused.
     for t in tags:
-        if not _is_valid_tag(t):
-            crit_error(
-                f"tag '{t}' is not valid. A tag must start with an "
-                f"alphanumeric character and contain only letters, "
-                f"digits, underscores, dots, hyphens, slashes, or a "
-                f"single colon for the version."
-            )
+        try:
+            parse_tag_reference(t)
+        except InvalidReference as exc:
+            crit_error(f"tag '{quote_path(t)}' is not valid: {exc}.")
             sys.exit(1)
 
     tags = [with_explicit_tag(t) for t in tags]
@@ -428,36 +432,33 @@ def _parse_build_args(raw):
 
 
 def _derive_tag_from_path(build_dir, dockerfile):
-    """Pick a default tag based on the build context basename."""
+    """Pick a default tag based on the build context basename.
+
+    Made to fit the reference grammar rather than merely checked against
+    it: lowercase, anything outside [a-z0-9._-] turned into '-', a run of
+    separators Docker does not allow ('._', '_-', '___') collapsed into one
+    '-' as runs of '-' always were, and none left at either end. A
+    directory called `app_` or `my._app` used to produce a tag no registry
+    would take.
+    """
     base = os.path.basename(os.path.abspath(build_dir).rstrip("/"))
     if not base or base in (".", ".."):
         if dockerfile and dockerfile != "-":
             base = os.path.basename(os.path.dirname(os.path.abspath(dockerfile)))
-    base = base.lower()
-    base = re.sub(r"[^a-z0-9_.\-]", "-", base).strip("-")
-    base = re.sub(r"-+", "-", base)
-    if not base or not is_valid_name(base):
+    base = re.sub(r"[^a-z0-9_.\-]", "-", base.lower())
+    base = re.sub(
+        r"[._-]+",
+        lambda m: (m.group() if re.fullmatch(r"[._]|__|-+", m.group())
+                   else "-"),
+        base,
+    )
+    base = re.sub(r"-+", "-", base).strip("._-")
+    tag = f"{base}:latest"
+    try:
+        parse_tag_reference(tag)
+    except InvalidReference:
         return ""
-    return f"{base}:latest"
-
-
-def _is_valid_tag(tag):
-    # Allow registry-style prefixes (host/path/name:tag) without
-    # mandating registry validation; insist only that the local alias
-    # we'd derive is sane.
-    if not tag:
-        return False
-    if ":" in tag:
-        name_part, tag_part = tag.rsplit(":", 1)
-        if not tag_part:
-            return False
-        # Tag part: starts with alphanumeric, then word chars + dot/dash.
-        if not re.match(r"^[A-Za-z0-9][\w.\-]*$", tag_part):
-            return False
-    else:
-        name_part = tag
-    last = name_part.split("/")[-1]
-    return is_valid_name(last)
+    return tag if is_valid_name(base) else ""
 
 
 def _install_as_container(install_name, image_ref, target_arch, quiet):

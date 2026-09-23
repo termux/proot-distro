@@ -243,10 +243,12 @@ def _resolve_images(identifier: str, arch) -> list:
 def _image_locks(identifier: str, targets: list) -> list:
     """Return the BuildLocks to hold while *targets* are deleted.
 
-    `build` and `push` key their lock on the reference as the user
-    spelled it, so both the recorded reference and the one just typed
-    are locked; duplicates collapse. Locks are entered in sorted-path
-    order, consistent with every other multi-lock call site.
+    `build` and `push` key their lock on the canonical reference -- the
+    manifest-cache key -- so the recorded reference and the one just
+    typed collapse into one lock whenever they name the same image. Both
+    are still asked for: an entry written before references were recorded
+    has none of its own. Locks are entered in sorted-path order,
+    consistent with every other multi-lock call site.
     """
     locks = {}
     for record in targets:

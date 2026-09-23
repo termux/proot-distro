@@ -868,7 +868,9 @@ would shadow the container's.
 
 `install` accepts an image reference, a local path (must start with
 `/`, `./`, `../`, or `~`), or an `http(s)://` URL. `--user` takes name,
-numeric uid, or `user:group`.
+numeric uid, or `user:group`. A reference is held to Docker's grammar
+(`refs.parse_reference`, see "Docker / OCI registry") before a
+container name is derived from it or a lock taken.
 
 A local **OCI archive** is a stranger's file (`install ./img.tar`, or a
 URL), so how much memory reading it costs must not be the archive's to
@@ -1286,7 +1288,10 @@ create a file there and `--verbose` prints it.
 
 `ContainerLock` → `RUNTIME_DIR/locks/<name>.lock`. `BuildLock` →
 `RUNTIME_DIR/locks/build/<sha256-prefix>.lock`, key = first 16 hex of
-`sha256("<image_ref>_<arch>")` (same as the manifest-cache key).
+`sha256("<canonical_ref(image_ref)>_<arch>")` — the manifest-cache key
+itself, so every spelling of one image (`myapp`, `docker.io/library/
+myapp:latest`) takes one lock. It used to hash the reference as spelled,
+and a `build` and a `push` of the same cache entry ran side by side.
 
 Non-blocking `flock(2)`. Conflict ⇒ exit immediately, reporting the
 holder's PID + command. Re-entrancy via `_held_exclusive` — `reset`
@@ -1406,11 +1411,70 @@ uname, so emulated containers self-report correctly.
 
 ## Docker / OCI registry (`helpers/docker/`)
 
+An image **reference** is parsed by Docker's own grammar
+(`refs.parse_reference`, distribution/reference normalised the way
+`docker pull` normalises): lowercase repository paths, the registry
+being a first component with `.` or `:`, `localhost`, or an upper-case
+letter, a tag of at most 128 `[A-Za-z0-9_.-]`, an optional
+`@sha256:<64 lowercase hex>` digest (no other algorithm: a pin that
+cannot be checked pins nothing), a normalised name of at most 255
+characters, a port of at most 65535, and never a bare 64-hex image ID.
+ASCII-only and matched with `fullmatch` (Python's `\w` is Unicode and
+`$` matches before a trailing newline), and the whole string is capped
+before any pattern runs. What came before only split strings, so a
+reference was never refused, only misunderstood: `ubuntu#x` and
+`ubuntu&scope=…` went into the registry URL and the Hub token query as
+written, `ubuntu:` asked for `/manifests/`, `ubuntu@sha256:<hex>` was
+the repository `library/ubuntu@sha256`, and `build -t ../../x:1` was
+taken with `..` as its registry while `build -t localhost:5000/app` was
+refused. Every door a reference comes in by asks it — `install`, `push`
+(`parse_tag_reference`, which also refuses a digest), `build -t`,
+`FROM` and `COPY --from` (both before the reference is echoed in a log
+line) — and `pull_image`/`push_image` ask again themselves.
+`InvalidReference` is a `RuntimeError` because that is what
+`pull_image` promises its callers, and its message never contains the
+reference: callers name it, through `quote_path`. The rest of `refs.py`
+(`canonical_ref`, `parse_image_ref`, `with_explicit_tag`,
+`derive_alias`) stays **total**, since it is also handed strings nothing
+validated — a container's `manifest.json`, a cache entry, a
+`remove --image` ID — and a key or a lookup must not raise: a valid
+reference gets the grammar's answer, anything else the old loose split.
+`canonical_ref` produces the same string the loose split did for every
+reference both understood (`localhost/app` is now registry + repo
+rather than one Hub path, and spells `localhost/app:latest` either
+way), so no recorded cache key moved. `search`'s name filter is
+`refs.is_repository_path`, the same grammar.
+
+The repository a pull or a push talks to comes from the **reference**,
+never from the cache entry's `repo`: the entry is a file a guest can
+write on Termux, and `push` used to take its upload URLs, its
+push-scoped token and so the repository it overwrote from that field.
+
 Pull is manifest-cache-first: cached + all layers present *and*
 verified ⇒ fully offline; cached + missing layers ⇒ fetch token +
 missing only; otherwise full pipeline (token → manifest → arch unwrap
 → config blob → layers). Cache writes use `atomic_replace`. Layer
 digests are stream-verified via `hashlib.sha256` before promotion.
+
+A reference **pinned by digest** (`debian:12@sha256:…`) is pulled by
+the digest (`Reference.manifest_ref`; a tag beside it is not consulted,
+as with `docker pull`) and `_resolve_pinned()` follows it down: the
+document the pin names, the arch's child when that is an index, each
+checked against the digest that named it, with the media type read off
+the document and never off a response header (only the document is
+covered). The config is fetched strictly (`_download_config`) — a tag's
+unreachable config degrades to `{}`, a pin's is a failure, since the
+image a pin names has the config it names. The cache entry keeps the
+raw bytes of all three under `documents` (base64, digest → bytes;
+`save_manifest_cache(documents=)` / `load_manifest_documents()`), and a
+hit (`_cached_pin`) re-verifies the whole chain and derives manifest and
+config from those bytes alone — the entry's `manifest` and
+`image_config` are not read, and anything short of a verified chain is a
+miss that goes to the registry (with a warning when a chain was there
+and failed). So a pinned image installs offline only as the content the
+pin names, however the cache was rewritten. The canonical form drops the
+tag (`library/debian@sha256:…`), so every spelling of one pin shares one
+entry, and no tag's entry can answer for a pin.
 
 Verification is **on use, not only on entry**: a blob's file name is
 not evidence of its content, because `download_blob()` is not the only
@@ -1472,7 +1536,10 @@ and each layer is hashed as it is copied into the cache
 (`_oci_cache_layer`), so a mismatched blob never reaches disk. Digests
 pass through `validate_digest()` before being converted to filesystem
 paths (layer cache, OCI blob layout) so a crafted reference like
-`../foo:bar` can't escape the cache root. A `zstd` mediaType is refused
+`../foo:bar` can't escape the cache root, and a digest a registry names
+— the arch's child in an index, a manifest's config — goes through
+`split_digest()` before it becomes part of a URL, which the fetch only
+checks the answer against afterwards. A `zstd` mediaType is refused
 only when `compress.ZSTD_AVAILABLE` is False; with support present the
 blob rides the same `r|*` auto-detect a gzip layer does. Whiteouts (`.wh..wh..opq` clears parent
 dir; `.wh.<name>` deletes sibling), hardlink linkname filtering, and
@@ -1522,7 +1589,7 @@ holds a name rather than a descriptor — `build`'s FROM, which passes
 `root_fd=stage.rootfs_fd`.
 
 Manifest-cache payload (`cache.py`): `{image_ref, arch, manifest, repo,
-image_config}`. The key is a hash, so the entry itself is the only
+image_config}`, plus `documents` for a pinned reference (above). The key is a hash, so the entry itself is the only
 record of which image it holds — `save_manifest_cache()` (the single
 writer; `oci_writer.store_in_cache` delegates to it) stores both, a
 cache hit in `pull_image` calls `annotate_manifest_cache()` to backfill
@@ -1532,9 +1599,10 @@ falls back to naming the rest from installed containers'
 `arch`, `image_id` (config digest hex), on-disk `size`, `missing` layer
 count, `created`, `cached_at` — consumed by `list --image` /
 `remove --image`, plus the `name` the entry was read under, which is
-what a deletion addresses it by. `refs.py` owns the string forms: `canonical_ref()`
-(cache-key input), `with_explicit_tag()` (`:latest` default, shared by
-`build`/`push`/`remove`), `DOCKER_TO_ARCH`.
+what a deletion addresses it by. `refs.py` owns the string forms: `parse_reference()`
+(the grammar), `canonical_ref()` (cache-key input), `with_explicit_tag()`
+(`:latest` default, shared by `build`/`push`/`remove`; a pin is left
+alone), `DOCKER_TO_ARCH`.
 
 A cache entry is not the registry's word for it: it is a file under
 `BASE_CACHE_DIR`, which on Termux sits inside the bound
@@ -1763,8 +1831,8 @@ Hub's chains to), and a Hub redirect could step down to plain HTTP under
 the redirect policy's insecure allowance. The help for `install` and
 `push` says so.
 
-Push (`push.py`) loads `(manifest, repo, image_config)` from the local
-cache, re-canonicalises and verifies SHA against `manifest.config.digest`,
+Push (`push.py`) loads `(manifest, image_config)` from the local
+cache (the repository is the reference's — see above), re-canonicalises and verifies SHA against `manifest.config.digest`,
 HEAD-probes each blob, uploads the missing via POST-uploads + monolithic
 PUT (no chunked, no cross-repo mount, no multi-arch index). 401/403 ⇒
 `push_denied_msg`. The upload `Location` is a header the registry's

@@ -413,8 +413,6 @@ def test_push_refuses_a_poisoned_layer_blob(builders, monkeypatch):
     monkeypatch.setattr(push_mod, "load_manifest_cache",
                         lambda ref, arch: (manifest, "me/app", {"k": "v"}))
     monkeypatch.setattr(push_mod, "canonical_json", lambda d: cfg_bytes)
-    monkeypatch.setattr(push_mod, "parse_image_ref",
-                        lambda ref: ("reg.example", "me/app", "latest"))
     monkeypatch.setattr(push_mod, "get_auth_token",
                         lambda *a, **k: ("TKN", "https://reg.example"))
     monkeypatch.setattr(push_mod, "_blob_exists", lambda *a, **k: False)

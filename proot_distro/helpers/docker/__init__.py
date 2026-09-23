@@ -20,7 +20,8 @@
 
 # Architecture: Pure-Python OCI/Docker registry client, split by concern:
 #
-#   refs.py        — parse_image_ref, derive_alias, ARCH_TO_DOCKER.
+#   refs.py        — parse_reference (Docker's reference grammar),
+#                    parse_image_ref, derive_alias, ARCH_TO_DOCKER.
 #                    No I/O.
 #   cache.py       — manifest/layer cache paths + save/load helpers,
 #                    and the digest checks every blob consumer runs
@@ -40,9 +41,13 @@
 from proot_distro.helpers.docker.refs import (
     ARCH_TO_DOCKER,
     DOCKER_TO_ARCH,
+    InvalidReference,
+    Reference,
     canonical_ref,
     derive_alias,
     parse_image_ref,
+    parse_reference,
+    parse_tag_reference,
     with_explicit_tag,
 )
 from proot_distro.helpers.docker.cache import (
@@ -96,6 +101,8 @@ __all__ = (
     "ARCH_TO_DOCKER",
     "AuthStrippingRedirectHandler",
     "DOCKER_TO_ARCH",
+    "InvalidReference",
+    "Reference",
     "SEARCH_DEFAULT_LIMIT",
     "SEARCH_LIMIT_MAX",
     "SEARCH_PAGE_MAX",
@@ -123,6 +130,8 @@ __all__ = (
     "open_layer_cache_dir",
     "open_manifest_cache_dir",
     "parse_image_ref",
+    "parse_reference",
+    "parse_tag_reference",
     "pull_image",
     "push_denied_msg",
     "push_image",

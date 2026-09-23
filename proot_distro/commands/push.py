@@ -28,13 +28,17 @@
 
 import sys
 
-from proot_distro.message import C, msg, log_info, log_error, crit_error
+from proot_distro.message import (
+    C, msg, log_info, log_error, crit_error, quote_path,
+)
 from proot_distro.locking import BuildLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.helpers.docker import (
+    InvalidReference,
     load_manifest_cache,
     parse_image_ref,
+    parse_tag_reference,
     push_image,
     with_explicit_tag,
 )
@@ -51,6 +55,15 @@ def command_push(args):
 
     if not image_ref:
         crit_error("image reference is not specified (e.g. 'myrepo/myapp:1.0').")
+        sys.exit(1)
+
+    # Refused here, before the cache is asked about it, so a reference
+    # that is no reference -- or a digest, which is nothing a push can
+    # name -- is reported as what it is rather than as "no image found".
+    try:
+        parse_tag_reference(image_ref)
+    except InvalidReference as exc:
+        crit_error(f"cannot push '{quote_path(image_ref)}': {exc}.")
         sys.exit(1)
 
     # Append :latest the same way build does, so users can push using the

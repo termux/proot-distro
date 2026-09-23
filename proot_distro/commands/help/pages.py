@@ -70,8 +70,9 @@ HELP_PAGES = {
              "Use a Dockerfile at PATH instead of <PATH>/Dockerfile. "
              "Pass '-' to read the Dockerfile from standard input."),
             ("-t, --tag [REF]",
-             "Image reference to assign. Repeatable. Defaults to "
-             "'<basename(PATH)>:latest'."),
+             "Image reference to assign, without a digest. Repeatable. "
+             "Defaults to '<basename(PATH)>:latest', adjusted to Docker's "
+             "name rules."),
             ("--build-arg [K=V]",
              "Set a build-time ARG. Only ARGs declared in the "
              "Dockerfile are honoured. Repeatable."),
@@ -173,7 +174,8 @@ HELP_PAGES = {
             "IMAGE is the same reference passed to 'build -t', for "
             "example 'myuser/myapp:1.0' (Docker Hub) or "
             "'ghcr.io/myorg/myapp:1.0' (custom registry). When no tag "
-            "component is present, ':latest' is appended."
+            "component is present, ':latest' is appended. A digest "
+            "reference cannot be pushed."
             "\n\n"
             "By default the architecture matches the host. Use "
             "--architecture to push an image built for a different "
@@ -399,7 +401,14 @@ HELP_PAGES = {
             "\n\n"
             "By default Docker images will be pulled from Docker Hub. Custom "
             "registry needs to be specified as part of image reference. "
-            "Example: 'ghcr.io/foo/bar:tag'."
+            "Example: 'ghcr.io/foo/bar:tag' or 'localhost:5000/foo'. A "
+            "reference Docker would refuse is refused here too."
+            "\n\n"
+            "An image can be pinned by digest, for example "
+            "'debian:12@sha256:<64 hex digits>'. It is then pulled by that "
+            "digest and everything under it is verified against it, the "
+            "cached copy included, so it installs as exactly that content "
+            "or not at all."
             "\n\n"
             "Layers are cached locally and reused on subsequent "
             "installs of the same image."

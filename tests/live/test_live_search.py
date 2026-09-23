@@ -5,11 +5,10 @@
 # These hit the network and depend on Docker Hub availability and on the
 # shape of its /v1/search response, which no other test can verify.
 
-import re
-
 import pytest
 
 from proot_distro.helpers.docker import search as hub
+from proot_distro.helpers.docker.refs import parse_reference
 
 pytestmark = pytest.mark.live
 
@@ -32,7 +31,7 @@ def test_live_search_names_are_installable_references():
     for hit in results:
         # Whatever Hub returns, what leaves the helper must be a legal
         # reference — `search --quiet` prints these bare for piping.
-        assert re.match(hub._REPO_NAME_RE, hit["name"])
+        parse_reference(hit["name"])
         assert "\x1b" not in hit["description"]
 
 

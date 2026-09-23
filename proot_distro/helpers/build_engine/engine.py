@@ -35,8 +35,8 @@ from proot_distro.execenv import is_exportable, is_host_exec_var
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.message import C, log_info
 from proot_distro.helpers.docker import (
-    ARCH_TO_DOCKER, apply_layer, manifest_config_digest, open_required_layer,
-    pull_image,
+    ARCH_TO_DOCKER, InvalidReference, apply_layer, manifest_config_digest,
+    open_required_layer, parse_reference, pull_image,
 )
 from proot_distro.helpers.dockerfile import expand_vars
 from proot_distro.helpers.rootfs import write_hosts, write_resolv_conf
@@ -659,6 +659,14 @@ class BuildEngine:
 
     def _pull_base_image(self, stage, image_ref):
         """Use helpers.docker.pull_image to populate the stage rootfs."""
+        # pull_image refuses a reference the grammar does not accept as
+        # well; asked here first so the line below never echoes one, since
+        # it is the Dockerfile's text (after ARG expansion) and may hold
+        # anything, a terminal escape included.
+        try:
+            parse_reference(image_ref)
+        except InvalidReference as exc:
+            raise BuildError(f"FROM {image_ref}: {exc}") from exc
         log_info(f"Pulling base image '{image_ref}' ({self.target_arch_pd})...")
         try:
             rootfs_fd = _stage_rootfs_fd(stage)

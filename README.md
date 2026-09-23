@@ -203,11 +203,26 @@ from a local archive file.
 | Official, no tag (uses `latest`) | `alpine` |
 | User image | `myuser/myimage:tag` |
 | Custom registry | `ghcr.io/foo/bar:latest` |
+| Registry with a port | `localhost:5000/myimage` |
+| Pinned by digest | `debian:12@sha256:<64 hex digits>` |
 
-Custom registries are detected by the first path component containing
-`.` or `:` (i.e. a hostname). Public images on `ghcr.io`,
-`quay.io`, `registry.gitlab.com`, etc. are pulled with an anonymous
-Bearer token discovered from each registry's `/v2/` challenge.
+A reference is held to Docker's own grammar and refused, before
+anything is fetched, when Docker would refuse it: repository names are
+lowercase, a tag is at most 128 characters of letters, digits, `_`, `.`
+and `-`, and so on. The first path component names a registry when it
+contains `.` or `:`, when it is `localhost`, or when it has an
+upper-case letter — exactly as for `docker pull`. Public images on
+`ghcr.io`, `quay.io`, `registry.gitlab.com`, etc. are pulled with an
+anonymous Bearer token discovered from each registry's `/v2/`
+challenge.
+
+A reference **pinned by digest** is pulled by that digest (a tag beside
+it is not consulted, as with `docker pull`), and everything under it is
+verified against it: the document the digest names, the architecture's
+manifest when that is a multi-arch index, the image config and every
+layer. The cached copy is held to the same check on every later install,
+so a pinned image installs offline only as the exact content the digest
+names. Only `sha256` digests are supported.
 
 **Private images** require credentials. Set `PD_DOCKER_AUTH` to
 `username:password` (or `username:PAT`) before running the install
@@ -395,7 +410,7 @@ installs entirely without network access.
 | Option | Description |
 |---|---|
 | `-f`, `--file PATH` | Use a Dockerfile at PATH instead of `<PATH>/Dockerfile`. Pass `-` to read the Dockerfile from stdin. |
-| `-t`, `--tag REF` | Image reference to assign. Repeatable. Defaults to `<basename(PATH)>:latest`. |
+| `-t`, `--tag REF` | Image reference to assign. Repeatable. Must be a valid Docker reference without a digest (`myapp`, `ghcr.io/org/app:1.0`, `localhost:5000/app`). Defaults to `<basename(PATH)>:latest`, adjusted to Docker's name rules. |
 | `--build-arg K=V` | Set a build-time `ARG`. Only `ARG`s declared in the Dockerfile are honoured. Repeatable. |
 | `--architecture ARCH` | Target CPU architecture (default: host). Accepts proot-distro names (`aarch64`, `arm`, `i686`, `riscv64`, `x86_64`) or Docker platform strings (`linux/arm64`, …). |
 | `--target STAGE` | Stop after the named stage of a multi-stage build. |
@@ -528,7 +543,9 @@ intermediate archive are involved.
 path component lacks an explicit `:tag` suffix, `:latest` is appended
 (matching `build`'s behaviour). The registry is derived from the
 image reference: a bare or user/repo form goes to Docker Hub, a host
-form like `ghcr.io/foo/bar:tag` goes to the named registry.
+form like `ghcr.io/foo/bar:tag` or `localhost:5000/app` goes to the
+named registry. A digest reference cannot be pushed: the registry
+computes the digest from what is uploaded.
 
 **Options:**
 

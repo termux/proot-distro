@@ -38,7 +38,9 @@ import tarfile
 from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_write
 from proot_distro.constants import BASE_CACHE_DIR, PROGRAM_NAME
-from proot_distro.message import C, msg, log_info, log_error, crit_error
+from proot_distro.message import (
+    C, msg, log_info, log_error, crit_error, quote_path,
+)
 from proot_distro.progress import clear_bar
 from proot_distro.locking import ContainerLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
@@ -48,7 +50,9 @@ from proot_distro.paths import (
     container_is_installed, open_container_pair,
 )
 from proot_distro.sysdata import setup_fake_sysdata
-from proot_distro.helpers.docker import derive_alias, pull_image
+from proot_distro.helpers.docker import (
+    InvalidReference, derive_alias, parse_reference, pull_image,
+)
 from proot_distro.helpers.rootfs import (
     open_etc,
     register_android_ids_at,
@@ -159,6 +163,18 @@ def command_install(args) -> None:
     # Decide between local-file, URL, and Docker-pull mode.
     local_path = os.path.expanduser(image_ref) if _is_local_path(image_ref) else None
     url = image_ref if _is_url(image_ref) else None
+
+    # Anything else is an image reference, and one Docker would refuse is
+    # refused here, before a container name is derived from it or a lock
+    # taken: `ubuntu@sha256:<hex>` used to surface as "cannot derive a
+    # valid container name", and `Ubuntu` as whatever the registry said
+    # about a repository no client can name.
+    if local_path is None and url is None:
+        try:
+            parse_reference(image_ref)
+        except InvalidReference as exc:
+            crit_error(f"cannot install '{quote_path(image_ref)}': {exc}.")
+            sys.exit(1)
 
     install_name = _resolve_install_name(
         image_ref, local_path, url, custom_container_name,

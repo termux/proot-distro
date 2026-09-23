@@ -50,6 +50,7 @@ def _page(names, num_results=None, num_pages=1):
     "trailing/",
     "/leading",
     "esc\x1b[31mape",
+    "nginx\n",                     # `$` used to match before the newline
     "a" * 256,                     # over the length ceiling
     "",
     None,
