@@ -546,7 +546,7 @@ def _login_with_rootfs(container_name: str, args, lock,
         for k, v in child_env.items():
             parts.append(f"{k}={dq(v)}")
         parts.extend(dq(a) for a in proot_args)
-        print(" \\\n  ".join(parts))
+        _print_command(" \\\n  ".join(parts) + "\n")
         sys.exit(0)
 
     # Session metadata shared by the foreground and detached paths.
@@ -596,6 +596,31 @@ def _login_with_rootfs(container_name: str, args, lock,
     _session_fd = register_session(**reg)  # noqa: F841 (kept alive until exec)
 
     _exec_proot(proot_bin, proot_args, child_env, rootfs_fd)
+
+
+def _print_command(text: str) -> None:
+    """Write --get-proot-cmd's *text* to stdout as the bytes it names.
+
+    The command carries the session's environment and argv, and a byte
+    that is not UTF-8 is a lone surrogate in both -- a --build-arg an
+    image's ENV baked in, a password in the environment, an argument on
+    this command line. stdout is strict, so print() raised
+    UnicodeEncodeError on it; and a printed escape would not do either,
+    since the line is for running, and run it would set a different
+    value from the one this program passes. os.fsencode() is how the
+    exec itself turns these strings into bytes, so the line sets exactly
+    what the session gets. Only a string the exec could not encode
+    either -- a surrogate outside the escape range, out of an image's
+    JSON -- falls back to a visible escape; the session refuses that one
+    with a message of its own.
+    """
+    try:
+        data = os.fsencode(text)
+    except UnicodeEncodeError:
+        data = text.encode("utf-8", "backslashreplace")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
 
 
 def _exec_proot(proot_bin, proot_args, child_env, rootfs_fd: int) -> None:

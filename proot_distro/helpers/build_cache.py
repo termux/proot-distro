@@ -271,6 +271,20 @@ def _canonical_flags(flags):
     return "&".join(f"{k}={v}" for k, v in sorted(flags.items()))
 
 
+def _hash_bytes(text: str) -> bytes:
+    """*text* as the bytes the recipe hash is taken over.
+
+    Total over every string, which strict UTF-8 is not: a `--build-arg`
+    byte that is not UTF-8 arrives as a lone surrogate, and it is in the
+    ARG/ENV state every RUN after it hashes -- whether or not the step
+    uses it -- as well as in any here-doc it is expanded into. Strict
+    UTF-8 raised UnicodeEncodeError out of the cache lookup, a traceback
+    before the step could run. `surrogatepass` changes nothing for a
+    string that encoded before, so no recorded recipe moves.
+    """
+    return text.encode("utf-8", "surrogatepass")
+
+
 def compute_recipe_hash(parent_layer_digest, instr, extra_inputs=""):
     """Compute the recipe hash for `instr` chained onto `parent_layer_digest`.
 
@@ -280,21 +294,21 @@ def compute_recipe_hash(parent_layer_digest, instr, extra_inputs=""):
     env+ARG state visible to a RUN).
     """
     h = hashlib.sha256()
-    h.update((parent_layer_digest or "").encode())
+    h.update(_hash_bytes(parent_layer_digest or ""))
     h.update(b"\x00")
-    h.update(instr["name"].encode())
+    h.update(_hash_bytes(instr["name"]))
     h.update(b"\x00")
-    h.update(_canonical_flags(instr.get("flags", {})).encode())
+    h.update(_hash_bytes(_canonical_flags(instr.get("flags", {}))))
     h.update(b"\x00")
-    h.update(_canonical_value(instr.get("value", "")).encode())
+    h.update(_hash_bytes(_canonical_value(instr.get("value", ""))))
     h.update(b"\x00")
     for hd in instr.get("heredocs", []) or []:
         h.update(b"<<")
-        h.update((hd.get("body") or "").encode())
+        h.update(_hash_bytes(hd.get("body") or ""))
         h.update(b">>")
     h.update(b"\x00")
     if isinstance(extra_inputs, bytes):
         h.update(extra_inputs)
     else:
-        h.update(str(extra_inputs).encode())
+        h.update(_hash_bytes(str(extra_inputs)))
     return h.hexdigest()

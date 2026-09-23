@@ -251,6 +251,12 @@ def quote_path(text: str) -> str:
     through literally. Backslash is escaped too, so an escape this produced
     cannot be confused with those three characters spelled out in a name.
 
+    A lone surrogate is escaped as well, as `\\udcff`. It is how a byte
+    that is not UTF-8 arrives -- out of argv, the environment, or a JSON
+    document's `\\udcff` -- and no stream can encode one: stderr renders
+    it with backslashreplace, which is where the spelling comes from, but
+    stdout is strict and raised UnicodeEncodeError on it.
+
     Only the untrusted text is passed through here, never a whole message:
     the colour codes the log helpers wrap it in are control characters by
     definition.
@@ -262,6 +268,8 @@ def quote_path(text: str) -> str:
             out.append(escaped)
         elif ch < " " or ch == "\x7f":
             out.append(f"\\x{ord(ch):02x}")
+        elif "\ud800" <= ch <= "\udfff":
+            out.append(f"\\u{ord(ch):04x}")
         else:
             out.append(ch)
     return "".join(out)

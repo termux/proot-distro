@@ -36,7 +36,8 @@ Top-level utilities (each owns a focused concern):
 - `message.py` — color dict `C`, `msg`, `log_info/error`, `warn`,
   `crit_error`, `set_quiet`/`is_quiet`, `tty_safe_for_writes`,
   `terminal_width` (column count for the `ps` / `list --image` tables),
-  `quote_path` (C-style escapes for control characters) and
+  `quote_path` (C-style escapes for control characters, and `\udcff`
+  for a lone surrogate — see "Conventions") and
   `quote_error`. Names inside a rootfs are the guest's to choose, and a
   name inside a **backup archive** is whoever built the archive's, so
   every filesystem-derived name passes through `quote_path` before it
@@ -2454,3 +2455,26 @@ maps each name to a zero-arg renderer the CLI dispatches.
 - New commands plug into `cli._COMMAND_HANDLERS`, `parser` (with
   `_pd_command` stamped), `REQUIRED_ARGS` if positional,
   `commands/help/pages.HELP_PAGES`, and `ALIAS_TO_CANONICAL` for aliases.
+- **A byte that is not UTF-8 is a lone surrogate, and nothing encodes a
+  string strictly.** That is how Python hands over one out of argv or the
+  environment (surrogateescape), and JSON's `\udcff` produces the same
+  thing out of an image config, a manifest-cache entry or a container's
+  `manifest.json`. It travels a long way — a `--build-arg` into the
+  ARG/ENV state, an `ENV` into the image's config, that into a session's
+  environment — and every strict `.encode()` or `print()` on its path was
+  a `UnicodeEncodeError` traceback: the RUN recipe hash (any RUN after
+  such an ARG, used or not), the login profile snippet (every `login` and
+  `run` of the resulting container), `login --get-proot-cmd`,
+  `PD_DOCKER_AUTH`'s Basic header, `list --image --quiet`. The rule is by
+  purpose. Bytes that go **to the guest or the wire** are
+  `os.fsencode()` — what `execve` itself gets, the test `is_exportable`
+  judges by, and the byte the user actually set: the profile snippet,
+  the `--get-proot-cmd` line (written to `sys.stdout.buffer`, since it is
+  for running and an escape would set a different value), the Basic
+  credential. A **hash** encodes `surrogatepass`, which is total over every
+  string and leaves every string strict UTF-8 accepted exactly where it
+  was, so no recorded key moves: `build_cache._hash_bytes`,
+  `cache.manifest_cache_key`, the `BuildLock` path, `COPY --from`'s slot.
+  **Display** goes through `quote_path`, which renders a lone surrogate
+  as `\udcff` — the spelling stderr's backslashreplace already used — so
+  stdout, which is strict, can print it.

@@ -379,3 +379,39 @@ def test_termux_type_login_applies_image_env(builders, capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "FOO=frommanifest" in out
+
+
+# ----- a byte that is not UTF-8 ------------------------------------------
+
+def _strict_stdout(monkeypatch):
+    """stdout as the interpreter sets it up: UTF-8, errors='strict'."""
+    import io
+    import sys
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="utf-8", errors="strict",
+                              write_through=True)
+    monkeypatch.setattr(sys, "stdout", stream)
+    return raw
+
+
+def test_a_byte_that_is_not_utf8_is_printed_as_that_byte(builders,
+                                                         monkeypatch):
+    # An image's Env holding JSON's `\udcff` (or a --build-arg an ENV baked
+    # in) passes is_exportable and reaches the session as byte 0xff. Both
+    # the profile snippet and this printout used to raise on it -- the
+    # snippet for every login and run -- and the printed line is for
+    # running, so it carries the byte itself, not an escape of it.
+    manifest = _builders.simple_image_manifest(env=["X=a\udcffb"])
+    builders.make_container("sbox", arch=HOST_ARCH, manifest=manifest)
+    os.makedirs(os.path.join(container_rootfs("sbox"), "etc", "profile.d"),
+                exist_ok=True)
+    raw = _strict_stdout(monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        command_login(_login_args("sbox"))
+    assert exc.value.code == 0
+    out = raw.getvalue()
+    assert b'X="a\xffb"' in out
+    snippet = os.path.join(container_rootfs("sbox"), "etc", "profile.d",
+                           "termux-profile.sh")
+    with open(snippet, "rb") as fh:
+        assert b"export X='a\xffb'" in fh.read()

@@ -35,7 +35,7 @@ import re
 import time
 
 from proot_distro.constants import PROGRAM_NAME
-from proot_distro.message import C, msg, terminal_width
+from proot_distro.message import C, msg, quote_path, terminal_width
 from proot_distro.paths import installed_container_names
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.docker import iter_cached_images
@@ -115,7 +115,10 @@ def _list_images(quiet: bool) -> None:
             if name in seen:
                 continue
             seen.add(name)
-            print(name)
+            # The reference is a manifest-cache entry's text, which is
+            # guest-writable on Termux: a lone surrogate in it (a JSON
+            # `\\udcff`) raised UnicodeEncodeError out of strict stdout.
+            print(quote_path(name))
         return
 
     msg()

@@ -302,7 +302,14 @@ def _write_profile_snippet(profile_fd: int, env: dict,
     except OSError:
         return
     try:
-        os.write(fd, content.encode())
+        # The bytes the exec's own environment carries, the encoding every
+        # value above was judged by (is_exportable): a byte that is not
+        # UTF-8 -- a lone surrogate out of an image's Env, a --build-arg
+        # baked into one by ENV, an --env on this command line -- passes
+        # that test and reaches the session intact, and strict UTF-8 here
+        # raised UnicodeEncodeError instead, taking every login and run of
+        # the container down with it.
+        os.write(fd, os.fsencode(content))
         os.fchmod(fd, 0o644)
     except OSError:
         pass

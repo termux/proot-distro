@@ -418,7 +418,11 @@ def env_basic_auth() -> str:
             "A bare token without a username cannot be used — registry "
             "auth requires a token exchange with Basic credentials."
         )
-    return "Basic " + base64.b64encode(raw.encode()).decode()
+    # The variable's own bytes: os.environ decodes them with
+    # surrogateescape, so a password byte that is not UTF-8 is a lone
+    # surrogate here, and strict UTF-8 raised UnicodeEncodeError out of
+    # the pull. os.fsencode() gives back exactly what was set.
+    return "Basic " + base64.b64encode(os.fsencode(raw)).decode()
 
 
 def _require_usable_realm(realm: str, registry: str, insecure: bool) -> None:

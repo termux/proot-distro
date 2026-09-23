@@ -222,3 +222,17 @@ def test_image_env_blocked_membership():
     assert "COLORTERM" in login_env.IMAGE_ENV_BLOCKED
     assert "ANDROID_ROOT" in login_env.IMAGE_ENV_BLOCKED
     assert "FOO" not in login_env.IMAGE_ENV_BLOCKED
+
+
+def test_inject_profile_writes_a_byte_that_is_not_utf8_as_that_byte(
+    tmp_path,
+):
+    # is_exportable judges a value by os.fsencode(), so a lone surrogate
+    # from the escape range -- an image's Env `\udcff`, a --build-arg an
+    # ENV baked in -- is exported, and the snippet used to be encoded
+    # strictly and raise, taking every login and run down. It now holds
+    # the same byte the session's environment does.
+    root = _profile_dir(tmp_path)
+    login_env.inject_termux_profile(str(root), {"X": "a\udcffb"})
+    content = (root / "etc" / "profile.d" / "termux-profile.sh").read_bytes()
+    assert b"export X='a\xffb'" in content

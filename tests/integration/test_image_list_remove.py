@@ -362,3 +362,28 @@ def test_remove_container_rejects_architecture_flag(builders, capsys):
                                        verbose=False, override_arch="x86_64"))
     assert exc.value.code == 1
     assert "--architecture" in capsys.readouterr().err
+
+
+def test_list_quiet_prints_a_hostile_reference_quoted(builders, monkeypatch):
+    # The manifest cache is guest-writable on Termux, so an entry's
+    # reference is anyone's text. A lone surrogate in it (JSON `\udcff`)
+    # raised UnicodeEncodeError out of the strict stdout `--quiet` prints
+    # to, and ESC went to the terminal as it was.
+    import io
+    import sys
+    digest, size, _diff = builders.seed_cached_layer(
+        [{"name": "etc/x", "type": "file", "data": b"x"}]
+    )
+    manifest = {"schemaVersion": 2,
+                "layers": [{"digest": digest, "size": size,
+                            "mediaType": OCI_LAYER_MEDIA}]}
+    save_manifest_cache("evil/\udcffimg:1", "x86_64", manifest, "evil", {})
+    save_manifest_cache("evil/\x1b[31mred:1", "x86_64", manifest, "evil", {})
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(
+        raw, encoding="utf-8", errors="strict", write_through=True))
+    command_list(SimpleNamespace(image=True, quiet=True))
+    out = raw.getvalue().decode("utf-8")
+    assert "evil/\\udcffimg:1" in out
+    assert "evil/\\e[31mred:1" in out
+    assert "\x1b" not in out

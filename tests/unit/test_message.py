@@ -72,6 +72,17 @@ def test_quote_path_escapes_terminal_control_sequences():
     assert message.quote_path("tab\there") == "tab\\there"
 
 
+def test_quote_path_escapes_a_lone_surrogate():
+    # How a byte that is not UTF-8 arrives, from argv, the environment or a
+    # JSON `\\udcff`. stderr renders one as backslashreplace does, which is
+    # where the spelling comes from; stdout is strict and used to raise.
+    assert message.quote_path("a\udcffb") == "a\\udcffb"
+    assert message.quote_path("\ud800") == "\\ud800"
+    message.quote_path("x\udcff\ud800\x1b").encode("utf-8")  # strict: fine
+    # And a backslash spelled out stays distinguishable from the escape.
+    assert message.quote_path("\\udcff") == "\\\\udcff"
+
+
 def test_quote_path_escapes_every_control_byte_and_del():
     quoted = message.quote_path("".join(chr(c) for c in range(0x20)) + "\x7f")
     assert "\x1b" not in quoted

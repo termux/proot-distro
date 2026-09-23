@@ -55,6 +55,15 @@ def test_env_basic_auth_encodes(monkeypatch):
     assert transport.env_basic_auth() == expected
 
 
+def test_env_basic_auth_carries_the_variables_own_bytes(monkeypatch):
+    # os.environ decodes a byte that is not UTF-8 to a lone surrogate, and
+    # strict UTF-8 raised on it out of the pull. The credential is the
+    # bytes the user set.
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:p\udcffss")
+    expected = "Basic " + base64.b64encode(b"alice:p\xffss").decode()
+    assert transport.env_basic_auth() == expected
+
+
 def test_env_basic_auth_requires_colon(monkeypatch):
     monkeypatch.setenv("PD_DOCKER_AUTH", "bare-token-no-colon")
     with pytest.raises(RuntimeError):
