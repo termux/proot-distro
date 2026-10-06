@@ -155,13 +155,55 @@ class _HashingReader:
 
         tarfile stops at the end-of-archive marker, so the tail of the
         *compressed* file is never pulled through on its own — and a
-        digest over a prefix is not a digest over the blob.
+        digest over a prefix is not a digest over the blob. Reading the
+        rest through the underlying file object alone would not feed the
+        hasher: that work has to go through ``self.read`` so every byte
+        that lands in the digest also passed the same code path.
         """
-        while self._fh.read(1 << 20):
+        while self.read(1 << 20):
             pass
 
     def __getattr__(self, name):
         return getattr(self._fh, name)
+
+
+class _OsReader:
+    """Unbuffered file object that draws every byte through os.read().
+
+    Python's ``open(fd, 'rb')`` returns a buffered reader that pre-fetches
+    ahead of what the consumer asks for. tarfile's GzipFile pulls a few
+    hundred compressed bytes, decides the archive is over, and stops
+    asking — but the buffered reader has already drained the rest of the
+    small file into its discard buffer, where a downstream hasher never
+    sees it. The digest then disagrees with the bytes the OS holds. This
+    reader exposes the same ``read``/``readinto`` API straight off the fd
+    so the hash and the extraction consume the same bytes.
+    """
+
+    _CHUNK = 1 << 16
+
+    def __init__(self, fd):
+        self._fd = fd
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            chunks = []
+            while True:
+                c = os.read(self._fd, self._CHUNK)
+                if not c:
+                    break
+                chunks.append(c)
+            return b"".join(chunks)
+        return os.read(self._fd, size)
+
+    def readinto(self, buf):
+        n = os.read(self._fd, len(buf))
+        if n:
+            buf[:n] = bytes(buf[:n])
+        return n
+
+    def close(self):
+        return None
 
 
 def extract_tar_fd_to_rootfs(
@@ -201,7 +243,7 @@ def extract_tar_fd_to_rootfs(
     """
     require_read_support_fd(fd, subject)
     os.lseek(fd, 0, os.SEEK_SET)
-    raw_fh = open(fd, "rb", closefd=False)
+    raw_fh = _OsReader(fd)
     hashing = _HashingReader(raw_fh) if expected_sha256 else raw_fh
     try:
         _extract_stream(
