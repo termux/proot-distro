@@ -1509,7 +1509,20 @@ inode can be truncated and rewritten in place. So `apply_layer` also
 passes the expected hex to `extract_tar_fd_to_rootfs`, which hashes the
 stream **as it is consumed** (`_HashingReader`, plus a `drain()` — tarfile
 stops at the end-of-archive marker, and a digest over a prefix is no
-digest at all) and raises if the total does not match. That check is
+digest at all) and raises if the total does not match. `drain()` has to
+read through the hashing reader's own `read()`: it used to pull the tail
+off the wrapped file, which consumed those bytes and hashed none of them,
+so an intact layer whose gzip tail lay past the last read tarfile made
+was refused with the digest of its prefix. tarfile reads 512 bytes to
+sniff the compression and 10 KiB at a time after that, and Go's gzip
+closes a stream with a few bytes — an empty stored block, the CRC, the
+length — after the deflate body, so a layer a few dozen bytes longer than
+one of those boundaries (523 bytes for a layer of
+`ghcr.io/btwiuse/omarchy-android:0.0.14`, 0.8% of the sizes swept) failed
+to install with "does not match its digest" while its cached blob hashed
+correctly. The buffered reader `open(fd, "rb")` returns is not part of
+that: it hands tarfile the bytes it asks for whatever it prefetched, and
+every byte it hands over passes the hasher. That check is
 after the fact by nature: the members are on the rootfs by the time the
 last byte proves the archive wrong, which is why every caller discards
 the tree on error (`install` removes the container directory, `build`

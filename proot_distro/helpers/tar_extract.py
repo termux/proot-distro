@@ -156,8 +156,16 @@ class _HashingReader:
         tarfile stops at the end-of-archive marker, so the tail of the
         *compressed* file is never pulled through on its own — and a
         digest over a prefix is not a digest over the blob.
+
+        The loop reads through ``self.read``, not the wrapped file: bytes
+        drawn from the file directly are consumed and hash nothing, which
+        left the digest covering only what tarfile had asked for. That is
+        every byte of a gzip layer except the last few when its tar ends
+        inside the first 512-byte read tarfile makes to sniff the
+        compression, e.g. a 523-byte layer failing as "does not match its
+        digest" with the hash of its first 512 bytes.
         """
-        while self._fh.read(1 << 20):
+        while self.read(1 << 20):
             pass
 
     def __getattr__(self, name):
