@@ -109,7 +109,7 @@ Roughly bottom-up. Higher entries import lower ones.
 | `paths.py` | Container layout helpers, `[container:]path` specs, `pin_path()`, overlap checks. |
 | `guestfile.py` | Read a file the way the guest sees it (chroot-style symlink following, capped, FIFO-safe). |
 | `l2s.py` | Rewrite proot link2symlink targets after a rootfs moves. |
-| `shm.py`, `sysdata.py` | Host-side directories bound into the guest as `/dev/shm` and fake `/proc` / `/sys` files. |
+| `shm.py`, `sysdata.py` | Host-side directories bound into the guest as `/dev/shm` and fake `/proc` / `/sys` files. `sysdata` rebuilds the fake `stat` and `uptime` from the host's `/proc/cpuinfo` at every login, so their CPU list matches it. |
 | `session.py` | Session registry: one JSON file per PID, liveness by inherited `flock`. |
 | `arch.py` | CPU detection, ELF probing, QEMU emulator selection, proot binary lookup. |
 | `compress.py` | Everything zstd (usable on Python >= 3.14 only) and the diagnostics when it is missing. |

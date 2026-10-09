@@ -64,16 +64,28 @@ _FAKE_LOADAVG = "0.12 0.07 0.02 2/165 765\n"
 
 _FAKE_OVERFLOW_ID = "65534\n"
 
-_FAKE_STAT = """\
-cpu  1957 0 2877 93280 262 342 254 87 0 0
-cpu0 31 0 226 12027 82 10 4 9 0 0
-cpu1 45 0 664 11144 21 263 233 12 0 0
-cpu2 494 0 537 11283 27 10 3 8 0 0
-cpu3 359 0 234 11723 24 26 5 7 0 0
-cpu4 295 0 268 11772 10 12 2 12 0 0
-cpu5 270 0 251 11833 15 3 1 10 0 0
-cpu6 430 0 520 11386 30 8 1 12 0 0
-cpu7 30 0 172 12108 50 8 1 13 0 0
+# One snapshot row per CPU: the ten counters of a /proc/stat "cpuN" line
+# (user nice system idle iowait irq softirq steal guest guest_nice) in
+# USER_HZ ticks, each CPU about 120 s into a 124 s uptime. fake_stat()
+# lays them over however many CPUs the host has, cycling through the rows
+# when it has more than eight.
+_FAKE_CPU_ROWS = (
+    (31, 0, 226, 12027, 82, 10, 4, 9, 0, 0),
+    (45, 0, 664, 11144, 21, 263, 233, 12, 0, 0),
+    (494, 0, 537, 11283, 27, 10, 3, 8, 0, 0),
+    (359, 0, 234, 11723, 24, 26, 5, 7, 0, 0),
+    (295, 0, 268, 11772, 10, 12, 2, 12, 0, 0),
+    (270, 0, 251, 11833, 15, 3, 1, 10, 0, 0),
+    (430, 0, 520, 11386, 30, 8, 1, 12, 0, 0),
+    (30, 0, 172, 12108, 50, 8, 1, 13, 0, 0),
+)
+_IDLE_COLUMN = 3
+_USER_HZ = 100
+_FAKE_UPTIME_SECONDS = "124.08"
+
+# The counters after the per-CPU lines. None of them depends on how many
+# CPUs there are.
+_FAKE_STAT_TAIL = """\
 intr 127541 38 290 0 0 0 0 4 0 1 0 0 25329 258 0 5777 277 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 ctxt 140223
 btime 1680020856
@@ -83,7 +95,67 @@ procs_blocked 0
 softirq 75663 0 5903 6 25375 10774 0 243 11685 0 21677
 """
 
-_FAKE_UPTIME = "124.08 932.80\n"
+# What the guest's /proc/cpuinfo is read from. The host's: nothing here
+# fakes it, so it is the file fake_stat() has to agree with.
+_CPUINFO = "/proc/cpuinfo"
+
+
+def host_cpu_ids() -> list:
+    """Return the sorted ids of the CPUs /proc/cpuinfo lists.
+
+    The kernel lists the online CPUs there, by the same ids its real
+    /proc/stat uses for ``cpuN`` -- on Android a core that is switched
+    off disappears from both, leaving a gap in the numbering that a
+    ``range()`` would paper over. A kernel whose cpuinfo has no
+    ``processor : N`` lines (some architectures format it differently),
+    or a file that cannot be read, falls back to ``os.cpu_count()``, and
+    to one CPU when even that is unknown, so the list is never empty.
+    """
+    ids = set()
+    try:
+        with open(_CPUINFO, "rb") as fh:
+            for line in fh:
+                key, sep, value = line.partition(b":")
+                value = value.strip()
+                if sep and key.strip() == b"processor" and value.isdigit():
+                    ids.add(int(value))
+    except OSError:
+        pass
+    if not ids:
+        ids = set(range(os.cpu_count() or 1))
+    return sorted(ids)
+
+
+def _cpu_rows(cpus) -> list:
+    """Pair each id in *cpus* (CPU 0 when empty) with its snapshot counters."""
+    return [(cpu, _FAKE_CPU_ROWS[n % len(_FAKE_CPU_ROWS)])
+            for n, cpu in enumerate(cpus or [0])]
+
+
+def fake_stat(cpus) -> str:
+    """Return /proc/stat content with one ``cpuN`` line per id in *cpus*.
+
+    The aggregate ``cpu`` line is the column-wise sum of those lines, as
+    the kernel's is, so a tool that cross-checks the two (or divides one
+    by the other) sees them agree for any number of CPUs.
+    """
+    rows = _cpu_rows(cpus)
+    total = [sum(column) for column in zip(*(row for _cpu, row in rows))]
+    lines = ["cpu  " + " ".join(map(str, total))]
+    for cpu, row in rows:
+        lines.append(f"cpu{cpu} " + " ".join(map(str, row)))
+    return "\n".join(lines) + "\n" + _FAKE_STAT_TAIL
+
+
+def fake_uptime(cpus) -> str:
+    """Return /proc/uptime content consistent with fake_stat(*cpus*).
+
+    The second field is the idle time summed over every CPU, so it is
+    taken from the same rows as the idle column of ``cpu`` in /proc/stat.
+    """
+    idle = sum(row[_IDLE_COLUMN] for _cpu, row in _cpu_rows(cpus))
+    return f"{_FAKE_UPTIME_SECONDS} {idle / _USER_HZ:.2f}\n"
+
 
 _FAKE_VMSTAT = """\
 nr_free_pages 1743136
@@ -266,19 +338,21 @@ direct_map_level3_splits 0
 nr_unstable 0
 """
 
-
-# The fake /proc entries, in the order they are written and bound: the
-# name under sysdata/, the guest path it substitutes for, and the content.
 _FAKE_VERSION = (
     f"Linux version {DEFAULT_FAKE_KERNEL_RELEASE} (proot@termux) "
     f"(gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) "
     f"{DEFAULT_FAKE_KERNEL_VERSION}\n"
 )
 
+# The fake /proc entries, in the order they are written and bound: the
+# name under sysdata/, the guest path it substitutes for, and the content.
+# The content is a string, written once and then left alone, or -- for the
+# entries that describe the CPUs -- a function of the host's CPU ids,
+# which is rewritten whenever its output changes (see setup_fake_sysdata).
 _FAKE_ENTRIES = (
     ("loadavg", "/proc/loadavg", _FAKE_LOADAVG),
-    ("stat", "/proc/stat", _FAKE_STAT),
-    ("uptime", "/proc/uptime", _FAKE_UPTIME),
+    ("stat", "/proc/stat", fake_stat),
+    ("uptime", "/proc/uptime", fake_uptime),
     ("version", "/proc/version", _FAKE_VERSION),
     ("vmstat", "/proc/vmstat", _FAKE_VMSTAT),
     ("sysctl_entry_cap_last_cap", "/proc/sys/kernel/cap_last_cap", "40\n"),
@@ -390,12 +464,75 @@ def _write_if_missing(dir_fd: int, name: str, content: str) -> None:
         os.close(fd)
 
 
+def _holds(dir_fd: int, name: str, data: bytes) -> bool:
+    """True when *name* is a file this module wrote, containing *data*."""
+    try:
+        fd, st = dirfd.open_regular_at(dir_fd, name, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        with os.fdopen(fd, "rb") as fh:
+            fd = None
+            return (_is_own_file(st) and st.st_size == len(data)
+                    and fh.read(len(data) + 1) == data)
+    except OSError:
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _write_current(dir_fd: int, name: str, content: str) -> None:
+    """Make *name* under dir_fd a plain file holding exactly *content*.
+
+    For the entries whose content follows the host (see fake_stat), which
+    unlike _write_if_missing() cannot leave an existing file alone: the
+    CPU count it was written for may no longer be the host's -- an Android
+    kernel takes cores offline and brings them back, and a container's
+    directory can be restored onto another device. A file that already
+    holds *content* is not touched.
+
+    Otherwise the new content goes into a fresh O_EXCL temporary in the
+    same directory and is renamed over the name. rename(2) replaces the
+    directory entry and follows nothing at the destination, so a symlink
+    or a hardlink planted as *name* is swapped out rather than written
+    through, with no window in which the entry is missing or half-written
+    for a session starting at the same moment. A directory in the way
+    makes the rename fail; it is left alone, as _write_if_missing() does.
+    """
+    data = content.encode()
+    if _holds(dir_fd, name, data):
+        return
+    tmp = dirfd.temp_name(name, f".{os.getpid()}.{os.urandom(4).hex()}.tmp")
+    try:
+        fd, _st = dirfd.open_new_at(dir_fd, tmp, 0o644)
+    except OSError:
+        return
+    try:
+        try:
+            view = data
+            while view:
+                view = view[os.write(fd, view):]
+        finally:
+            os.close(fd)
+        os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except OSError:
+        pass
+    finally:
+        # Nothing left under the temporary's name after a rename, and a
+        # failed write or rename (or an interrupt) must not leave it.
+        dirfd.unlink_quietly(dir_fd, tmp)
+
+
 def setup_fake_sysdata(rootfs: str, *, container_fd=None) -> None:
     """Create fake /proc and /sys stubs required by proot on Android.
 
     *rootfs* is the absolute path to the container's rootfs directory
     (e.g. ``$RUNTIME_DIR/containers/<name>/rootfs``).  Fake files are
     written to a sibling ``sysdata/`` directory, not into the rootfs.
+    Most are written once; ``stat`` and ``uptime`` are regenerated for
+    the host's current CPU list, so ``/proc/stat`` always has the same
+    ``cpuN`` lines as the ``/proc/cpuinfo`` the guest reads beside it.
 
     *container_fd* is that sibling's parent -- `containers/<name>` --
     when the caller has pinned it, and a caller that has one must pass
@@ -422,8 +559,12 @@ def setup_fake_sysdata(rootfs: str, *, container_fd=None) -> None:
         empty_fd = _ensure_dir_at(dir_fd, "sys_empty")
         if empty_fd is not None:
             os.close(empty_fd)
+        cpus = host_cpu_ids()
         for name, _real, content in _FAKE_ENTRIES:
-            _write_if_missing(dir_fd, name, content)
+            if callable(content):
+                _write_current(dir_fd, name, content(cpus))
+            else:
+                _write_if_missing(dir_fd, name, content)
     finally:
         os.close(dir_fd)
 

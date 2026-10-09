@@ -17,7 +17,12 @@ from proot_distro import sysdata
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
+    # The CPU entries follow the host's cpuinfo; pin it so the content a
+    # test expects cannot change between the write and the comparison.
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text("".join(f"processor\t: {n}\n\n" for n in range(4)))
+    monkeypatch.setattr(sysdata, "_CPUINFO", str(cpuinfo))
     container = tmp_path / "container"
     rootfs = container / "rootfs"
     rootfs.mkdir(parents=True)
@@ -28,6 +33,13 @@ def env(tmp_path):
 
 def _sysdata(container):
     return container / "sysdata"
+
+
+def _expected(content):
+    # An entry that follows the host's CPUs is a function of their ids.
+    if callable(content):
+        return content(sysdata.host_cpu_ids())
+    return content
 
 
 # --- setup -----------------------------------------------------------------
@@ -41,7 +53,7 @@ def test_setup_creates_the_expected_tree(env):
     assert stat.S_IMODE(sd.stat().st_mode) == 0o700
     assert (sd / "sys_empty").is_dir()
     for name, _real, content in sysdata._FAKE_ENTRIES:
-        assert (sd / name).read_text() == content
+        assert (sd / name).read_text() == _expected(content)
 
 
 def test_setup_keeps_existing_content(env):
@@ -80,7 +92,8 @@ def test_setup_does_not_leave_a_host_file_bound(env):
     sysdata.setup_fake_sysdata(str(rootfs))
 
     assert victim.read_text() == "host secret\n"
-    assert (sd / "stat").read_text() == sysdata._FAKE_STAT
+    assert (sd / "stat").read_text() == sysdata.fake_stat(
+        sysdata.host_cpu_ids())
 
 
 def test_setup_refuses_a_symlinked_sysdata_dir(env):
@@ -154,7 +167,135 @@ def test_setup_steps_over_a_directory_in_the_way(env):
     # Nothing to unlink a directory with here; the entry is left alone
     # and the rest of the tree is still written.
     assert (sd / "loadavg").is_dir()
-    assert (sd / "uptime").read_text() == sysdata._FAKE_UPTIME
+    assert (sd / "uptime").read_text() == sysdata.fake_uptime(
+        sysdata.host_cpu_ids())
+
+
+# The CPU entries are rewritten when the host's CPU list changes, so unlike
+# the others they are replaced on a normal run. The replacement must be as
+# contained as the creation: it renames over the name, never writes through
+# whatever the name currently is.
+
+def _stale(sd, name="stat"):
+    # Content the next setup will find different, forcing a rewrite.
+    (sd / name).write_text("stale\n")
+
+
+def test_refresh_does_not_write_through_a_hardlink(env):
+    container, rootfs, outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    victim = outside / "secret"
+    victim.write_text("host secret\n")
+    (sd / "stat").unlink()
+    os.link(str(victim), str(sd / "stat"))
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert victim.read_text() == "host secret\n"
+    assert victim.stat().st_nlink == 1
+    assert (sd / "stat").stat().st_nlink == 1
+    assert (sd / "stat").read_text() == sysdata.fake_stat(
+        sysdata.host_cpu_ids())
+
+
+def test_refresh_does_not_trust_a_hardlink_with_the_right_content(env):
+    # The content comparison must not turn a linked host file into the
+    # container's own: a victim that already reads as the fake text is
+    # still another name for the host's inode.
+    container, rootfs, outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    victim = outside / "secret"
+    victim.write_text(sysdata.fake_stat(sysdata.host_cpu_ids()))
+    (sd / "stat").unlink()
+    os.link(str(victim), str(sd / "stat"))
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert (sd / "stat").stat().st_nlink == 1
+    assert (sd / "stat").stat().st_ino != victim.stat().st_ino
+    assert victim.stat().st_nlink == 1
+
+
+def test_refresh_does_not_trust_a_symlink_with_the_right_content(env):
+    container, rootfs, outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    victim = outside / "secret"
+    victim.write_text(sysdata.fake_uptime(sysdata.host_cpu_ids()))
+    (sd / "uptime").unlink()
+    os.symlink(str(victim), str(sd / "uptime"))
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert not (sd / "uptime").is_symlink()
+    assert victim.read_text() == sysdata.fake_uptime(sysdata.host_cpu_ids())
+
+
+def test_refresh_replaces_a_symlink_without_following_it(env):
+    container, rootfs, outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    victim = outside / "secret"
+    victim.write_text("host secret\n")
+    (sd / "stat").unlink()
+    os.symlink(str(victim), str(sd / "stat"))
+    (sd / "uptime").unlink()
+    os.symlink(str(outside / "new-host-file"), str(sd / "uptime"))
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert victim.read_text() == "host secret\n"
+    assert not (outside / "new-host-file").exists()
+    assert not (sd / "stat").is_symlink()
+    assert not (sd / "uptime").is_symlink()
+
+
+def test_refresh_does_not_hang_on_a_fifo(env):
+    # Opening a pipe to compare its content would wait for a writer the
+    # guest never provides.
+    container, rootfs, _outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    (sd / "stat").unlink()
+    os.mkfifo(str(sd / "stat"))
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert stat.S_ISREG((sd / "stat").lstat().st_mode)
+    assert (sd / "stat").read_text() == sysdata.fake_stat(
+        sysdata.host_cpu_ids())
+
+
+def test_refresh_steps_over_a_directory_in_the_way(env):
+    container, rootfs, _outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    (sd / "stat").unlink()
+    (sd / "stat").mkdir()
+    (sd / "stat" / "keep").write_text("guest data\n")
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert (sd / "stat" / "keep").read_text() == "guest data\n"
+    assert (sd / "uptime").read_text() == sysdata.fake_uptime(
+        sysdata.host_cpu_ids())
+    # The failed rename took its temporary with it.
+    assert [n for n in os.listdir(str(sd)) if ".tmp" in n] == []
+
+
+def test_refresh_replaces_a_stale_file(env):
+    container, rootfs, _outside = env
+    sysdata.setup_fake_sysdata(str(rootfs))
+    sd = _sysdata(container)
+    _stale(sd)
+
+    sysdata.setup_fake_sysdata(str(rootfs))
+
+    assert (sd / "stat").read_text() == sysdata.fake_stat(
+        sysdata.host_cpu_ids())
+    assert (sd / "stat").stat().st_nlink == 1
 
 
 # --- bindings --------------------------------------------------------------

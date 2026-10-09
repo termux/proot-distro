@@ -1653,6 +1653,12 @@ cp proot_distro/completions/proot-distro.fish \
   cross-repository blob mounting, or chunked uploads. Layers shared
   across repos on the same registry are re-uploaded in full, and a
   failed upload of a large layer must restart from zero.
+- **Fixed system statistics on Termux**: Android blocks some `/proc`
+  files. For those (such as `/proc/stat`, `/proc/uptime`,
+  `/proc/loadavg` and `/proc/vmstat`) a container sees fixed stand-ins,
+  so `top` and `uptime` show a snapshot, not live numbers. The CPU list
+  in `/proc/stat` always follows `/proc/cpuinfo`, so both show the same
+  cores. `--minimal` turns the stand-ins off.
 - **No live state migration**: `backup`/`restore` archive the rootfs
   and the OCI manifest, but in-memory state of running processes is
   not preserved.
