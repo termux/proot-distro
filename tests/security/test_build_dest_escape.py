@@ -116,7 +116,7 @@ def test_workdir_plain_path_is_created_and_chmodded(engine):
 # --- COPY/ADD materialisation ----------------------------------------------
 
 def test_materialise_dir_over_a_symlink_does_not_chmod_the_target(tmp_path):
-    # `_safe_resolve` covers the *parents* of every entry; the final
+    # `safe_resolve_parts` covers the *parents* of every entry; the final
     # component is deliberately left alone so the entry itself is replaced
     # rather than written through. A directory entry has to drop a link
     # standing there for that to hold — os.makedirs(exist_ok=True) is happy

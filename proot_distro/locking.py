@@ -32,10 +32,10 @@
 #     exclusive lock blocks all other locks (shared or exclusive) on
 #     the same name.
 #
-#   BuildLock — keyed by (image_ref, arch). Used by `build` and `push`
-#     to prevent concurrent operations on the same image tag, which
-#     would race on the manifest cache, the build-cache index, and any
-#     --output file. Always exclusive.
+#   BuildLock — keyed by (image_ref, arch). Used by `build`, `push` and
+#     `remove --image` to prevent concurrent operations on the same
+#     image tag, which would race on the manifest cache, the build-cache
+#     index, and any --output file. Always exclusive.
 #
 # The two namespaces never collide because BuildLock files live under
 # RUNTIME_DIR/locks/build/ while ContainerLock files live directly under
@@ -149,9 +149,10 @@ def _locks_dir_fd(parts, create: bool = False):
     has always meant "carry on unlocked". Being *kept* from one is
     _LockPathDenied instead: a `chmod 000` on RUNTIME_DIR or on locks/
     is a thing a container can do, and it must not read as a filesystem
-    that cannot hold locks. Reading raises it too, since a directory
-    that cannot be listed hides holders rather than proving there are
-    none; there, a missing directory is the only "nothing is held".
+    that cannot hold locks. Reading raises LockStateUnknown instead,
+    since a directory that cannot be listed hides holders rather than
+    proving there are none; there, a missing directory is the only
+    "nothing is held".
     """
     if not create:
         return _read_locks_dir_fd(parts)
@@ -738,9 +739,9 @@ class ContainerLock(_FlockBase):
 class BuildLock(_FlockBase):
     """Advisory exclusive lock for a single (image_ref, arch) build target.
 
-    Used by `build` and `push` to prevent concurrent operations on the
-    same image tag from racing on the manifest cache, the build-cache
-    index, and any --output file. The lock key matches the
+    Used by `build`, `push` and `remove --image` to prevent concurrent
+    operations on the same image tag from racing on the manifest cache,
+    the build-cache index, and any --output file. The lock key matches the
     manifest-cache key so the lock identifies the same artifact the
     caller is about to read or write.
 

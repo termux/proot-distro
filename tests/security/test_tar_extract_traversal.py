@@ -124,7 +124,7 @@ def test_symlink_dotdot_target_stays_inside(env):
 
 
 # A hostile archive can point a symlink at an *absolute* path and then write
-# "through" it. The extractor's _safe_resolve walks each parent component
+# "through" it. The extractor's safe_resolve_parts walks each parent component
 # clamped inside the rootfs and re-roots an absolute symlink target at the
 # rootfs (matching proot's runtime view where the guest '/' is the rootfs), so
 # the write is contained instead of escaping to the host. These tests pin that

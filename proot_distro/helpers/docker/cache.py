@@ -21,7 +21,7 @@
 # Architecture: On-disk caches that let pulls and builds run offline.
 # Two caches live side-by-side under BASE_CACHE_DIR:
 #
-#   layers/<digest-with-colon-as-underscore>
+#   oci_layers/<digest-with-colon-as-underscore>
 #       One file per blob, named for the digest of its content. The
 #       name is not evidence: download_blob() verifies a blob it
 #       fetches, but the directory itself is writable by anything that
@@ -39,7 +39,7 @@
 #       last component of it, so every blob is opened -- and an evicted
 #       one unlinked -- as (dir_fd, name) off open_layer_cache_dir().
 #
-#   manifests/<sha256-prefix>.json
+#   oci_manifests/<sha256-prefix>.json
 #       { "image_ref": ..., "arch": ...,
 #         "manifest": ..., "repo": ..., "image_config": ...,
 #         "documents": { "<digest>": "<base64>", ... } }

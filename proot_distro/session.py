@@ -19,9 +19,10 @@
 #
 
 # Architecture: Registry of active proot sessions, surfaced by the `ps`
-# command. A container may run several sessions at once (login/run take a
-# shared container lock), so a single per-container record is not enough —
-# one JSON file per session is written under SESSIONS_DIR, keyed by PID.
+# command and acted on by `kill`. A container may run several sessions at
+# once (login/run take a shared container lock), so a single per-container
+# record is not enough — one JSON file per session is written under
+# SESSIONS_DIR, keyed by PID.
 #
 # Liveness is tracked with the same trick the container lock uses: each
 # session holds an exclusive flock(2) on its own file via a file
@@ -81,9 +82,9 @@ from proot_distro import dirfd, statedir
 from proot_distro.constants import RUNTIME_DIR, SESSIONS_DIR
 from proot_distro.names import is_valid_name
 
-# What `kind` may say. A closed vocabulary, written at the single call
-# site in commands/login, so anything else in that field was not written
-# by this program.
+# What `kind` may say. A closed vocabulary, chosen in the one place
+# commands/login builds the record (foreground and --detach alike), so
+# anything else in that field was not written by this program.
 SESSION_KINDS = ("login", "run")
 
 # The record fields that are plain flags, and their default: `detach`

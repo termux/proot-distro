@@ -21,16 +21,18 @@
 # Architecture: reading a file out of a container the way the *guest*
 # would see it, rather than the way the host resolves a path.
 #
-# Two places need this and both read the same kind of file: `login`, which
-# takes a user's uid/gid/home/shell out of the container's /etc/passwd and
+# Two places need this for the same kind of file: `login`, which takes a
+# user's uid/gid/home/shell out of the container's /etc/passwd and
 # /etc/group before it exec's proot, and the build engine, which resolves
-# USER and COPY --chown against the stage rootfs's own copies. Everything
-# involved is image or guest content — the file, and every directory
-# component leading to it — so the rule is a chroot's: an existing symlink
-# is followed, because a legitimate image ships one (Nix points
-# /etc/passwd at an absolute store path), but an absolute target restarts
-# at the rootfs, a relative one continues from the directory holding the
-# link, and ".." stops at the rootfs.
+# USER and COPY --chown against the stage rootfs's own copies. Architecture
+# detection (arch.py) reads the ELF header of a container's shell binaries
+# the same way, through read_guest_bytes(). Everything involved is image
+# or guest content — the file, and every directory component leading to
+# it — so the rule is a chroot's: an existing symlink is followed,
+# because a legitimate image ships one (Nix points /etc/passwd at an
+# absolute store path), but an absolute target restarts at the rootfs, a
+# relative one continues from the directory holding the link, and ".."
+# stops at the rootfs.
 #
 # The walk that resolves is the walk that opens: components are consumed
 # one at a time off a directory descriptor, so there is no window between
@@ -56,7 +58,8 @@ import stat
 from proot_distro import dirfd
 from proot_distro.l2s import resolve_l2s_target
 
-# Same budget paths._resolve_within_root and tar_extract._safe_resolve use.
+# Same budget paths._resolve_within_root and tar_extract.safe_resolve_parts
+# use.
 _MAX_SYMLINK_HOPS = 40
 
 # How many path components one lookup may consume in total. Forty hops of

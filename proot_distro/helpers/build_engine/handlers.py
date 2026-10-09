@@ -19,7 +19,8 @@
 #
 
 # Architecture: Metadata-only handlers — the Dockerfile instructions
-# whose only side effect is to mutate the in-progress image config.
+# whose only side effect is to mutate the in-progress image config
+# (WORKDIR also creates its directory and records a thin layer for it).
 # Each handler receives the live BuildEngine and the parsed instruction
 # record. The HANDLERS dispatch table at the bottom of this module
 # binds every Dockerfile name to its function (including the RUN and
@@ -185,9 +186,9 @@ def do_workdir(engine, instr):
             f"WORKDIR with empty path at line {instr['lineno']}."
         )
     # Normalised whether or not it is absolute. Only the relative branch
-    # used to be, so `WORKDIR /../../../x` kept its ".." into host_path
-    # below -- and os.makedirs() then created that directory as many
-    # levels above the rootfs as the instruction asked for, anywhere the
+    # used to be, so `WORKDIR /../../../x` kept its ".." in the host path
+    # the directory was then made at -- and os.makedirs() created it as
+    # many levels above the rootfs as the instruction asked for, anywhere the
     # invoking user can write, with a chmod 0755 behind it. The layer
     # picked up a matching "../x" arcname. ".." is resolved against the
     # guest's "/" here, clamping at the image root the way a chroot does

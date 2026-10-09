@@ -25,7 +25,8 @@
 #   build_engine/    — Dockerfile interpreter (FROM/RUN/COPY/...).
 #   docker/          — pure-Python OCI/Docker registry client.
 #   dockerfile.py    — Dockerfile lexer + parser.
-#   download.py      — HTTP GET with progress + retries.
+#   download.py      — HTTP(S) opener (redirect policy, timeouts), retries,
+#                      file download with progress, sha256_file.
 #   layer_diff.py    — rootfs snapshot/diff, layer-tar writer (RUN step).
 #   oci_writer.py    — manifest cache + OCI tarball outputs of `build`.
 #   rootfs.py        — post-extraction rootfs fixups (DNS, hosts, UIDs).

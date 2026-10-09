@@ -120,7 +120,7 @@ def download_blob(
 
 
 def apply_layer(layer_fd: int, rootfs_fd: int, *, digest: str = "") -> None:
-    """Apply one OCI/Docker layer (gzipped tar) into the *rootfs_fd* tree.
+    """Apply one OCI/Docker layer (a tar, compressed or not) into *rootfs_fd*.
 
     Takes the **descriptor** the verification handed back, not a path, so
     the inode read is the one that was hashed (see

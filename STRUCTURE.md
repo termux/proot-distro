@@ -47,7 +47,7 @@ what the command takes (see `locking.py`).
 | Command (aliases) | Module | Does | Lock |
 | --- | --- | --- | --- |
 | `install` (`add`, `i`, `in`, `ins`) | `install.py`, `install_local.py` | Pull a reference, or unpack a local/URL OCI layout or rootfs tarball, into `containers/<name>/`. Writes `manifest.json`. | container, exclusive |
-| `remove` (`rm`) | `remove.py` | Delete a container, or with `--image` a cached image. | container, exclusive |
+| `remove` (`rm`) | `remove.py` | Delete a container, or with `--image` a cached image. | container, exclusive; `--image`: build lock |
 | `rename` | `rename.py` | Rename a container and rewrite its l2s symlinks. | exclusive |
 | `reset` | `reset.py` | Reinstall from the image recorded in `manifest.json`. | exclusive |
 | `login` (`sh`) | `login/` | Start a shell or command inside a container. | container, shared |
@@ -62,7 +62,7 @@ what the command takes (see `locking.py`).
 | `push` | `push.py` | Upload a built image to a registry. | build lock |
 | `ps` | `ps.py` | List live sessions from the session registry. | none |
 | `kill` | `kill.py` | Tear down a session's whole process tree. | none |
-| `clear-cache` (`clear`, `cl`) | `clear_cache.py` | Delete the download cache, or only orphan blobs / the build index. Refuses while an exclusive lock is held. | none |
+| `clear-cache` (`clear`, `cl`) | `clear_cache.py` | Delete the download cache, or only orphan blobs / the build index. The orphan and build-index sweeps refuse while another command holds an exclusive lock. | none taken; sweeps probe for held locks |
 
 `login/` is split by concern:
 
@@ -148,8 +148,8 @@ Installed containers are independent copies and do not reference the cache.
 `containers/<name>/rootfs` as a descriptor. Then either `pull_image` (cache
 check, manifest and index resolution, per-layer download and digest check,
 `apply_layer` -> `tar_extract`) or `install_from_local_file`
-(OCI layout or plain tar). Finally the `rootfs.py` fixups, `sysdata` stubs and
-`manifest.json`. A failed install removes what it made.
+(OCI layout or plain tar). Then `manifest.json`, the `rootfs.py` fixups and
+the `sysdata` stubs. A failed install removes what it made.
 
 **login / run.** Shared lock, then pin the rootfs as a descriptor. `passwd`
 reads the user through `guestfile`. `env`, `bindings`, `sysdata` and `shm`
@@ -214,7 +214,7 @@ rewrite anything under `RUNTIME_DIR` and `BASE_CACHE_DIR`.
 
 ## Tests
 
-The suite (about 1400 tests) is offline and deterministic by default. See
+The suite (about 1900 tests) is offline and deterministic by default. See
 `tests/README.md` for running it and for how isolation works.
 
 | Directory | Covers |

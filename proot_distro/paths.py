@@ -31,7 +31,21 @@
 #       not the same as trusting it: CONTAINERS_DIR is guest-writable on
 #       Termux, so `containers/<name>` is a name a session can leave
 #       behind as a symlink, and every command that creates, fills or
-#       removes a container used to name it.
+#       removes a container used to name it. open_container_pair opens
+#       both, the rootfs descended from the container's own descriptor.
+#
+#   container_is_installed / installed_container_names /
+#   container_entry_lstat
+#       "Is there such a container" decided by that same walk instead of
+#       os.path.isdir() on a composed path. container_entry_lstat is the
+#       odd one out: it is `remove`'s, and reports an entry a guest left
+#       behind that the other two rightly refuse to walk.
+#
+#   open_container_manifest / read_container_manifest /
+#   container_image_config / container_image_origin
+#       containers/<name>/manifest.json, opened as a regular file by
+#       descriptor, read under a size cap and shape-checked field by
+#       field: the file is a stranger's to rewrite on Termux.
 #
 #   container_from_spec / resolve_container_path
 #       Decode the `[container:]path` spec format. The container side is

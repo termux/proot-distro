@@ -23,8 +23,9 @@
 # access. Handles parser directives (only `escape=` changes lexer
 # behaviour), line continuations, full-line comments, JSON exec form
 # detection, here-docs for RUN/COPY/ADD, and per-instruction flag
-# parsing. Variable expansion is intentionally not performed here —
-# the engine does that with the live ARG/ENV scope.
+# parsing. Variable expansion is intentionally not performed while
+# parsing — the engine does that with the live ARG/ENV scope, using
+# expand_vars() at the bottom of this module.
 
 import json
 import re

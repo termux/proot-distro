@@ -22,8 +22,8 @@
 # build engine computes per instruction. A hit means "we have a
 # pre-built layer that matches this exact (parent + instruction +
 # inputs) combination — apply the cached blob instead of re-executing
-# the instruction." Stored under BASE_CACHE_DIR alongside layers/ and
-# manifests/ so a single `clear-cache` removes all build artefacts
+# the instruction." Stored under BASE_CACHE_DIR alongside oci_layers/ and
+# oci_manifests/ so a single `clear-cache` removes all build artefacts
 # together; `clear-cache --build-cache` drops this index alone and lets
 # the layer sweep collect what it was pinning.
 

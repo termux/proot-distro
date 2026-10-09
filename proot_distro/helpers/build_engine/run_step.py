@@ -390,7 +390,11 @@ def _chdir_to(rootfs_fd):
 
 
 def _stdin_file(engine, stdin_input):
-    """The here-doc body as a file to read stdin from, or None.
+    """*stdin_input* as a file for the step to read from, or None.
+
+    do_run passes none today: a here-doc's body travels as the shell's
+    own command argument, so the step reads /dev/null. The plumbing is
+    kept for a step that does have input.
 
     A file rather than a pipe. The step is watched rather than waited on
     (see _wait_for_step), so there is no communicate() left to feed a

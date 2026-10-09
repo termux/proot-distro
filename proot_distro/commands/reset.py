@@ -20,10 +20,11 @@
 
 # Architecture: Rebuilds a container rootfs from the image reference stored
 # in containers/<name>/manifest.json. The rootfs/ subdirectory and the
-# shm/ scratch store are removed; manifest.json is preserved and re-used
-# by install. Containers
-# without a manifest (plain tarball installs, legacy rootfs) are rejected —
-# reset requires an OCI image_ref to know what to pull.
+# shm/ scratch store are removed; the image reference and architecture are
+# read from manifest.json and handed to install, which writes a fresh one.
+# Containers without a recorded image reference (plain tarball installs,
+# legacy rootfs) are rejected — reset requires an OCI image_ref to know
+# what to pull.
 
 import sys
 from types import SimpleNamespace

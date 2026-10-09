@@ -19,8 +19,9 @@
 #
 
 # Architecture: Constants used across the build_engine subpackage —
-# Dockerfile flag tables and `needs_proot()` for the CLI's startup
-# probe. No I/O, no imports of sibling submodules: this is a leaf.
+# the predefined ARG names, the instructions whose values are expanded,
+# and `needs_proot()`, which `build` asks before it requires proot. No
+# I/O, no imports of sibling submodules: this is a leaf.
 
 
 # Predefined ARG keys that are always visible without explicit
@@ -33,8 +34,10 @@ PREDEFINED_ARGS = frozenset({
     "http_proxy", "https_proxy", "no_proxy", "ftp_proxy", "all_proxy",
 })
 
-# Instructions whose argument values undergo variable expansion before
-# dispatch (everything except CMD/ENTRYPOINT/RUN exec-form payloads).
+# Instructions whose shell-form argument values undergo variable
+# expansion before dispatch (the engine skips an exec-form payload). CMD,
+# ENTRYPOINT, RUN, SHELL, HEALTHCHECK and ONBUILD are not listed: the
+# shell expands those when they run, not the build.
 EXPANDS_VARS = frozenset({
     "ADD", "ARG", "ENV", "EXPOSE", "FROM", "LABEL", "STOPSIGNAL",
     "USER", "VOLUME", "WORKDIR", "COPY",

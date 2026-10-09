@@ -18,7 +18,11 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: openat(2)-based filesystem walking for `copy` and `sync`.
+# Architecture: openat(2)-based filesystem access. Born for `copy` and
+# `sync`, it is now the layer under every command that touches container,
+# image or cache content: the state-directory walk (statedir.py), atomic
+# writes, locks, sessions, `backup`, `remove`, layer extraction and the
+# build engine all build on it.
 #
 # Every helper here names a file as (directory fd, entry name) instead of
 # as a path, and opens directories with O_NOFOLLOW. Path-based walking
@@ -33,7 +37,7 @@
 # Note that Linux reports O_NOFOLLOW|O_DIRECTORY on a symlink as ENOTDIR,
 # not ELOOP, so REFUSED covers both.
 #
-# Two rules here are easy to break by accident, because in both cases the
+# Three rules here are easy to break by accident, because in each case the
 # obvious call looks fd-based but is not proof against a planted entry:
 #
 #   - chmod. Linux has no AT_SYMLINK_NOFOLLOW for fchmodat(2), so naming an
@@ -53,8 +57,10 @@
 #     creates a *new* inode instead — open_new_at() is O_EXCL, and a
 #     destination that may already exist is renamed into place.
 #
-# Directory fds are closed as each recursion unwinds, so the number open
-# at any moment is the depth of the tree, not its size.
+# The tree walks keep their directories on an explicit stack rather than
+# in recursion, and Levels (below) parks the shallow ones, so the number
+# of fds open at any moment depends on neither the depth of the tree nor
+# its size.
 
 import errno
 import os
@@ -1001,7 +1007,7 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
     copied, which is then stepped over: one unreadable file or directory
     in a tree must not end the transfer, since the point of the command
     is usually to save what *can* be saved. That is `cp -r`'s behaviour
-    (and rsync's, and this module's own `sync`), where letting the error
+    (and rsync's, and the `sync` command's), where letting the error
     propagate stopped at the first locked directory and left everything
     after it uncopied. A caller with no on_error still gets the exception,
     so nothing silently swallows an error by default.
@@ -1012,7 +1018,8 @@ def copy_tree_at(src_dir_fd: int, dst_dir_fd: int, *, rel: str = "",
     interpreter's own stack and end the command in a traceback, since
     RecursionError is not an OSError and no caller's net caught it. One
     frame per level holds that level's two fds and the entries it has
-    left, so the fds open at any moment are still the depth of the tree.
+    left, and Levels parks the shallow ones, so the fds open at any
+    moment stay bounded however deep the tree goes.
     """
     # Frame layout: [src_fd, dst_fd, rel, pending names, src_st, owned].
     # src_st is the source directory's lstat, applied to the destination

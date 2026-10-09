@@ -106,7 +106,7 @@ def build_manifest_and_config(image_config, layers, arch_name):
 
 
 # ---------------------------------------------------------------------------
-# Variant A — store the manifest in dlcache so install can find it
+# Variant A — store the manifest in the manifest cache so install can find it
 # ---------------------------------------------------------------------------
 
 def store_in_cache(image_ref, arch_name_pd, manifest, image_config):

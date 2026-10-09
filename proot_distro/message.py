@@ -28,8 +28,8 @@
 # taken over by another process for interactive input — e.g., the pinentry
 # triggered by piping a backup into 'gpg -c'. In that state any of our
 # writes (info lines, progress bars) would land on top of the other
-# program's display. msg() and the backup progress bar consult this so
-# that piping into curses/no-echo consumers stays clean.
+# program's display. msg() and the progress bars (progress.py) consult
+# this so that piping into curses/no-echo consumers stays clean.
 #
 # A process-global "quiet" flag is also exported: set_quiet(True) (called
 # by command handlers when --quiet was passed) makes is_quiet() return True
@@ -152,7 +152,7 @@ def terminal_width(default: int = 80) -> int:
     """Return the terminal's column count, or *default* when unknown.
 
     stderr is probed first because that is where the commands that lay
-    out columns (`ps`, `list --image`) render; stdout is the fallback
+    out columns (`ps`, `list --image`, `search`) render; stdout is the fallback
     for the case where only it is still attached to the terminal.
     """
     for fd in (2, 1):
@@ -242,14 +242,15 @@ _QUOTE_MAP = {
 def quote_path(text: str) -> str:
     """Render *text* printable, C-style escapes for control characters.
 
-    Names inside a container rootfs are chosen by whoever controls the
-    guest, and `copy` and `sync` print them freely: `--verbose` logs every
-    entry, the skip warning names the file it passed over, and an OSError
-    carries the name it failed on. A name holding ESC repaints the
+    Names inside a container rootfs, an archive, an image's metadata or a
+    registry's reply are chosen by whoever controls that content, and the
+    commands print them freely: `copy` and `sync` log every entry under
+    `--verbose`, the skip warning names the file it passed over, and an
+    OSError carries the name it failed on. A name holding ESC repaints the
     terminal, hides the lines around it, or hands the emulator whatever
     sequence follows it, so nothing below 0x20 — nor DEL — is allowed
     through literally. Backslash is escaped too, so an escape this produced
-    cannot be confused with those three characters spelled out in a name.
+    cannot be confused with the same characters spelled out in a name.
 
     A lone surrogate is escaped as well, as `\\udcff`. It is how a byte
     that is not UTF-8 arrives -- out of argv, the environment, or a JSON

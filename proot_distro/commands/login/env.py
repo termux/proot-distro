@@ -22,6 +22,9 @@
 #
 #   - read_manifest_env: harvest Env entries from containers/<name>/manifest.json
 #   - IMAGE_ENV_BLOCKED: vars an image Env may NOT override.
+#   - image_env_pairs: the (key, value) pairs those entries may become,
+#     once IMAGE_ENV_BLOCKED, the LD_*/PROOT_* namespaces and anything
+#     execve(2) could not take are refused.
 #   - identity_env_pairs: the variables that tell a guest which container
 #     it is in and which image that container came from.
 #   - inject_termux_profile: drop a profile.d snippet that re-exports

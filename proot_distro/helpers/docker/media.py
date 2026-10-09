@@ -19,7 +19,8 @@
 #
 
 # Architecture: All OCI / Docker mediaType strings used across the
-# pull and push pipelines. Keeping them in one module avoids the
+# pull and push pipelines, and the canonical JSON form that manifests and
+# configs are hashed in. Keeping them in one module avoids the
 # silent divergence that would happen if oci_writer.py and push.py
 # each defined their own copies.
 

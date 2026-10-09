@@ -26,8 +26,8 @@
 #
 # A small _PdArgumentParser subclass exists so per-command parsers can
 # stamp their canonical command name onto each instance — the value
-# is consumed by the runtime error handler in cli.py to render the
-# right help page when argparse rejects an argument.
+# is consumed by its own error() override to render the right help
+# page when argparse rejects an argument.
 
 import argparse
 import sys
@@ -37,14 +37,19 @@ from proot_distro.message import msg, crit_error
 
 
 class _PdArgumentParser(argparse.ArgumentParser):
-    """Argparse subclass that defers errors to the CLI dispatcher."""
+    """Argparse subclass that reports a parse error as our own message.
+
+    Instead of argparse's usage dump, error() prints the message through
+    crit_error(), then the help page of the command named by
+    `_pd_command` (when one was stamped), and exits with status 1.
+    """
 
     _pd_command: "str | None" = None
 
     def error(self, message: str) -> None:
-        # Late import to avoid an import cycle: parser.py is imported by
-        # cli.py, and the per-command help renderer indirectly imports
-        # cli.py via HELP_COMMANDS's references.
+        # Imported here rather than at module level: the help pages are
+        # needed only on this error path, so building a parser does not
+        # pay for loading them.
         from proot_distro.commands.help import HELP_COMMANDS
 
         msg()

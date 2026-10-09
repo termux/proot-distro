@@ -19,7 +19,7 @@
 #
 
 # Architecture: Shared TTY progress-bar primitives. Every long-running
-# command (install, backup, restore, sync, build, push) draws the same
+# command (install, backup, restore, copy, sync, build, push) draws the same
 # style of bar — a 20-cell `[####----] NN% A / B` line on stderr,
 # anchored by '\r' and erased with '\033[K'. Centralising the format
 # here removes ~7 near-identical copies and ensures a single place to

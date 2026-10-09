@@ -21,8 +21,9 @@
 # Architecture: Post-extraction rootfs fixup helpers. Each function targets a
 # single aspect of Termux/Android integration (resolv.conf, /etc/hosts,
 # Android UIDs). Kept separate from the install command so the same fixups
-# can be applied by other entry points (e.g. restore). No subprocess calls
-# here — only Python standard-library filesystem operations.
+# can be applied by other entry points (the build engine writes
+# resolv.conf and /etc/hosts into each stage it creates). No subprocess
+# calls here — only Python standard-library filesystem operations.
 #
 # Everything here runs against a rootfs that was just unpacked from an
 # image the user named but did not write, so every entry these functions

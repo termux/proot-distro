@@ -18,16 +18,16 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: CLI entry point. Most of the heavy lifting now lives
+# Architecture: CLI entry point. Most of the heavy lifting lives
 # elsewhere:
 #
 #   parser.py             — argparse construction + ALIAS_TO_CANONICAL.
 #   commands/help/        — HELP_COMMANDS dispatcher + per-command pages.
 #   commands/*            — one module (or subpackage) per subcommand.
 #
-# main() routes signals, checks the runtime environment (root warn,
-# nested-proot rejection, proot probe), runs the parser, validates
-# required positionals, and dispatches to the matching command.
+# main() routes signals, checks the runtime environment (nested-proot
+# rejection, proot probe), runs the parser, validates required
+# positionals, and dispatches to the matching command.
 
 import os
 import shutil
@@ -120,7 +120,10 @@ def _refuse_nested_proot() -> None:
 
 
 def ensure_proot_installed() -> None:
-    """Verify proot is on PATH; offer to install it on Termux (TTY only).
+    """Verify proot is usable; offer to install it on Termux (TTY only).
+
+    A PD_PROOT_BIN override is validated by get_proot_bin() and nothing
+    else is probed; without one, proot must be on PATH.
 
     Exits the process when proot is unavailable and cannot be installed
     (or the user declines the offer). Shared by the startup probe and by
@@ -173,7 +176,7 @@ def ensure_proot_installed() -> None:
 
 
 def _ensure_proot_available(first_canonical: str) -> None:
-    """Verify proot is on PATH; offer to install it on Termux.
+    """Run the startup proot probe (see ensure_proot_installed).
 
     `build` and `push` are exempt from this startup probe: `build` may
     run a Dockerfile with no RUN instructions in pure-Python mode, and

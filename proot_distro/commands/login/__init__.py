@@ -26,6 +26,8 @@
 #   passwd.py    — user/group resolution against the rootfs.
 #   bindings.py  — Android storage and system --bind args.
 #   env.py       — image Env reading + /etc/profile.d injection.
+#   proot_cmd.py — assembles the proot argv (build_proot_args).
+#   detach.py    — --detach: double-fork daemonisation.
 #   migrate.py   — legacy installed-rootfs migration.
 #   quoting.py   — POSIX double-quoting for --get-proot-cmd.
 

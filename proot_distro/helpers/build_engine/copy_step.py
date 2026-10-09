@@ -19,8 +19,9 @@
 #
 
 # Architecture: The COPY and ADD handlers. Each instruction produces
-# exactly one layer assembled from a file_map (arcname -> entry dict)
-# that is also materialised onto the rootfs at the same time. Sources
+# one layer (none when nothing matched) assembled from a file_map
+# (arcname -> entry dict) that is also materialised onto the rootfs at
+# the same time. Sources
 # may be the build context, another stage (--from=<stage>), an external
 # image (--from=<image:tag>), or — for ADD — an HTTP/HTTPS URL.
 #
@@ -29,8 +30,9 @@
 # then every regular member of an auto-extracted archive, all of them live
 # at the same time — into RAM, and a single instruction could take the
 # build process out. Content that does not already exist as a file is
-# spooled into engine.tmp_root and referenced by path, which is where it
-# was headed anyway: the instruction both materialises it into the rootfs
+# spooled into the build's scratch root (the add-spool directory, see
+# _Spool) and referenced like any other file, which is where it was
+# headed anyway: the instruction both materialises it into the rootfs
 # and packs it into a layer, and tmp_root is removed when the build ends.
 #
 # No entry names a path to read, either. A source is resolved beneath the
@@ -933,9 +935,9 @@ def _materialise_files(rootfs_dir, file_map, *, rootfs_fd=None):
     component re-pointed in between — by a background process an earlier
     RUN left running, which off Termux nothing kills — sent the whole
     instruction wherever the new link led. The parent is therefore
-    re-walked off a descriptor (dirfd.opendir_under, O_NOFOLLOW per
-    level, creating what is missing) and the entry itself is written as
-    (dir_fd, name).
+    re-walked off a descriptor (dirfd.descend_at from the pinned rootfs,
+    or dirfd.opendir_under without one; O_NOFOLLOW per level, creating
+    what is missing) and the entry itself is written as (dir_fd, name).
 
     The final component is deliberately not resolved, so we replace the
     entry itself and never a same-named symlink's target — which means

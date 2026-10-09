@@ -162,7 +162,8 @@ def open_tar_writer(output_path, fileobj=None, level: int = ZSTD_LEVEL):
     Exactly one of *output_path* (a file to create) and *fileobj* (an
     already-open binary stream) is used; the file is opened here so both
     cases share the single `w|` code path that lets *level* apply — see
-    the module docstring for why tarfile's own `w|zst` cannot.
+    the Architecture note at the top of this module for why tarfile's own
+    `w|zst` cannot.
     """
     require_write_support()
     with ExitStack() as stack:

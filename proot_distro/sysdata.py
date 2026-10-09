@@ -19,10 +19,11 @@
 #
 
 # Architecture: Supplies fake /proc and /sys content that proot bind-mounts
-# read-only into the container. Android restricts or blocks several /proc
-# files; providing static replacements ensures distro tools that read them
-# (top, htop, etc.) work correctly. The fake files live under
-# containers/<name>/sysdata/ so they are removed together with the container.
+# over the real entries in the container. Android restricts or blocks
+# several /proc files; providing static replacements ensures distro tools
+# that read them (top, htop, etc.) work correctly. The fake files live
+# under containers/<name>/sysdata/ so they are removed together with the
+# container.
 #
 # That directory is guest-writable: on Termux it sits under $TERMUX_PREFIX,
 # which is bound read-write into every non-isolated container, so a session
@@ -461,6 +462,9 @@ def _open_sysdata_dir(rootfs: str, container_fd):
 
 def fake_sysdata_bindings(rootfs: str, *, container_fd=None) -> list:
     """Return --bind args for the fake /proc and /sys entries of *rootfs*.
+
+    A /proc entry the host can already read is left alone, so a stub
+    stands in only where the real file is blocked or missing.
 
     Only entries this module could verify are bound: sys_empty as a real
     directory, each /proc substitute as a plain file with one link -- a

@@ -20,8 +20,12 @@
 
 # Architecture: Single source of truth for the container-name format rule.
 # Used by every command that accepts a container name (install, remove,
-# rename, reset, login, run, backup, restore) plus the build command's
-# --install-as / -t/--tag aliases. Centralising the regex prevents drift
+# rename, reset, login, run, backup, restore, kill), by `build` for
+# --install-as and for the tag it derives from the build directory's name
+# (an explicit -t/--tag is an image reference, held to Docker's grammar in
+# helpers/docker/refs.py instead), and by the layers that read a name back
+# from disk: the `[container:]path` specs, the container listing and the
+# session registry's records. Centralising the regex prevents drift
 # between modules that would otherwise each copy the same pattern.
 
 import re

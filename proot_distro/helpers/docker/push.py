@@ -312,8 +312,9 @@ def _put_manifest(
 def _strip_private_keys(d: dict) -> dict:
     """Return a shallow copy of *d* without keys starting with '_'.
 
-    `_get_manifest` stuffs the response Content-Type into `_ct` for
-    internal use; that key must not be serialised back to the registry.
+    pull's `_parse_manifest` stuffs the media type into `_ct` for
+    internal use, and the manifest cache keeps it; that key must not be
+    serialised back to the registry.
     """
     return {k: v for k, v in d.items() if not k.startswith("_")}
 

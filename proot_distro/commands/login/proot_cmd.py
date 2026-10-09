@@ -28,7 +28,8 @@
 #   4. --rootfs / --cwd / baseline /dev /proc /sys binds.
 #   5. Optional non-minimal binds: /dev/random etc., Android storage,
 #      Android system paths, Termux $HOME / $PREFIX bridges.
-#   6. User-supplied --bind entries (with overlap warning).
+#   6. User-supplied --bind entries (with overlap warning), then -p when
+#      ports are redirected.
 #   7. Inner command (shell or run-mode inner argv).
 
 import os

@@ -36,7 +36,7 @@
 #   - Members containing ".." or empty components after strip are
 #     dropped so a crafted archive cannot escape the rootfs. Interior "."
 #     components are kept (OCI layers commonly use "./foo" paths) and
-#     _safe_resolve drops them on the way through; a *trailing* one is
+#     safe_resolve_parts drops them on the way through; a *trailing* one is
 #     dropped with the member, since it names the parent directory rather
 #     than an entry and the writers would have acted on that.
 #   - A whiteout deletes the name after its ".wh." prefix, and that name
@@ -73,13 +73,14 @@
 #   - Hard-link targets (member.linkname) get the same filtering and
 #     clamped resolution as member.name. Without it a malicious archive
 #     could set linkname to "../../etc/shadow" (or route it through a
-#     planted symlink) and we'd shutil.copy2 the host's file into a
+#     planted symlink) and we'd copy the host's file into a
 #     member-defined dest inside the rootfs.
 #   - Hard links are deferred until every regular file has been
 #     written, then both endpoints are re-resolved (so a symlink
 #     planted *after* the link member can't redirect the copy) and
-#     copied with shutil.copy2 so the link source definitely exists and
-#     mtime survives the round-trip.
+#     copied with dirfd.copy_file_at (shutil.copy2 against descriptors)
+#     so the link source definitely exists and mtime survives the
+#     round-trip.
 #   - Directory mtimes are stamped last (writing into a dir bumps its
 #     mtime, so this must follow all writes).
 #   - Directories get at least S_IRWXU so subsequent writes succeed
@@ -116,7 +117,8 @@ def extract_tar_to_rootfs(
     the inode the caller validated rather than a name it can be asked
     to resolve again. The caller owns the descriptor.
 
-    See module docstring for the shared invariants. The function
+    See the Architecture note at the top of this module for the shared
+    invariants. The function
     consumes a compressed-or-not tar stream via tarfile's `'r|*'`
     auto-detect, so it works for raw tar, .tar.gz, .tar.bz2, .tar.xz,
     .tar.zst (Python 3.14+), and a Docker/OCI layer blob alike.
@@ -380,8 +382,9 @@ def _process_member(member, tf, rootfs_fd, parents, *, strip,
         return
 
     # Resolve the destination's parent through any pre-existing symlink
-    # components, clamping every hop inside the rootfs (see module
-    # docstring). The final component is deliberately *not* followed so
+    # components, clamping every hop inside the rootfs (see the
+    # Architecture note at the top). The final component is deliberately
+    # *not* followed so
     # we operate on the entry itself, never on whatever a same-named
     # symlink points at.
     parent_parts = safe_resolve_parts_at(rootfs_fd, rel_parts[:-1])
@@ -507,7 +510,7 @@ def _defer_hardlink(member, strip, rel_parts, deferred_links):
     are stripped, the first `strip` components dropped, and any ".." or
     empty component drops the entry. Without this a malicious archive
     could point linkname at a host path (e.g. "../../etc/shadow") and
-    shutil.copy2 would resolve it through the rootfs prefix, copying
+    the copy would resolve it through the rootfs prefix, copying
     host content into the member-defined dest inside the rootfs.
 
     Only the (validated) relative components of both endpoints are

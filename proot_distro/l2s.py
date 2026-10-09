@@ -30,6 +30,11 @@
 # user Ctrl-C's mid-walk we'd leave the container in a half-rewritten
 # state where some inner files point at a now-missing path. Instead the
 # signal handler prints a warning and the walk continues to completion.
+#
+# It also holds the read side that callers packing or inspecting a rootfs
+# (backup, the build engine, guestfile) need: resolve_l2s_target()
+# recognises a stand-in and confines its target to the rootfs, and
+# open_l2s_backing() opens what it names without trusting the path.
 
 import os
 import signal

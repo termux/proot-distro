@@ -22,7 +22,9 @@
 # machine-specific knowledge (ELF header parsing, QEMU binary names, 32-bit
 # support probing) in one place so the rest of the codebase stays
 # arch-agnostic. detect_installed_arch() accepts a rootfs path so callers
-# are not coupled to the container storage layout.
+# are not coupled to the container storage layout. The proot binary itself
+# is located here too (get_proot_bin), since the emulator and proot paths
+# are made absolute for the same reason.
 
 import ctypes
 import os
@@ -219,7 +221,7 @@ _QEMU_PKGS = {
 def get_proot_bin() -> str:
     """Return the absolute path of the proot executable, or exit.
 
-    A set override is validated like --emulator: it must point at an
+    A set PD_PROOT_BIN is validated like --emulator: it must point at an
     existing, executable file, or the process exits with an error.
     Unset falls back to the PATH lookup for "proot".
 

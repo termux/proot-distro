@@ -62,9 +62,10 @@
 #
 # The work is three passes over the tree: _collect_rels counts entries
 # and records the source's relative paths, _mirror_at writes, and (with
-# --delete) _collect_extras_at / _remove_extras_at prune. All three carry
-# directory fds down the recursion and close them as it unwinds, so the
-# number of open fds is the depth of the tree rather than its size.
+# --delete) _collect_extras_at / _remove_extras_at prune. All three walk
+# with an explicit stack of directory fds rather than by recursion, and
+# dirfd.Levels parks the shallow levels, so the number of open fds stays
+# bounded however deep or large the tree is.
 
 import os
 import stat
@@ -86,7 +87,7 @@ _TMP_SUFFIX = ".~pd_sync"
 
 
 class _Ctx:
-    """State threaded through the recursive passes."""
+    """State threaded through the passes over the tree."""
 
     def __init__(self, src_root, dest_spec, verbose, use_checksum):
         self.src_root = src_root

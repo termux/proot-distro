@@ -8,8 +8,9 @@
 #
 # paths.pin_path() re-walks the resolved components with O_NOFOLLOW and holds
 # the directory fd open, which both detects a swap (ELOOP -> abort) and pins
-# what it validated (the fd names an inode, not a name). open_pinned_leaf()
-# covers the final component the fd cannot.
+# what it validated (the fd names an inode, not a name). The final component
+# the fd cannot cover is opened as (pin.dir_fd, pin.leaf) with O_NOFOLLOW
+# (dirfd.open_file_at / open_regular_at).
 #
 # These tests drive the swap deterministically rather than racing for it.
 

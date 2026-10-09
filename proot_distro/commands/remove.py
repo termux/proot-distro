@@ -26,8 +26,9 @@
 #   --image   — a cached OCI image: its manifest-cache entry plus every
 #               layer blob no remaining cached image still references.
 #               Installed containers are untouched — their rootfs is an
-#               independent copy — but `reset` will need the network
-#               again, which the summary points out.
+#               independent copy, and the summary names those that were
+#               installed from the image — but `reset` will need the
+#               network again.
 #
 # An image identifier is a reference ('ubuntu:24.04', tag defaulting to
 # ':latest'), an image ID prefix as shown by `list --image`, or a cache
