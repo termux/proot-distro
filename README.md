@@ -249,6 +249,23 @@ When the env var is set, the authentication progress line notes
 `(user credentials)` so you can confirm your credentials are being
 picked up.
 
+**Pull rate limits.** Registries limit how often you may pull. Docker
+Hub counts anonymous pulls per network address, and mobile or shared
+networks give one address to many people. When a registry answers
+"too many requests" (HTTP 429), the install stops and tells you when to
+try again, if the registry says. Pulling with an account
+(`PD_DOCKER_AUTH`) gets a limit of its own.
+
+Some registries only pass requests on to Docker Hub, for example
+`docker.n8n.io`. Everyone pulling through them anonymously shares one
+Docker Hub limit, so it is often used up. The error message names the
+image's Docker Hub name; install from there instead:
+
+```sh
+# Instead of docker.n8n.io/n8nio/n8n:latest
+proot-distro install n8nio/n8n:latest
+```
+
 Layers are cached in `$BASE_CACHE_DIR/oci_layers/` and reused on
 subsequent installs. If both the resolved manifest (cached in
 `$BASE_CACHE_DIR/oci_manifests/`) and all of its layers are already

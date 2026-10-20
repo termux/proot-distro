@@ -34,9 +34,13 @@
 # And no request waits forever: the opener gives every one of them
 # NETWORK_TIMEOUT unless its caller names a timeout of its own.
 
+import datetime
+import email.utils
 import hashlib
 import http.client
+import math
 import os
+import re
 import ssl
 import time
 import urllib.error
@@ -52,6 +56,7 @@ from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 __all__ = (
     "IncompleteResponse",
     "InvalidRequest",
+    "MAX_RETRY_AFTER",
     "NETWORK_ERRORS",
     "NETWORK_TIMEOUT",
     "RedirectPolicyHandler",
@@ -67,6 +72,7 @@ __all__ = (
     "is_retryable_http_error",
     "new_request",
     "require_complete_body",
+    "retry_after",
     "retry_http",
     "sha256_file",
 )
@@ -478,6 +484,72 @@ def is_plaintext_http_tls_error(exc: urllib.error.URLError) -> bool:
     return (getattr(reason, "reason", None) or "") in _PLAINTEXT_HTTP_TLS_REASONS
 
 
+# The longest Retry-After this program waits out, in seconds.
+#
+# A 429 Too Many Requests or a 503 Service Unavailable may say when to
+# come back (RFC 6585 section 4, RFC 9110 section 10.2.3), and coming
+# back sooner only earns the same refusal: retry_http waits at least
+# that long. A longer wait is not one a command should sit through in
+# silence -- a quota that refills in an hour is for the user to wait
+# out or get around -- so such an answer is reported at once.
+MAX_RETRY_AFTER = 60
+
+# Where a server reports what is left of its request quota: the IETF
+# draft's header (draft-ietf-httpapi-ratelimit-headers) and its de facto
+# X- predecessor. Docker Hub sends both, as `0;w=3600` -- nothing left in
+# a one-hour window -- and GitHub the second alone, as a bare count.
+_QUOTA_REMAINING_HEADERS = ("RateLimit-Remaining", "X-RateLimit-Remaining")
+_QUOTA_SPENT_RE = re.compile(r"0+[ \t]*(?:;|\Z)")
+_DELTA_SECONDS_RE = re.compile(r"[0-9]+")
+
+# The statuses whose Retry-After decides the retry. The header is the
+# server's text on any answer, but these two are the ones defined to
+# mean "come back then"; on a 500 it decides nothing, and a wait taken
+# from it would be one no cap was ever applied to.
+_RETRY_LATER_CODES = (429, 503)
+
+
+def retry_after(exc: BaseException):
+    """Seconds the Retry-After of HTTP error *exc* asks to wait, or None.
+
+    Both forms of the header are read: delta-seconds, and an HTTP-date
+    (one already past is a wait of 0). None is a server that said
+    nothing about when -- no header, not an HTTP error, a value that is
+    neither form -- which is not the same as a server that said "now".
+    A number too large for a float is infinity, never an exception: the
+    header is the server's text.
+    """
+    if not isinstance(exc, urllib.error.HTTPError) or exc.headers is None:
+        return None
+    value = exc.headers.get("Retry-After")
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if _DELTA_SECONDS_RE.fullmatch(value):
+        return float(value)
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        # TypeError is what 3.9 raises for a string that is no date.
+        return None
+    if when.tzinfo is None:
+        # `-0000`: UTC, said in a way that leaves the zone unstated.
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return max(0.0, (when - now).total_seconds())
+
+
+def _quota_spent(exc: urllib.error.HTTPError) -> bool:
+    """Whether HTTP error *exc* reports its request quota used up."""
+    if exc.headers is None:
+        return False
+    for name in _QUOTA_REMAINING_HEADERS:
+        value = exc.headers.get(name)
+        if isinstance(value, str) and _QUOTA_SPENT_RE.match(value.strip()):
+            return True
+    return False
+
+
 def is_retryable_http_error(exc: BaseException) -> bool:
     """Return True if a failed HTTP request is worth retrying.
 
@@ -490,9 +562,20 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     Everything else — 5xx server errors, connection resets, timeouts, DNS
     failures, and a response body that ended early — is treated as transient
     and retried.
+
+    "Later" is the server's to say. A 429 or 503 whose Retry-After asks
+    for more than MAX_RETRY_AFTER is not retried, and neither is a 429
+    that names no time but reports its quota spent: a registry's pull
+    quota refills over hours, so retrying it seconds apart only delays
+    the same failure.
     """
     if isinstance(exc, urllib.error.HTTPError):
-        return not (400 <= exc.code < 500 and exc.code not in (408, 429))
+        if exc.code in _RETRY_LATER_CODES:
+            wait = retry_after(exc)
+            if wait is not None:
+                return wait <= MAX_RETRY_AFTER
+            return not (exc.code == 429 and _quota_spent(exc))
+        return not (400 <= exc.code < 500 and exc.code != 408)
     if isinstance(exc, urllib.error.URLError):
         if is_cert_verification_error(exc) or is_plaintext_http_tls_error(exc):
             return False
@@ -520,6 +603,10 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
     retrying or logging — so the caller can translate it into a meaningful
     message. The original exception is likewise re-raised once every attempt is
     spent. *what* is a short label for the retry log line.
+
+    The wait between attempts is *retry_delay*, or the Retry-After of a
+    429 or 503 when that is longer -- is_retryable_http_error has already
+    refused one past MAX_RETRY_AFTER, and the wait is held to it anyway.
     """
     for attempt in range(max_retries):
         try:
@@ -529,11 +616,19 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
         except NETWORK_ERRORS as exc:
             if not is_retryable_http_error(exc) or attempt >= max_retries - 1:
                 raise
+            delay = retry_delay
+            wait = None
+            if (isinstance(exc, urllib.error.HTTPError)
+                    and exc.code in _RETRY_LATER_CODES):
+                wait = retry_after(exc)
+            if wait is not None:
+                delay = max(retry_delay,
+                            math.ceil(min(wait, MAX_RETRY_AFTER)))
             log_info(
                 f"{what}: attempt {attempt + 1}/{max_retries} failed "
-                f"({exc}); retrying in {retry_delay}s..."
+                f"({exc}); retrying in {delay}s..."
             )
-            time.sleep(retry_delay)
+            time.sleep(delay)
 
 
 def sha256_file(path: str) -> str:

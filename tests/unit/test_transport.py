@@ -16,6 +16,7 @@ import pytest
 
 from proot_distro.helpers import download
 from proot_distro.helpers.docker import transport
+from proot_distro.helpers.docker.refs import parse_reference
 
 
 @pytest.fixture(autouse=True)
@@ -721,6 +722,117 @@ def test_denied_messages_mention_auth_env(monkeypatch):
     assert "PD_DOCKER_AUTH" in transport.push_denied_msg("me/app", 403)
     monkeypatch.setenv("PD_DOCKER_AUTH", "u:p")
     assert "correct" in transport.auth_denied_msg("ubuntu", 403)
+
+
+# ----- 429 Too Many Requests ---------------------------------------------
+
+def _rate_limited(url, headers=()):
+    hdrs = email.message.Message()
+    for name, value in headers:
+        hdrs[name] = value
+    # A body, as urllib always gives one: on 3.9 an HTTPError built
+    # without one has no .url.
+    return urllib.error.HTTPError(
+        url, 429, "Too Many Requests", hdrs, io.BytesIO(b""),
+    )
+
+
+_HUB_SOURCE = (("Docker-RateLimit-Source", "192.0.2.10"),
+               ("RateLimit-Remaining", "0;w=3600"))
+
+
+def _limit_msg(image_ref, exc):
+    return transport.rate_limited_msg(
+        image_ref, parse_reference(image_ref), exc
+    )
+
+
+def test_a_docker_hub_front_end_points_at_docker_hub(monkeypatch):
+    # Regression: docker.n8n.io relays Docker Hub through a few shared
+    # addresses for any client that is not Docker itself, and their
+    # anonymous quota is spent. The install failed with "Network error:
+    # HTTP Error 429", nothing saying why or what to do instead.
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    exc = _rate_limited(
+        "https://docker.n8n.io/v2/n8nio/n8n/manifests/latest", _HUB_SOURCE,
+    )
+    text = _limit_msg("docker.n8n.io/n8nio/n8n:latest", exc)
+    assert "HTTP 429" in text
+    assert "passes requests on to Docker Hub" in text
+    assert "install it from there: 'n8nio/n8n:latest'" in text
+    assert "PD_DOCKER_AUTH=username:password" in text
+    assert "Docker Hub account" in text
+
+
+def test_a_pinned_front_end_reference_keeps_its_pin():
+    digest = "sha256:" + "a" * 64
+    exc = _rate_limited(
+        f"https://docker.n8n.io/v2/n8nio/n8n/manifests/{digest}", _HUB_SOURCE,
+    )
+    text = _limit_msg(f"docker.n8n.io/n8nio/n8n@{digest}", exc)
+    assert f"'n8nio/n8n@{digest}'" in text
+
+
+def test_a_refusal_after_a_redirect_to_docker_hub_is_not_the_front_ends():
+    # The front end redirected the request and Docker Hub refused it:
+    # counted against this machine's own address, so pointing at Docker
+    # Hub would send the user to where the refusal came from.
+    exc = _rate_limited(
+        "https://registry-1.docker.io/v2/n8nio/n8n/manifests/latest",
+        _HUB_SOURCE,
+    )
+    text = _limit_msg("docker.n8n.io/n8nio/n8n:latest", exc)
+    assert "install it from there" not in text
+    assert "Registry 'docker.n8n.io'" in text
+
+
+def test_a_registry_that_does_not_relay_docker_hub_gets_generic_advice(
+        monkeypatch):
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    exc = _rate_limited("https://ghcr.io/v2/o/i/manifests/1")
+    text = _limit_msg("ghcr.io/o/i:1", exc)
+    assert "Registry 'ghcr.io'" in text
+    assert "Docker Hub" not in text
+    assert "PD_DOCKER_AUTH=username:password" in text
+
+
+def test_docker_hub_itself_explains_the_per_address_limit(monkeypatch):
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    exc = _rate_limited(
+        "https://registry-1.docker.io/v2/library/alpine/manifests/3",
+        _HUB_SOURCE,
+    )
+    text = _limit_msg("alpine:3", exc)
+    assert text.startswith("Docker Hub refused to serve 'alpine:3'")
+    assert "per network address" in text
+    assert "install it from there" not in text
+    assert "Docker Hub account" in text
+
+
+def test_with_credentials_the_limit_is_the_accounts(monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "u:p")
+    exc = _rate_limited(
+        "https://docker.n8n.io/v2/n8nio/n8n/manifests/latest", _HUB_SOURCE,
+    )
+    text = _limit_msg("docker.n8n.io/n8nio/n8n:latest", exc)
+    assert "for the account in PD_DOCKER_AUTH" in text
+    assert "PD_DOCKER_AUTH=" not in text
+    assert "install it from there" not in text
+
+
+@pytest.mark.parametrize("retry_after,said", [
+    ("2700", "Try again in about 45 minutes"),
+    ("7200", "Try again in about 2 hours"),
+    ("75", "Try again in 75 seconds"),
+    pytest.param("9" * 400, "Try again in more than a day", id="huge"),
+    ("soon", "Try again later"),
+    ("0", "Try again later"),
+])
+def test_the_message_says_when_the_registry_said(retry_after, said):
+    exc = _rate_limited(
+        "https://ghcr.io/v2/o/i/manifests/1", [("Retry-After", retry_after)],
+    )
+    assert said in _limit_msg("ghcr.io/o/i:1", exc)
 
 
 def test_a_metadata_body_short_of_its_declared_length_is_refused(monkeypatch):

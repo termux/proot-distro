@@ -19,9 +19,16 @@
 #
 
 # Architecture: Registry HTTP plumbing used by both pull and push.
-# Three concerns live here:
+# Three concerns live here, beside the messages that explain a
+# registry's refusals:
 #
-#   - User-Agent header generation (so registries can spot us).
+#   - User-Agent header generation (so registries can spot us). It
+#     names this program and nothing else, though that has a price on
+#     a front end that routes by it: docker.n8n.io redirects Docker's
+#     own client, picked out by its User-Agent, to Docker Hub and
+#     relays everyone else through its own few addresses, whose
+#     anonymous Docker Hub quota is spent more often than not
+#     (rate_limited_msg says so, and where else to pull from).
 #   - Authorization-stripping redirect handler — Docker Hub blob URLs
 #     redirect to CDN hosts that reject Bearer tokens with HTTP 400.
 #     Python's default redirect handler keeps headers across hops, so
@@ -58,6 +65,7 @@
 
 import base64
 import json
+import math
 import os
 import re
 import urllib.error
@@ -75,6 +83,7 @@ from proot_distro.helpers.download import (
     is_plaintext_http_tls_error,
     new_request,
     require_complete_body,
+    retry_after,
     retry_http,
 )
 
@@ -361,6 +370,90 @@ def auth_denied_msg(image_ref: str, code: int) -> str:
     return (
         f"Unauthorized: '{image_ref}' does not exist or is a private image. "
         f"Set PD_DOCKER_AUTH=username:password to authenticate."
+    )
+
+
+def _wait_text(seconds: float) -> str:
+    """A Retry-After, rounded to what a person would say."""
+    if not math.isfinite(seconds) or seconds >= 86400:
+        return "more than a day"
+    if seconds >= 5400:
+        return f"about {round(seconds / 3600)} hours"
+    if seconds >= 90:
+        return f"about {round(seconds / 60)} minutes"
+    return f"{math.ceil(seconds)} seconds"
+
+
+def _relays_docker_hub(registry: str, exc: urllib.error.HTTPError) -> bool:
+    """Whether *registry* answered *exc* on Docker Hub's behalf.
+
+    Docker Hub marks every answer it counts against a pull quota with
+    Docker-RateLimit-Source, the address or account the pull was counted
+    against. The same header on a refusal from another registry is a
+    front end passing requests on to Docker Hub -- a vanity name such as
+    docker.n8n.io, a pull-through mirror. The refusal has to have come
+    from that registry itself: one that redirected the request to Docker
+    Hub (as such front ends do for clients they recognise) got its
+    answer from Docker Hub, counted against this machine's own address.
+    """
+    if not registry or exc.headers is None:
+        return False
+    if exc.headers.get("Docker-RateLimit-Source") is None:
+        return False
+    try:
+        host = urllib.parse.urlsplit(getattr(exc, "url", "") or "").netloc
+    except ValueError:
+        return False
+    return host.lower() == registry.lower()
+
+
+def rate_limited_msg(image_ref: str, ref, exc: urllib.error.HTTPError) -> str:
+    """Return the error shown when a registry answers 429 Too Many Requests.
+
+    *ref* is the parsed *image_ref*. The advice depends on whose limit it
+    is. With PD_DOCKER_AUTH set it is the account's, and there is nothing
+    to do but wait. Anonymous pulls from Docker Hub are counted per
+    network address, which a mobile carrier's NAT shares among many
+    people. A front end relaying Docker Hub (_relays_docker_hub) is one
+    address to Docker Hub however many people pull through it, so its
+    anonymous quota is spent by all of them at once and is often simply
+    gone; the image is usually on Docker Hub under the same repository,
+    and pulling it from there is counted against this machine's own
+    address instead.
+    """
+    registry = ref.registry
+    who = f"Registry '{registry}'" if registry else "Docker Hub"
+    text = (
+        f"{who} refused to serve '{image_ref}' "
+        f"(HTTP 429 Too Many Requests): its rate limit is reached"
+    )
+    wait = retry_after(exc)
+    when = f"in {_wait_text(wait)}" if wait else "later"
+    if os.environ.get("PD_DOCKER_AUTH"):
+        return f"{text} for the account in PD_DOCKER_AUTH. Try again {when}."
+    hub_account = (
+        "set PD_DOCKER_AUTH=username:password to pull with a Docker Hub "
+        "account, which has a limit of its own"
+    )
+    if not registry:
+        return (
+            f"{text}. Docker Hub limits anonymous pulls per network "
+            f"address, which mobile and shared networks give to many "
+            f"people at once. Try again {when}, or {hub_account}."
+        )
+    if _relays_docker_hub(registry, exc):
+        hub_ref = ref._replace(registry="").canonical
+        return (
+            f"{text}. '{registry}' passes requests on to Docker Hub, and "
+            f"everyone pulling anonymously through it shares one Docker "
+            f"Hub limit. If the image is published on Docker Hub too, "
+            f"install it from there: '{hub_ref}'. Otherwise try again "
+            f"{when}, or {hub_account}."
+        )
+    return (
+        f"{text}. Try again {when}, or set "
+        f"PD_DOCKER_AUTH=username:password to pull with an account; "
+        f"registries usually allow signed-in users more."
     )
 
 

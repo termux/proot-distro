@@ -81,7 +81,7 @@ what the command takes (see `locking.py`).
 
 | Module | Role |
 | --- | --- |
-| `helpers/docker/` | Pure-Python registry client. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth, redirects, JSON caps), `pull.py`, `push.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
+| `helpers/docker/` | Pure-Python registry client. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth, redirects, JSON caps, refusal messages), `pull.py`, `push.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
 | `helpers/dockerfile.py` | Pure Dockerfile parser. No execution and no variable expansion. |
 | `helpers/build_engine/` | Dockerfile interpreter. `engine.py` (`BuildEngine`: FROM, dispatch, history), `stage.py` (per-FROM state and descriptors), `handlers.py` (metadata-only instructions and the dispatch table), `run_step.py` (RUN under proot), `copy_step.py` (COPY/ADD), `users.py`, `dockerignore.py`, `parsing.py`, `constants.py`, `errors.py`. |
 | `helpers/layer_diff.py` | Snapshot the rootfs before and after a RUN, diff, write a gzipped OCI layer with whiteouts. |
@@ -89,7 +89,7 @@ what the command takes (see `locking.py`).
 | `helpers/oci_writer.py` | Final `build` outputs: manifest cache entry and OCI image-layout tarball. |
 | `helpers/tar_extract.py` | The single streaming tar -> rootfs extractor, used for layers and plain tarballs. |
 | `helpers/rootfs.py` | Post-extraction fixups: `resolv.conf`, `/etc/hosts`, Android uid/gid entries. |
-| `helpers/download.py` | HTTP opener, redirect policy, retries, `download_file`, `sha256_file`. |
+| `helpers/download.py` | HTTP opener, redirect policy, retries (honouring `Retry-After`, giving up on a spent quota), `download_file`, `sha256_file`. |
 
 ### Foundation modules
 
@@ -214,7 +214,7 @@ rewrite anything under `RUNTIME_DIR` and `BASE_CACHE_DIR`.
 
 ## Tests
 
-The suite (about 1900 tests) is offline and deterministic by default. See
+The suite (about 2000 tests) is offline and deterministic by default. See
 `tests/README.md` for running it and for how isolation works.
 
 | Directory | Covers |

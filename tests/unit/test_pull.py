@@ -136,3 +136,93 @@ def test_pull_image_keeps_docker_hub_verified(monkeypatch, ref, expected):
     pull_mod.pull_image(ref, -1, "x86_64", insecure=True)
     pull_mod.pull_image(ref, -1, "x86_64", insecure=False)
     assert seen == [expected, False]
+
+
+# ----- 429 Too Many Requests ----------------------------------------------
+
+_N8N = "docker.n8n.io/n8nio/n8n:latest"
+
+_LAYER = {
+    "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+    "digest": "sha256:" + "b" * 64,
+    "size": 10,
+}
+_ONE_LAYER = {"schemaVersion": 2, "layers": [_LAYER]}
+
+
+def _hub_quota_spent(url):
+    # What docker.n8n.io answers any client that is not Docker itself.
+    import email.message
+    import urllib.error
+    hdrs = email.message.Message()
+    hdrs["Docker-RateLimit-Source"] = "192.0.2.10"
+    hdrs["RateLimit-Remaining"] = "0;w=3600"
+    hdrs["X-RateLimit-Remaining"] = "0;w=3600"
+    return urllib.error.HTTPError(
+        url, 429, "Too Many Requests", hdrs, io.BytesIO(b""),
+    )
+
+
+def _assert_points_at_docker_hub(text):
+    assert "HTTP 429" in text
+    assert "install it from there: 'n8nio/n8n:latest'" in text
+    assert "Network error" not in text
+
+
+def test_a_spent_quota_on_the_manifest_fails_at_once_and_says_why(
+        monkeypatch):
+    # Regression: `install docker.n8n.io/n8nio/n8n:latest` retried the
+    # manifest four times over twenty seconds, then failed with "Network
+    # error: HTTP Error 429: Too Many Requests".
+    calls = []
+
+    def _open(req):
+        calls.append(req.full_url)
+        raise _hub_quota_spent(req.full_url)
+
+    monkeypatch.setattr(
+        pull_mod, "get_auth_token",
+        lambda *a, **k: ("T", "https://docker.n8n.io"),
+    )
+    monkeypatch.setattr(
+        pull_mod, "opener",
+        lambda insecure=False: SimpleNamespace(open=_open),
+    )
+    with pytest.raises(RuntimeError) as exc:
+        pull_mod.pull_image(_N8N, -1, "x86_64")
+    _assert_points_at_docker_hub(str(exc.value))
+    assert calls == [
+        "https://docker.n8n.io/v2/n8nio/n8n/manifests/latest",
+    ]
+
+
+def test_a_spent_quota_on_the_token_for_a_cached_manifest_says_why(
+        monkeypatch):
+    def _refuse(*a, **k):
+        raise _hub_quota_spent("https://docker.n8n.io/v2/")
+
+    monkeypatch.setattr(
+        pull_mod, "load_manifest_cache",
+        lambda *a: (_ONE_LAYER, "n8nio/n8n", {}),
+    )
+    monkeypatch.setattr(pull_mod, "annotate_manifest_cache", lambda *a: None)
+    monkeypatch.setattr(pull_mod, "get_auth_token", _refuse)
+    with pytest.raises(RuntimeError) as exc:
+        pull_mod.pull_image(_N8N, -1, "x86_64")
+    _assert_points_at_docker_hub(str(exc.value))
+
+
+def test_a_spent_quota_on_a_layer_says_why(monkeypatch):
+    def _refuse(repo, digest, token, base, insecure):
+        raise _hub_quota_spent(f"{base}/v2/{repo}/blobs/{digest}")
+
+    monkeypatch.setattr(
+        pull_mod, "_resolve_single_manifest",
+        lambda *a: (_ONE_LAYER, "T", "https://docker.n8n.io", {}),
+    )
+    monkeypatch.setattr(pull_mod, "_fetch_config_blob", lambda *a: {})
+    monkeypatch.setattr(pull_mod, "save_manifest_cache", lambda *a, **k: None)
+    monkeypatch.setattr(pull_mod, "download_blob", _refuse)
+    with pytest.raises(RuntimeError) as exc:
+        pull_mod.pull_image(_N8N, -1, "x86_64")
+    _assert_points_at_docker_hub(str(exc.value))

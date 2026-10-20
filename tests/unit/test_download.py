@@ -183,6 +183,190 @@ def test_retry_http_reraises_after_exhaustion(monkeypatch):
     assert attempts["n"] == 3
 
 
+# ----- 429 / 503: when to come back ---------------------------------------
+
+def _http_error(code, headers=(), url="https://reg.example/v2/"):
+    hdrs = email.message.Message()
+    for name, value in headers:
+        hdrs[name] = value
+    return urllib.error.HTTPError(url, code, "x", hdrs, None)
+
+
+# Exactly what docker.n8n.io answered: a front end relaying Docker Hub,
+# whose anonymous quota is spent. No Retry-After.
+_HUB_QUOTA_SPENT = (
+    ("Docker-RateLimit-Source", "192.0.2.10"),
+    ("X-RateLimit-Limit", "100;w=3600"),
+    ("RateLimit-Limit", "100;w=3600"),
+    ("X-RateLimit-Remaining", "0;w=3600"),
+    ("RateLimit-Remaining", "0;w=3600"),
+)
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("30", 30.0),
+    (" 7 ", 7.0),
+    ("0", 0.0),
+    ("Wed, 21 Oct 2015 07:28:00 GMT", 0.0),    # already past
+    ("Wed, 21 Oct 2015 07:28:00 -0000", 0.0),  # UTC, zone unstated
+])
+def test_retry_after_reads_both_forms(value, expected):
+    exc = _http_error(429, [("Retry-After", value)])
+    assert download.retry_after(exc) == expected
+
+
+def test_retry_after_an_http_date_ahead_is_the_time_until_it():
+    import datetime
+    import email.utils
+    ahead = datetime.datetime.now(datetime.timezone.utc) + \
+        datetime.timedelta(minutes=10)
+    exc = _http_error(429, [
+        ("Retry-After", email.utils.format_datetime(ahead, usegmt=True)),
+    ])
+    assert 590 <= download.retry_after(exc) <= 600
+
+
+@pytest.mark.parametrize("value", [
+    "soon", "", "-5", "1.5", "\u0661\u0662",       # Arabic-Indic digits
+    "Mon, 01 Jan 99999 00:00:00 GMT",              # past datetime's range
+])
+def test_retry_after_says_nothing_for_what_it_cannot_read(value):
+    exc = _http_error(429, [("Retry-After", value)])
+    assert download.retry_after(exc) is None
+
+
+def test_retry_after_needs_an_http_error_with_the_header():
+    assert download.retry_after(_http_error(429)) is None
+    assert download.retry_after(urllib.error.URLError("reset")) is None
+    assert download.retry_after(OSError("x")) is None
+
+
+def test_retry_after_past_any_float_is_infinite_not_a_traceback():
+    exc = _http_error(429, [("Retry-After", "9" * 5000)])
+    assert download.retry_after(exc) == float("inf")
+    assert not download.is_retryable_http_error(exc)
+
+
+def test_a_429_with_its_quota_spent_is_not_retried():
+    # Regression: Docker Hub's answer to a spent anonymous quota names no
+    # time, and the quota refills over the hour. It was retried four
+    # times five seconds apart, then reported as a network error.
+    assert not download.is_retryable_http_error(
+        _http_error(429, _HUB_QUOTA_SPENT)
+    )
+    # GitHub's spelling: a bare count in the X- header alone.
+    assert not download.is_retryable_http_error(
+        _http_error(429, [("X-RateLimit-Remaining", "0")])
+    )
+    assert not download.is_retryable_http_error(
+        _http_error(429, [("RateLimit-Remaining", " 00 ")])
+    )
+
+
+@pytest.mark.parametrize("remaining", ["5", "05", "10;w=3600", "junk"])
+def test_a_429_with_quota_left_is_retried(remaining):
+    assert download.is_retryable_http_error(
+        _http_error(429, [("RateLimit-Remaining", remaining)])
+    )
+
+
+@pytest.mark.parametrize("code", [429, 503])
+def test_retry_after_decides_a_429_or_503(code):
+    assert download.is_retryable_http_error(
+        _http_error(code, [("Retry-After", "30")])
+    )
+    assert download.is_retryable_http_error(_http_error(
+        code, [("Retry-After", str(download.MAX_RETRY_AFTER))]
+    ))
+    assert not download.is_retryable_http_error(_http_error(
+        code, [("Retry-After", str(download.MAX_RETRY_AFTER + 1))]
+    ))
+    # A short Retry-After outranks a spent quota: the server said when.
+    assert download.is_retryable_http_error(_http_error(
+        code, [("Retry-After", "10"), ("RateLimit-Remaining", "0")]
+    ))
+
+
+def test_a_spent_quota_on_a_503_still_retries():
+    # The quota rule is a 429's: a 503 is the server, not the client.
+    assert download.is_retryable_http_error(
+        _http_error(503, [("RateLimit-Remaining", "0")])
+    )
+
+
+def test_retry_after_on_other_statuses_decides_nothing():
+    assert download.is_retryable_http_error(
+        _http_error(500, [("Retry-After", "99999")])
+    )
+    assert not download.is_retryable_http_error(
+        _http_error(404, [("Retry-After", "1")])
+    )
+
+
+def _count_attempts(monkeypatch, exc):
+    slept = []
+    monkeypatch.setattr(download.time, "sleep", slept.append)
+    monkeypatch.setattr(download, "log_info", lambda text: None)
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        raise exc
+
+    with pytest.raises(urllib.error.HTTPError):
+        download.retry_http(op, what="Job", max_retries=3, retry_delay=5)
+    return attempts["n"], slept
+
+
+def test_retry_http_gives_up_at_once_on_a_spent_quota(monkeypatch):
+    n, slept = _count_attempts(monkeypatch, _http_error(429, _HUB_QUOTA_SPENT))
+    assert (n, slept) == (1, [])
+
+
+def test_retry_http_gives_up_at_once_on_a_long_retry_after(monkeypatch):
+    n, slept = _count_attempts(
+        monkeypatch, _http_error(503, [("Retry-After", "3600")])
+    )
+    assert (n, slept) == (1, [])
+
+
+def test_retry_http_waits_as_long_as_retry_after_asks(monkeypatch):
+    n, slept = _count_attempts(
+        monkeypatch, _http_error(429, [("Retry-After", "42")])
+    )
+    assert (n, slept) == (3, [42, 42])
+
+
+def test_retry_http_never_waits_less_than_its_own_delay(monkeypatch):
+    n, slept = _count_attempts(
+        monkeypatch, _http_error(429, [("Retry-After", "1")])
+    )
+    assert (n, slept) == (3, [5, 5])
+
+
+def test_retry_http_ignores_retry_after_on_a_500(monkeypatch):
+    # Only 429 and 503 have their wait honoured; on any other status the
+    # header is ignored -- a huge one no longer sleeps for good, nor
+    # overflows math.ceil().
+    n, slept = _count_attempts(
+        monkeypatch, _http_error(500, [("Retry-After", "9" * 400)])
+    )
+    assert (n, slept) == (3, [5, 5])
+
+
+def test_retry_http_logs_the_wait_it_takes(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a: None)
+    logged = []
+    monkeypatch.setattr(download, "log_info", logged.append)
+
+    def op():
+        raise _http_error(429, [("Retry-After", "17")])
+
+    with pytest.raises(urllib.error.HTTPError):
+        download.retry_http(op, what="Job", max_retries=2)
+    assert any("retrying in 17s" in line for line in logged)
+
+
 # ----- download_file plaintext detection ----------------------------------
 
 def test_download_file_plaintext_https_meaningful_error(tmp_path, monkeypatch):
