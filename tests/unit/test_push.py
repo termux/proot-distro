@@ -245,7 +245,8 @@ def test_upload_put_off_the_registry_origin_carries_no_token(
     # headers, token included. Docker's client sends nothing to another
     # origin; neither does this.
     seen = _capture_put_auth(monkeypatch, location)
-    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "Bearer TKN",
+                            _BASE)
     assert seen["url"].startswith(location)
     assert seen["auth"] is None
 
@@ -254,7 +255,7 @@ def test_upload_put_off_the_registry_origin_carries_no_token(
     fd = os.open(str(blob), os.O_RDONLY)
     try:
         seen = _capture_put_auth(monkeypatch, location)
-        push._upload_blob_fd("me/app", "sha256:cc", fd, "TKN", _BASE)
+        push._upload_blob_fd("me/app", "sha256:cc", fd, "Bearer TKN", _BASE)
     finally:
         os.close(fd)
     assert seen["url"].startswith(location)
@@ -268,7 +269,8 @@ def test_upload_put_off_the_registry_origin_carries_no_token(
 ])
 def test_upload_put_on_the_registry_keeps_the_token(monkeypatch, location):
     seen = _capture_put_auth(monkeypatch, location)
-    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN", _BASE)
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "Bearer TKN",
+                            _BASE)
     assert seen["url"].startswith("https://reg.example")
     assert seen["auth"] == "Bearer TKN"
 
@@ -278,7 +280,7 @@ def test_upload_put_keeps_the_token_on_an_https_upgrade(monkeypatch):
     # sends uploads to its own https endpoint: the same server, more
     # securely, so the token goes along.
     seen = _capture_put_auth(monkeypatch, "https://reg.example/uploads/1")
-    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "TKN",
+    push._upload_blob_bytes("me/app", "sha256:cc", b"data", "Bearer TKN",
                             "http://reg.example", insecure=True)
     assert seen["auth"] == "Bearer TKN"
 
@@ -351,6 +353,54 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
     assert captured["manifest_base"] == "http://reg.example"
     assert captured["manifest_insecure"] is True
     assert result["manifest_digest"] == "sha256:dd"
+
+
+def test_push_asks_for_a_credential_that_can_push(monkeypatch, tmp_path):
+    # Every other push test fakes get_auth_token without looking at
+    # *actions*, so a push asking for "pull" alone -- answered by every
+    # token service with a token that cannot upload -- passed them all.
+    _pushable(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake_auth(repo, registry, actions="pull", insecure=False):
+        seen.update(repo=repo, registry=registry, actions=actions)
+        return "Bearer TKN", _BASE
+
+    monkeypatch.setattr(push, "get_auth_token", fake_auth)
+    push.push_image("reg.example/me/app:1", "x86_64")
+    assert seen == {"repo": "me/app", "registry": "reg.example",
+                    "actions": "pull,push"}
+
+
+@pytest.mark.parametrize("auth", [
+    "Bearer TKN",                       # a token service's grant
+    "Basic YWxpY2U6c2VjcmV0",           # a registry checking passwords itself
+])
+def test_every_push_request_carries_the_resolved_authorization(
+        monkeypatch, tmp_path, auth):
+    real = {name: getattr(push, name) for name in (
+        "_blob_exists", "_upload_blob_fd", "_upload_blob_bytes",
+        "_put_manifest")}
+    _pushable(monkeypatch, tmp_path)
+    for name, fn in real.items():
+        monkeypatch.setattr(push, name, fn)
+    monkeypatch.setattr(push, "get_auth_token",
+                        lambda *a, **k: (auth, _BASE))
+    sent = []
+
+    def fake(req, *a, **k):
+        sent.append((req.get_method(), req.get_header("Authorization")))
+        if req.get_method() == "HEAD":
+            raise _http_error(req.full_url, 404, "Not Found")
+        if req.get_method() == "POST":
+            return _FakeResp(202, {"Location": "/v2/me/app/blobs/uploads/1"})
+        return _FakeResp(201)
+
+    _patch_opener(monkeypatch, fake)
+    push.push_image("reg.example/me/app:1", "x86_64")
+    # Layer and config: probe, upload session, upload. Then the manifest.
+    assert [m for m, _a in sent] == ["HEAD", "POST", "PUT"] * 2 + ["PUT"]
+    assert all(a == auth for _m, a in sent)
 
 
 # ----- timeouts -----------------------------------------------------------

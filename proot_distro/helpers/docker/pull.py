@@ -22,7 +22,8 @@
 #
 #   1. Check the local manifest cache. If present, decide whether all
 #      layer blobs are already on disk (fully-offline branch) or only
-#      a token + the missing layers need to be fetched.
+#      the registry's credential + the missing layers need to be
+#      fetched.
 #   2. On manifest miss, resolve the registry manifest. Manifest-list
 #      indexes are unwrapped to the arch-specific child manifest.
 #   3. For each layer: skip when a cached blob re-hashes to its digest,
@@ -95,18 +96,19 @@ _ACCEPT_HEADER = ", ".join([
 
 
 def _manifest_body(
-    repo: str, ref: str, token: str, base: str,
+    repo: str, ref: str, auth: str, base: str,
     insecure: bool = False,
 ) -> tuple:
     """Fetch the manifest *ref* names. Returns (body, Content-Type).
 
     *ref* is a tag or a digest; the body answering a digest is checked
-    against it before it is returned.
+    against it before it is returned. *auth* is the Authorization value
+    get_auth_token() resolved, or '' for none.
     """
     url = f"{base}/v2/{repo}/manifests/{ref}"
     headers = {**_ua(), "Accept": _ACCEPT_HEADER}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
     req = new_request(url, headers=headers)
 
     def _attempt():
@@ -153,10 +155,10 @@ def _parse_manifest(body: bytes, ct: str, ref: str) -> dict:
 
 
 def _get_manifest(
-    repo: str, ref: str, token: str, base: str,
+    repo: str, ref: str, auth: str, base: str,
     insecure: bool = False,
 ) -> dict:
-    body, ct = _manifest_body(repo, ref, token, base, insecure)
+    body, ct = _manifest_body(repo, ref, auth, base, insecure)
     return _parse_manifest(body, ct, ref)
 
 
@@ -281,35 +283,35 @@ def _resolve_pinned(image_ref: str, pin: str, arch: str, fetch) -> tuple:
 def _resolve_single_manifest(
     image_ref: str, ref, arch: str, insecure: bool = False
 ) -> tuple:
-    """Return (single_image_manifest, token, base, documents) for the arch.
+    """Return (single_image_manifest, auth, base, documents) for the arch.
 
     *documents* is what _resolve_pinned gathered for a pinned reference,
     and empty for a tag: a tag names no content, so there is nothing a
     later cache hit could check the manifest against.
     """
     log_info(f"Authenticating with registry{auth_note()}...")
-    token, base = get_auth_token(ref.repo, ref.registry, insecure=insecure)
+    auth, base = get_auth_token(ref.repo, ref.registry, insecure=insecure)
 
     log_info(f"Fetching manifest for '{image_ref}'...")
     if ref.digest:
         manifest, documents = _resolve_pinned(
             image_ref, ref.digest, arch,
             lambda digest: _manifest_body(
-                ref.repo, digest, token, base, insecure)[0],
+                ref.repo, digest, auth, base, insecure)[0],
         )
-        return manifest, token, base, documents
+        return manifest, auth, base, documents
 
-    manifest = _get_manifest(ref.repo, ref.tag, token, base, insecure)
+    manifest = _get_manifest(ref.repo, ref.tag, auth, base, insecure)
     if _is_index(manifest):
         digest = _child_digest(manifest, arch, image_ref)
         log_info(f"Fetching {arch} manifest...")
-        manifest = _get_manifest(ref.repo, digest, token, base, insecure)
+        manifest = _get_manifest(ref.repo, digest, auth, base, insecure)
 
-    return manifest, token, base, {}
+    return manifest, auth, base, {}
 
 
 def _download_config(
-    repo: str, cfg_digest: str, token: str, base: str,
+    repo: str, cfg_digest: str, auth: str, base: str,
     insecure: bool = False,
 ) -> bytes:
     """The image config blob *cfg_digest* names, checked against it.
@@ -322,8 +324,8 @@ def _download_config(
     split_digest(cfg_digest)
     url = f"{base}/v2/{repo}/blobs/{cfg_digest}"
     headers = {**_ua()}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
     req = new_request(url, headers=headers)
 
     def _attempt():
@@ -363,7 +365,7 @@ def _parse_config(body: bytes) -> dict:
 
 
 def _fetch_config_blob(
-    repo: str, cfg_digest: str, token: str, base: str,
+    repo: str, cfg_digest: str, auth: str, base: str,
     insecure: bool = False,
 ) -> dict:
     """Fetch the image config blob; return parsed dict (empty on error).
@@ -379,7 +381,7 @@ def _fetch_config_blob(
     if not cfg_digest:
         return {}
     try:
-        body = _download_config(repo, cfg_digest, token, base, insecure)
+        body = _download_config(repo, cfg_digest, auth, base, insecure)
     except RuntimeError:
         # Too large, or not the blob the digest names: a refusal, not a
         # degraded config, since each says something about the blob
@@ -446,8 +448,8 @@ def pull_image(
     The manifest is checked in the local cache first. If cached and
     every layer blob is present *and* re-hashes to its digest, the
     install runs entirely without network access. If the manifest is
-    cached but some layers are missing or fail that check, only an auth
-    token is fetched before downloading them again.
+    cached but some layers are missing or fail that check, only the
+    registry's credential is resolved before downloading them again.
 
     A reference pinned by digest (`debian:12@sha256:…`) is pulled by that
     digest, and everything under it is checked against it: the document
@@ -541,7 +543,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
     cache entry: they are where the missing layers are fetched from, and
     the entry is a file this program does not own.
     """
-    token = None
+    auth = ""
     base = None
     repo, registry = ref.repo, ref.registry
 
@@ -559,7 +561,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                      f"layer(s) for '{image_ref}' ({arch})...")
             try:
                 log_info(f"Authenticating with registry{auth_note()}...")
-                token, base = get_auth_token(
+                auth, base = get_auth_token(
                     repo, registry, insecure=insecure
                 )
             except NETWORK_ERRORS as net_err:
@@ -583,7 +585,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 raise RuntimeError(f"Network error: {net_err}") from net_err
     else:
         try:
-            manifest, token, base, documents = _resolve_single_manifest(
+            manifest, auth, base, documents = _resolve_single_manifest(
                 image_ref, ref, arch, insecure
             )
             cfg_digest = _config_digest(manifest)
@@ -596,7 +598,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 image_config = {}
                 if cfg_digest:
                     body = _download_config(
-                        repo, cfg_digest, token, base, insecure
+                        repo, cfg_digest, auth, base, insecure
                     )
                     documents[cfg_digest] = body
                     image_config = _parse_config(body)
@@ -619,7 +621,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
             raise RuntimeError(f"Network error: {net_err}") from net_err
         if not ref.digest:
             image_config = _fetch_config_blob(
-                repo, cfg_digest, token, base, insecure
+                repo, cfg_digest, auth, base, insecure
             )
         save_manifest_cache(image_ref, arch, manifest, repo, image_config,
                             documents=documents)
@@ -666,7 +668,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                      f"{i + 1}/{n_layers}{size_str}...")
             try:
                 layer_fd = download_blob(
-                    repo, digest, token or "", base, insecure
+                    repo, digest, auth, base, insecure
                 )
             except NETWORK_ERRORS as dl_err:
                 # Read the same way as the two nets above: an HTTPError

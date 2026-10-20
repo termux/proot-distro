@@ -249,8 +249,8 @@ def test_get_auth_token_docker_hub(monkeypatch):
 
     _patch_hub(monkeypatch, fake_urlopen)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    tok, base = transport.get_auth_token("library/ubuntu")
-    assert tok == "DOCKERHUB_TKN"
+    auth, base = transport.get_auth_token("library/ubuntu")
+    assert auth == "Bearer DOCKERHUB_TKN"
     assert base == transport.REGISTRY_URL
     assert "scope=repository:library/ubuntu:pull" in captured["url"]
 
@@ -274,8 +274,8 @@ def test_hub_token_exchange_goes_through_the_stripping_opener(monkeypatch):
         lambda *a, **k: pytest.fail("urlopen() must not be used"),
     )
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
-    tok, _base = transport.get_auth_token("library/ubuntu")
-    assert tok == "T"
+    auth, _base = transport.get_auth_token("library/ubuntu")
+    assert auth == "Bearer T"
     assert seen["url"].startswith(transport.AUTH_URL)
     assert seen["auth"] == transport.env_basic_auth()
 
@@ -312,10 +312,10 @@ def test_get_auth_token_custom_registry_challenge(monkeypatch):
 
     _patch_opener(monkeypatch, fake_open)
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    tok, base = transport.get_auth_token(
+    auth, base = transport.get_auth_token(
         "team/app", registry="reg.example", actions="pull,push"
     )
-    assert tok == "CUSTOM_TKN"
+    assert auth == "Bearer CUSTOM_TKN"
     assert base == "https://reg.example"
     # Probed /v2/ over HTTPS then redeemed the realm with scope+service.
     assert calls[0] == "https://reg.example/v2/"
@@ -367,10 +367,10 @@ def test_a_plaintext_realm_is_allowed_under_insecure(monkeypatch):
     sent = []
     _patch_opener(monkeypatch, _challenge_opener("http://auth.example/t", sent))
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
-    tok, _base = transport.get_auth_token(
+    auth, _base = transport.get_auth_token(
         "x/y", registry="reg.example", insecure=True
     )
-    assert tok == "T"
+    assert auth == "Bearer T"
     assert len(sent) == 1
     assert sent[0][0].startswith("http://auth.example/t?")
     assert sent[0][1] == transport.env_basic_auth()
@@ -406,8 +406,9 @@ def test_a_realm_on_another_https_host_is_used(monkeypatch):
     _patch_opener(monkeypatch, _challenge_opener("https://gitlab.com/jwt/auth",
                                                  sent))
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
-    tok, base = transport.get_auth_token("g/p", registry="registry.gitlab.com")
-    assert tok == "T"
+    auth, base = transport.get_auth_token("g/p",
+                                          registry="registry.gitlab.com")
+    assert auth == "Bearer T"
     assert base == "https://registry.gitlab.com"
     assert sent[0][0].startswith("https://gitlab.com/jwt/auth?")
     assert sent[0][1] == transport.env_basic_auth()
@@ -466,7 +467,107 @@ def test_a_token_no_header_can_carry_is_refused_unprinted(monkeypatch,
 def test_an_ordinary_token_is_accepted(monkeypatch):
     jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln-_+/=="
     _patch_hub(monkeypatch, lambda req, *a, **k: _FakeResp({"token": jwt}))
-    assert transport.get_auth_token("library/x")[0] == jwt
+    assert transport.get_auth_token("library/x")[0] == f"Bearer {jwt}"
+
+
+def test_a_grant_naming_its_token_access_token_is_used(monkeypatch):
+    # The OAuth2 name; some token services send it alone.
+    _patch_hub(monkeypatch,
+               lambda req, *a, **k: _FakeResp({"access_token": "OAUTH"}))
+    assert transport.get_auth_token("library/x")[0] == "Bearer OAUTH"
+
+
+def test_an_empty_grant_sends_no_authorization(monkeypatch):
+    # Not "Bearer " with nothing after it: no header at all.
+    _patch_hub(monkeypatch, lambda req, *a, **k: _FakeResp({"token": ""}))
+    assert transport.get_auth_token("library/x")[0] == ""
+
+
+# ----- challenges other than a Bearer realm --------------------------------
+
+def _probe_only(www_authenticate, sink):
+    """A registry answering /v2/ with *www_authenticate*; nothing else."""
+
+    def fake_open(req, *a, **k):
+        sink.append((req.full_url, req.get_header("Authorization")))
+        if not req.full_url.endswith("/v2/"):
+            pytest.fail(f"nothing is asked after the probe: {req.full_url}")
+        hdrs = email.message.Message()
+        if www_authenticate is not None:
+            hdrs["WWW-Authenticate"] = www_authenticate
+        raise urllib.error.HTTPError(
+            req.full_url, 401, "Unauthorized", hdrs, None
+        )
+
+    return fake_open
+
+
+@pytest.mark.parametrize("challenge", [
+    'Basic realm="Registry Realm"',     # distribution's htpasswd auth
+    "basic realm=registry",             # the scheme is case-insensitive
+    "Basic",
+    '  Basic realm="r"',
+])
+def test_a_basic_challenge_gets_the_credentials_as_they_are(monkeypatch,
+                                                            challenge):
+    # Regression: a registry that checks passwords itself has no token
+    # service, and challenges with Basic. Any challenge but Bearer was
+    # taken for an open registry, so PD_DOCKER_AUTH was never sent, and
+    # the refusal that followed said to check it.
+    sent = []
+    _patch_opener(monkeypatch, _probe_only(challenge, sent))
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    auth, base = transport.get_auth_token("x/y", registry="reg.example")
+    assert auth == transport.env_basic_auth()
+    assert base == "https://reg.example"
+    # Returned for the requests to come, not sent anywhere on the way.
+    assert sent == [("https://reg.example/v2/", None)]
+
+
+def test_a_basic_challenge_without_credentials_sends_nothing(monkeypatch):
+    sent = []
+    _patch_opener(monkeypatch, _probe_only('Basic realm="r"', sent))
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    assert transport.get_auth_token("x/y", registry="reg.example") == (
+        "", "https://reg.example")
+
+
+def test_a_basic_challenge_over_plain_http_needs_allow_insecure(monkeypatch):
+    # The password goes to the registry itself, over the scheme the probe
+    # settled on -- plain HTTP only when the user asked for it.
+    sent = []
+
+    def fake_open(req, *a, **k):
+        if req.full_url.startswith("https://"):
+            raise urllib.error.URLError(_ssl_error("WRONG_VERSION_NUMBER"))
+        return _probe_only('Basic realm="r"', sent)(req)
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    with pytest.raises(RuntimeError, match="--allow-insecure"):
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert sent == []
+    auth, base = transport.get_auth_token("x/y", registry="reg.example",
+                                          insecure=True)
+    assert (auth, base) == (transport.env_basic_auth(), "http://reg.example")
+
+
+@pytest.mark.parametrize("challenge", [
+    None,                               # no WWW-Authenticate at all
+    "",
+    "Negotiate",
+    'Digest realm="r", nonce="n"',
+    'Bearer service="s"',               # a Bearer challenge with no realm
+    "Bearer",
+])
+def test_a_challenge_naming_nowhere_to_authenticate_sends_nothing(
+        monkeypatch, challenge):
+    sent = []
+    _patch_opener(monkeypatch, _probe_only(challenge, sent))
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    assert transport.get_auth_token("x/y", registry="reg.example") == (
+        "", "https://reg.example")
+    assert sent == [("https://reg.example/v2/", None)]
 
 
 @pytest.mark.parametrize("registry", ["[:5000", "[::1", "[x]"])
@@ -549,8 +650,8 @@ def test_response_at_the_limit_is_read(monkeypatch):
     monkeypatch.setattr(transport, "MAX_METADATA_BYTES", len(payload))
     _patch_hub(monkeypatch, lambda req, *a, **k: _RawResp(payload))
     monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
-    tok, _base = transport.get_auth_token("library/ubuntu")
-    assert tok == "A" * 40
+    auth, _base = transport.get_auth_token("library/ubuntu")
+    assert auth == "Bearer " + "A" * 40
 
 
 def test_oversized_response_is_not_retried(monkeypatch):

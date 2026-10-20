@@ -226,7 +226,10 @@ The suite (about 2000 tests) is offline and deterministic by default. See
 
 `conftest.py` redirects XDG and `HOME` into a sandbox before importing the
 package and refuses to run outside it. `_builders.py` holds shared fixtures
-for tars, OCI archives, ELF stubs and rootfs trees.
+for tars, OCI archives, ELF stubs and rootfs trees. `_registry.py` is an
+in-process registry, token service and blob store on 127.0.0.1 (Bearer or
+Basic auth, TLS from the test-only CA in `tests/tls/`), against which
+`integration/test_registry_auth.py` runs pull and push end to end.
 
 CI (`tests.yml`) runs unit, integration, security and live tests on Python
 3.9, 3.11 and 3.13, plus an end-to-end shell script on pushes that installs

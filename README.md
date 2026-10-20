@@ -226,9 +226,11 @@ names. Only `sha256` digests are supported.
 
 **Private images** require credentials. Set `PD_DOCKER_AUTH` to
 `username:password` (or `username:PAT`) before running the install
-command. The colon separator is mandatory — the value is sent as HTTP
-Basic auth to the registry's token endpoint to obtain a scoped bearer
-token:
+command. The colon separator is mandatory. Most registries trade these
+credentials for a short-lived access token. Registries that check the
+password themselves (for example a self-hosted registry with a
+password file) get the credentials directly. Either way, they are sent
+only to that registry and its login service:
 
 ```sh
 # Docker Hub private image
@@ -574,9 +576,9 @@ computes the digest from what is uploaded.
 **Authentication:**
 
 `push` uses the same `PD_DOCKER_AUTH=username:password` contract as
-`install`. The colon separator is mandatory — the value is forwarded
-as HTTP Basic auth to the registry's token endpoint to obtain a
-scoped bearer token with `pull,push` actions:
+`install`. The colon separator is mandatory. The credentials are used
+the same way as for `install`, asking for permission to both pull and
+push:
 
 ```sh
 # Docker Hub

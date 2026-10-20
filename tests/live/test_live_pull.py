@@ -62,8 +62,8 @@ def _index_digest(image_ref):
     from proot_distro.helpers.docker.refs import parse_reference
 
     ref = parse_reference(image_ref)
-    token, base = pull_mod.get_auth_token(ref.repo, ref.registry)
-    body, _ct = pull_mod._manifest_body(ref.repo, ref.tag, token, base)
+    auth, base = pull_mod.get_auth_token(ref.repo, ref.registry)
+    body, _ct = pull_mod._manifest_body(ref.repo, ref.tag, auth, base)
     return "sha256:" + hashlib.sha256(body).hexdigest()
 
 

@@ -23,7 +23,9 @@
 #   1. Load the cached manifest + image_config produced by `build`.
 #      Re-canonicalize the config and verify its digest matches
 #      manifest.config.digest — guards against cache corruption.
-#   2. Exchange PD_DOCKER_AUTH for a Bearer token with `pull,push` scope.
+#   2. Resolve the registry's credential for `pull,push`: PD_DOCKER_AUTH
+#      exchanged for a Bearer token, or sent as it is to a registry whose
+#      challenge is Basic (transport.get_auth_token).
 #   3. For each layer: HEAD-probe (skip if present), else
 #      POST /v2/<repo>/blobs/uploads/ + PUT <location>?digest=<digest>
 #      streaming from the cached blob through a progress reader.
@@ -103,13 +105,14 @@ def _resolve_upload_url(base: str, location: str) -> str:
 
 
 def _headers_for(headers: dict, base: str, url: str) -> dict:
-    """*headers* for a request to *url*: the token only on the registry.
+    """*headers* for a request to *url*: the credential only on the registry.
 
-    The Bearer token was issued for the registry at *base*, and the
-    upload Location is a header the registry's answer named -- an
-    absolute one can point anywhere. Reusing the same headers for the
-    PUT sent the token to whatever host it named; verified with a
-    `Location: https://evil.example/upload/1`. Docker's client keys its
+    The Authorization header -- a Bearer token issued for the registry at
+    *base*, or a Basic registry's password itself -- is for that origin
+    alone, and the upload Location is a header the registry's answer
+    named -- an absolute one can point anywhere. Reusing the same headers
+    for the PUT sent the credential to whatever host it named; verified
+    with a `Location: https://evil.example/upload/1`. Docker's client keys its
     authorizer on the registry it pinged and sends nothing to another
     origin, and so does this: the request still goes (a registry may
     legitimately hand out a pre-signed upload URL on a store of its
@@ -121,13 +124,13 @@ def _headers_for(headers: dict, base: str, url: str) -> dict:
 
 
 def _blob_exists(
-    repo: str, digest: str, token: str, base: str, insecure: bool = False,
+    repo: str, digest: str, auth: str, base: str, insecure: bool = False,
 ) -> bool:
     """Return True iff blob *digest* already exists on the registry."""
     url = f"{base}/v2/{repo}/blobs/{digest}"
     headers = {**_ua()}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
     req = new_request(url, method="HEAD", headers=headers)
 
     def _attempt():
@@ -179,7 +182,7 @@ class _ProgressReader:
 
 
 def _upload_blob_bytes(
-    repo: str, digest: str, data: bytes, token: str,
+    repo: str, digest: str, data: bytes, auth: str,
     base: str, insecure: bool = False,
 ) -> None:
     """Upload a small in-memory blob (POST + monolithic PUT).
@@ -190,8 +193,8 @@ def _upload_blob_bytes(
     itself is uploaded.
     """
     headers = {**_ua()}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
 
     def _attempt():
         # A retry re-opens the upload session: the POST yields a fresh upload
@@ -228,7 +231,7 @@ def _upload_blob_bytes(
 
 
 def _upload_blob_fd(
-    repo: str, digest: str, src_fd: int, token: str,
+    repo: str, digest: str, src_fd: int, auth: str,
     base: str, insecure: bool = False, label: str = "",
 ) -> None:
     """Upload the blob behind *src_fd* (streamed, POST + monolithic PUT).
@@ -238,8 +241,8 @@ def _upload_blob_fd(
     attempt rewinds it, since a retry re-streams from the start.
     """
     headers = {**_ua()}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
     size = os.fstat(src_fd).st_size
 
     def _attempt():
@@ -285,7 +288,7 @@ def _upload_blob_fd(
 
 def _put_manifest(
     repo: str, reference: str, body: bytes, media_type: str,
-    token: str, base: str, insecure: bool = False,
+    auth: str, base: str, insecure: bool = False,
 ) -> str:
     """PUT a manifest at <reference> (tag or digest). Returns the registry
     digest from the Docker-Content-Digest header, if provided."""
@@ -295,8 +298,8 @@ def _put_manifest(
         "Content-Type": media_type,
         "Content-Length": str(len(body)),
     }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
     req = new_request(url, data=body, method="PUT", headers=headers)
 
     def _attempt():
@@ -423,7 +426,7 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         # bad certificate is tolerated and an HTTP-only registry falls back to
         # http://; otherwise a cert/plaintext failure raises a RuntimeError
         # pointing at --allow-insecure (handled inside get_auth_token).
-        token, base = get_auth_token(
+        auth, base = get_auth_token(
             repo, registry, actions="pull,push", insecure=insecure,
         )
     except urllib.error.HTTPError as exc:
@@ -440,7 +443,7 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         short_id = digest.split(":")[-1][:12]
 
         try:
-            if _blob_exists(repo, digest, token, base, insecure):
+            if _blob_exists(repo, digest, auth, base, insecure):
                 log_info(f"{short_id}: Layer {i + 1}/{n_layers} already "
                          f"exists on registry, skipping upload.")
                 continue
@@ -457,7 +460,7 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
                 log_info(f"{short_id}: Uploading layer {i + 1}/{n_layers} "
                          f"({fmt_size(size)})...")
                 _upload_blob_fd(
-                    repo, digest, src_fd, token, base, insecure,
+                    repo, digest, src_fd, auth, base, insecure,
                     label=short_id,
                 )
             finally:
@@ -471,14 +474,14 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
 
     cfg_short = expected_cfg_digest.split(":")[-1][:12]
     try:
-        if _blob_exists(repo, expected_cfg_digest, token, base, insecure):
+        if _blob_exists(repo, expected_cfg_digest, auth, base, insecure):
             log_info(f"{cfg_short}: Image config already exists on "
                      f"registry, skipping upload.")
         else:
             log_info(f"{cfg_short}: Uploading image config "
                      f"({fmt_size(len(config_bytes))})...")
             _upload_blob_bytes(
-                repo, expected_cfg_digest, config_bytes, token, base, insecure,
+                repo, expected_cfg_digest, config_bytes, auth, base, insecure,
             )
             bytes_uploaded += len(config_bytes)
     except urllib.error.HTTPError as exc:
@@ -493,7 +496,7 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
              f"({fmt_size(len(manifest_bytes))})...")
     try:
         registry_digest = _put_manifest(
-            repo, tag, manifest_bytes, manifest_media, token, base, insecure,
+            repo, tag, manifest_bytes, manifest_media, auth, base, insecure,
         )
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)

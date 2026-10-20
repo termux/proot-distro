@@ -42,10 +42,14 @@ from proot_distro.helpers.tar_extract import extract_tar_fd_to_rootfs
 
 
 def download_blob(
-    repo: str, digest: str, token: str, base: str,
+    repo: str, digest: str, auth: str, base: str,
     insecure: bool = False,
 ) -> int:
     """Download a blob to the layer cache; return an open descriptor on it.
+
+    *auth* is the Authorization value transport.get_auth_token()
+    resolved, or '' for none. A registry's blob URL commonly redirects
+    to storage elsewhere, which the header does not follow.
 
     Streams the bytes through sha256 and verifies the result against the
     expected *digest* before promoting the .tmp file. The descriptor is a
@@ -69,8 +73,8 @@ def download_blob(
 
     url = f"{base}/v2/{repo}/blobs/{digest}"
     headers = {**_ua()}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
     req = new_request(url, headers=headers)
 
     def _attempt():

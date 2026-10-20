@@ -36,21 +36,27 @@
 #     a download.RedirectPolicyHandler, so which redirects are followed
 #     at all -- never off HTTPS unless --allow-insecure, never to another
 #     scheme -- is the rule every other request in the program obeys.
-#   - Token-exchange flow: PD_DOCKER_AUTH (username:password) is the
-#     single auth contract; the registry's WWW-Authenticate header
-#     tells us where to redeem it for a Bearer token.
+#   - Authentication: PD_DOCKER_AUTH (username:password) is the
+#     single auth contract. The registry's WWW-Authenticate header
+#     either tells us where to redeem it for a Bearer token, or (Basic)
+#     asks for it on every request. get_auth_token() turns either into
+#     the one Authorization value pull and push send.
 #
 # A credential goes only where it was addressed. same_auth_origin() is
 # the one rule for that: the redirect handler asks it before carrying a
-# header on to the next hop, and push asks it before carrying the Bearer
-# token to the upload Location a registry hands back. The token exchange
-# is the other side of the same coin -- PD_DOCKER_AUTH is sent as Basic
-# to whatever realm the registry's challenge names, since that is how
-# the protocol works (Docker Hub's realm is auth.docker.io, GitLab's is
-# gitlab.com for registry.gitlab.com, so the host is legitimately the
-# registry's to choose), but the realm has to be an https:// URL, or an
-# http:// one under --allow-insecure. A plaintext realm is a password on
-# the wire without the user having asked for plaintext anything.
+# header on to the next hop, and push asks it before carrying the
+# Authorization header -- the Bearer token, or a Basic registry's
+# password itself -- to the upload Location a registry hands back. The
+# token exchange is the other side of the same coin -- PD_DOCKER_AUTH is
+# sent as Basic to whatever realm the registry's challenge names, since
+# that is how the protocol works (Docker Hub's realm is auth.docker.io,
+# GitLab's is gitlab.com for registry.gitlab.com, so the host is
+# legitimately the registry's to choose), but the realm has to be an
+# https:// URL, or an http:// one under --allow-insecure. A plaintext
+# realm is a password on the wire without the user having asked for
+# plaintext anything. A registry whose challenge is Basic gets
+# PD_DOCKER_AUTH itself, held to the same rule: it goes to the origin
+# that was probed, over plain HTTP only under --allow-insecure.
 #
 # Everything a registry says about itself arrives here first, and none of
 # it is this program's to trust: how many bytes a metadata response holds
@@ -264,6 +270,11 @@ def _grant_token(data: dict, what: str) -> str:
             f"HTTP header cannot carry."
         )
     return token
+
+
+def _bearer(token: str) -> str:
+    """The Authorization value for a granted *token*; '' for no token."""
+    return f"Bearer {token}" if token else ""
 
 
 def decode_json_object(body: bytes, what: str) -> dict:
@@ -522,8 +533,9 @@ def env_basic_auth() -> str:
         raise RuntimeError(
             "PD_DOCKER_AUTH must be in 'username:password' format "
             "(e.g. 'myuser:mypassword' or 'myuser:ghp_xxx'). "
-            "A bare token without a username cannot be used — registry "
-            "auth requires a token exchange with Basic credentials."
+            "A bare token without a username cannot be used — registries "
+            "take a username and a password (or access token) as Basic "
+            "credentials."
         )
     # The variable's own bytes: os.environ decodes them with
     # surrogateescape, so a password byte that is not UTF-8 is a lone
@@ -586,11 +598,18 @@ def get_auth_token(
     repo: str, registry: str = "", actions: str = "pull",
     insecure: bool = False,
 ) -> tuple:
-    """Resolve a registry's base URL and an OAuth2 token for *repo*.
+    """Resolve a registry's base URL and the credential for *repo*.
 
-    Returns ``(token, base_url)`` where *base_url* is the resolved
+    Returns ``(authorization, base_url)`` where *base_url* is the resolved
     ``scheme://registry`` that every subsequent request for this image must
-    use. *token* is empty for wide-open registries.
+    use, and *authorization* the value of the Authorization header every
+    one of them carries: ``Bearer <token>`` for a registry with a token
+    service, ``Basic <credentials>`` for one that checks passwords itself,
+    and empty when there is nothing to send (a wide-open registry, or an
+    anonymous client of one that wants Basic). The header goes only to
+    *base_url*'s origin: a redirect elsewhere drops it
+    (AuthStrippingRedirectHandler), and so does an upload Location
+    elsewhere (push._headers_for).
 
     `actions` is a comma-separated list of registry actions to request,
     such as 'pull' (default), 'push', or 'pull,push'. The push flow
@@ -603,7 +622,7 @@ def get_auth_token(
 
     Without PD_DOCKER_AUTH Docker Hub uses its well-known auth endpoint for
     anonymous requests (always HTTPS). For any other registry the scheme and
-    Bearer realm are discovered with a single /v2/ probe:
+    the challenge are discovered with a single /v2/ probe:
 
       * HTTPS is tried first — even under *insecure*, so a registry serving
         an untrusted certificate is reached (cert verification is skipped
@@ -613,9 +632,13 @@ def get_auth_token(
       * A registry that answers the HTTPS probe with plaintext is HTTP-only:
         under *insecure* it is retried over http://; otherwise a RuntimeError
         points the user at ``--allow-insecure``.
-      * The realm the challenge names must be an https:// URL -- or an
-        http:// one under *insecure* -- before anything is sent to it
+      * The realm a Bearer challenge names must be an https:// URL -- or
+        an http:// one under *insecure* -- before anything is sent to it
         (see _require_usable_realm).
+      * A Basic challenge means the registry takes the credentials itself
+        on every request, so PD_DOCKER_AUTH is what it gets. It goes to the
+        origin that was probed, over the scheme the probe settled on -- so
+        plain HTTP only under *insecure*, as for a realm.
     """
     basic_auth = env_basic_auth()
 
@@ -636,12 +659,12 @@ def get_auth_token(
         data = decode_json_object(
             _request_body(auth_opener().open, req, what), what,
         )
-        return _grant_token(data, what), REGISTRY_URL
+        return _bearer(_grant_token(data, what)), REGISTRY_URL
 
-    # Custom registry: probe /v2/ to resolve the scheme and discover the
-    # Bearer realm. Registries serving public images still require this dance —
-    # they answer 401 to unauthenticated requests and embed the token endpoint
-    # in the challenge.
+    # Custom registry: probe /v2/ to resolve the scheme and discover how
+    # it authenticates. Registries serving public images still require
+    # this dance — they answer 401 to unauthenticated requests and embed
+    # the token endpoint (or a Basic challenge) in the answer.
     op = opener(insecure)
     scheme = "https"
     while True:
@@ -653,10 +676,20 @@ def get_auth_token(
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
                 raise
-            www_auth = exc.headers.get("WWW-Authenticate", "")
-            if not www_auth.lower().startswith("bearer "):
+            www_auth = exc.headers.get("WWW-Authenticate", "").strip()
+            auth_scheme, _, challenge = www_auth.partition(" ")
+            auth_scheme = auth_scheme.lower()
+            if auth_scheme == "basic":
+                # distribution's htpasswd auth, Nexus, Artifactory and the
+                # like: no token to exchange the credentials for, and the
+                # registry wants them on every request. This used to be
+                # taken for an open registry, so nothing was ever sent and
+                # the refusal that followed told the user to check
+                # credentials it had not used.
+                return basic_auth, base
+            if auth_scheme != "bearer":
                 return "", base
-            params = _parse_bearer_challenge(www_auth.split(" ", 1)[1])
+            params = _parse_bearer_challenge(challenge)
             realm = params.get("realm", "")
             if not realm:
                 return "", base
@@ -678,7 +711,7 @@ def get_auth_token(
             data = decode_json_object(
                 _request_body(op.open, token_req, what), what,
             )
-            return _grant_token(data, what), base
+            return _bearer(_grant_token(data, what)), base
         except urllib.error.URLError as exc:
             # The server speaks TLS but its certificate is untrusted. Only
             # reachable when enforcing HTTPS (the insecure opener skips

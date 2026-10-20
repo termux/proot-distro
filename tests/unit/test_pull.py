@@ -6,15 +6,20 @@
 # reported as the registry serving the wrong bytes -- fatal, not retried.
 # The opener is mocked; no network.
 
+import email.message
 import hashlib
 import io
 import json
+import os
+import urllib.error
 from types import SimpleNamespace
 
 import pytest
 
 from proot_distro.helpers import download
+from proot_distro.helpers.docker import layers as layers_mod
 from proot_distro.helpers.docker import pull as pull_mod
+from proot_distro.helpers.docker.transport import auth_denied_msg
 
 
 @pytest.fixture(autouse=True)
@@ -226,3 +231,93 @@ def test_a_spent_quota_on_a_layer_says_why(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         pull_mod.pull_image(_N8N, -1, "x86_64")
     _assert_points_at_docker_hub(str(exc.value))
+
+
+# ----- authorization -------------------------------------------------------
+
+@pytest.mark.parametrize("auth", [
+    "Bearer T",                         # a token service's grant
+    "Basic YWxpY2U6c2VjcmV0",           # a registry checking passwords itself
+    "",                                 # an open registry
+])
+def test_every_pull_request_carries_the_resolved_authorization(monkeypatch,
+                                                               auth):
+    # get_auth_token resolves the whole header value, and the manifest,
+    # the config and the layer are each asked for with exactly that.
+    blob = b"blob bytes"
+    digest = "sha256:" + hashlib.sha256(blob).hexdigest()
+    sent = []
+
+    def _open(req):
+        sent.append(req.get_header("Authorization"))
+        return _Resp(_MANIFEST if "/manifests/" in req.full_url else blob)
+
+    fake = lambda insecure=False: SimpleNamespace(open=_open)  # noqa: E731
+    monkeypatch.setattr(pull_mod, "opener", fake)
+    monkeypatch.setattr(layers_mod, "opener", fake)
+    pull_mod._get_manifest("team/app", "1", auth, "https://r")
+    pull_mod._download_config("team/app", digest, auth, "https://r")
+    os.close(layers_mod.download_blob("team/app", digest, auth, "https://r"))
+    assert sent == [auth or None] * 3
+
+
+_REF = "reg.example/team/app:1"
+
+
+def _refusal(code):
+    def _refuse(*a, **k):
+        raise urllib.error.HTTPError(
+            "https://reg.example/v2/", code, "Refused",
+            email.message.Message(), io.BytesIO(b""),
+        )
+    return _refuse
+
+
+def _refuse_at(monkeypatch, stage, code):
+    """Make the pull of _REF meet HTTP *code* at *stage*."""
+    refuse = _refusal(code)
+    if stage == "token for a cached manifest":
+        monkeypatch.setattr(pull_mod, "load_manifest_cache",
+                            lambda *a: (_ONE_LAYER, "team/app", {}))
+        monkeypatch.setattr(pull_mod, "annotate_manifest_cache",
+                            lambda *a: None)
+        monkeypatch.setattr(pull_mod, "get_auth_token", refuse)
+    elif stage == "token":
+        monkeypatch.setattr(pull_mod, "get_auth_token", refuse)
+    elif stage == "manifest":
+        monkeypatch.setattr(
+            pull_mod, "get_auth_token",
+            lambda *a, **k: ("Bearer T", "https://reg.example"),
+        )
+        monkeypatch.setattr(
+            pull_mod, "opener",
+            lambda insecure=False: SimpleNamespace(open=refuse),
+        )
+    else:
+        monkeypatch.setattr(
+            pull_mod, "_resolve_single_manifest",
+            lambda *a: (_ONE_LAYER, "Bearer T", "https://reg.example", {}),
+        )
+        monkeypatch.setattr(pull_mod, "_fetch_config_blob", lambda *a: {})
+        monkeypatch.setattr(pull_mod, "save_manifest_cache",
+                            lambda *a, **k: None)
+        monkeypatch.setattr(pull_mod, "download_blob", refuse)
+
+
+@pytest.mark.parametrize("with_credentials", [False, True])
+@pytest.mark.parametrize("code", [401, 403])
+@pytest.mark.parametrize("stage", [
+    "token for a cached manifest", "token", "manifest", "layer",
+])
+def test_a_refusal_at_every_stage_of_a_pull_says_access_denied(
+        monkeypatch, stage, code, with_credentials):
+    # The three places the pull reads a registry's 401/403 -- the token
+    # for a cached manifest's missing layers, the manifest (and the token
+    # before it), and a layer -- each have to say what auth_denied_msg
+    # says, not "Network error: HTTP Error 401".
+    if with_credentials:
+        monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    _refuse_at(monkeypatch, stage, code)
+    with pytest.raises(RuntimeError) as exc:
+        pull_mod.pull_image(_REF, -1, "x86_64")
+    assert str(exc.value) == auth_denied_msg(_REF, code)
