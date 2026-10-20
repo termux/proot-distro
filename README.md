@@ -609,6 +609,9 @@ the registry accepts unauthenticated `PUT`s.
   cache and aborts the push.
 - 401/403 responses (on any phase: token fetch, blob upload, manifest
   PUT) are reported with a hint to set or fix `PD_DOCKER_AUTH`.
+- A "too many requests" answer (HTTP 429) stops the push with a message
+  saying whose limit was reached and when to try again, if the registry
+  says. Short waits the registry asks for are waited out automatically.
 
 **Examples:**
 

@@ -5,6 +5,7 @@
 
 import email.message
 import hashlib
+import io
 import os
 
 import urllib.error
@@ -483,3 +484,137 @@ def test_push_image_refuses_a_digest_before_reading_the_cache(monkeypatch):
     monkeypatch.setattr(push, "load_manifest_cache", no_cache)
     with pytest.raises(RuntimeError, match="use a tag"):
         push.push_image("reg.example/me/app@sha256:" + "a" * 64, "x86_64")
+
+
+# ----- 429 Too Many Requests ----------------------------------------------
+
+def _quota_spent(url, source=False):
+    hdrs = email.message.Message()
+    hdrs["RateLimit-Remaining"] = "0;w=3600"
+    if source:
+        hdrs["Docker-RateLimit-Source"] = "192.0.2.10"
+    return urllib.error.HTTPError(
+        url, 429, "Too Many Requests", hdrs, io.BytesIO(b""),
+    )
+
+
+def _pushable(monkeypatch, tmp_path):
+    """A cached image push_image will get as far as the network with."""
+    cfg_bytes = b"CFG"
+    manifest = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"digest": "sha256:" + hashlib.sha256(cfg_bytes).hexdigest()},
+        "layers": [{"digest": "sha256:" + "a" * 64}],
+    }
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"layer")
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda r, a: (manifest, "me/app", {"k": "v"}))
+    monkeypatch.setattr(push, "canonical_json", lambda d: cfg_bytes)
+    monkeypatch.setattr(push, "blob_present", lambda d: True)
+    monkeypatch.setattr(push, "open_required_layer",
+                        lambda d: os.open(blob, os.O_RDONLY))
+    monkeypatch.setattr(push, "get_auth_token",
+                        lambda *a, **k: ("TKN", _BASE))
+    monkeypatch.setattr(push, "_blob_exists", lambda *a, **k: False)
+    monkeypatch.setattr(push, "_upload_blob_fd", lambda *a, **k: None)
+    monkeypatch.setattr(push, "_upload_blob_bytes", lambda *a, **k: None)
+    monkeypatch.setattr(push, "_put_manifest", lambda *a, **k: "sha256:dd")
+
+
+def _refuse(*a, **k):
+    raise _quota_spent(_BASE + "/v2/me/app/blobs/uploads/")
+
+
+@pytest.mark.parametrize("stage", [
+    "get_auth_token", "_blob_exists", "_upload_blob_fd",
+    "_upload_blob_bytes", "_put_manifest",
+])
+def test_a_rate_limited_push_says_so_at_every_stage(monkeypatch, tmp_path,
+                                                    stage):
+    # Regression: a 429 anywhere in the push came out of command_push as
+    # "Network error: HTTP Error 429: Too Many Requests".
+    _pushable(monkeypatch, tmp_path)
+    monkeypatch.setattr(push, stage, _refuse)
+    with pytest.raises(RuntimeError) as exc:
+        push.push_image("reg.example/me/app:1", "x86_64")
+    text = str(exc.value)
+    assert "Registry 'reg.example' refused to accept" in text
+    assert "HTTP 429" in text
+    assert "to push with an account" in text
+
+
+def test_a_spent_quota_on_a_push_is_not_retried(monkeypatch, tmp_path):
+    # Through the real probe and opener: one request, then the message.
+    real_blob_exists = push._blob_exists
+    _pushable(monkeypatch, tmp_path)
+    monkeypatch.setattr(push, "_blob_exists", real_blob_exists)
+    calls = []
+
+    def refuse(req, *a, **k):
+        calls.append(req.full_url)
+        raise _quota_spent(req.full_url)
+
+    _patch_opener(monkeypatch, refuse)
+    with pytest.raises(RuntimeError) as exc:
+        push.push_image("reg.example/me/app:1", "x86_64")
+    assert "HTTP 429" in str(exc.value)
+    assert len(calls) == 1
+
+
+def test_other_http_errors_still_reach_the_command(monkeypatch, tmp_path):
+    _pushable(monkeypatch, tmp_path)
+
+    def bad_request(*a, **k):
+        raise _http_error(_BASE + "/v2/me/app/manifests/1", 400, "Bad")
+
+    monkeypatch.setattr(push, "_put_manifest", bad_request)
+    with pytest.raises(urllib.error.HTTPError):
+        push.push_image("reg.example/me/app:1", "x86_64")
+
+
+def test_auth_refusals_keep_their_own_message(monkeypatch, tmp_path):
+    _pushable(monkeypatch, tmp_path)
+
+    def denied(*a, **k):
+        raise _http_error(_BASE + "/v2/me/app/manifests/1", 403, "Denied")
+
+    monkeypatch.setattr(push, "_put_manifest", denied)
+    with pytest.raises(RuntimeError) as exc:
+        push.push_image("reg.example/me/app:1", "x86_64")
+    assert "Push denied" in str(exc.value)
+
+
+def _push_limit_msg(image_ref, exc):
+    from proot_distro.helpers.docker.refs import parse_tag_reference
+    return push._refusal_msg(image_ref, parse_tag_reference(image_ref), exc)
+
+
+def test_a_push_to_docker_hub_gets_no_pull_advice(monkeypatch):
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    exc = _quota_spent("https://registry-1.docker.io/v2/me/app/blobs/x",
+                       source=True)
+    text = _push_limit_msg("me/app:1", exc)
+    assert text.startswith("Docker Hub refused to accept 'me/app:1'")
+    assert "anonymous pulls" not in text
+    assert "to push with a Docker Hub account" in text
+
+
+def test_a_push_to_a_docker_hub_front_end_is_not_sent_elsewhere(monkeypatch):
+    # The pull's advice -- install from the Docker Hub name -- is nothing
+    # a push can do: the image would have to be built under that name.
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    exc = _quota_spent("https://hub-mirror.example/v2/me/app/blobs/x",
+                       source=True)
+    text = _push_limit_msg("hub-mirror.example/me/app:1", exc)
+    assert "passes requests on to Docker Hub" in text
+    assert "install it from there" not in text
+    assert "to push with a Docker Hub account" in text
+
+
+def test_a_rate_limited_push_with_credentials_is_the_accounts(monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "u:p")
+    exc = _quota_spent(_BASE + "/v2/me/app/blobs/x")
+    text = _push_limit_msg("reg.example/me/app:1", exc)
+    assert "for the account in PD_DOCKER_AUTH" in text
+    assert "PD_DOCKER_AUTH=" not in text

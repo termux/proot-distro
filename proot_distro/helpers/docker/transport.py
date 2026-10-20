@@ -407,52 +407,66 @@ def _relays_docker_hub(registry: str, exc: urllib.error.HTTPError) -> bool:
     return host.lower() == registry.lower()
 
 
-def rate_limited_msg(image_ref: str, ref, exc: urllib.error.HTTPError) -> str:
+def rate_limited_msg(
+    image_ref: str, ref, exc: urllib.error.HTTPError, action: str = "pull",
+) -> str:
     """Return the error shown when a registry answers 429 Too Many Requests.
 
-    *ref* is the parsed *image_ref*. The advice depends on whose limit it
-    is. With PD_DOCKER_AUTH set it is the account's, and there is nothing
-    to do but wait. Anonymous pulls from Docker Hub are counted per
-    network address, which a mobile carrier's NAT shares among many
-    people. A front end relaying Docker Hub (_relays_docker_hub) is one
-    address to Docker Hub however many people pull through it, so its
-    anonymous quota is spent by all of them at once and is often simply
-    gone; the image is usually on Docker Hub under the same repository,
-    and pulling it from there is counted against this machine's own
-    address instead.
+    *ref* is the parsed *image_ref*, and *action* is "pull" or "push".
+    The advice depends on whose limit it is. With PD_DOCKER_AUTH set it
+    is the account's, and there is nothing to do but wait. Anonymous
+    pulls from Docker Hub are counted per network address, which a
+    mobile carrier's NAT shares among many people. A front end relaying
+    Docker Hub (_relays_docker_hub) is one address to Docker Hub however
+    many people pull through it, so its anonymous quota is spent by all
+    of them at once and is often simply gone; the image is usually on
+    Docker Hub under the same repository, and pulling it from there is
+    counted against this machine's own address instead.
+
+    A push is told the same, less what only a pull can act on: the
+    per-address limit is Docker Hub's pull limit, and a push cannot
+    simply go to the Docker Hub name -- the image has to be built under
+    it first, and pushing there needs an account anyway.
     """
+    pulling = action == "pull"
     registry = ref.registry
     who = f"Registry '{registry}'" if registry else "Docker Hub"
     text = (
-        f"{who} refused to serve '{image_ref}' "
-        f"(HTTP 429 Too Many Requests): its rate limit is reached"
+        f"{who} refused to {'serve' if pulling else 'accept'} "
+        f"'{image_ref}' (HTTP 429 Too Many Requests): its rate limit is "
+        f"reached"
     )
     wait = retry_after(exc)
     when = f"in {_wait_text(wait)}" if wait else "later"
     if os.environ.get("PD_DOCKER_AUTH"):
         return f"{text} for the account in PD_DOCKER_AUTH. Try again {when}."
     hub_account = (
-        "set PD_DOCKER_AUTH=username:password to pull with a Docker Hub "
-        "account, which has a limit of its own"
+        f"set PD_DOCKER_AUTH=username:password to {action} with a Docker "
+        f"Hub account, which has a limit of its own"
     )
     if not registry:
-        return (
-            f"{text}. Docker Hub limits anonymous pulls per network "
-            f"address, which mobile and shared networks give to many "
-            f"people at once. Try again {when}, or {hub_account}."
+        why = (
+            "Docker Hub limits anonymous pulls per network address, which "
+            "mobile and shared networks give to many people at once. "
+            if pulling else ""
         )
+        return f"{text}. {why}Try again {when}, or {hub_account}."
     if _relays_docker_hub(registry, exc):
+        shared = (
+            f"{text}. '{registry}' passes requests on to Docker Hub, and "
+            f"everyone using it anonymously shares one Docker Hub limit."
+        )
+        if not pulling:
+            return f"{shared} Try again {when}, or {hub_account}."
         hub_ref = ref._replace(registry="").canonical
         return (
-            f"{text}. '{registry}' passes requests on to Docker Hub, and "
-            f"everyone pulling anonymously through it shares one Docker "
-            f"Hub limit. If the image is published on Docker Hub too, "
+            f"{shared} If the image is published on Docker Hub too, "
             f"install it from there: '{hub_ref}'. Otherwise try again "
             f"{when}, or {hub_account}."
         )
     return (
         f"{text}. Try again {when}, or set "
-        f"PD_DOCKER_AUTH=username:password to pull with an account; "
+        f"PD_DOCKER_AUTH=username:password to {action} with an account; "
         f"registries usually allow signed-in users more."
     )
 
