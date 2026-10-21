@@ -50,8 +50,12 @@ import pytest  # noqa: E402
 
 # Safe now: constants resolves into the sandbox on first import.
 from proot_distro import constants, dirfd, locking, message  # noqa: E402
+from proot_distro import prootcheck  # noqa: E402
 
 import _builders  # noqa: E402
+
+# The real self-test, for the tests that exercise it (`real_proot_probe`).
+_REAL_PROOT_PROBE = prootcheck._probe
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +159,28 @@ def _clean_runtime():
     message.set_quiet(False)
     locking._held_exclusive.clear()
     _clear_child_subreaper()
+
+
+@pytest.fixture(autouse=True)
+def _proot_confines(monkeypatch):
+    """Answer proot's self-test with "confines" unless a test asks otherwise.
+
+    login and RUN steps probe the proot binary before using it. Most
+    tests stand in a fake path for proot and a fake Popen or execvpe for
+    the exec, so a real probe would launch whatever that path names, or
+    land in the test's fake. A test that wants the real probe requests
+    `real_proot_probe`; one that wants a verdict patches `_probe` itself.
+    """
+    prootcheck._verdicts.clear()
+    monkeypatch.setattr(prootcheck, "_probe", lambda proot_bin, toggles: True)
+    yield
+    prootcheck._verdicts.clear()
+
+
+@pytest.fixture
+def real_proot_probe(monkeypatch):
+    """Undo the autouse stub above: run the real proot self-test."""
+    monkeypatch.setattr(prootcheck, "_probe", _REAL_PROOT_PROBE)
 
 
 # ---------------------------------------------------------------------------

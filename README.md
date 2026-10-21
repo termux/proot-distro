@@ -124,6 +124,9 @@ On startup the tool verifies that `proot` is available. If it isn't:
 Set `PD_PROOT_BIN` to use a custom `proot` executable instead of the
 PATH lookup; see the environment variables table below.
 
+Before anything runs inside a container, `proot` itself is tested too;
+see [proot self-test](#proot-self-test).
+
 PRoot-Distro also refuses to run inside another `proot` (nested proot
 is not supported by `proot` itself) and prints a warning if launched
 as the `root` user.
@@ -1531,6 +1534,33 @@ env PATH=… HOME=/root … \
 You can see this exact command for any container by adding the
 `--get-proot-cmd` flag to `login` or `run`.
 
+#### proot self-test
+
+Before a session or a `build` RUN step starts, PRoot-Distro checks
+that `proot` really keeps programs inside the container. The check
+takes a few milliseconds.
+
+Some `proot` builds only work correctly with their seccomp acceleration
+turned off. One example is the `proot` 5.4.0 package of Ubuntu 26.04.
+When PRoot-Distro finds such a build, it sets `PROOT_NO_SECCOMP=1` for
+you and prints a warning:
+
+```
+Warning: '/usr/bin/proot' skips path translation unless seccomp
+acceleration is off (a defect of some proot 5.4.0 builds); running it
+with PROOT_NO_SECCOMP=1. Export PROOT_NO_SECCOMP=1 to skip this warning.
+```
+
+To hide the warning, add this to your shell profile:
+
+```sh
+export PROOT_NO_SECCOMP=1
+```
+
+If `proot` does not keep programs inside the container at all,
+PRoot-Distro refuses to start it. Install a working `proot`, or point
+`PD_PROOT_BIN` at one.
+
 #### Cross-architecture support
 
 Architectures supported as containers: `aarch64`, `arm`, `i686`,
@@ -1591,6 +1621,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `PD_DOCKER_AUTH` | Credentials for pulling and pushing Docker/OCI images. Must be in `username:password` or `username:PAT` format (colon required). Sent as HTTP Basic auth to the registry's token endpoint to obtain a scoped bearer token. Takes effect for `install`, `build` (`FROM` base-image pulls), and `push` (with `pull,push` scope). Not sent by `search` — Docker Hub's search endpoint ignores it. |
 | `PD_PROOT_BIN` | Absolute path to a custom `proot` executable, used in place of the PATH lookup for `login`, `run`, and `build` RUN steps. Must point at an existing, executable file or the command exits with an error. |
 | `PD_FORCE_NO_COLORS` | When set to any value, disables ANSI colors in PRoot-Distro's own output. |
+| `PROOT_NO_SECCOMP` | Turns off `proot`'s seccomp acceleration. Inherited and forwarded to `proot`, except in `--minimal` mode. Set automatically, in every mode, when the [proot self-test](#proot-self-test) finds that `proot` needs it. |
 | `PROOT_VERBOSE` | Inherited and forwarded to `proot` for debugging. Skipped in `--minimal` mode. |
 | `COLUMNS` | Fallback terminal width for `--help` rendering. |
 | `TERM`, `COLORTERM` | Inherited from the host and exported into the guest (always; even in `--minimal`). In `normal`-type containers, `TERM` defaults to `xterm-256color` when unset on the host. |

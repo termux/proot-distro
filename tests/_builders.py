@@ -13,6 +13,7 @@ import io
 import json
 import os
 import struct
+import sys
 import tarfile
 
 # proot-distro arch name -> ELF e_machine value.
@@ -469,3 +470,49 @@ def login_child_env(command, args, capsys):
         command(args)
     assert exc.value.code == 0
     return parse_proot_cmd_env(capsys.readouterr().out)
+
+
+# ---------------------------------------------------------------------------
+# Stand-in proot
+# ---------------------------------------------------------------------------
+
+# Parses the leading options the way proot does and then, by *mode*:
+# "confine" rewrites every argument under a --bind destination to its
+# source; "leak" runs the command on the host as it is, which is what
+# Ubuntu 26.04's proot 5.4.0 does in seccomp mode; "leak-with-seccomp"
+# confines only with PROOT_NO_SECCOMP set; "fail" exits 1 at once and
+# "hang" never answers.
+_FAKE_PROOT = """#!{python}
+import os, sys, time
+mode = {mode!r}
+if mode == "fail":
+    sys.exit(1)
+if mode == "hang":
+    time.sleep(60)
+args = sys.argv[1:]
+binds = []
+while args and args[0].startswith("-"):
+    opt = args.pop(0)
+    if opt.startswith("--bind="):
+        src, _, dst = opt[len("--bind="):].partition(":")
+        binds.append((src, dst or src))
+confine = mode == "confine" or (
+    mode == "leak-with-seccomp" and os.environ.get("PROOT_NO_SECCOMP"))
+def guest(path):
+    for src, dst in binds:
+        if path == dst or path.startswith(dst + "/"):
+            return src + path[len(dst):]
+    return path
+if confine:
+    args = [guest(a) for a in args]
+os.execv(args[0], args)
+"""
+
+
+def fake_proot(directory, mode):
+    """Write a stand-in proot in *mode* under *directory*; return its path."""
+    path = os.path.join(str(directory), f"proot-{mode}")
+    with open(path, "w") as fh:
+        fh.write(_FAKE_PROOT.format(python=sys.executable, mode=mode))
+    os.chmod(path, 0o755)
+    return path
