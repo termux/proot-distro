@@ -13,14 +13,23 @@ concurrency:
 
 jobs:
   test:
-    name: Test suite (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Test suite (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Cover the floor and the latest of the supported range
-        # (pyproject: requires-python = ">=3.9").
-        python-version: ['3.9', '3.12', '3.15']
+        # (pyproject: requires-python = ">=3.9"). setup-python has no 3.9
+        # build for Ubuntu 26.04, so the floor stays on 24.04. That also
+        # keeps both distro proots under test: 5.1.0 there, and on 26.04
+        # the 5.4.0 that only confines with PROOT_NO_SECCOMP set.
+        include:
+          - python-version: '3.9'
+            os: ubuntu-24.04
+          - python-version: '3.12'
+            os: ubuntu-latest
+          - python-version: '3.15'
+            os: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v7
