@@ -189,6 +189,7 @@ HELP_PAGES = {
             "Private repositories require authentication. Set "
             "PD_DOCKER_AUTH=\"user:password\" (or "
             "\"user:personal-access-token\") before running push. "
+            "The credentials are checked before anything is uploaded. "
             "Self-hosted registries that allow anonymous push do not "
             "need PD_DOCKER_AUTH set."
         ),
@@ -425,7 +426,8 @@ HELP_PAGES = {
             "Private images require authentication. Set the environment "
             "variable PD_DOCKER_AUTH=\"user:password\" before running "
             "the install command. Some registries use a personal access "
-            "token instead of password."
+            "token instead of password. The credentials are checked "
+            "before the download starts."
         ),
         "options": [
             ("-h, --help", "Show this help."),

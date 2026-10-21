@@ -251,6 +251,11 @@ When the env var is set, the authentication progress line notes
 `(user credentials)` so you can confirm your credentials are being
 picked up.
 
+The credentials are checked before anything is downloaded. If the
+registry rejects them, the install stops right away and says so. Check
+the username and password. An access token may also have expired or
+lack the needed scope.
+
 **Pull rate limits.** Registries limit how often you may pull. Docker
 Hub counts anonymous pulls per network address, and mobile or shared
 networks give one address to many people. When a registry answers
@@ -593,6 +598,9 @@ proot-distro push ghcr.io/myorg/myapp:1.0
 export PD_DOCKER_AUTH=myuser:mypassword
 proot-distro push registry.example.com/private/myapp:1.0
 ```
+
+The credentials are checked before anything is uploaded. Wrong
+credentials stop the push right away with a message saying so.
 
 Self-hosted registries that allow anonymous push do not need
 `PD_DOCKER_AUTH` set — the token endpoint returns an empty token and

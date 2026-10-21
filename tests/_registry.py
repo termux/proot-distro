@@ -5,15 +5,20 @@
 # Three servers on 127.0.0.1, each its own origin (a port of its own):
 #
 #   registry  The /v2/ API. The probe of /v2/ answers 401 with a Bearer
-#             challenge naming the token service as its realm; every
-#             other endpoint wants a Bearer token granting the action it
-#             serves (pull, or push), and answers 401 with the same
-#             challenge otherwise, as distribution does.
+#             challenge naming the token service as its realm, and 200
+#             to a token the service issued; every other endpoint wants
+#             a Bearer token granting the action it serves (pull, or
+#             push), and answers 401 with the same challenge otherwise,
+#             as distribution does.
 #   auth      The token service. Basic credentials, when sent, must be an
-#             account's; a wrong password is a 401. An account may pull
-#             and push every repository, an anonymous caller may pull the
-#             public ones and nothing else -- what is not granted is
-#             simply left out of the token, as real token services do.
+#             account's; a wrong password is a 401, or reject_code's
+#             status (GHCR says 403). A request naming no scope is a
+#             check of the credentials alone, as `docker login` makes. An
+#             account may pull and push every repository, unless it is
+#             one of the outsiders, which sign in but may do no more
+#             than an anonymous caller: pull the public repositories and
+#             nothing else. What is not granted is simply left out of
+#             the token, as real token services do.
 #   cdn       Where blob GETs are redirected, the way Docker Hub sends
 #             them to pre-signed storage URLs, and optionally where upload
 #             sessions are handed off. Like those stores it refuses any
@@ -22,7 +27,9 @@
 # With scheme="basic" there is no token service to speak of: the probe's
 # challenge is Basic, and the registry checks an account's password on
 # every request itself, as distribution's htpasswd auth, Nexus and
-# Artifactory do.
+# Artifactory do -- /v2/ included, which is where a client checks them.
+# A wrong password is answered as the token service would answer it
+# (Amazon ECR's is a 400).
 #
 # Every request is recorded with its Authorization header, so a test can
 # say exactly which server saw which credential.
@@ -111,6 +118,10 @@ class FakeRegistry:
         self.scheme = scheme
         self.service = service
         self.users = {"alice": "s3cret"}
+        # Accounts that sign in and are granted nothing for it.
+        self.outsiders = set()
+        # The status credentials that are not an account's get.
+        self.reject_code = 401
         self.public = set()
         # What the token endpoint names the token under. Registries send
         # `token`, `access_token` or both; the client takes either.
@@ -214,7 +225,7 @@ class FakeRegistry:
     # ----- policy ---------------------------------------------------------
 
     def allowed(self, account, repo: str) -> set:
-        if account is not None:
+        if account is not None and account not in self.outsiders:
             return {"pull", "push"}
         return {"pull"} if repo in self.public else set()
 
@@ -294,13 +305,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return _NOBODY
         return user
 
+    def _refuse_credentials(self):
+        """Answer credentials that are not an account's."""
+        code = self.state.reject_code
+        if code == 401 and self.role == "registry":
+            return self._challenge()
+        return self._error(code, "UNAUTHORIZED" if code == 401 else "DENIED")
+
     def _auth(self):
         st = self.state
         if self.url.path != "/token" or self.command != "GET":
             return self._error(404, "NOT_FOUND")
         account = self._account()
         if account is _NOBODY:
-            return self._error(401, "UNAUTHORIZED")
+            return self._refuse_credentials()
         access = {}
         for scope in self.query.get("scope", []):
             kind, _, rest = scope.partition(":")
@@ -335,8 +353,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         st = self.state
         if st.scheme == "basic":
             account = self._account()
+            if account is _NOBODY:
+                self._refuse_credentials()
+                return False
             with st.lock:
-                ok = account is not _NOBODY and kind not in st.deny \
+                ok = kind not in st.deny \
                     and action in st.allowed(account, repo)
             if not ok:
                 self._challenge(repo, action)
@@ -355,10 +376,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         st = self.state
         path = self.url.path
         if path == "/v2/":
-            # Asked without a token by every client, to learn the realm.
-            if self.headers.get("Authorization"):
+            # Asked bare by every client, to learn the challenge. Asked
+            # with credentials, it says whether they are good: a Basic
+            # registry's account, or a token the service issued.
+            header = self.headers.get("Authorization")
+            if not header:
+                return self._challenge()
+            if st.scheme == "basic":
+                if self._account() is _NOBODY:
+                    return self._refuse_credentials()
                 return self._reply(200, b"{}")
-            return self._challenge()
+            scheme, _, token = header.partition(" ")
+            with st.lock:
+                known = scheme == "Bearer" and token in st.tokens
+            if not known:
+                return self._challenge()
+            return self._reply(200, b"{}")
         m = _UPLOAD_RE.match(path)
         if m:
             repo, upload = m.group("name"), m.group("id")

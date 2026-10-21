@@ -28,7 +28,7 @@
 #                    before trusting a cached file's name.
 #   media.py       — OCI/Docker media-type constants + canonical_json.
 #   transport.py   — User-Agent, AuthStrippingRedirectHandler, the
-#                    PD_DOCKER_AUTH token exchange.
+#                    PD_DOCKER_AUTH check and token exchange.
 #   layers.py      — download_blob + apply_layer (delegates to
 #                    helpers/tar_extract for the per-member loop).
 #   pull.py        — pull_image: full pipeline from cache check
@@ -76,6 +76,7 @@ from proot_distro.helpers.docker.transport import (
     auth_denied_msg,
     auth_note,
     auth_opener,
+    credentials_rejected_msg,
     env_basic_auth,
     get_auth_token,
     insecure_for,
@@ -113,6 +114,7 @@ __all__ = (
     "auth_note",
     "auth_opener",
     "canonical_ref",
+    "credentials_rejected_msg",
     "derive_alias",
     "download_blob",
     "env_basic_auth",

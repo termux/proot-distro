@@ -23,9 +23,11 @@
 #   1. Load the cached manifest + image_config produced by `build`.
 #      Re-canonicalize the config and verify its digest matches
 #      manifest.config.digest — guards against cache corruption.
-#   2. Resolve the registry's credential for `pull,push`: PD_DOCKER_AUTH
-#      exchanged for a Bearer token, or sent as it is to a registry whose
-#      challenge is Basic (transport.get_auth_token).
+#   2. Resolve the registry's credential for `pull,push`: PD_DOCKER_AUTH,
+#      once the registry or its token service has accepted it, exchanged
+#      for a Bearer token, or sent as it is to a registry whose challenge
+#      is Basic (transport.get_auth_token). Wrong credentials stop the
+#      push here, before anything is uploaded.
 #   3. For each layer: HEAD-probe (skip if present), else
 #      POST /v2/<repo>/blobs/uploads/ + PUT <location>?digest=<digest>
 #      streaming from the cached blob through a progress reader.

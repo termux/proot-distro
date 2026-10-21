@@ -371,9 +371,11 @@ def test_a_plaintext_realm_is_allowed_under_insecure(monkeypatch):
         "x/y", registry="reg.example", insecure=True
     )
     assert auth == "Bearer T"
-    assert len(sent) == 1
-    assert sent[0][0].startswith("http://auth.example/t?")
-    assert sent[0][1] == transport.env_basic_auth()
+    # The credential check, then the token request.
+    assert len(sent) == 2
+    for url, authorization in sent:
+        assert url.startswith("http://auth.example/t?")
+        assert authorization == transport.env_basic_auth()
 
 
 @pytest.mark.parametrize("realm", [
@@ -486,12 +488,17 @@ def test_an_empty_grant_sends_no_authorization(monkeypatch):
 # ----- challenges other than a Bearer realm --------------------------------
 
 def _probe_only(www_authenticate, sink):
-    """A registry answering /v2/ with *www_authenticate*; nothing else."""
+    """A registry answering /v2/ with *www_authenticate*; nothing else.
+
+    A /v2/ carrying credentials is a check of them, and they are good.
+    """
 
     def fake_open(req, *a, **k):
         sink.append((req.full_url, req.get_header("Authorization")))
         if not req.full_url.endswith("/v2/"):
             pytest.fail(f"nothing is asked after the probe: {req.full_url}")
+        if req.get_header("Authorization"):
+            return _FakeResp({})
         hdrs = email.message.Message()
         if www_authenticate is not None:
             hdrs["WWW-Authenticate"] = www_authenticate
@@ -520,8 +527,10 @@ def test_a_basic_challenge_gets_the_credentials_as_they_are(monkeypatch,
     auth, base = transport.get_auth_token("x/y", registry="reg.example")
     assert auth == transport.env_basic_auth()
     assert base == "https://reg.example"
-    # Returned for the requests to come, not sent anywhere on the way.
-    assert sent == [("https://reg.example/v2/", None)]
+    # Returned for the requests to come, and sent once on the way: to the
+    # /v2/ that challenged, to have it checked.
+    assert sent == [("https://reg.example/v2/", None),
+                    ("https://reg.example/v2/", auth)]
 
 
 def test_a_basic_challenge_without_credentials_sends_nothing(monkeypatch):
@@ -550,6 +559,8 @@ def test_a_basic_challenge_over_plain_http_needs_allow_insecure(monkeypatch):
     auth, base = transport.get_auth_token("x/y", registry="reg.example",
                                           insecure=True)
     assert (auth, base) == (transport.env_basic_auth(), "http://reg.example")
+    assert sent == [("http://reg.example/v2/", None),
+                    ("http://reg.example/v2/", auth)]
 
 
 @pytest.mark.parametrize("challenge", [
@@ -568,6 +579,183 @@ def test_a_challenge_naming_nowhere_to_authenticate_sends_nothing(
     assert transport.get_auth_token("x/y", registry="reg.example") == (
         "", "https://reg.example")
     assert sent == [("https://reg.example/v2/", None)]
+
+
+# ----- the credential check ------------------------------------------------
+#
+# With PD_DOCKER_AUTH set, the server that judges it is asked about it
+# alone before it is used for the image: the token service with no scope,
+# as `docker login` asks, or a Basic registry at /v2/. A wrong password
+# used to come back as access denied to the image, which says nothing
+# about which of the two was wrong.
+
+def _error(url, code):
+    return urllib.error.HTTPError(url, code, "Refused",
+                                  email.message.Message(), io.BytesIO(b""))
+
+
+def test_hub_credentials_are_checked_before_the_token_is_asked(monkeypatch):
+    sent = []
+
+    def fake_open(req, *a, **k):
+        sent.append((req.full_url, req.get_header("Authorization")))
+        return _FakeResp({"token": "T"})
+
+    _patch_hub(monkeypatch, fake_open)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    assert transport.get_auth_token("library/x")[0] == "Bearer T"
+    basic = transport.env_basic_auth()
+    assert sent == [
+        (f"{transport.AUTH_URL}?service=registry.docker.io", basic),
+        (f"{transport.AUTH_URL}?service=registry.docker.io"
+         f"&scope=repository:library/x:pull", basic),
+    ]
+
+
+def test_nothing_is_checked_without_credentials(monkeypatch):
+    sent = []
+
+    def fake_open(req, *a, **k):
+        sent.append(req.full_url)
+        return _FakeResp({"token": "T"})
+
+    _patch_hub(monkeypatch, fake_open)
+    monkeypatch.delenv("PD_DOCKER_AUTH", raising=False)
+    transport.get_auth_token("library/x")
+    assert sent == [f"{transport.AUTH_URL}?service=registry.docker.io"
+                    f"&scope=repository:library/x:pull"]
+
+
+def test_a_realm_checks_credentials_with_its_service_and_no_scope(
+        monkeypatch):
+    sent = []
+    _patch_opener(monkeypatch,
+                  _challenge_opener("https://auth.example/t?x=1", sent))
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    transport.get_auth_token("g/p", registry="reg.example",
+                             actions="pull,push")
+    basic = transport.env_basic_auth()
+    assert sent == [
+        ("https://auth.example/t?x=1&service=s", basic),
+        ("https://auth.example/t?x=1&service=s"
+         "&scope=repository:g/p:pull,push", basic),
+    ]
+
+
+def test_a_realm_naming_no_service_is_checked_as_it_is(monkeypatch):
+    sent = []
+
+    def fake_open(req, *a, **k):
+        if req.full_url.endswith("/v2/"):
+            hdrs = email.message.Message()
+            hdrs["WWW-Authenticate"] = 'Bearer realm="https://auth.example/t"'
+            raise urllib.error.HTTPError(
+                req.full_url, 401, "Unauthorized", hdrs, None)
+        sent.append(req.full_url)
+        return _FakeResp({"token": "T"})
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    transport.get_auth_token("g/p", registry="reg.example")
+    assert sent == ["https://auth.example/t",
+                    "https://auth.example/t?scope=repository:g/p:pull"]
+
+
+@pytest.mark.parametrize("code", [401, 403])
+@pytest.mark.parametrize("registry", ["", "reg.example"])
+def test_a_token_service_refusing_the_check_is_a_rejection(
+        monkeypatch, code, registry):
+    # Docker Hub, GitLab, Quay and Google say 401; GHCR says 403.
+    sent = []
+
+    def token_service(req, *a, **k):
+        sent.append(req.full_url)
+        raise _error(req.full_url, code)
+
+    if registry:
+        def fake_open(req, *a, **k):
+            if req.full_url.endswith("/v2/"):
+                return _challenge_opener("https://auth.example/t",
+                                         [])(req)
+            return token_service(req)
+        _patch_opener(monkeypatch, fake_open)
+    else:
+        _patch_hub(monkeypatch, token_service)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("x/y", registry=registry)
+    assert str(exc.value) == transport.credentials_rejected_msg(
+        registry, code)
+    assert isinstance(exc.value.__cause__, urllib.error.HTTPError)
+    # Refused at the check: the token for the image is never asked for.
+    assert len(sent) == 1
+    assert "scope=" not in sent[0]
+
+
+@pytest.mark.parametrize("code", [400, 404, 429, 500])
+def test_a_token_service_failing_the_check_otherwise_is_not_a_rejection(
+        monkeypatch, code):
+    # Only a refusal is said to be one. A rate limit, a server error or a
+    # request the service cannot serve is reported by the caller the way
+    # the same answer to the token request always was.
+    def fake_open(req, *a, **k):
+        raise _error(req.full_url, code)
+
+    _patch_hub(monkeypatch, fake_open)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        transport.get_auth_token("library/x")
+    assert exc.value.code == code
+
+
+@pytest.mark.parametrize("code", [400, 401, 403])
+def test_a_basic_registry_refusing_the_check_is_a_rejection(monkeypatch,
+                                                            code):
+    # A 400 counts here: the same /v2/ without credentials said 401, so a
+    # 400 with them is about them. Amazon ECR says exactly that.
+    sent = []
+
+    def fake_open(req, *a, **k):
+        sent.append(req.get_header("Authorization"))
+        if req.get_header("Authorization"):
+            raise _error(req.full_url, code)
+        return _probe_only('Basic realm="r"', [])(req)
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    with pytest.raises(RuntimeError) as exc:
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert str(exc.value) == transport.credentials_rejected_msg(
+        "reg.example", code)
+    assert sent == [None, transport.env_basic_auth()]
+
+
+def test_a_basic_registry_failing_the_check_otherwise_is_not_a_rejection(
+        monkeypatch):
+    def fake_open(req, *a, **k):
+        if req.get_header("Authorization"):
+            raise _error(req.full_url, 500)
+        return _probe_only('Basic realm="r"', [])(req)
+
+    _patch_opener(monkeypatch, fake_open)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        transport.get_auth_token("x/y", registry="reg.example")
+    assert exc.value.code == 500
+
+
+def test_the_rejection_message_names_who_refused_and_not_the_password(
+        monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:secret")
+    hub = transport.credentials_rejected_msg("", 401)
+    assert hub.startswith("Docker Hub rejected the credentials in "
+                          "PD_DOCKER_AUTH (HTTP 401).")
+    other = transport.credentials_rejected_msg("ghcr.io", 403)
+    assert other.startswith("Registry 'ghcr.io' rejected the credentials "
+                            "in PD_DOCKER_AUTH (HTTP 403).")
+    for text in (hub, other):
+        assert "alice" not in text
+        assert "secret" not in text
 
 
 @pytest.mark.parametrize("registry", ["[:5000", "[::1", "[x]"])

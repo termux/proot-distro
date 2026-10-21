@@ -39,8 +39,11 @@
 #   - Authentication: PD_DOCKER_AUTH (username:password) is the
 #     single auth contract. The registry's WWW-Authenticate header
 #     either tells us where to redeem it for a Bearer token, or (Basic)
-#     asks for it on every request. get_auth_token() turns either into
-#     the one Authorization value pull and push send.
+#     asks for it on every request. get_auth_token() has it checked
+#     first, the way `docker login` does (_check_credentials), so a
+#     wrong password stops the pull or push before it starts and says
+#     so, and then turns either answer into the one Authorization value
+#     pull and push send.
 #
 # A credential goes only where it was addressed. same_auth_origin() is
 # the one rule for that: the redirect handler asks it before carrying a
@@ -96,6 +99,7 @@ from proot_distro.helpers.download import (
 
 REGISTRY_URL = "https://registry-1.docker.io"
 AUTH_URL = "https://auth.docker.io/token"
+HUB_SERVICE = "registry.docker.io"
 
 # How large a metadata response may be before it is refused. Manifests,
 # manifest indexes, image configs, token grants and search pages are all
@@ -241,6 +245,22 @@ def _request_body(open_fn, req, what: str, limit: int = None) -> bytes:
     return retry_http(_attempt, what=what)
 
 
+def _release(exc: urllib.error.HTTPError) -> None:
+    """Close the connection behind *exc*, whose body nobody will read.
+
+    An HTTPError holds the response it was raised for, socket and all,
+    and one that ends up in a chained exception sits in a reference
+    cycle (the exception, its traceback, the frame binding it) that only
+    the cyclic garbage collector frees. Until it runs the socket stays
+    open. Called once the status and headers have been read, which do
+    not need the connection; an HTTPError made without a response has
+    nothing to close.
+    """
+    fp = getattr(exc, "fp", None)
+    if fp is not None:
+        fp.close()
+
+
 def _grant_token(data: dict, what: str) -> str:
     """Pull the Bearer token out of a token-endpoint grant.
 
@@ -368,6 +388,21 @@ def _http_registry_reachable(registry: str, timeout: float = 6.0) -> bool:
         return True
     except NETWORK_ERRORS:
         return False
+
+
+def credentials_rejected_msg(registry: str, code: int) -> str:
+    """Return the error shown when a registry refuses PD_DOCKER_AUTH itself.
+
+    Not access to an image: the account. _check_credentials asks with no
+    repository named, so the answer is about the username and password
+    alone -- unlike auth_denied_msg, which cannot tell the two apart.
+    """
+    who = f"Registry '{registry}'" if registry else "Docker Hub"
+    return (
+        f"{who} rejected the credentials in PD_DOCKER_AUTH (HTTP {code}). "
+        f"Check the username and password. An access token may also have "
+        f"expired or lack the required permissions."
+    )
 
 
 def auth_denied_msg(image_ref: str, code: int) -> str:
@@ -594,6 +629,74 @@ def _require_usable_realm(realm: str, registry: str, insecure: bool) -> None:
     )
 
 
+def _token_url(realm: str, service: str, scope: str = "") -> str:
+    """The token request URL for *realm*, naming *service* and *scope*.
+
+    Either may be empty, and is then left out: a challenge need not name
+    a service, and the credential check asks for no scope at all.
+    """
+    params = []
+    if service:
+        params.append(f"service={urllib.parse.quote(service, safe='')}")
+    if scope:
+        params.append(f"scope={scope}")
+    if not params:
+        return realm
+    sep = "&" if "?" in realm else "?"
+    return f"{realm}{sep}{'&'.join(params)}"
+
+
+# What the server judging PD_DOCKER_AUTH answers credentials it refuses.
+# Token services say 401 (Docker Hub, GitLab, Quay, Google) or 403
+# (GHCR). A registry checking them itself says 401 or 403 too, and
+# Amazon ECR says 400.
+_REJECTED_BY_TOKEN_SERVICE = (401, 403)
+_REJECTED_BY_REGISTRY = (400, 401, 403)
+
+
+def _check_credentials(
+    open_fn, url: str, basic_auth: str, registry: str, rejected: tuple,
+) -> None:
+    """Have PD_DOCKER_AUTH checked by the server that judges it, or raise.
+
+    *url* is that server: the token service with no scope requested, or a
+    registry that checks passwords itself at its /v2/ endpoint. This is
+    the request `docker login` makes, so every registry a Docker user
+    signs in to answers it, and its answer is about the account alone:
+    a 401 or 403 to a request naming a repository can be the password or
+    the repository, and not every registry says which. Before this check
+    a wrong password was reported as access denied to the image, and on a
+    registry that checks passwords itself, only once the pull or push
+    was already under way.
+
+    A status in *rejected* raises a RuntimeError saying the credentials
+    were refused. A Basic registry's 400 counts: its /v2/ just answered
+    the same request without them with 401, so the only thing a 400 can
+    be about is what was added. Anything else (a rate limit, a server
+    error, a network failure) propagates as it would from the request
+    the check comes before -- the token request, or a Basic registry's
+    first manifest or blob request -- and the caller reports it the
+    same way. A 200
+    is all that is read from a success; the body, a token for no
+    repository at all, is not kept.
+
+    The caller decides where *url* may be: a realm only once
+    _require_usable_realm has passed it, a Basic registry over the scheme
+    its probe settled on. The opener behind *open_fn* drops the header on
+    a redirect to another origin, as it does for every other request.
+    """
+    req = new_request(url, headers={**_ua(), "Authorization": basic_auth})
+    try:
+        _request_body(open_fn, req, "Checking credentials")
+    except urllib.error.HTTPError as exc:
+        if exc.code in rejected:
+            _release(exc)
+            raise RuntimeError(
+                credentials_rejected_msg(registry, exc.code)
+            ) from exc
+        raise
+
+
 def get_auth_token(
     repo: str, registry: str = "", actions: str = "pull",
     insecure: bool = False,
@@ -619,6 +722,12 @@ def get_auth_token(
     forwarded as HTTP Basic auth to the registry's token endpoint,
     enabling access to private images. PD_DOCKER_AUTH must always
     contain a colon separating the username from the password/PAT.
+    Before it is used for *repo*, whoever judges it -- the token service,
+    asked for no scope, or a Basic registry's /v2/ -- is asked whether
+    it is an account's (_check_credentials), and a refusal is a
+    RuntimeError saying the credentials are wrong. Nothing is checked
+    when nothing would be sent: without PD_DOCKER_AUTH, or for a registry
+    whose probe asks for no credentials.
 
     Without PD_DOCKER_AUTH Docker Hub uses its well-known auth endpoint for
     anonymous requests (always HTTPS). For any other registry the scheme and
@@ -643,19 +752,22 @@ def get_auth_token(
     basic_auth = env_basic_auth()
 
     if not registry:
-        url = (
-            f"{AUTH_URL}?service=registry.docker.io"
-            f"&scope=repository:{repo}:{actions}"
-        )
+        # Through the auth-stripping opener, never urlopen(): the default
+        # redirect handler carries the Basic header to whatever host a
+        # redirect names, and these are the requests that have the user's
+        # password in them. Docker Hub is always verified HTTPS, so it is
+        # the verifying opener whatever `insecure` says.
+        if basic_auth:
+            _check_credentials(
+                auth_opener().open, _token_url(AUTH_URL, HUB_SERVICE),
+                basic_auth, registry, _REJECTED_BY_TOKEN_SERVICE,
+            )
+        url = _token_url(AUTH_URL, HUB_SERVICE,
+                         f"repository:{repo}:{actions}")
         req = new_request(url, headers=_ua())
         if basic_auth:
             req.add_header("Authorization", basic_auth)
         what = f"Authenticating {repo}"
-        # Through the auth-stripping opener, never urlopen(): the default
-        # redirect handler carries the Basic header to whatever host a
-        # redirect names, and this is the one request that has the user's
-        # password in it. Docker Hub is always verified HTTPS, so it is
-        # the verifying opener whatever `insecure` says.
         data = decode_json_object(
             _request_body(auth_opener().open, req, what), what,
         )
@@ -676,6 +788,11 @@ def get_auth_token(
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
                 raise
+            # The challenge is all there is to read. Whatever comes next
+            # -- the check, the token request -- runs inside this
+            # handler, and a refusal it raises keeps this exception
+            # alive as its context.
+            _release(exc)
             www_auth = exc.headers.get("WWW-Authenticate", "").strip()
             auth_scheme, _, challenge = www_auth.partition(" ")
             auth_scheme = auth_scheme.lower()
@@ -685,7 +802,15 @@ def get_auth_token(
                 # registry wants them on every request. This used to be
                 # taken for an open registry, so nothing was ever sent and
                 # the refusal that followed told the user to check
-                # credentials it had not used.
+                # credentials it had not used. The registry is asked
+                # with them once now, at the /v2/ it just challenged
+                # from, so a wrong password is said to be one here
+                # rather than as a refused manifest or upload later.
+                if basic_auth:
+                    _check_credentials(
+                        op.open, f"{base}/v2/", basic_auth, registry,
+                        _REJECTED_BY_REGISTRY,
+                    )
                 return basic_auth, base
             if auth_scheme != "bearer":
                 return "", base
@@ -695,15 +820,14 @@ def get_auth_token(
                 return "", base
             _require_usable_realm(realm, registry, insecure)
             service = params.get("service", "")
-            qs_parts = []
-            if service:
-                qs_parts.append(
-                    f"service={urllib.parse.quote(service, safe='')}"
+            if basic_auth:
+                _check_credentials(
+                    op.open, _token_url(realm, service), basic_auth,
+                    registry, _REJECTED_BY_TOKEN_SERVICE,
                 )
-            qs_parts.append(f"scope=repository:{repo}:{actions}")
-            sep = "&" if "?" in realm else "?"
             token_req = new_request(
-                f"{realm}{sep}{'&'.join(qs_parts)}", headers=_ua()
+                _token_url(realm, service, f"repository:{repo}:{actions}"),
+                headers=_ua(),
             )
             if basic_auth:
                 token_req.add_header("Authorization", basic_auth)

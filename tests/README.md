@@ -61,9 +61,12 @@ members), `make_oci_archive`, `make_layer_blob` / `seed_cached_layer`,
 
 `_registry.py`'s `FakeRegistry` is an OCI registry, its token service and
 a blob store, each a server of its own on 127.0.0.1, so the pull and push
-pipelines run unmocked: probe, challenge, token exchange, redirects and
-uploads. It speaks Bearer or Basic authentication and records every
-request with its Authorization header. TLS comes from `tests/tls/`: a CA
+pipelines run unmocked: probe, challenge, credential check, token
+exchange, redirects and uploads. It speaks Bearer or Basic
+authentication, can refuse a wrong password the way a given registry
+does (`reject_code`: 401, GHCR's 403, ECR's 400), has accounts that sign
+in but may not pull (`outsiders`), and records every request with its
+Authorization header. TLS comes from `tests/tls/`: a CA
 made for this suite alone (its key was discarded) and a certificate it
 issued for `localhost` / `127.0.0.1`. Tests trust it by pointing
 `SSL_CERT_FILE` at `tests/tls/ca.pem`; since Python 3.12 builds an HTTPS
