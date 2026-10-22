@@ -12,17 +12,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The suite runs against proot built from termux/proot, the source of
+  # the proot Termux ships, not against the runner's distro package.
+  # Ubuntu 26.04's proot 5.4.0-3 confines nothing unless PROOT_NO_SECCOMP
+  # is set, so it is never installed here.
+  #
+  # The commit is pinned so that a push to termux/proot cannot change
+  # what this workflow tests. Bump PROOT_COMMIT to test a newer proot.
+  #
+  # One binary serves the whole matrix. It is built on the oldest glibc
+  # there (Ubuntu 24.04), so it also runs on the newer runners. At the
+  # pinned commit, termux/proot does not compile against glibc 2.43
+  # (Ubuntu 26.04): src/compat.h defines SYS_SECCOMP as a macro before
+  # <signal.h> declares it as an enum constant.
+  proot:
+    name: Build proot (termux/proot)
+    runs-on: ubuntu-24.04
+    env:
+      PROOT_REPO: https://github.com/termux/proot.git
+      PROOT_COMMIT: e2d843ee6dab076ea0ed1ffd5d0ea12232185499
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # gcc-multilib: proot embeds a 32-bit loader for i386 guests.
+          sudo apt-get install -yq --no-install-recommends \
+            build-essential gcc-multilib libtalloc-dev
+
+      - name: Build proot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          src="${RUNNER_TEMP}/proot-src"
+          git init -q "${src}"
+          git -C "${src}" fetch -q --depth 1 "${PROOT_REPO}" "${PROOT_COMMIT}"
+          git -C "${src}" checkout -q --detach FETCH_HEAD
+          make -C "${src}/src" -j"$(nproc)" proot
+          install -D -m 0755 "${src}/src/proot" "${RUNNER_TEMP}/proot-bin/proot"
+          "${RUNNER_TEMP}/proot-bin/proot" --version
+
+      - name: Store proot
+        uses: actions/upload-artifact@v7
+        with:
+          name: proot
+          path: ${{ runner.temp }}/proot-bin/proot
+          if-no-files-found: error
+
   test:
     name: Test suite (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    needs: proot
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Cover the floor and the latest of the supported range
         # (pyproject: requires-python = ">=3.9"). setup-python has no 3.9
-        # build for Ubuntu 26.04, so the floor stays on 24.04. That also
-        # keeps both distro proots under test: 5.1.0 there, and on 26.04
-        # the 5.4.0 that only confines with PROOT_NO_SECCOMP set.
+        # build for Ubuntu 26.04, so the floor stays on 24.04.
         include:
           - python-version: '3.9'
             os: ubuntu-24.04
@@ -41,9 +87,39 @@ jobs:
           cache: 'pip'
           cache-dependency-path: pyproject.toml
 
+      - name: Retrieve proot
+        uses: actions/download-artifact@v8
+        with:
+          name: proot
+          path: ${{ runner.temp }}/proot/bin
+
+      - name: Install proot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -yq --no-install-recommends libtalloc2
+          # Artifacts do not keep the mode bits.
+          chmod 0755 "${RUNNER_TEMP}/proot/bin/proot"
+          echo "${RUNNER_TEMP}/proot/bin" >> "${GITHUB_PATH}"
+
+      - name: Check proot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Every later step must find this build, not some other proot.
+          test "$(command -v proot)" = "${RUNNER_TEMP}/proot/bin/proot"
+          proot --version
+          # It must confine: a bind is visible only through proot, so the
+          # shell finds the marker only if its own syscalls are translated.
+          probe="$(mktemp -d)"
+          touch "${probe}/marker"
+          proot -r / -b "${probe}:/pd-ci-probe" \
+            /bin/sh -c 'test -e /pd-ci-probe/marker'
+          rm -rf "${probe}"
+
       - name: Install package with test extra
         run: |
-          sudo apt update && sudo apt install -yq proot
           python -m pip install --upgrade pip
           pip install -e '.[test]'
 

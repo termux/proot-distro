@@ -231,9 +231,11 @@ in-process registry, token service and blob store on 127.0.0.1 (Bearer or
 Basic auth, TLS from the test-only CA in `tests/tls/`), against which
 `integration/test_registry_auth.py` runs pull and push end to end.
 
-CI (`tests.yml`) runs unit, integration, security and live tests on Python
-3.9, 3.11 and 3.13, plus an end-to-end shell script on pushes that installs
-Alpine, Debian and Ubuntu and exercises each command.
+CI (`tests.yml`) first builds proot from a pinned termux/proot commit (the
+distro package is never installed) and checks that it confines. It then
+runs unit, integration, security and live tests on Python 3.9 (Ubuntu
+24.04), 3.12 and 3.15 (latest Ubuntu), plus an end-to-end shell script on
+pushes that installs Alpine, Debian and Ubuntu and exercises each command.
 
 ## Adding things
 
