@@ -63,7 +63,6 @@ from proot_distro.message import log_info, warn
 from proot_distro.arch import (
     ARCH_UNAME_M, get_device_cpu_arch, get_emulator_args, get_proot_bin,
 )
-from proot_distro.prootcheck import ProotConfinementError, confining_env
 from proot_distro.shm import make_guest_tmp, make_shm_dir
 from proot_distro.sysdata import setup_fake_sysdata, fake_sysdata_bindings
 from proot_distro.helpers.build_cache import (
@@ -314,12 +313,6 @@ def _exec_proot(engine, stage, command, stdin_input):
     proot_args.extend(command)
 
     child_env = _build_child_env(engine, stage)
-    # A Dockerfile is untrusted input, and a proot that does not translate
-    # paths would run its RUN against the host. See proot_distro.prootcheck.
-    try:
-        child_env.update(confining_env(proot_bin, child_env))
-    except ProotConfinementError as exc:
-        raise BuildError(str(exc)) from exc
 
     if not engine.quiet and not engine.verbose:
         log_info(f"Running step (user={stage.user or 'root'}, "

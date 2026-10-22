@@ -52,7 +52,6 @@ from proot_distro.arch import (
     get_emulator_args,
     get_proot_bin,
 )
-from proot_distro.prootcheck import ProotConfinementError, confining_env
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.locking import ContainerLock
 from proot_distro.session import register_session
@@ -499,9 +498,8 @@ def _login_with_rootfs(container_name: str, args, lock,
 
     # Proot itself reads a few env vars to toggle its own behavior. They
     # are passed through to proot (and therefore to the spawned guest
-    # process). In minimal mode only PROOT_L2S_DIR is exported, plus the
-    # PROOT_NO_SECCOMP the self-test below may require; proot debug vars
-    # are skipped to keep the environment truly minimal.
+    # process). In minimal mode only PROOT_L2S_DIR is exported; proot
+    # debug vars are skipped to keep the environment truly minimal.
     if not minimal:
         for var in ("PROOT_NO_SECCOMP", "PROOT_VERBOSE"):
             val = os.environ.get(var)
@@ -529,16 +527,6 @@ def _login_with_rootfs(container_name: str, args, lock,
             warn("container's .l2s is not a plain directory; leaving "
                  "PROOT_L2S_DIR unset for this session.")
     child_env.pop("LD_PRELOAD", None)
-
-    # Last, so it judges the PROOT_NO_SECCOMP the session will carry --
-    # in --minimal mode too, since what it may add is not a debug toggle
-    # but the difference between a container and the host. Before the
-    # printed command as well, which would otherwise leave it out.
-    try:
-        child_env.update(confining_env(proot_bin, child_env))
-    except ProotConfinementError as exc:
-        crit_error(str(exc))
-        sys.exit(1)
 
     if show_cmd:
         # Said before the command rather than inside it: stdout is the

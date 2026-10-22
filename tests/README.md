@@ -41,13 +41,6 @@ the Termux/auth environment *before* importing any proot_distro module, then
 wipes the runtime/cache trees between tests. A guard refuses to run if the
 resolved paths are not inside the sandbox or if `IS_TERMUX` is True.
 
-`login` and RUN steps self-test the proot binary before using it
-(`proot_distro.prootcheck`). Most tests stand a fake path or a fake
-`Popen` in for proot, so an autouse fixture answers that self-test with
-"confines". A test that wants the real probe requests `real_proot_probe`
-and points it at a `fake_proot` (confining, leaking, leaking only in
-seccomp mode, failing or hanging).
-
 Several tests build trees deeper than the interpreter's recursion limit on
 purpose, so two rules keep one from taking the rest of the run with it:
 
@@ -64,7 +57,7 @@ purpose, so two rules keep one from taking the rest of the run with it:
 
 Shared builders live in `_builders.py`: `make_tar` (arbitrary, incl. hostile,
 members), `make_oci_archive`, `make_layer_blob` / `seed_cached_layer`,
-`elf_bytes`, `make_rootfs`, `make_container`, `tree_snapshot`, `fake_proot`.
+`elf_bytes`, `make_rootfs`, `make_container`, `tree_snapshot`.
 
 `_registry.py`'s `FakeRegistry` is an OCI registry, its token service and
 a blob store, each a server of its own on 127.0.0.1, so the pull and push
@@ -84,8 +77,7 @@ rebuilt after that (see `integration/test_registry_auth.py`).
 
 - Real `login` / `run` `os.execvpe` into proot + a distro shell is not
   unit-testable; covered via `--get-proot-cmd` (asserts the generated proot
-  argv) plus the opt-in live test, which reads the guest's own
-  `/etc/os-release` so a proot that leaks to the host cannot pass it.
+  argv) plus the opt-in live test.
 - `run_step.do_run`'s actual proot invocation is exercised only by the live
   build test; its separable helpers are covered directly.
 - Termux-only (`IS_TERMUX=True`) branches are covered by calling pure

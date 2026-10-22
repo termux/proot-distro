@@ -29,7 +29,6 @@ proot_distro/
   dirfd.py  statedir.py  atomic.py  locking.py  paths.py        Safe filesystem layer
   guestfile.py  l2s.py  shm.py  sysdata.py  session.py         Container runtime state
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
-  prootcheck.py                                                 Self-test of the proot binary
 ```
 
 ### Entry and dispatch
@@ -113,7 +112,6 @@ Roughly bottom-up. Higher entries import lower ones.
 | `shm.py`, `sysdata.py` | Host-side directories bound into the guest as `/dev/shm` and fake `/proc` / `/sys` files. `sysdata` rebuilds the fake `stat` and `uptime` from the host's `/proc/cpuinfo` at every login, so their CPU list matches it. |
 | `session.py` | Session registry: one JSON file per PID, liveness by inherited `flock`. |
 | `arch.py` | CPU detection, ELF probing, QEMU emulator selection, proot binary lookup. |
-| `prootcheck.py` | Self-test of the proot binary before it is handed a guest: runs it with one `--bind` on the host root and checks a shell sees the bound file. Adds `PROOT_NO_SECCOMP=1` for a proot that only confines without seccomp acceleration (Ubuntu 26.04's 5.4.0), refuses one that never confines. Used by `login` and `run_step`. |
 | `compress.py` | Everything zstd (usable on Python >= 3.14 only) and the diagnostics when it is missing. |
 
 ## Runtime data layout
@@ -155,9 +153,7 @@ the `sysdata` stubs. A failed install removes what it made.
 
 **login / run.** Shared lock, then pin the rootfs as a descriptor. `passwd`
 reads the user through `guestfile`. `env`, `bindings`, `sysdata` and `shm`
-prepare binds and environment. `proot_cmd.build_proot_args` builds the argv,
-and `prootcheck` confirms the proot binary confines a guest (possibly adding
-`PROOT_NO_SECCOMP=1`).
+prepare binds and environment. `proot_cmd.build_proot_args` builds the argv.
 The session is recorded in `session.py`, and the process either `execvpe`s
 into proot (the lock fd is inherited, so the lock lives as long as the
 session) or is daemonised by `detach`. `run` reads Entrypoint/Cmd from
@@ -167,11 +163,11 @@ session) or is daemonised by `detach`. `run` reads Entrypoint/Cmd from
 needed (only RUN-family instructions). `BuildEngine` creates a scratch root
 under `build-tmp/` and one `Stage` per FROM. Each instruction becomes a
 history entry and, if it changes files, a layer. RUN looks up the recipe hash
-in `build_cache`; on a miss it snapshots, runs under proot (once `prootcheck`
-has confirmed the binary confines), snapshots again, and `layer_diff` writes
-the layer. COPY/ADD build a file map and write the layer straight from it.
-`oci_writer` then stores the manifest in the cache, and optionally writes an
-OCI tarball (`--output`) or installs a container (`--install-as`).
+in `build_cache`; on a miss it snapshots, runs under proot, snapshots again,
+and `layer_diff` writes the layer. COPY/ADD build a file map and write the
+layer straight from it. `oci_writer` then stores the manifest in the cache, and
+optionally writes an OCI tarball (`--output`) or installs a container
+(`--install-as`).
 
 **push.** Load the built image from the caches, verify the config digest,
 have `PD_DOCKER_AUTH` checked and exchange it for a token, HEAD-probe and
