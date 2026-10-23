@@ -20,17 +20,13 @@ jobs:
   # The commit is pinned so that a push to termux/proot cannot change
   # what this workflow tests. Bump PROOT_COMMIT to test a newer proot.
   #
-  # One binary serves the whole matrix. It is built on the oldest glibc
-  # there (Ubuntu 24.04), so it also runs on the newer runners. At the
-  # pinned commit, termux/proot does not compile against glibc 2.43
-  # (Ubuntu 26.04): src/compat.h defines SYS_SECCOMP as a macro before
-  # <signal.h> declares it as an enum constant.
+  # One binary serves the whole matrix.
   proot:
     name: Build proot (termux/proot)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       PROOT_REPO: https://github.com/termux/proot.git
-      PROOT_COMMIT: e2d843ee6dab076ea0ed1ffd5d0ea12232185499
+      PROOT_COMMIT: 968ae1be84c69a607dbcd43ee514ab04753d60c5
 
     steps:
       - name: Install build dependencies
@@ -73,9 +69,9 @@ jobs:
           - python-version: '3.9'
             os: ubuntu-24.04
           - python-version: '3.12'
-            os: ubuntu-latest
+            os: ubuntu-26.04
           - python-version: '3.15'
-            os: ubuntu-latest
+            os: ubuntu-26.04
 
     steps:
       - uses: actions/checkout@v7
