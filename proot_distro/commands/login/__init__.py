@@ -251,6 +251,7 @@ def _build_normal_env(container_name, login_user, login_home,
         env["PATH"] = DEFAULT_PATH_ENV
         if IS_TERMUX:
             env["MOZ_FAKE_NO_SANDBOX"] = "1"
+            env["MOZ_SHM_NO_SEALS"] = "1"
             env["PULSE_SERVER"] = "127.0.0.1"
 
     # Image manifest Env applies in every mode (including isolated and

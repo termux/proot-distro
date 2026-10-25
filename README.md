@@ -758,11 +758,11 @@ builds a clean environment dict and passes it to `os.execvpe("proot",
 …)`. Precedence (later entries win):
 
 1. Baseline: `PATH` (from `DEFAULT_PATH_ENV`), `MOZ_FAKE_NO_SANDBOX=1`,
-   `PULSE_SERVER=127.0.0.1` (Termux only).
+   `MOZ_SHM_NO_SEALS=1`, `PULSE_SERVER=127.0.0.1` (Termux only).
 2. Image-defined `Env` from `manifest.json`. Cannot override Android
-   system vars, `MOZ_FAKE_NO_SANDBOX`, `PULSE_SERVER`, `TERM`,
-   `COLORTERM`, the identity variables below, or anything in the
-   `LD_*`/`PROOT_*` namespaces.
+   system vars, `MOZ_FAKE_NO_SANDBOX`, `MOZ_SHM_NO_SEALS`,
+   `PULSE_SERVER`, `TERM`, `COLORTERM`, the identity variables below,
+   or anything in the `LD_*`/`PROOT_*` namespaces.
 3. Identity variables — what the guest may ask about where it is
    running (see the table below).
 4. Android system vars (`ANDROID_*`, `BOOTCLASSPATH`, etc.), Termux

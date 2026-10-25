@@ -83,7 +83,7 @@ ANDROID_HOST_ENV_VARS = (
 IMAGE_ENV_BLOCKED = frozenset({
     *ANDROID_HOST_ENV_VARS,
     *IDENTITY_ENV_KEYS,
-    "MOZ_FAKE_NO_SANDBOX", "PULSE_SERVER",
+    "MOZ_FAKE_NO_SANDBOX", "MOZ_SHM_NO_SEALS", "PULSE_SERVER",
     "TERM", "COLORTERM",
 })
 
@@ -183,9 +183,9 @@ def inject_termux_profile(rootfs: str, env: dict, *,
     Login shells source /etc/profile, which reinitialises the environment
     and discards whatever proot inherited. Without a snippet every
     proot-distro-defined var — Termux baseline (MOZ_FAKE_NO_SANDBOX,
-    PULSE_SERVER), Android system vars, image Env entries, identity
-    variables, and user --env flags — disappears the moment the user
-    runs `su - someone` inside the container.
+    MOZ_SHM_NO_SEALS, PULSE_SERVER), Android system vars, image Env
+    entries, identity variables, and user --env flags — disappears the
+    moment the user runs `su - someone` inside the container.
 
     Written by **every** session of a normal-type container, whatever
     its mode and host, so the snippet always says what the session
