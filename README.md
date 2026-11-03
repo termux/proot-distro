@@ -14,6 +14,19 @@ PRoot-Distro can also **build** OCI images from a Dockerfile (no Docker
 daemon required), storing the result in the local manifest cache or
 exporting it as a standalone OCI tarball.
 
+### Donate
+
+If you enjoy using PRoot-Distro, I will be grateful for your support! This is
+very important to keep the project up in long term, deliver new features and
+bugfixes.
+
+**Donate via Patreon**: https://patreon.com/SylirreOSS
+
+Or send a tip in Bitcoin:
+```
+bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
+```
+
 ---
 
 ## Table of contents
@@ -1703,27 +1716,6 @@ cp proot_distro/completions/proot-distro.fish \
   bindings to drop.
 
 ---
-
-## Donate
-
-Support is important to keep the project up in a long term. I'm grateful for any amount of tip in cryptocurrency:
-
-**Bitcoin**:
-```
-bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
-```
-
-**Ethereum**:
-```
-0x1F5196A5b0120D4a66FCAABBe71728239B06EC12
-```
-
-**Tron**:
-```
-TEJiwRMMGV1JXvRYDRVJ1qw7kFgskEk3sJ
-```
-
-Recipient: the author of PRoot-Distro, [@sylirre](https://github.com/sylirre)
 
 ## Issues and contributing
 
