@@ -69,7 +69,26 @@ IS_TERMUX: bool = _detect_termux()
 # Paths
 # ---------------------------------------------------------------------------
 
-if IS_TERMUX:
+# A configured API instance starts each stateful operation in a fresh worker
+# and supplies these private overrides before that interpreter imports the
+# package. Keeping them private prevents the CLI from acquiring another set
+# of user-facing storage environment variables while allowing independent
+# API instances to reuse the existing descriptor-safe state layer unchanged.
+_API_RUNTIME_DIR = os.environ.get("_PROOT_DISTRO_API_RUNTIME_DIR")
+_API_CACHE_DIR = os.environ.get("_PROOT_DISTRO_API_CACHE_DIR")
+_API_PATHS_VALID = bool(
+    _API_RUNTIME_DIR and _API_CACHE_DIR
+    and os.path.isabs(_API_RUNTIME_DIR)
+    and os.path.isabs(_API_CACHE_DIR)
+    and _API_RUNTIME_DIR != os.path.dirname(_API_RUNTIME_DIR)
+    and _API_CACHE_DIR != os.path.dirname(_API_CACHE_DIR)
+    and _API_RUNTIME_DIR != _API_CACHE_DIR
+)
+
+if _API_PATHS_VALID:
+    RUNTIME_DIR = _API_RUNTIME_DIR
+    BASE_CACHE_DIR = _API_CACHE_DIR
+elif IS_TERMUX:
     RUNTIME_DIR = os.path.join(TERMUX_PREFIX, "var", "lib", PROGRAM_NAME)
     BASE_CACHE_DIR = os.path.join(RUNTIME_DIR, "cache")
 else:

@@ -1,4 +1,5 @@
 import hashlib
+import os
 import subprocess
 import sys
 
@@ -14,6 +15,7 @@ from proot_distro.api import (
     OperationEvent,
     ProotDistro,
     ProotDistroError,
+    RuntimeConfig,
     SearchHit,
     SearchResult,
     SessionInfo,
@@ -29,7 +31,8 @@ def test_public_exports_are_explicit():
     assert set(api.__all__) == {
         "ContainerInfo", "EventKind", "ImageInfo", "InvalidArgumentError",
         "NetworkError", "OperationError", "OperationEvent", "ProotDistro",
-        "ProotDistroError", "SearchHit", "SearchResult", "SessionInfo",
+        "ProotDistroError", "RuntimeConfig", "SearchHit", "SearchResult",
+        "SessionInfo",
     }
 
 
@@ -49,6 +52,54 @@ def test_constructor_rejects_non_callable_event_handler():
     with pytest.raises(InvalidArgumentError) as exc:
         ProotDistro(event_handler="print")
     assert exc.value.operation == "initialize"
+
+
+def test_constructor_rejects_unknown_config_type():
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro(config={})
+    assert exc.value.operation == "initialize"
+
+
+def test_runtime_config_normalizes_paths(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = RuntimeConfig("state", "cache", "bin/proot")
+
+    assert config.runtime_dir == os.path.join(str(tmp_path), "state")
+    assert config.cache_dir == os.path.join(str(tmp_path), "cache")
+    assert config.proot_path == os.path.join(str(tmp_path), "bin", "proot")
+    assert ProotDistro(config).config is config
+
+
+@pytest.mark.parametrize("runtime,cache", [
+    ("", "cache"),
+    ("state", ""),
+    (os.path.sep, "cache"),
+    ("state", os.path.sep),
+    ("same", "same"),
+    ("cache/state", "cache"),
+    ("bad\0state", "cache"),
+])
+def test_runtime_config_rejects_unsafe_roots(runtime, cache):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RuntimeConfig(runtime, cache)
+    assert exc.value.operation == "configure"
+
+
+def test_runtime_config_rejects_invalid_proot_path(tmp_path):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RuntimeConfig(tmp_path / "state", tmp_path / "cache", "bad\0proot")
+    assert exc.value.operation == "configure"
+
+
+def test_worker_environment_carries_runtime_config(tmp_path):
+    config = RuntimeConfig(
+        tmp_path / "state", tmp_path / "cache", tmp_path / "proot"
+    )
+    env = program._worker_environment(config)
+
+    assert env["_PROOT_DISTRO_API_RUNTIME_DIR"] == config.runtime_dir
+    assert env["_PROOT_DISTRO_API_CACHE_DIR"] == config.cache_dir
+    assert env["PD_PROOT_BIN"] == config.proot_path
 
 
 def test_empty_inventories_return_tuples(capsys):
@@ -113,17 +164,19 @@ def test_image_inventory_returns_immutable_model(builders):
 
 def test_session_inventory_copies_mutable_command(monkeypatch):
     command = ["/bin/sh", "-l"]
-    monkeypatch.setattr(program, "active_sessions", lambda: [{
-        "pid": 123,
-        "container": "box",
-        "kind": "login",
-        "command": command,
-        "user": "root",
-        "start_time": 10.5,
-        "isolated": True,
-        "minimal": False,
-        "detach": True,
-    }])
+    monkeypatch.setattr(program, "_run_worker", lambda *_args, **_kwargs: {
+        "items": [{
+            "pid": 123,
+            "container": "box",
+            "kind": "login",
+            "command": command,
+            "user": "root",
+            "start_time": 10.5,
+            "isolated": True,
+            "minimal": False,
+            "detached": True,
+        }],
+    })
 
     sessions = ProotDistro().list_sessions()
     command.append("changed")

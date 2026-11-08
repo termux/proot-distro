@@ -31,6 +31,7 @@ from proot_distro.api.errors import (
     OperationError,
     ProotDistroError,
 )
+from proot_distro.api.config import RuntimeConfig
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
     ContainerInfo,
@@ -52,6 +53,7 @@ __all__ = (
     "OperationEvent",
     "ProotDistro",
     "ProotDistroError",
+    "RuntimeConfig",
     "SearchHit",
     "SearchResult",
     "SessionInfo",

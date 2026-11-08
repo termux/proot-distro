@@ -30,13 +30,12 @@ import os
 import signal
 import subprocess
 import sys
+from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
 
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import (
-    BASE_CACHE_DIR,
     IS_TERMUX,
-    RUNTIME_DIR,
     TERMUX_APP_PACKAGE,
     TERMUX_HOME,
     TERMUX_PREFIX,
@@ -57,6 +56,7 @@ from proot_distro.api.errors import (
     NetworkError,
     OperationError,
 )
+from proot_distro.api.config import RuntimeConfig
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
     ContainerInfo,
@@ -102,6 +102,51 @@ def _container_info(name: str) -> ContainerInfo:
     )
 
 
+def _container_inventory() -> Tuple[ContainerInfo, ...]:
+    """Read container records using the active process configuration."""
+    return tuple(_container_info(name) for name in installed_container_names())
+
+
+def _image_inventory() -> Tuple[ImageInfo, ...]:
+    """Read image records using the active process configuration."""
+    images = []
+    for record in iter_cached_images():
+        reference = _text(record["image_ref"])
+        image_hex = _text(record["image_id"])
+        identifier = reference or (image_hex[:12] if image_hex else record["key"])
+        images.append(ImageInfo(
+            identifier=identifier,
+            reference=reference,
+            repository=_text(record["repo"]),
+            architecture=_text(record["arch"]),
+            image_id=_text(record.get("config_digest")),
+            size_bytes=record["size"],
+            layer_count=len(record["layers"]),
+            missing_layers=record["missing"],
+            created=_text(record["created"]),
+            cached_at=float(record["cached_at"]),
+        ))
+    return tuple(images)
+
+
+def _session_inventory() -> Tuple[SessionInfo, ...]:
+    """Read session records using the active process configuration."""
+    return tuple(
+        SessionInfo(
+            pid=record["pid"],
+            container=record["container"],
+            kind=record["kind"],
+            command=tuple(record["command"]),
+            user=record["user"],
+            start_time=record["start_time"],
+            isolated=record["isolated"],
+            minimal=record["minimal"],
+            detached=record["detach"],
+        )
+        for record in active_sessions()
+    )
+
+
 def _require_name(name, *, operation: str, argument: str = "name") -> str:
     """Validate and return a public container-name argument."""
     if not isinstance(name, str) or not is_valid_name(name):
@@ -113,10 +158,16 @@ def _require_name(name, *, operation: str, argument: str = "name") -> str:
     return name
 
 
-def _worker_environment() -> dict:
+def _worker_environment(config: RuntimeConfig) -> dict:
     """Environment that recreates this process's default state roots."""
     env = os.environ.copy()
     env["PD_FORCE_NO_COLORS"] = "1"
+    env["_PROOT_DISTRO_API_RUNTIME_DIR"] = config.runtime_dir
+    env["_PROOT_DISTRO_API_CACHE_DIR"] = config.cache_dir
+    if config.proot_path is None:
+        env.pop("PD_PROOT_BIN", None)
+    else:
+        env["PD_PROOT_BIN"] = config.proot_path
     # The application may have imported this package from a path it added
     # to sys.path at runtime. Child interpreters do not inherit sys.path, so
     # explicitly put this package's parent first and guarantee that the
@@ -139,8 +190,6 @@ def _worker_environment() -> dict:
         ):
             env["TERMUX_VERSION"] = "unknown"
     else:
-        env["XDG_DATA_HOME"] = os.path.dirname(RUNTIME_DIR)
-        env["XDG_CACHE_HOME"] = os.path.dirname(BASE_CACHE_DIR)
         for name in (
             "TERMUX_VERSION",
             "TERMUX_APP__APP_VERSION_NAME",
@@ -165,8 +214,10 @@ def _worker_error(operation: str, stderr: bytes) -> OperationError:
     return OperationError(detail, operation=operation)
 
 
-def _run_worker(operation: str, options: dict) -> dict:
-    """Run one mutation in an isolated child and return its JSON result."""
+def _run_worker(operation: str, options: dict,
+                config: Optional[RuntimeConfig] = None) -> dict:
+    """Run one stateful operation in a child and return its JSON result."""
+    config = config or RuntimeConfig.default()
     request = json.dumps(
         {"operation": operation, "options": options},
         ensure_ascii=True,
@@ -178,10 +229,10 @@ def _run_worker(operation: str, options: dict) -> dict:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=_worker_environment(),
+            env=_worker_environment(config),
             start_new_session=True,
         )
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise OperationError(
             f"cannot start the {operation} worker: {exc}", operation=operation,
         ) from exc
@@ -223,69 +274,130 @@ def _run_worker(operation: str, options: dict) -> dict:
     return result
 
 
+@dataclass(frozen=True)
+class _OperationContext:
+    """Dependencies shared by operations of one public facade instance."""
+
+    config: RuntimeConfig
+    event_handler: Optional[EventHandler]
+
+    def event(self, operation: str, kind: EventKind, message: str) -> None:
+        if self.event_handler is not None:
+            self.event_handler(OperationEvent(operation, kind, message))
+
+    def worker(self, operation: str, options: dict) -> dict:
+        return _run_worker(operation, options, self.config)
+
+
 class ProotDistro:
     """Standardized programmatic access to PRoot-Distro operations.
 
     The facade does not connect to a service and starts no persistent
-    background process. Methods execute in the caller's process unless an
-    operation's documented process semantics require a short-lived child.
+    background process. Stateful methods use a short-lived child so each
+    instance can apply its own runtime configuration without changing the
+    embedding process's environment or imported module constants.
 
     ``event_handler`` is optional. When provided, it is called synchronously
     for informational events such as network retries. Exceptions raised by
     the handler propagate to the caller.
     """
 
-    def __init__(self, *, event_handler: Optional[EventHandler] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[RuntimeConfig] = None,
+        *,
+        event_handler: Optional[EventHandler] = None,
+    ) -> None:
+        if config is None:
+            config = RuntimeConfig.default()
+        elif not isinstance(config, RuntimeConfig):
+            raise InvalidArgumentError(
+                "config must be a RuntimeConfig instance or None.",
+                operation="initialize",
+            )
         if event_handler is not None and not callable(event_handler):
             raise InvalidArgumentError(
                 "event_handler must be callable or None.", operation="initialize"
             )
-        self._event_handler = event_handler
+        self._context = _OperationContext(config, event_handler)
+
+    @property
+    def config(self) -> RuntimeConfig:
+        """The immutable runtime configuration used by this instance."""
+        return self._context.config
 
     def _event(self, operation: str, kind: EventKind, message: str) -> None:
-        if self._event_handler is not None:
-            self._event_handler(OperationEvent(operation, kind, message))
+        self._context.event(operation, kind, message)
 
     def list_containers(self) -> Tuple[ContainerInfo, ...]:
         """Return installed containers sorted by name."""
-        return tuple(_container_info(name) for name in installed_container_names())
+        result = self._context.worker("list_containers", {})
+        items = result.get("items")
+        if not isinstance(items, list):
+            raise OperationError(
+                "container inventory worker returned an invalid result.",
+                operation="list_containers",
+            )
+        try:
+            return tuple(ContainerInfo(**item) for item in items)
+        except (TypeError, ValueError):
+            raise OperationError(
+                "container inventory worker returned an invalid result.",
+                operation="list_containers",
+            ) from None
 
     def list_images(self) -> Tuple[ImageInfo, ...]:
         """Return locally cached OCI images in deterministic order."""
-        images = []
-        for record in iter_cached_images():
-            reference = _text(record["image_ref"])
-            image_hex = _text(record["image_id"])
-            identifier = reference or (image_hex[:12] if image_hex else record["key"])
-            images.append(ImageInfo(
-                identifier=identifier,
-                reference=reference,
-                repository=_text(record["repo"]),
-                architecture=_text(record["arch"]),
-                image_id=_text(record.get("config_digest")),
-                size_bytes=record["size"],
-                layer_count=len(record["layers"]),
-                missing_layers=record["missing"],
-                created=_text(record["created"]),
-                cached_at=float(record["cached_at"]),
-            ))
-        return tuple(images)
+        result = self._context.worker("list_images", {})
+        items = result.get("items")
+        if not isinstance(items, list):
+            raise OperationError(
+                "image inventory worker returned an invalid result.",
+                operation="list_images",
+            )
+        try:
+            return tuple(ImageInfo(**item) for item in items)
+        except (TypeError, ValueError):
+            raise OperationError(
+                "image inventory worker returned an invalid result.",
+                operation="list_images",
+            ) from None
 
     def list_sessions(self) -> Tuple[SessionInfo, ...]:
         """Return validated records for every live PRoot-Distro session."""
-        return tuple(
-            SessionInfo(
-                pid=record["pid"],
-                container=record["container"],
-                kind=record["kind"],
-                command=tuple(record["command"]),
-                user=record["user"],
-                start_time=record["start_time"],
-                isolated=record["isolated"],
-                minimal=record["minimal"],
-                detached=record["detach"],
+        result = self._context.worker("list_sessions", {})
+        items = result.get("items")
+        if not isinstance(items, list):
+            raise OperationError(
+                "session inventory worker returned an invalid result.",
+                operation="list_sessions",
             )
-            for record in active_sessions()
+        try:
+            return tuple(SessionInfo(
+                pid=item["pid"],
+                container=item["container"],
+                kind=item["kind"],
+                command=tuple(item["command"]),
+                user=item["user"],
+                start_time=item["start_time"],
+                isolated=item["isolated"],
+                minimal=item["minimal"],
+                detached=item["detached"],
+            ) for item in items)
+        except (KeyError, TypeError, ValueError):
+            raise OperationError(
+                "session inventory worker returned an invalid result.",
+                operation="list_sessions",
+            ) from None
+
+    def _installed_container(self, name: str, operation: str) -> ContainerInfo:
+        """Return *name* from this instance's configured state."""
+        for container in self.list_containers():
+            if container.name == name:
+                return container
+        raise OperationError(
+            f"{operation} completed but container '{name}' is not installed.",
+            operation=operation,
         )
 
     def install(
@@ -336,7 +448,7 @@ class ProotDistro:
                 "allow_insecure must be a boolean.", operation="install"
             )
 
-        result = _run_worker("install", {
+        result = self._context.worker("install", {
             "source": source,
             "name": name,
             "architecture": architecture,
@@ -348,14 +460,18 @@ class ProotDistro:
                 "install worker did not identify the installed container.",
                 operation="install",
             )
-        return _container_info(installed_name)
+        return self._installed_container(installed_name, "install")
 
     def remove_container(self, name: str) -> ContainerInfo:
         """Permanently remove a container and return its former metadata."""
         name = _require_name(name, operation="remove_container")
-        previous = _container_info(name)
-        _run_worker("remove_container", {"name": name})
-        return previous
+        previous = None
+        for container in self.list_containers():
+            if container.name == name:
+                previous = container
+                break
+        self._context.worker("remove_container", {"name": name})
+        return previous or ContainerInfo(name, None, None, None)
 
     def rename_container(self, old_name: str, new_name: str) -> ContainerInfo:
         """Rename a container and return its metadata under the new name."""
@@ -370,17 +486,17 @@ class ProotDistro:
                 "old_name and new_name must differ.",
                 operation="rename_container",
             )
-        _run_worker("rename_container", {
+        self._context.worker("rename_container", {
             "old_name": old_name,
             "new_name": new_name,
         })
-        return _container_info(new_name)
+        return self._installed_container(new_name, "rename_container")
 
     def reset_container(self, name: str) -> ContainerInfo:
         """Reinstall a container from its recorded OCI image."""
         name = _require_name(name, operation="reset_container")
-        _run_worker("reset_container", {"name": name})
-        return _container_info(name)
+        self._context.worker("reset_container", {"name": name})
+        return self._installed_container(name, "reset_container")
 
     def search(
         self, query: str, *, limit: int = SEARCH_DEFAULT_LIMIT,
@@ -423,7 +539,8 @@ class ProotDistro:
             records, total = search_images(
                 normalized,
                 limit,
-                on_retry=on_retry if self._event_handler is not None else None,
+                on_retry=(on_retry if self._context.event_handler is not None
+                          else None),
             )
         except NETWORK_ERRORS as exc:
             raise NetworkError(str(exc), operation="search") from exc

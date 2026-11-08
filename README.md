@@ -248,6 +248,28 @@ when the method finishes; it is not a persistent service.
 Only names imported from `proot_distro.api` are part of the stable public API.
 Other package modules are implementation details.
 
+### Separate API storage
+
+By default, the API uses the same storage as the command-line utility. Pass a
+`RuntimeConfig` to keep an application's containers and cache separate:
+
+```python
+from proot_distro.api import ProotDistro, RuntimeConfig
+
+config = RuntimeConfig(
+    runtime_dir="./app-state",
+    cache_dir="./app-cache",
+    proot_path="/path/to/proot",  # optional
+)
+pd = ProotDistro(config)
+```
+
+Paths are converted to absolute paths when the configuration is created. The
+runtime and cache roots must be different and cannot be a filesystem root.
+The runtime root also cannot be placed inside the cache root.
+Each `ProotDistro` instance keeps its configuration, so multiple applications
+or test environments can use independent state in the same Python process.
+
 ---
 
 ## Commands reference

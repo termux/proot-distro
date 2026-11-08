@@ -50,10 +50,11 @@ Only names re-exported by `proot_distro.api` are public.
 | Module | Role |
 | --- | --- |
 | `api/program.py` | `ProotDistro` facade: inventories, Docker Hub search, and container install/remove/rename/reset methods. |
+| `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
 | `api/models.py` | Frozen result records returned by public methods. |
 | `api/errors.py` | Stable exception hierarchy; no `SystemExit` crosses the API boundary. |
 | `api/events.py` | Optional synchronous informational events such as network retries. |
-| `api/_worker.py` | One-shot child executor for mutation pipelines that still use CLI-oriented process control. Not a daemon or public protocol. |
+| `api/_worker.py` | One-shot child executor that applies per-instance paths and isolates CLI-oriented process control. Not a daemon or public protocol. |
 
 ### Commands
 
@@ -113,7 +114,7 @@ Roughly bottom-up. Higher entries import lower ones.
 
 | Module | Role |
 | --- | --- |
-| `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and the paths derived from them. Computed once at import. |
+| `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. |
 | `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, `quote_path` (escapes terminal control bytes in any name read from disk or network). |
 | `names.py` | The one container-name rule. |
 | `progress.py` | Shared stderr progress bar. |

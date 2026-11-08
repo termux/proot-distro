@@ -23,21 +23,41 @@
 The command handlers still own the mature mutation pipelines, including
 their cleanup, descriptor pinning, locks, and interruption rules. They also
 use process-oriented control flow (terminal output, signal handlers, and
-``SystemExit``), which must not leak into an embedding application. This
-module runs one requested mutation in a fresh process and reports a small
-JSON result to its parent. It is an implementation detail, not a daemon or
-client-server protocol.
+``SystemExit``), which must not leak into an embedding application. State
+paths are also bound into modules when their interpreter imports them. This
+module runs one requested stateful operation in a fresh process, applies that
+instance's paths before import, and reports a small JSON result to its parent.
+It is an implementation detail, not a daemon or client-server protocol.
 """
 
 import json
 import os
 import sys
+from dataclasses import asdict
 from types import SimpleNamespace
 
 from proot_distro.message import quote_error, set_quiet
 
 
 _MAX_INPUT_BYTES = 1024 * 1024
+
+
+def _list_containers(_options: dict) -> dict:
+    from proot_distro.api.program import _container_inventory
+
+    return {"items": [asdict(item) for item in _container_inventory()]}
+
+
+def _list_images(_options: dict) -> dict:
+    from proot_distro.api.program import _image_inventory
+
+    return {"items": [asdict(item) for item in _image_inventory()]}
+
+
+def _list_sessions(_options: dict) -> dict:
+    from proot_distro.api.program import _session_inventory
+
+    return {"items": [asdict(item) for item in _session_inventory()]}
 
 
 def _install(options: dict) -> dict:
@@ -107,6 +127,9 @@ def _reset(options: dict) -> dict:
 
 
 _OPERATIONS = {
+    "list_containers": _list_containers,
+    "list_images": _list_images,
+    "list_sessions": _list_sessions,
     "install": _install,
     "remove_container": _remove,
     "rename_container": _rename,

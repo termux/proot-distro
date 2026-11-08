@@ -8,6 +8,7 @@ from proot_distro.api import (
     InvalidArgumentError,
     OperationError,
     ProotDistro,
+    RuntimeConfig,
 )
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
@@ -48,6 +49,29 @@ def test_install_treats_relative_pathlike_as_local(tmp_path, builders,
     result = ProotDistro().install(Path(archive.name))
 
     assert result.name == "relative-rootfs"
+
+
+def test_configured_instances_have_independent_state(tmp_path, builders):
+    archive = _rootfs_archive(tmp_path, builders, "isolated-rootfs.tar.gz")
+    first = ProotDistro(RuntimeConfig(
+        tmp_path / "first-state", tmp_path / "first-cache"
+    ))
+    second = ProotDistro(RuntimeConfig(
+        tmp_path / "second-state", tmp_path / "second-cache"
+    ))
+
+    installed = first.install(archive, name="isolated")
+
+    assert installed.name == "isolated"
+    assert [item.name for item in first.list_containers()] == ["isolated"]
+    assert second.list_containers() == ()
+    assert os.path.isdir(os.path.join(
+        first.config.runtime_dir, "containers", "isolated", "rootfs"
+    ))
+
+    removed = first.remove_container("isolated")
+    assert removed.name == "isolated"
+    assert first.list_containers() == ()
 
 
 def test_install_failure_is_operation_error_without_output(tmp_path, capsys):
