@@ -353,6 +353,33 @@ pd.kill_all_sessions(signal_name="KILL")
 `start_detached` and `run_detached` daemonize only inside the one-shot worker;
 they never call `fork()` in the embedding application.
 
+### Inspecting session commands
+
+Use `inspect_start` or `inspect_run` to inspect session setup without executing
+proot:
+
+```python
+command = pd.inspect_run("my-container", ["--port", "8080"])
+
+print(command.executable)
+print(command.argv)
+print(command.environment_dict)
+print(command.inner_command)
+print(command.shell_command)
+```
+
+The returned immutable `SessionCommand` also includes `container`, `kind`,
+`rootfs`, `work_dir`, and `user`. It accepts the same session options as
+`start` and `run` except stdio.
+
+The inspected argv is intentionally the printable, path-based form used by
+CLI `--get-proot-cmd`: it contains `--rootfs=<path>`. Actual API sessions pin
+the validated rootfs directory by descriptor, enter that directory, and pass
+`--rootfs=.`. Executing `SessionCommand.shell_command` yourself does not retain
+that descriptor-pinning security guarantee. Inspection performs the same
+host-side preparation as session startup, including legacy layout migration
+and profile/sysdata updates, but does not register or execute a session.
+
 Mutating operations run in a short-lived child process so their signal and
 cleanup behavior cannot alter the embedding application. This worker exits
 when the method finishes; it is not a persistent service.

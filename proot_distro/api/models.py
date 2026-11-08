@@ -173,6 +173,33 @@ class DetachedSession:
     kind: str
 
 
+@dataclass(frozen=True)
+class SessionCommand:
+    """Inspectable path-based launch description for a container session.
+
+    ``argv`` names ``rootfs`` by path for display and external inspection.
+    Actual API sessions use a validated directory descriptor and
+    ``--rootfs=.`` instead; executing this description cannot reproduce that
+    descriptor pinning guarantee.
+    """
+
+    kind: str
+    container: str
+    executable: str
+    argv: Tuple[str, ...]
+    environment: Tuple[Tuple[str, str], ...]
+    inner_command: Tuple[str, ...]
+    rootfs: str
+    work_dir: str
+    user: str
+    shell_command: str
+
+    @property
+    def environment_dict(self) -> dict:
+        """Return a mutable copy of the inspected environment."""
+        return dict(self.environment)
+
+
 __all__ = (
     "BackupResult",
     "BuildResult",
@@ -185,6 +212,7 @@ __all__ = (
     "SearchHit",
     "SearchResult",
     "SessionInfo",
+    "SessionCommand",
     "SessionSignalResult",
     "RestoreResult",
     "TransferResult",

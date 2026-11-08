@@ -35,6 +35,7 @@ from proot_distro.api import (
     SearchHit,
     SearchResult,
     SessionInfo,
+    SessionCommand,
     SessionProcess,
     SessionSignalResult,
     TransferResult,
@@ -58,7 +59,7 @@ def test_public_exports_are_explicit():
         "NotFoundError", "OperationError", "OperationEvent",
         "PartialOperationError", "ProotDistro", "ProotDistroError", "PushResult",
         "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
-        "SearchResult", "SessionInfo", "SessionProcess",
+        "SearchResult", "SessionCommand", "SessionInfo", "SessionProcess",
         "SessionSignalResult", "TransferResult", "UnsupportedOperationError",
     }
 

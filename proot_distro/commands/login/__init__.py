@@ -473,10 +473,11 @@ def _login_with_rootfs(container_name: str, args, lock,
     # descriptor and not something a shell command line can hold. The
     # printed line is said to be what it is, next to where it is printed.
     show_cmd = getattr(args, "get_proot_cmd", False)
+    inspect_cmd = getattr(args, "_api_inspect", False)
     proot_args = build_proot_args(
         proot_bin=proot_bin,
         rootfs=rootfs,
-        rootfs_arg=rootfs if show_cmd else os.curdir,
+        rootfs_arg=rootfs if (show_cmd or inspect_cmd) else os.curdir,
         container_fd=container_fd,
         rootfs_fd=rootfs_fd,
         login_wd=login_wd,
@@ -534,7 +535,7 @@ def _login_with_rootfs(container_name: str, args, lock,
                  "PROOT_L2S_DIR unset for this session.")
     child_env.pop("LD_PRELOAD", None)
 
-    if show_cmd:
+    if show_cmd or inspect_cmd:
         # Said before the command rather than inside it: stdout is the
         # command and nothing else, so it stays ready to redirect into a
         # file or pipe into a shell. What the note is for is that the
@@ -545,16 +546,24 @@ def _login_with_rootfs(container_name: str, args, lock,
         # Nothing printable closes that gap: a descriptor cannot be
         # spelled, and `cd <path> && ... --rootfs=.` only moves the same
         # name resolution one step earlier.
+        command_text = _format_command(child_env, proot_args)
+        if inspect_cmd:
+            return {
+                "executable": proot_bin,
+                "argv": list(proot_args),
+                "environment": list(child_env.items()),
+                "inner_command": list(inner),
+                "rootfs": rootfs,
+                "work_dir": login_wd,
+                "user": login_user,
+                "shell_command": command_text.rstrip("\n"),
+            }
         warn(f"printed for inspection: this is not a copy of what "
              f"{PROGRAM_NAME} runs. It names the rootfs, which is "
              f"resolved afresh whenever the command is run, while the "
              f"session {PROGRAM_NAME} starts passes '--rootfs=.' from "
              f"inside the directory it validated.")
-        parts = ["env", "-i"]
-        for k, v in child_env.items():
-            parts.append(f"{k}={dq(v)}")
-        parts.extend(dq(a) for a in proot_args)
-        _print_command(" \\\n  ".join(parts) + "\n")
+        _print_command(command_text)
         sys.exit(0)
 
     # Session metadata shared by the foreground and detached paths.
@@ -604,6 +613,15 @@ def _login_with_rootfs(container_name: str, args, lock,
     _session_fd = register_session(**reg)  # noqa: F841 (kept alive until exec)
 
     _exec_proot(proot_bin, proot_args, child_env, rootfs_fd)
+
+
+def _format_command(child_env: dict, proot_args: list) -> str:
+    """Return the same path-based shell command --get-proot-cmd prints."""
+    parts = ["env", "-i"]
+    for key, value in child_env.items():
+        parts.append(f"{key}={dq(value)}")
+    parts.extend(dq(arg) for arg in proot_args)
+    return " \\\n  ".join(parts) + "\n"
 
 
 def _print_command(text: str) -> None:

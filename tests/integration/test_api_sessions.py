@@ -11,6 +11,7 @@ from proot_distro.api import (
     ProotDistro,
     RuntimeConfig,
     SessionProcess,
+    SessionCommand,
     SessionSignalResult,
 )
 
@@ -75,6 +76,56 @@ def test_run_uses_image_entrypoint_and_arguments(builders, fake_proot):
     assert process.kind == "run"
     assert b"/bin/echo replacement" in stdout
     assert stderr == b""
+
+
+def test_inspect_start_returns_path_based_launch_description(
+        builders, fake_proot, tmp_path):
+    builders.make_container("inspect-box")
+    bind = tmp_path / "bind"
+    bind.mkdir()
+    pd = _program(fake_proot)
+
+    command = pd.inspect_start(
+        "inspect-box",
+        ["echo", "hello"],
+        environment={"API_VALUE": "inspect"},
+        binds=[f"{bind}:/mnt/bind"],
+        work_dir="/root",
+    )
+
+    assert isinstance(command, SessionCommand)
+    assert command.kind == "login"
+    assert command.container == "inspect-box"
+    assert command.executable == str(fake_proot)
+    assert command.argv[0] == str(fake_proot)
+    assert f"--rootfs={command.rootfs}" in command.argv
+    assert "--rootfs=." not in command.argv
+    assert "--cwd=/root" in command.argv
+    assert any(str(bind) in argument for argument in command.argv)
+    assert command.environment_dict["API_VALUE"] == "inspect"
+    assert any("echo" in argument for argument in command.inner_command)
+    assert command.shell_command.startswith("env ")
+    assert str(fake_proot) in command.shell_command
+    assert pd.list_sessions() == ()
+
+
+def test_inspect_run_resolves_image_entrypoint(builders, fake_proot):
+    builders.make_container("inspect-run", manifest={
+        "image_config": {"config": {
+            "Entrypoint": ["/bin/server"],
+            "Cmd": ["default"],
+            "WorkingDir": "/srv",
+        }},
+    })
+
+    command = _program(fake_proot).inspect_run(
+        "inspect-run", ["replacement"]
+    )
+
+    assert command.kind == "run"
+    assert command.inner_command == ("/bin/server", "replacement")
+    assert command.work_dir == "/srv"
+    assert "--cwd=/srv" in command.argv
 
 
 def test_live_session_is_listed_and_terminated_as_tree(builders, fake_proot):
@@ -166,6 +217,8 @@ def test_start_missing_container_is_typed_error(fake_proot):
     ("run", ("box", ["bad\0arg"]), {}, "run"),
     ("start_detached", ("box", "echo"), {}, "start_detached"),
     ("run_detached", ("box",), {"environment": []}, "run_detached"),
+    ("inspect_start", ("box", "echo"), {}, "inspect_start"),
+    ("inspect_run", ("box",), {"minimal": 1}, "inspect_run"),
     ("kill_session", (0,), {}, "kill_session"),
     ("kill_session", (123,), {"signal_name": "NOPE"}, "kill_session"),
     ("kill_all_sessions", (), {"signal_name": "NOPE"},

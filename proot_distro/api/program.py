@@ -88,6 +88,7 @@ from proot_distro.api.models import (
     SearchHit,
     SearchResult,
     SessionInfo,
+    SessionCommand,
     SessionSignalResult,
     RestoreResult,
     TransferResult,
@@ -1621,6 +1622,144 @@ class ProotDistro:
             kernel=kernel, hostname=hostname,
         )
         return self._start_detached_session(
+            "run", container, arguments, options
+        )
+
+    def _inspect_session_command(
+        self, kind: str, container: str, arguments, options: dict,
+    ) -> SessionCommand:
+        operation = "inspect_start" if kind == "login" else "inspect_run"
+        container = _require_name(container, operation=operation)
+        arguments = _string_list(
+            arguments, operation=operation, argument="arguments"
+        )
+        if not any(
+            item.name == container for item in self.list_containers()
+        ):
+            raise NotFoundError(
+                f"container '{container}' is not installed.",
+                operation=operation,
+            )
+        result = self._context.worker(operation, {
+            "kind": kind,
+            "container": container,
+            "arguments": arguments,
+            "options": options,
+        })
+        try:
+            executable = result["executable"]
+            argv = tuple(result["argv"])
+            environment = tuple(
+                (entry[0], entry[1]) for entry in result["environment"]
+            )
+            inner_command = tuple(result["inner_command"])
+            rootfs = result["rootfs"]
+            work_dir = result["work_dir"]
+            user = result["user"]
+            shell_command = result["shell_command"]
+            scalar_values = (
+                executable, rootfs, work_dir, user, shell_command,
+            )
+            if (result.get("container") != container
+                    or result.get("kind") != kind
+                    or not all(isinstance(value, str) and value
+                               for value in scalar_values)
+                    or not argv or argv[0] != executable
+                    or not all(isinstance(value, str) for value in argv)
+                    or not all(isinstance(key, str) and isinstance(value, str)
+                               for key, value in environment)
+                    or not all(isinstance(value, str)
+                               for value in inner_command)
+                    or f"--rootfs={rootfs}" not in argv
+                    or "--rootfs=." in argv):
+                raise ValueError
+        except (KeyError, TypeError, ValueError, IndexError):
+            raise OperationError(
+                "session inspection worker returned an invalid result.",
+                operation=operation,
+            ) from None
+        return SessionCommand(
+            kind=kind,
+            container=container,
+            executable=executable,
+            argv=argv,
+            environment=environment,
+            inner_command=inner_command,
+            rootfs=rootfs,
+            work_dir=work_dir,
+            user=user,
+            shell_command=shell_command,
+        )
+
+    def inspect_start(
+        self,
+        container: str,
+        arguments=(),
+        *,
+        user: str = "root",
+        environment: Optional[Mapping[str, str]] = None,
+        binds=(),
+        work_dir: Optional[str] = None,
+        redirect_ports: bool = False,
+        shared_home: bool = False,
+        shared_tmp: bool = False,
+        shared_x11: bool = False,
+        isolated: bool = False,
+        minimal: bool = False,
+        no_link2symlink: bool = False,
+        no_sysvipc: bool = False,
+        no_kill_on_exit: bool = False,
+        emulator=None,
+        kernel: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> SessionCommand:
+        """Inspect the path-based command corresponding to :meth:`start`."""
+        options = self._session_options(
+            "inspect_start", user=user, environment=environment, binds=binds,
+            work_dir=work_dir, redirect_ports=redirect_ports,
+            shared_home=shared_home, shared_tmp=shared_tmp,
+            shared_x11=shared_x11, isolated=isolated, minimal=minimal,
+            no_link2symlink=no_link2symlink, no_sysvipc=no_sysvipc,
+            no_kill_on_exit=no_kill_on_exit, emulator=emulator,
+            kernel=kernel, hostname=hostname,
+        )
+        return self._inspect_session_command(
+            "login", container, arguments, options
+        )
+
+    def inspect_run(
+        self,
+        container: str,
+        arguments=(),
+        *,
+        user: str = "root",
+        environment: Optional[Mapping[str, str]] = None,
+        binds=(),
+        work_dir: Optional[str] = None,
+        redirect_ports: bool = False,
+        shared_home: bool = False,
+        shared_tmp: bool = False,
+        shared_x11: bool = False,
+        isolated: bool = False,
+        minimal: bool = False,
+        no_link2symlink: bool = False,
+        no_sysvipc: bool = False,
+        no_kill_on_exit: bool = False,
+        emulator=None,
+        kernel: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> SessionCommand:
+        """Inspect the path-based command corresponding to :meth:`run`."""
+        options = self._session_options(
+            "inspect_run", user=user, environment=environment, binds=binds,
+            work_dir=work_dir, redirect_ports=redirect_ports,
+            shared_home=shared_home, shared_tmp=shared_tmp,
+            shared_x11=shared_x11, isolated=isolated, minimal=minimal,
+            no_link2symlink=no_link2symlink, no_sysvipc=no_sysvipc,
+            no_kill_on_exit=no_kill_on_exit, emulator=emulator,
+            kernel=kernel, hostname=hostname,
+        )
+        return self._inspect_session_command(
             "run", container, arguments, options
         )
 

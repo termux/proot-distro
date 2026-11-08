@@ -491,6 +491,25 @@ def _start_detached(options: dict) -> dict:
     return {"pid": pid, "container": options["container"], "kind": kind}
 
 
+def _inspect_session(options: dict) -> dict:
+    from proot_distro.api._session_worker import _args
+
+    args = _args(options)
+    args._api_inspect = True
+    kind = options.get("kind")
+    if kind == "login":
+        from proot_distro.commands.login import command_login
+        result = command_login(args)
+    elif kind == "run":
+        from proot_distro.commands.run import command_run
+        result = command_run(args)
+    else:
+        raise ValueError("session kind is not valid")
+    if not isinstance(result, dict):
+        raise RuntimeError("session inspection did not return a description")
+    return {**result, "container": options["container"], "kind": kind}
+
+
 _OPERATIONS = {
     "list_containers": _list_containers,
     "list_images": _list_images,
@@ -511,6 +530,8 @@ _OPERATIONS = {
     "kill_session": _kill_session,
     "start_detached": _start_detached,
     "run_detached": _start_detached,
+    "inspect_start": _inspect_session,
+    "inspect_run": _inspect_session,
 }
 
 
