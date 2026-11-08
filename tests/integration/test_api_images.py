@@ -3,11 +3,13 @@ import os
 import pytest
 
 from proot_distro.api import (
+    AlreadyExistsError,
     BuildResult,
     CacheCleanupResult,
     EventKind,
     ImageRemovalResult,
     InvalidArgumentError,
+    NotFoundError,
     ProotDistro,
 )
 from proot_distro.helpers.docker.cache import layer_cache_path
@@ -89,6 +91,32 @@ def test_clear_orphan_removes_unreferenced_layer(builders):
     assert result.mode == "orphan"
     assert result.bytes_reclaimed >= size
     assert not os.path.exists(layer_cache_path(digest))
+
+
+def test_missing_cached_images_raise_not_found():
+    pd = ProotDistro()
+
+    with pytest.raises(NotFoundError) as remove_exc:
+        pd.remove_image("missing:1")
+    assert remove_exc.value.operation == "remove_image"
+
+    with pytest.raises(NotFoundError) as push_exc:
+        pd.push("missing:1")
+    assert push_exc.value.operation == "push"
+
+
+def test_build_refuses_existing_output_with_typed_error(tmp_path):
+    context = _context(tmp_path)
+    output = tmp_path / "existing.oci.tar"
+    output.write_bytes(b"keep")
+
+    with pytest.raises(AlreadyExistsError) as exc:
+        ProotDistro().build(
+            context, tags=["existing-output:1"], outputs=[output]
+        )
+
+    assert exc.value.operation == "build"
+    assert output.read_bytes() == b"keep"
 
 
 @pytest.mark.parametrize("method,args,kwargs,operation", [

@@ -423,6 +423,27 @@ def show_event(event):
 pd = ProotDistro(event_handler=show_event)
 ```
 
+### API errors
+
+All public failures inherit from `ProotDistroError`. Applications can catch
+more precise classes without parsing display messages:
+
+| Exception | Meaning |
+|---|---|
+| `InvalidArgumentError` | A public method argument is malformed. |
+| `NotFoundError` | A requested container, image, source, or archive is missing. |
+| `AlreadyExistsError` | An operation refused to overwrite an existing resource. |
+| `BusyError` | A container or image is locked by another operation or session. |
+| `AuthenticationError` | Registry credentials or permissions were refused. |
+| `NetworkError` | Communication with a remote service failed. |
+| `IntegrityError` | Content failed digest or structural validation. |
+| `UnsupportedOperationError` | The resource does not support the operation, such as resetting a plain rootfs archive. |
+| `PartialOperationError` | Some entries were processed but the whole operation did not complete. |
+| `OperationError` | Another operation failure without a more specific category. |
+
+Worker-backed methods exchange a structured internal error record. Exception
+selection does not depend on parsing colored CLI output.
+
 ---
 
 ## Commands reference

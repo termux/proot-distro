@@ -878,6 +878,10 @@ def _remove_extras_at(dst_fd, rel, targets, ctx, counter):
 # Entry point
 # ---------------------------------------------------------------------------
 
+class SyncPartialError(RuntimeError):
+    """A synchronization completed with one or more skipped failures."""
+
+
 def command_sync(args) -> None:
     """Mirror *src* to *dest*, optionally deleting orphaned entries."""
     src = args.source
@@ -889,10 +893,14 @@ def command_sync(args) -> None:
     with ExitStack() as stack:
         for lock in container_locks_for_spec_pair(src, dest, command="sync"):
             stack.enter_context(lock)
-        _do_sync(src, dest, verbose, use_checksum, delete)
+        _do_sync(
+            src, dest, verbose, use_checksum, delete,
+            raise_errors=bool(getattr(args, "_api_raise_errors", False)),
+        )
 
 
-def _do_sync(src, dest, verbose, use_checksum, delete):
+def _do_sync(src, dest, verbose, use_checksum, delete, *,
+             raise_errors=False):
     # Both endpoints come back with their own final component resolved —
     # the container side by the chroot walk, the host side by realpath — so
     # `sync /sdcard box:/x` transfers the directory `/sdcard` points at and
@@ -999,8 +1007,11 @@ def _do_sync(src, dest, verbose, use_checksum, delete):
         # come back 0 after skipping an unreadable source directory, which
         # is the one thing a backup script cannot afford to be told.
         plural = "entry" if ctx.failures == 1 else "entries"
-        log_error(f"Error: {ctx.failures} {plural} could not be "
-                  f"transferred.")
+        message = (f"Error: {ctx.failures} {plural} could not be "
+                   f"transferred.")
+        log_error(message)
+        if raise_errors:
+            raise SyncPartialError(message)
         sys.exit(1)
     log_info("Finished synchronizing.")
 

@@ -759,6 +759,8 @@ def command_restore(args):
         log_error(f"Failed to restore container: {quote_error(exc)}")
         log_error(f"{C['BRED']}The archive either was corrupted or has "
                   f"unexpected structure.{C['RST']}")
+        if getattr(args, "_api_raise_errors", False):
+            raise
         sys.exit(1)
     finally:
         if raw_fh is not None:

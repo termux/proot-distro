@@ -6,9 +6,11 @@ import sys
 import pytest
 
 from proot_distro.api import (
+    AlreadyExistsError,
     AuthenticationError,
     BackupResult,
     BuildResult,
+    BusyError,
     CacheCleanupResult,
     ContainerInfo,
     CredentialProvider,
@@ -16,12 +18,15 @@ from proot_distro.api import (
     EventKind,
     ImageInfo,
     ImageRemovalResult,
+    IntegrityError,
     InvalidArgumentError,
     NetworkError,
+    NotFoundError,
     OperationError,
     OperationEvent,
     ProotDistro,
     ProotDistroError,
+    PartialOperationError,
     PushResult,
     RegistryCredentials,
     RestoreResult,
@@ -32,6 +37,7 @@ from proot_distro.api import (
     SessionProcess,
     SessionSignalResult,
     TransferResult,
+    UnsupportedOperationError,
 )
 from proot_distro.api import program
 from proot_distro.helpers.docker.cache import save_manifest_cache
@@ -42,14 +48,16 @@ def test_public_exports_are_explicit():
     import proot_distro.api as api
 
     assert set(api.__all__) == {
-        "AuthenticationError", "BackupResult", "BuildResult",
-        "CacheCleanupResult", "ContainerInfo", "CredentialProvider",
+        "AlreadyExistsError", "AuthenticationError", "BackupResult",
+        "BuildResult", "BusyError", "CacheCleanupResult", "ContainerInfo",
+        "CredentialProvider",
         "CredentialRequest", "EventKind", "ImageInfo", "ImageRemovalResult",
-        "InvalidArgumentError", "NetworkError", "OperationError",
-        "OperationEvent", "ProotDistro", "ProotDistroError", "PushResult",
+        "IntegrityError", "InvalidArgumentError", "NetworkError",
+        "NotFoundError", "OperationError", "OperationEvent",
+        "PartialOperationError", "ProotDistro", "ProotDistroError", "PushResult",
         "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
         "SearchResult", "SessionInfo", "SessionProcess",
-        "SessionSignalResult", "TransferResult",
+        "SessionSignalResult", "TransferResult", "UnsupportedOperationError",
     }
 
 
@@ -420,10 +428,36 @@ def test_search_translates_operation_error(monkeypatch):
 
 
 def test_public_errors_share_one_base():
+    assert issubclass(AlreadyExistsError, ProotDistroError)
     assert issubclass(AuthenticationError, ProotDistroError)
+    assert issubclass(BusyError, ProotDistroError)
+    assert issubclass(IntegrityError, ProotDistroError)
     assert issubclass(InvalidArgumentError, ProotDistroError)
     assert issubclass(NetworkError, ProotDistroError)
+    assert issubclass(NotFoundError, ProotDistroError)
     assert issubclass(OperationError, ProotDistroError)
+    assert issubclass(PartialOperationError, ProotDistroError)
+    assert issubclass(UnsupportedOperationError, ProotDistroError)
+
+
+@pytest.mark.parametrize("kind,exception_type", [
+    ("already_exists", AlreadyExistsError),
+    ("authentication", AuthenticationError),
+    ("busy", BusyError),
+    ("integrity", IntegrityError),
+    ("network", NetworkError),
+    ("not_found", NotFoundError),
+    ("operation", OperationError),
+    ("partial", PartialOperationError),
+    ("unsupported", UnsupportedOperationError),
+])
+def test_structured_worker_error_mapping(kind, exception_type):
+    payload = (
+        '{"_error":{"kind":"' + kind + '","message":"detail"}}'
+    ).encode()
+    error = program._structured_worker_error("test", payload)
+    assert isinstance(error, exception_type)
+    assert error.operation == "test"
 
 
 def test_worker_rejects_unknown_operation_without_traceback():

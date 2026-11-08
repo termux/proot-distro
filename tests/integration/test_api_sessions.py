@@ -6,6 +6,7 @@ import pytest
 from proot_distro.api import (
     InvalidArgumentError,
     OperationError,
+    NotFoundError,
     ProotDistro,
     RuntimeConfig,
     SessionProcess,
@@ -107,6 +108,12 @@ def test_start_failure_is_operation_error_without_terminal_output(
     assert exc.value.operation == "start"
     assert "proot" in str(exc.value).lower()
     assert capsys.readouterr() == ("", "")
+
+
+def test_start_missing_container_is_typed_error(fake_proot):
+    with pytest.raises(NotFoundError) as exc:
+        _program(fake_proot).start("missing")
+    assert exc.value.operation == "start"
 
 
 @pytest.mark.parametrize("method,args,kwargs,operation", [

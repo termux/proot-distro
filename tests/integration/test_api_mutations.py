@@ -4,12 +4,15 @@ from pathlib import Path
 import pytest
 
 from proot_distro.api import (
+    AlreadyExistsError,
+    BusyError,
     ContainerInfo,
     EventKind,
     InvalidArgumentError,
-    OperationError,
+    NotFoundError,
     ProotDistro,
     RuntimeConfig,
+    UnsupportedOperationError,
 )
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
@@ -94,7 +97,7 @@ def test_configured_instances_have_independent_state(tmp_path, builders):
 
 
 def test_install_failure_is_operation_error_without_output(tmp_path, capsys):
-    with pytest.raises(OperationError) as exc:
+    with pytest.raises(NotFoundError) as exc:
         ProotDistro().install(tmp_path / "missing.tar", name="missing")
 
     assert exc.value.operation == "install"
@@ -114,11 +117,56 @@ def test_remove_returns_former_metadata(builders, capsys):
 
 
 def test_remove_missing_container_is_operation_error(capsys):
-    with pytest.raises(OperationError) as exc:
+    with pytest.raises(NotFoundError) as exc:
         ProotDistro().remove_container("ghost")
     assert exc.value.operation == "remove_container"
     assert "is not installed" in str(exc.value)
     assert capsys.readouterr() == ("", "")
+
+
+def test_install_existing_container_is_typed_error(tmp_path, builders):
+    archive = _rootfs_archive(tmp_path, builders, "duplicate.tar.gz")
+    pd = ProotDistro()
+    pd.install(archive, name="duplicate")
+
+    with pytest.raises(AlreadyExistsError) as exc:
+        pd.install(archive, name="duplicate")
+
+    assert exc.value.operation == "install"
+
+
+def test_remove_busy_container_is_typed_error(builders):
+    from proot_distro.locking import ContainerLock
+
+    builders.make_container("busy")
+    lock = ContainerLock("busy", exclusive=False, command="login")
+    assert lock.acquire()
+    try:
+        with pytest.raises(BusyError) as exc:
+            ProotDistro().remove_container("busy")
+    finally:
+        lock.release()
+
+    assert exc.value.operation == "remove_container"
+
+
+def test_reset_plain_container_is_unsupported(builders):
+    builders.make_container("plain")
+
+    with pytest.raises(UnsupportedOperationError) as exc:
+        ProotDistro().reset_container("plain")
+
+    assert exc.value.operation == "reset_container"
+
+
+def test_rename_existing_destination_is_typed_error(builders):
+    builders.make_container("source")
+    builders.make_container("destination")
+
+    with pytest.raises(AlreadyExistsError) as exc:
+        ProotDistro().rename_container("source", "destination")
+
+    assert exc.value.operation == "rename_container"
 
 
 def test_rename_returns_new_container_info(builders, capsys):

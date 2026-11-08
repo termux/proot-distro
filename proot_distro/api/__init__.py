@@ -26,11 +26,17 @@ policy; modules elsewhere in the package remain implementation details.
 """
 
 from proot_distro.api.errors import (
+    AlreadyExistsError,
     AuthenticationError,
+    BusyError,
+    IntegrityError,
     InvalidArgumentError,
     NetworkError,
+    NotFoundError,
     OperationError,
+    PartialOperationError,
     ProotDistroError,
+    UnsupportedOperationError,
 )
 from proot_distro.api.config import RuntimeConfig
 from proot_distro.api.credentials import (
@@ -59,9 +65,11 @@ from proot_distro.api.process import SessionProcess
 
 
 __all__ = (
+    "AlreadyExistsError",
     "AuthenticationError",
     "BackupResult",
     "BuildResult",
+    "BusyError",
     "CacheCleanupResult",
     "ContainerInfo",
     "CredentialProvider",
@@ -69,10 +77,13 @@ __all__ = (
     "EventKind",
     "ImageInfo",
     "ImageRemovalResult",
+    "IntegrityError",
     "InvalidArgumentError",
     "NetworkError",
+    "NotFoundError",
     "OperationError",
     "OperationEvent",
+    "PartialOperationError",
     "ProotDistro",
     "ProotDistroError",
     "PushResult",
@@ -85,4 +96,5 @@ __all__ = (
     "SessionProcess",
     "SessionSignalResult",
     "TransferResult",
+    "UnsupportedOperationError",
 )

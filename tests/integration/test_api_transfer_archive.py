@@ -3,10 +3,12 @@ import os
 import pytest
 
 from proot_distro.api import (
+    AlreadyExistsError,
     BackupResult,
     EventKind,
     InvalidArgumentError,
-    OperationError,
+    IntegrityError,
+    NotFoundError,
     ProotDistro,
     RestoreResult,
     TransferResult,
@@ -113,11 +115,27 @@ def test_backup_refuses_existing_output(tmp_path, builders):
     archive = tmp_path / "existing.tar"
     archive.write_bytes(b"keep")
 
-    with pytest.raises(OperationError) as exc:
+    with pytest.raises(AlreadyExistsError) as exc:
         ProotDistro().backup("box", archive)
 
     assert exc.value.operation == "backup"
     assert archive.read_bytes() == b"keep"
+
+
+def test_restore_missing_archive_is_typed_error(tmp_path):
+    with pytest.raises(NotFoundError) as exc:
+        ProotDistro().restore(tmp_path / "missing.tar")
+    assert exc.value.operation == "restore"
+
+
+def test_restore_corrupt_archive_is_integrity_error(tmp_path):
+    archive = tmp_path / "corrupt.tar"
+    archive.write_bytes(b"not a tar archive")
+
+    with pytest.raises(IntegrityError) as exc:
+        ProotDistro().restore(archive)
+
+    assert exc.value.operation == "restore"
 
 
 @pytest.mark.parametrize("method,args,kwargs,operation", [

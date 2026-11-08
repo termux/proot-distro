@@ -43,6 +43,40 @@ from proot_distro.progress import capture_progress_events
 _MAX_INPUT_BYTES = 1024 * 1024
 
 
+class _WorkerFailure(Exception):
+    """A structured operation failure returned to the API parent."""
+
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def _enable_structured_locks() -> None:
+    """Turn context-manager lock conflicts into structured failures."""
+    from proot_distro.locking import _FlockBase
+
+    def enter(lock):
+        if not lock.acquire():
+            detail = lock.blocked_detail()
+            if detail:
+                message = (
+                    f"cannot lock {lock._label} '{lock._display}': {detail}"
+                )
+            else:
+                message = (
+                    f"{lock._label} '{lock._display}' is busy"
+                    f"{lock.holder_hint()}."
+                )
+            raise _WorkerFailure("busy", message)
+        return lock
+
+    _FlockBase.__enter__ = enter
+
+
+def _write_error(kind: str, message: str) -> None:
+    _write_result({"_error": {"kind": kind, "message": message}})
+
+
 def _apply_registry_credentials(options: dict) -> None:
     """Apply one validated credential payload to this one-shot worker."""
     credentials = options.get("credentials")
@@ -87,6 +121,24 @@ def _install(options: dict) -> dict:
 
     source = options["source"]
     name = options.get("name")
+    if name:
+        installed_name = name
+    elif _is_local_path(source):
+        installed_name = _derive_local_name(os.path.expanduser(source))
+    elif _is_url(source):
+        url_path = source.split("?", 1)[0].split("#", 1)[0]
+        installed_name = _derive_local_name(url_path)
+    else:
+        installed_name = derive_alias(source)
+    if _is_local_path(source) and not os.path.isfile(os.path.expanduser(source)):
+        raise _WorkerFailure(
+            "not_found", f"local archive '{source}' does not exist"
+        )
+    from proot_distro.paths import container_entry_lstat
+    if container_entry_lstat(installed_name) is not None:
+        raise _WorkerFailure(
+            "already_exists", f"container '{installed_name}' already exists"
+        )
     _apply_registry_credentials(options)
     command_install(SimpleNamespace(
         image_ref=source,
@@ -97,22 +149,18 @@ def _install(options: dict) -> dict:
         _api_raise_errors=True,
     ))
 
-    if name:
-        installed_name = name
-    elif _is_local_path(source):
-        installed_name = _derive_local_name(os.path.expanduser(source))
-    elif _is_url(source):
-        url_path = source.split("?", 1)[0].split("#", 1)[0]
-        installed_name = _derive_local_name(url_path)
-    else:
-        installed_name = derive_alias(source)
     return {"container_name": installed_name}
 
 
 def _remove(options: dict) -> dict:
     from proot_distro.commands.remove import command_remove
+    from proot_distro.paths import container_entry_lstat
 
     name = options["name"]
+    if container_entry_lstat(name) is None:
+        raise _WorkerFailure(
+            "not_found", f"container '{name}' is not installed"
+        )
     command_remove(SimpleNamespace(
         target=name,
         image=False,
@@ -125,9 +173,18 @@ def _remove(options: dict) -> dict:
 
 def _rename(options: dict) -> dict:
     from proot_distro.commands.rename import command_rename
+    from proot_distro.paths import container_entry_lstat, container_is_installed
 
     old_name = options["old_name"]
     new_name = options["new_name"]
+    if not container_is_installed(old_name):
+        raise _WorkerFailure(
+            "not_found", f"container '{old_name}' is not installed"
+        )
+    if container_entry_lstat(new_name) is not None:
+        raise _WorkerFailure(
+            "already_exists", f"container '{new_name}' already exists"
+        )
     command_rename(SimpleNamespace(
         orig_name=old_name,
         new_name=new_name,
@@ -138,8 +195,19 @@ def _rename(options: dict) -> dict:
 
 def _reset(options: dict) -> dict:
     from proot_distro.commands.reset import command_reset
+    from proot_distro.paths import container_image_origin, container_is_installed
 
     name = options["name"]
+    if not container_is_installed(name):
+        raise _WorkerFailure(
+            "not_found", f"container '{name}' is not installed"
+        )
+    image_ref, _arch = container_image_origin(name)
+    if not image_ref:
+        raise _WorkerFailure(
+            "unsupported",
+            f"container '{name}' has no OCI manifest and cannot be reset",
+        )
     _apply_registry_credentials(options)
     command_reset(SimpleNamespace(
         container_name=name, quiet=True, _api_raise_errors=True,
@@ -157,6 +225,7 @@ def _copy(options: dict) -> dict:
         quiet=True,
         move=options.get("move", False),
         recursive=options.get("recursive", False),
+        _api_raise_errors=True,
     ))
     return {
         "source": options["source"],
@@ -174,6 +243,7 @@ def _sync(options: dict) -> dict:
         quiet=True,
         checksum=options.get("checksum", False),
         delete=options.get("delete", False),
+        _api_raise_errors=True,
     ))
     return {
         "source": options["source"],
@@ -189,6 +259,15 @@ def _backup(options: dict) -> dict:
 
     output = options["output"]
     compression = options.get("compression")
+    from proot_distro.paths import container_is_installed
+    if not container_is_installed(options["name"]):
+        raise _WorkerFailure(
+            "not_found", f"container '{options['name']}' does not exist"
+        )
+    if os.path.lexists(output):
+        raise _WorkerFailure(
+            "already_exists", f"backup output '{output}' already exists"
+        )
     command_backup(SimpleNamespace(
         container_name=options["name"],
         output=output,
@@ -214,8 +293,12 @@ def _restore(options: dict) -> dict:
     from proot_distro.commands.restore import command_restore
 
     archive = options["archive"]
+    if not os.path.isfile(archive):
+        raise _WorkerFailure(
+            "not_found", f"backup archive '{archive}' does not exist"
+        )
     name = command_restore(SimpleNamespace(
-        archive=archive, verbose=False, quiet=True,
+        archive=archive, verbose=False, quiet=True, _api_raise_errors=True,
     ))
     if not isinstance(name, str):
         raise RuntimeError("restore did not identify a container")
@@ -235,6 +318,20 @@ def _build(options: dict) -> dict:
     build_path = options["path"]
     dockerfile = options.get("dockerfile")
     tags = list(options.get("tags") or [])
+    if not os.path.isdir(build_path):
+        raise _WorkerFailure(
+            "not_found", f"build context '{build_path}' does not exist"
+        )
+    dockerfile_path = dockerfile or os.path.join(build_path, "Dockerfile")
+    if not os.path.isfile(dockerfile_path):
+        raise _WorkerFailure(
+            "not_found", f"Dockerfile '{dockerfile_path}' does not exist"
+        )
+    for output in options.get("outputs") or []:
+        if os.path.lexists(output):
+            raise _WorkerFailure(
+                "already_exists", f"build output '{output}' already exists"
+            )
     command_build(SimpleNamespace(
         path=build_path,
         dockerfile=dockerfile,
@@ -271,8 +368,20 @@ def _build(options: dict) -> dict:
 
 def _push(options: dict) -> dict:
     from proot_distro.commands.push import command_push
+    from proot_distro.api.program import _image_inventory
+    from proot_distro.arch import get_device_cpu_arch
 
     _apply_registry_credentials(options)
+    architecture = options.get("architecture") or get_device_cpu_arch()
+    if not any(
+        image.reference == options["image_ref"]
+        and image.architecture == architecture
+        for image in _image_inventory()
+    ):
+        raise _WorkerFailure(
+            "not_found",
+            f"image '{options['image_ref']}' ({architecture}) is not cached",
+        )
     result = command_push(SimpleNamespace(
         image_ref=options["image_ref"],
         override_arch=options.get("architecture"),
@@ -288,12 +397,29 @@ def _push(options: dict) -> dict:
 def _remove_image(options: dict) -> dict:
     from proot_distro.api.program import _image_inventory
     from proot_distro.commands.remove import command_remove
+    from proot_distro.helpers.docker.refs import with_explicit_tag
 
     before = _image_inventory()
+    identifier = options["identifier"]
+    architecture = options.get("architecture")
+    wanted_ref = with_explicit_tag(identifier)
+    matches = []
+    for image in before:
+        if architecture and image.architecture != architecture:
+            continue
+        image_hex = (image.image_id or "").partition(":")[2]
+        if (image.reference == wanted_ref or image.identifier == identifier
+                or (len(identifier) >= 4 and image_hex.startswith(
+                    identifier.lower()))):
+            matches.append(image)
+    if not matches:
+        raise _WorkerFailure(
+            "not_found", f"no cached image matches '{identifier}'"
+        )
     command_remove(SimpleNamespace(
-        target=options["identifier"],
+        target=identifier,
         image=True,
-        override_arch=options.get("architecture"),
+        override_arch=architecture,
         verbose=False,
         quiet=True,
     ))
@@ -391,6 +517,7 @@ def main() -> int:
     os.umask(0o022)
     set_quiet(True)
     events = []
+    operation = ""
 
     def record(kind, text):
         events.append({"kind": kind, "message": text})
@@ -415,14 +542,23 @@ def main() -> int:
 
     try:
         operation, options = _read_request()
+        _enable_structured_locks()
         with capture_log_events(record):
             with capture_progress_events(record_progress):
                 result = _OPERATIONS[operation](options)
+    except _WorkerFailure as exc:
+        _write_error(exc.kind, str(exc))
+        return 1
     except SystemExit as exc:
         for event in events:
             if event["kind"] == "error":
                 sys.stderr.write(f"Error: {event['message']}\n")
         sys.stderr.flush()
+        messages = [
+            event["message"] for event in events if event["kind"] == "error"
+        ]
+        message = messages[-1] if messages else f"operation exited: {exc.code}"
+        _write_error("operation", message)
         code = exc.code if isinstance(exc.code, int) else 1
         return code if code != 0 else 1
     except KeyboardInterrupt:
@@ -432,11 +568,23 @@ def main() -> int:
             RegistryAuthenticationError,
         )
         if isinstance(exc, RegistryAuthenticationError):
-            sys.stderr.write(f"Error: {quote_error(exc)}\n")
-            sys.stderr.flush()
-            return 4
-        sys.stderr.write(f"Error: operation failed: {quote_error(exc)}\n")
-        sys.stderr.flush()
+            _write_error("authentication", quote_error(exc))
+            return 1
+        from proot_distro.commands.copy import CopyPartialError
+        from proot_distro.commands.sync import SyncPartialError
+        if isinstance(exc, (CopyPartialError, SyncPartialError)):
+            _write_error("partial", quote_error(exc))
+            return 1
+        import tarfile
+        if isinstance(exc, tarfile.TarError):
+            _write_error("integrity", quote_error(exc))
+            return 1
+        if operation == "push":
+            from proot_distro.helpers.download import NETWORK_ERRORS
+            if isinstance(exc, NETWORK_ERRORS):
+                _write_error("network", quote_error(exc))
+                return 1
+        _write_error("operation", f"operation failed: {quote_error(exc)}")
         return 1
     result["_events"] = []
     for event in events:

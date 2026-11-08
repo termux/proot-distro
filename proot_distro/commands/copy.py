@@ -60,6 +60,10 @@ from proot_distro.progress import (
 )
 
 
+class CopyPartialError(RuntimeError):
+    """A recursive copy completed with one or more skipped failures."""
+
+
 def command_copy(args) -> None:
     """Copy or move files between host paths and container paths."""
     src = args.source
@@ -71,7 +75,10 @@ def command_copy(args) -> None:
     with ExitStack() as stack:
         for lock in container_locks_for_spec_pair(src, dest, command="copy"):
             stack.enter_context(lock)
-        _do_copy(src, dest, verbose, move_mode, recursive)
+        _do_copy(
+            src, dest, verbose, move_mode, recursive,
+            raise_errors=bool(getattr(args, "_api_raise_errors", False)),
+        )
 
 
 def _opendir_pinned(pin):
@@ -239,7 +246,8 @@ def _move_pinned(src_pin, dest_pin, verbose=False):
     return 0
 
 
-def _do_copy(src, dest, verbose, move_mode, recursive):
+def _do_copy(src, dest, verbose, move_mode, recursive, *,
+             raise_errors=False):
     # A move acts on the entries themselves, so neither final component is
     # dereferenced: rename(2) moves a symlink rather than what it points at,
     # and replaces one sitting at the destination rather than writing
@@ -383,7 +391,10 @@ def _do_copy(src, dest, verbose, move_mode, recursive):
         # unreadable entry did not cost the whole tree. The status still has
         # to say the copy is incomplete, which is what `cp -r` does too.
         plural = "entry" if failures == 1 else "entries"
-        log_error(f"Error: {failures} {plural} could not be copied.")
+        message = f"Error: {failures} {plural} could not be copied."
+        log_error(message)
+        if raise_errors:
+            raise CopyPartialError(message)
         sys.exit(1)
 
     log_info("Finished copying files.")

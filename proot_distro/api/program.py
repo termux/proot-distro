@@ -58,10 +58,16 @@ from proot_distro.paths import installed_container_names, read_container_manifes
 from proot_distro.session import active_sessions
 
 from proot_distro.api.errors import (
+    AlreadyExistsError,
     AuthenticationError,
+    BusyError,
+    IntegrityError,
     InvalidArgumentError,
     NetworkError,
+    NotFoundError,
     OperationError,
+    PartialOperationError,
+    UnsupportedOperationError,
 )
 from proot_distro.api.config import RuntimeConfig
 from proot_distro.api.credentials import (
@@ -321,6 +327,34 @@ def _worker_error(operation: str, stderr: bytes) -> OperationError:
     return OperationError(detail, operation=operation)
 
 
+_WORKER_ERROR_TYPES = {
+    "already_exists": AlreadyExistsError,
+    "authentication": AuthenticationError,
+    "busy": BusyError,
+    "integrity": IntegrityError,
+    "network": NetworkError,
+    "not_found": NotFoundError,
+    "operation": OperationError,
+    "partial": PartialOperationError,
+    "unsupported": UnsupportedOperationError,
+}
+
+
+def _structured_worker_error(operation: str, stdout: bytes):
+    """Return a typed exception from a worker error envelope, or None."""
+    try:
+        payload = json.loads(stdout)
+        error = payload["_error"]
+        kind = error["kind"]
+        message = error["message"]
+        exception_type = _WORKER_ERROR_TYPES[kind]
+        if not isinstance(message, str) or not message:
+            raise TypeError
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        return None
+    return exception_type(message, operation=operation)
+
+
 def _run_worker(operation: str, options: dict,
                 config: Optional[RuntimeConfig] = None,
                 event_handler: Optional[EventHandler] = None) -> dict:
@@ -365,10 +399,10 @@ def _run_worker(operation: str, options: dict,
         proc.wait()
         raise
 
-    if proc.returncode == 4:
-        detail = _worker_error(operation, stderr)
-        raise AuthenticationError(str(detail), operation=operation)
     if proc.returncode != 0:
+        structured = _structured_worker_error(operation, stdout)
+        if structured is not None:
+            raise structured
         raise _worker_error(operation, stderr)
     try:
         result = json.loads(stdout)
@@ -1267,6 +1301,13 @@ class ProotDistro:
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
         )
+        if not any(
+            item.name == container for item in self.list_containers()
+        ):
+            raise NotFoundError(
+                f"container '{container}' is not installed.",
+                operation=operation,
+            )
         request = json.dumps({
             "kind": kind,
             "container": container,

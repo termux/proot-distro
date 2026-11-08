@@ -53,7 +53,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
 | `api/credentials.py` | Redacted `RegistryCredentials`, provider requests, and the provider callable contract. |
 | `api/models.py` | Frozen result records returned by public methods. |
-| `api/errors.py` | Stable exception hierarchy, including registry authentication failures; no `SystemExit` crosses the API boundary. |
+| `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
 | `api/events.py` | Optional info, warning, progress, and retry events. |
 | `api/_worker.py` | One-shot child executor that applies per-instance paths and isolates CLI-oriented process control. Not a daemon or public protocol. |
 | `api/process.py` | Stable `SessionProcess` handle for foreground login and image-entrypoint sessions. |

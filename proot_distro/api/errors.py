@@ -47,14 +47,44 @@ class AuthenticationError(ProotDistroError):
     """A registry refused credentials or denied their requested access."""
 
 
+class NotFoundError(ProotDistroError):
+    """A requested container, image, archive, or source does not exist."""
+
+
+class AlreadyExistsError(ProotDistroError):
+    """An operation refused to replace an existing resource."""
+
+
+class BusyError(ProotDistroError):
+    """A resource is locked by another operation or live session."""
+
+
+class IntegrityError(ProotDistroError):
+    """Cached, downloaded, or archived content failed validation."""
+
+
+class UnsupportedOperationError(ProotDistroError):
+    """The requested operation is not supported for this resource."""
+
+
+class PartialOperationError(ProotDistroError):
+    """An operation made progress but could not complete every entry."""
+
+
 class OperationError(ProotDistroError):
     """An operation failed after its arguments were accepted."""
 
 
 __all__ = (
     "AuthenticationError",
+    "AlreadyExistsError",
+    "BusyError",
+    "IntegrityError",
     "InvalidArgumentError",
     "NetworkError",
+    "NotFoundError",
     "OperationError",
+    "PartialOperationError",
     "ProotDistroError",
+    "UnsupportedOperationError",
 )
