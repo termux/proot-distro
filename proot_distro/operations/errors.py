@@ -67,11 +67,16 @@ class BuildValidationFailure(OperationFailure):
     """A build path, Dockerfile, tag, or option is not usable."""
 
 
+class PushValidationFailure(OperationFailure):
+    """An image reference, architecture, or push option is not usable."""
+
+
 __all__ = (
     "AmbiguousImageFailure",
     "BuildValidationFailure",
     "ImageNotFoundFailure",
     "InstallValidationFailure",
+    "PushValidationFailure",
     "TransferPartialFailure",
     "TransferValidationFailure",
 )

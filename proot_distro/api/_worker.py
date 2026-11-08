@@ -20,8 +20,8 @@
 
 """Short-lived configured executor for stateful API operations.
 
-Shared services own migrated mutation pipelines, while the remaining session,
-push, and signalling adapters still use process-oriented command handlers.
+Shared services own migrated mutation pipelines, while the remaining session
+and signalling adapters still use process-oriented command handlers.
 Neither their global state nor control flow may leak into an embedding
 application. This module runs one operation in a fresh process, applies that
 instance's paths before importing stateful modules, streams bounded event
@@ -462,31 +462,21 @@ def _build(options: dict) -> dict:
 
 
 def _push(options: dict) -> dict:
-    from proot_distro.commands.push import command_push
-    from proot_distro.arch import get_device_cpu_arch
-    from proot_distro.operations import list_images
+    from proot_distro.operations.push import push_image
 
     _apply_registry_credentials(options)
-    architecture = options.get("architecture") or get_device_cpu_arch()
-    if not any(
-        image.reference == options["image_ref"]
-        and image.architecture == architecture
-        for image in list_images()
-    ):
-        raise _WorkerFailure(
-            "not_found",
-            f"image '{options['image_ref']}' ({architecture}) is not cached",
-        )
-    result = command_push(SimpleNamespace(
-        image_ref=options["image_ref"],
-        override_arch=options.get("architecture"),
+    result = push_image(
+        options["image_ref"],
+        architecture=options.get("architecture"),
         allow_insecure=options.get("allow_insecure", False),
-        quiet=True,
-        _api_raise_errors=True,
-    ))
-    if not isinstance(result, dict):
-        raise RuntimeError("push did not return a result")
-    return result
+    )
+    return {
+        "registry": result.registry,
+        "repo": result.repository,
+        "tag": result.tag,
+        "manifest_digest": result.manifest_digest,
+        "bytes_uploaded": result.bytes_uploaded,
+    }
 
 
 def _remove_image(options: dict) -> dict:

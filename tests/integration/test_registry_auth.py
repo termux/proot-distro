@@ -48,7 +48,7 @@ from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import (
     OCI_CONFIG_MEDIA, OCI_LAYER_MEDIA, OCI_MANIFEST_MEDIA, canonical_json,
 )
-from proot_distro.helpers.docker.push import push_image
+from proot_distro.operations.push import _push_registry_image
 from proot_distro.paths import container_dir, container_rootfs
 
 ALICE = basic("alice", "s3cret")
@@ -682,7 +682,7 @@ def test_an_upload_handed_to_another_origin_goes_without_the_token(
     ref = f"{registry.host()}/team/app:1"
     _built(builders, ref, arch, "team/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
-    push_image(ref, arch)
+    _push_registry_image(ref, arch)
     assert [s.method for s in registry.seen("cdn")] == ["PUT", "PUT"]
     assert ("team/app", "1") in registry.manifests
     _assert_credentials_in_place(registry)
@@ -694,7 +694,7 @@ def test_a_docker_hub_push_authenticates_at_the_hub_token_service(
     arch = get_device_cpu_arch()
     _built(builders, "alice/app:1", arch, "alice/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
-    result = push_image("alice/app:1", arch)
+    result = _push_registry_image("alice/app:1", arch)
     assert result["registry"] == "docker.io"
     assert registry.token_scopes() == ["", "repository:alice/app:pull,push"]
     assert all("service=registry.docker.io" in s.path
@@ -794,7 +794,7 @@ def test_a_basic_registry_upload_handed_elsewhere_goes_without_the_password(
     ref = f"{reg.host()}/team/app:1"
     _built(builders, ref, arch, "team/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
-    push_image(ref, arch)
+    _push_registry_image(ref, arch)
     assert [s.method for s in reg.seen("cdn")] == ["PUT", "PUT"]
     assert ("team/app", "1") in reg.manifests
     _assert_credentials_in_place(reg)
@@ -913,7 +913,7 @@ def test_a_docker_hub_push_with_a_wrong_password_uploads_nothing(
     _built(builders, "alice/app:1", arch, "alice/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:wrong")
     with pytest.raises(RuntimeError) as exc:
-        push_image("alice/app:1", arch)
+        _push_registry_image("alice/app:1", arch)
     assert str(exc.value) == credentials_rejected_msg("", 401)
     assert registry.token_scopes() == [""]
     assert registry.seen("registry") == []

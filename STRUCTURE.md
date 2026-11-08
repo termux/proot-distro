@@ -68,7 +68,8 @@ internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the
 same services. Container, image, and session inventories plus container and
 cached-image removal, rename, cache cleanup, copy, move, synchronization,
-backup, restore, install, reset, and build orchestration are migrated.
+backup, restore, install, reset, build orchestration, and registry push are
+migrated.
 
 | Module | Role |
 | --- | --- |
@@ -84,6 +85,7 @@ backup, restore, install, reset, and build orchestration are migrated.
 | `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
 | `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata. |
 | `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, and optional installation. |
+| `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
 | `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
@@ -131,7 +133,7 @@ what the command takes (see `locking.py`).
 
 | Module | Role |
 | --- | --- |
-| `helpers/docker/` | Pure-Python registry client. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth and the `PD_DOCKER_AUTH` check, redirects, JSON caps, refusal messages), `pull.py`, `push.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
+| `helpers/docker/` | Pure-Python registry client. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth and the `PD_DOCKER_AUTH` check, redirects, JSON caps, refusal messages), `pull.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
 | `helpers/dockerfile.py` | Pure Dockerfile parser. No execution and no variable expansion. |
 | `helpers/build_engine/` | Dockerfile interpreter. `engine.py` (`BuildEngine`: FROM, dispatch, history), `stage.py` (per-FROM state and descriptors), `handlers.py` (metadata-only instructions and the dispatch table), `run_step.py` (RUN under proot), `copy_step.py` (COPY/ADD), `users.py`, `dockerignore.py`, `parsing.py`, `constants.py`, `errors.py`. |
 | `helpers/layer_diff.py` | Snapshot the rootfs before and after a RUN, diff, write a gzipped OCI layer with whiteouts. |

@@ -5,6 +5,7 @@ import pytest
 
 import proot_distro.operations.inventory as inventory
 import proot_distro.operations.backup as backup_service
+import proot_distro.operations.push as push_service
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
     NotFoundFailure,
@@ -21,6 +22,7 @@ from proot_distro.operations import (
     ContainerRename,
     ImageBuild,
     ImageRemoval,
+    ImagePush,
     InstalledContainer,
     OperationContext,
     Transfer,
@@ -33,6 +35,7 @@ from proot_distro.operations import (
     list_images,
     list_sessions,
     move_path,
+    push_image,
     remove_container,
     remove_image,
     rename_container,
@@ -471,3 +474,53 @@ def test_build_service_refuses_existing_output(tmp_path):
         )
 
     assert output.read_bytes() == b"keep"
+
+
+def test_push_service_returns_frozen_result_and_events(builders, monkeypatch):
+    digest, size, _diff_id = builders.seed_cached_layer([{
+        "name": "payload",
+        "type": "file",
+        "data": b"push service",
+    }])
+    save_manifest_cache(
+        "registry.example/team/service:1", "x86_64", {
+            "schemaVersion": 2,
+            "layers": [{
+                "digest": digest,
+                "size": size,
+                "mediaType": OCI_LAYER_MEDIA,
+            }],
+        }, "team/service", {},
+    )
+    monkeypatch.setattr(
+        push_service, "_push_registry_image",
+        lambda *_args, **_kwargs: {
+            "registry": "registry.example",
+            "repo": "team/service",
+            "tag": "1",
+            "manifest_digest": "sha256:" + "a" * 64,
+            "bytes_uploaded": 123,
+        },
+    )
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    result = push_image(
+        "registry.example/team/service:1",
+        architecture="x86_64",
+        context=context,
+    )
+
+    assert isinstance(result, ImagePush)
+    assert result.image.reference == "registry.example/team/service:1"
+    assert result.registry == "registry.example"
+    assert result.repository == "team/service"
+    assert result.tag == "1"
+    assert result.bytes_uploaded == 123
+    assert [phase for _kind, _message, phase, _resource in events] == [
+        "push", "push",
+    ]

@@ -150,6 +150,18 @@ class ImageBuild:
     size_bytes: int
 
 
+@dataclass(frozen=True)
+class ImagePush:
+    """A cached image tag published to an OCI registry."""
+
+    image: CachedImage
+    registry: str
+    repository: str
+    tag: str
+    manifest_digest: Optional[str]
+    bytes_uploaded: int
+
+
 __all__ = (
     "ActiveSession",
     "ArchiveBackup",
@@ -161,6 +173,7 @@ __all__ = (
     "ContainerRename",
     "ImageRemoval",
     "ImageBuild",
+    "ImagePush",
     "InstalledContainer",
     "Transfer",
 )
