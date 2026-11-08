@@ -49,10 +49,11 @@ Only names re-exported by `proot_distro.api` are public.
 
 | Module | Role |
 | --- | --- |
-| `api/program.py` | `ProotDistro` facade: container, image and session inventories and Docker Hub search. |
+| `api/program.py` | `ProotDistro` facade: inventories, Docker Hub search, and container install/remove/rename/reset methods. |
 | `api/models.py` | Frozen result records returned by public methods. |
 | `api/errors.py` | Stable exception hierarchy; no `SystemExit` crosses the API boundary. |
 | `api/events.py` | Optional synchronous informational events such as network retries. |
+| `api/_worker.py` | One-shot child executor for mutation pipelines that still use CLI-oriented process control. Not a daemon or public protocol. |
 
 ### Commands
 

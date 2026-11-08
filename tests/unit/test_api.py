@@ -213,3 +213,11 @@ def test_public_errors_share_one_base():
     assert issubclass(InvalidArgumentError, ProotDistroError)
     assert issubclass(NetworkError, ProotDistroError)
     assert issubclass(OperationError, ProotDistroError)
+
+
+def test_worker_rejects_unknown_operation_without_traceback():
+    with pytest.raises(OperationError) as exc:
+        program._run_worker("unknown", {})
+    assert exc.value.operation == "unknown"
+    assert "not valid" in str(exc.value)
+    assert "Traceback" not in str(exc.value)

@@ -18,15 +18,29 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-"""The public in-process interface to PRoot-Distro.
+"""The public programmatic interface to PRoot-Distro.
 
 ``ProotDistro`` is a programmatic facade, not a network client. It reads
 the same state as the command-line utility and delegates to the same
 descriptor-safe inventory and registry implementations.
 """
 
+import json
+import os
+import signal
+import subprocess
+import sys
 from typing import Callable, Optional, Tuple
 
+from proot_distro.arch import normalize_arch
+from proot_distro.constants import (
+    BASE_CACHE_DIR,
+    IS_TERMUX,
+    RUNTIME_DIR,
+    TERMUX_APP_PACKAGE,
+    TERMUX_HOME,
+    TERMUX_PREFIX,
+)
 from proot_distro.helpers.docker.cache import iter_cached_images
 from proot_distro.helpers.docker.search import (
     SEARCH_DEFAULT_LIMIT,
@@ -34,6 +48,7 @@ from proot_distro.helpers.docker.search import (
     search_images,
 )
 from proot_distro.helpers.download import NETWORK_ERRORS
+from proot_distro.names import NAME_RULE_HINT, is_valid_name
 from proot_distro.paths import installed_container_names, read_container_manifest
 from proot_distro.session import active_sessions
 
@@ -53,6 +68,8 @@ from proot_distro.api.models import (
 
 
 EventHandler = Callable[[OperationEvent], None]
+
+_MAX_WORKER_ERROR_BYTES = 64 * 1024
 
 
 def _text(value) -> Optional[str]:
@@ -83,6 +100,127 @@ def _container_info(name: str) -> ContainerInfo:
         architecture=architecture,
         image_id=image_id,
     )
+
+
+def _require_name(name, *, operation: str, argument: str = "name") -> str:
+    """Validate and return a public container-name argument."""
+    if not isinstance(name, str) or not is_valid_name(name):
+        shown = name if isinstance(name, str) else repr(name)
+        raise InvalidArgumentError(
+            f"{argument} '{shown}' is not valid. {NAME_RULE_HINT}",
+            operation=operation,
+        )
+    return name
+
+
+def _worker_environment() -> dict:
+    """Environment that recreates this process's default state roots."""
+    env = os.environ.copy()
+    env["PD_FORCE_NO_COLORS"] = "1"
+    # The application may have imported this package from a path it added
+    # to sys.path at runtime. Child interpreters do not inherit sys.path, so
+    # explicitly put this package's parent first and guarantee that the
+    # worker executes the same code as the facade that launched it.
+    package_parent = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)
+    )))
+    inherited_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        package_parent +
+        (os.pathsep + inherited_pythonpath if inherited_pythonpath else "")
+    )
+    if IS_TERMUX:
+        env["TERMUX__PREFIX"] = TERMUX_PREFIX
+        env["TERMUX__HOME"] = TERMUX_HOME
+        env["TERMUX_APP__PACKAGE_NAME"] = TERMUX_APP_PACKAGE
+        if not (
+            env.get("TERMUX_VERSION") or
+            env.get("TERMUX_APP__APP_VERSION_NAME")
+        ):
+            env["TERMUX_VERSION"] = "unknown"
+    else:
+        env["XDG_DATA_HOME"] = os.path.dirname(RUNTIME_DIR)
+        env["XDG_CACHE_HOME"] = os.path.dirname(BASE_CACHE_DIR)
+        for name in (
+            "TERMUX_VERSION",
+            "TERMUX_APP__APP_VERSION_NAME",
+            "TERMUX_APP__PACKAGE_NAME",
+            "TERMUX__HOME",
+            "TERMUX__PREFIX",
+        ):
+            env.pop(name, None)
+    return env
+
+
+def _worker_error(operation: str, stderr: bytes) -> OperationError:
+    """Translate bounded worker diagnostics into one public exception."""
+    tail = stderr[-_MAX_WORKER_ERROR_BYTES:]
+    detail = tail.decode("utf-8", "backslashreplace").strip()
+    if "Traceback (most recent call last):" in detail:
+        lines = [line for line in detail.splitlines() if line.strip()]
+        reason = lines[-1] if lines else "unexpected worker failure"
+        detail = f"{operation} worker failed: {reason}"
+    if not detail:
+        detail = f"{operation} failed."
+    return OperationError(detail, operation=operation)
+
+
+def _run_worker(operation: str, options: dict) -> dict:
+    """Run one mutation in an isolated child and return its JSON result."""
+    request = json.dumps(
+        {"operation": operation, "options": options},
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "proot_distro.api._worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_worker_environment(),
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise OperationError(
+            f"cannot start the {operation} worker: {exc}", operation=operation,
+        ) from exc
+
+    try:
+        stdout, stderr = proc.communicate(request)
+    except KeyboardInterrupt:
+        # Give the command handler the same interrupt the CLI would receive.
+        # Rename defers it while rewriting l2s links, so communicate waits
+        # until that consistency-critical section is complete.
+        try:
+            os.killpg(proc.pid, signal.SIGINT)
+        except OSError:
+            pass
+        proc.communicate()
+        raise
+    except BaseException:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
+        raise
+
+    if proc.returncode != 0:
+        raise _worker_error(operation, stderr)
+    try:
+        result = json.loads(stdout)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise OperationError(
+            f"{operation} worker returned an invalid result.",
+            operation=operation,
+        ) from exc
+    if not isinstance(result, dict):
+        raise OperationError(
+            f"{operation} worker returned an invalid result.",
+            operation=operation,
+        )
+    return result
 
 
 class ProotDistro:
@@ -149,6 +287,100 @@ class ProotDistro:
             )
             for record in active_sessions()
         )
+
+    def install(
+        self,
+        source,
+        *,
+        name: Optional[str] = None,
+        architecture: Optional[str] = None,
+        allow_insecure: bool = False,
+    ) -> ContainerInfo:
+        """Install a container from an image reference, URL, or archive."""
+        source_is_path = isinstance(source, os.PathLike)
+        try:
+            source = os.fspath(source)
+        except TypeError:
+            raise InvalidArgumentError(
+                "source must be a string or path-like object.",
+                operation="install",
+            ) from None
+        if not isinstance(source, str) or not source:
+            raise InvalidArgumentError(
+                "source must be a non-empty text path or image reference.",
+                operation="install",
+            )
+        if source_is_path:
+            # A PathLike object is an unambiguous request for a local path.
+            # Make a relative one explicit before handing it to the command
+            # pipeline, whose string syntax deliberately treats bare tokens
+            # as image references for CLI compatibility.
+            source = os.path.abspath(os.path.expanduser(source))
+        if name is not None:
+            _require_name(name, operation="install")
+        if architecture is not None:
+            if not isinstance(architecture, str):
+                raise InvalidArgumentError(
+                    "architecture must be a string or None.",
+                    operation="install",
+                )
+            normalized_arch = normalize_arch(architecture)
+            if normalized_arch is None:
+                raise InvalidArgumentError(
+                    f"unsupported architecture '{architecture}'.",
+                    operation="install",
+                )
+            architecture = normalized_arch
+        if not isinstance(allow_insecure, bool):
+            raise InvalidArgumentError(
+                "allow_insecure must be a boolean.", operation="install"
+            )
+
+        result = _run_worker("install", {
+            "source": source,
+            "name": name,
+            "architecture": architecture,
+            "allow_insecure": allow_insecure,
+        })
+        installed_name = result.get("container_name")
+        if not isinstance(installed_name, str):
+            raise OperationError(
+                "install worker did not identify the installed container.",
+                operation="install",
+            )
+        return _container_info(installed_name)
+
+    def remove_container(self, name: str) -> ContainerInfo:
+        """Permanently remove a container and return its former metadata."""
+        name = _require_name(name, operation="remove_container")
+        previous = _container_info(name)
+        _run_worker("remove_container", {"name": name})
+        return previous
+
+    def rename_container(self, old_name: str, new_name: str) -> ContainerInfo:
+        """Rename a container and return its metadata under the new name."""
+        old_name = _require_name(
+            old_name, operation="rename_container", argument="old_name"
+        )
+        new_name = _require_name(
+            new_name, operation="rename_container", argument="new_name"
+        )
+        if old_name == new_name:
+            raise InvalidArgumentError(
+                "old_name and new_name must differ.",
+                operation="rename_container",
+            )
+        _run_worker("rename_container", {
+            "old_name": old_name,
+            "new_name": new_name,
+        })
+        return _container_info(new_name)
+
+    def reset_container(self, name: str) -> ContainerInfo:
+        """Reinstall a container from its recorded OCI image."""
+        name = _require_name(name, operation="reset_container")
+        _run_worker("reset_container", {"name": name})
+        return _container_info(name)
 
     def search(
         self, query: str, *, limit: int = SEARCH_DEFAULT_LIMIT,

@@ -196,6 +196,9 @@ from proot_distro.api import ProotDistro, ProotDistroError
 
 pd = ProotDistro()
 
+# Install from a registry, URL, or local archive.
+container = pd.install("alpine:3.21", name="my-alpine")
+
 for container in pd.list_containers():
     print(container.name, container.image_reference)
 
@@ -212,6 +215,11 @@ except ProotDistroError as exc:
 else:
     for hit in result.hits:
         print(hit.name)
+
+# Container management uses the same state and locks as the CLI.
+pd.rename_container("my-alpine", "test-alpine")
+pd.reset_container("test-alpine")  # OCI installs only; loses local changes
+pd.remove_container("test-alpine")  # permanent; returns former metadata
 ```
 
 The returned records are immutable. API operations do not print messages or
@@ -223,9 +231,19 @@ notices:
 pd = ProotDistro(event_handler=lambda event: print(event.message))
 ```
 
-The first API release provides container, image and session inventories plus
-Docker Hub search. Container and image management operations will be added to
-the same interface while the existing CLI remains available.
+The API provides container, image and session inventories, Docker Hub search,
+and these container-management methods:
+
+| Method | Action |
+|---|---|
+| `install(SOURCE, name=..., architecture=..., allow_insecure=...)` | Install from an image reference, URL, or local archive. Returns `ContainerInfo`. |
+| `remove_container(NAME)` | Permanently remove a container. Returns its former `ContainerInfo`. |
+| `rename_container(OLD, NEW)` | Rename a container and update its link2symlink entries. |
+| `reset_container(NAME)` | Reinstall an OCI container from its recorded image. All changes in its rootfs are lost. |
+
+Mutating operations run in a short-lived child process so their signal and
+cleanup behavior cannot alter the embedding application. This worker exits
+when the method finishes; it is not a persistent service.
 
 Only names imported from `proot_distro.api` are part of the stable public API.
 Other package modules are implementation details.

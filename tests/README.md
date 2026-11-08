@@ -24,7 +24,8 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
   rootfs or the containers directory (path traversal via member names,
   hard-link / symlink linknames, crafted `index.json` digests, COPY/ADD
   sources, `--bind` specs).
-- `integration/` — the real `command_*` pipelines driven with
+- `integration/` — the public mutation API and real `command_*` pipelines
+  driven with
   `types.SimpleNamespace` args, against the sandboxed runtime tree
   (install / backup→restore / build→install / copy / sync / rename / reset /
   clear-cache / CLI dispatch / `login --get-proot-cmd`), and pull / push
