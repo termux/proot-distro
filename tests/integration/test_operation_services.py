@@ -6,6 +6,7 @@ import pytest
 import proot_distro.operations.inventory as inventory
 import proot_distro.operations.backup as backup_service
 import proot_distro.operations.push as push_service
+import proot_distro.operations.session_signals as signal_service
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
     NotFoundFailure,
@@ -25,6 +26,7 @@ from proot_distro.operations import (
     ImagePush,
     InstalledContainer,
     OperationContext,
+    SessionSignal,
     Transfer,
     backup_container,
     build_image,
@@ -41,6 +43,7 @@ from proot_distro.operations import (
     rename_container,
     restore_container,
     reset_container,
+    signal_sessions,
     sync_path,
 )
 from proot_distro.constants import BASE_CACHE_DIR
@@ -524,3 +527,23 @@ def test_push_service_returns_frozen_result_and_events(builders, monkeypatch):
     assert [phase for _kind, _message, phase, _resource in events] == [
         "push", "push",
     ]
+
+
+def test_session_signal_service_returns_empty_result_and_event(monkeypatch):
+    monkeypatch.setattr(signal_service, "active_sessions", lambda: [])
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    result = signal_sessions(
+        "service-session", signal_name="KILL", context=context
+    )
+
+    assert result == SessionSignal(
+        "service-session", "SIGKILL", (), 0, 0, ()
+    )
+    assert len(events) == 1
+    assert events[0][2:] == ("signal-session", "service-session")

@@ -71,12 +71,34 @@ class PushValidationFailure(OperationFailure):
     """An image reference, architecture, or push option is not usable."""
 
 
+class SessionSignalValidationFailure(OperationFailure):
+    """A session target or signal selection is not usable."""
+
+    def __init__(self, message, *, show_help=True):
+        super().__init__(message)
+        self.show_help = show_help
+
+
+class SessionSignalFailure(OperationFailure):
+    """One or more tracked processes survived a termination request."""
+
+    def __init__(self, result):
+        self.result = result
+        names = ", ".join(str(pid) for pid in result.survivors)
+        super().__init__(
+            f"{len(result.survivors)} process(es) survived {result.signal} "
+            f"and could not be stopped: {names}."
+        )
+
+
 __all__ = (
     "AmbiguousImageFailure",
     "BuildValidationFailure",
     "ImageNotFoundFailure",
     "InstallValidationFailure",
     "PushValidationFailure",
+    "SessionSignalFailure",
+    "SessionSignalValidationFailure",
     "TransferPartialFailure",
     "TransferValidationFailure",
 )

@@ -21,7 +21,7 @@
 """Short-lived configured executor for stateful API operations.
 
 Shared services own migrated mutation pipelines, while the remaining session
-and signalling adapters still use process-oriented command handlers.
+adapters still use process-oriented command handlers.
 Neither their global state nor control flow may leak into an embedding
 application. This module runs one operation in a fresh process, applies that
 instance's paths before importing stateful modules, streams bounded event
@@ -37,7 +37,6 @@ import sys
 import urllib.parse
 from contextlib import nullcontext
 from dataclasses import asdict
-from types import SimpleNamespace
 
 from proot_distro.message import capture_log_events, quote_error, set_quiet
 from proot_distro.progress import capture_progress_events
@@ -504,19 +503,14 @@ def _clear_cache(options: dict) -> dict:
 
 
 def _kill_session(options: dict) -> dict:
-    from proot_distro.commands.kill import _select_sessions, command_kill
-    from proot_distro.session import active_sessions
+    from proot_distro.operations.session_signals import signal_sessions
 
-    kill_all = options.get("all", False)
-    target = options.get("target")
-    selected = _select_sessions(active_sessions(), target, kill_all)
-    pids = [session["pid"] for session in selected]
-    command_kill(SimpleNamespace(
-        target=target,
-        all=kill_all,
-        signal=options.get("signal"),
-    ))
-    return {"pids": pids}
+    result = signal_sessions(
+        options.get("target"),
+        all_sessions=options.get("all", False),
+        signal_name=options.get("signal"),
+    )
+    return {"pids": list(result.pids)}
 
 
 def _start_detached(options: dict) -> dict:

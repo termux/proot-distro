@@ -162,6 +162,18 @@ class ImagePush:
     bytes_uploaded: int
 
 
+@dataclass(frozen=True)
+class SessionSignal:
+    """Tracked session roots selected for one signal operation."""
+
+    target: str
+    signal: str
+    pids: Tuple[int, ...]
+    session_count: int
+    signals_delivered: int
+    survivors: Tuple[int, ...]
+
+
 __all__ = (
     "ActiveSession",
     "ArchiveBackup",
@@ -175,5 +187,6 @@ __all__ = (
     "ImageBuild",
     "ImagePush",
     "InstalledContainer",
+    "SessionSignal",
     "Transfer",
 )
