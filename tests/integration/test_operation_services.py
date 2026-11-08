@@ -1,3 +1,4 @@
+import io
 import os
 
 import pytest
@@ -18,11 +19,13 @@ from proot_distro.operations import (
     ContainerRemoval,
     ContainerInstallation,
     ContainerRename,
+    ImageBuild,
     ImageRemoval,
     InstalledContainer,
     OperationContext,
     Transfer,
     backup_container,
+    build_image,
     clear_cache,
     copy_path,
     install_container,
@@ -414,3 +417,57 @@ def test_image_removal_service_raises_typed_missing_failure():
         remove_image("service-missing:1")
 
     assert exc.value.identifier == "service-missing:1"
+
+
+def test_build_service_returns_images_streams_and_events(tmp_path):
+    build_context = tmp_path / "service-build-context"
+    build_context.mkdir()
+    (build_context / "payload").write_bytes(b"service build")
+    (build_context / "Dockerfile").write_text(
+        "FROM scratch\nCOPY payload /payload\n"
+    )
+    output = io.BytesIO()
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    result = build_image(
+        str(build_context),
+        tags=["service-build:1"],
+        outputs=[output],
+        context=context,
+    )
+
+    assert isinstance(result, ImageBuild)
+    assert [image.reference for image in result.images] == [
+        "service-build:1"
+    ]
+    assert result.outputs == (None,)
+    assert result.layer_count == 1
+    assert result.size_bytes > 0
+    assert result.installed_container is None
+    assert output.getvalue().startswith(b"oci-layout")
+    assert any(
+        phase == "build" and resource == "service-build:1"
+        for _kind, _message, phase, resource in events
+    )
+
+
+def test_build_service_refuses_existing_output(tmp_path):
+    build_context = tmp_path / "service-existing-context"
+    build_context.mkdir()
+    (build_context / "Dockerfile").write_text("FROM scratch\n")
+    output = tmp_path / "existing-output.tar"
+    output.write_bytes(b"keep")
+
+    with pytest.raises(AlreadyExistsFailure):
+        build_image(
+            str(build_context),
+            tags=["service-existing:1"],
+            outputs=[str(output)],
+        )
+
+    assert output.read_bytes() == b"keep"

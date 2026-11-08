@@ -63,8 +63,13 @@ class InstallValidationFailure(OperationFailure):
     """An install source, name, or architecture is not usable."""
 
 
+class BuildValidationFailure(OperationFailure):
+    """A build path, Dockerfile, tag, or option is not usable."""
+
+
 __all__ = (
     "AmbiguousImageFailure",
+    "BuildValidationFailure",
     "ImageNotFoundFailure",
     "InstallValidationFailure",
     "TransferPartialFailure",

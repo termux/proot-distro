@@ -30,6 +30,7 @@ from proot_distro.operations.containers import (
     rename_container,
 )
 from proot_distro.operations.backup import backup_container
+from proot_distro.operations.build import build_image
 from proot_distro.operations.copy import copy_path, move_path
 from proot_distro.operations.cache import clear_cache
 from proot_distro.operations.images import remove_image
@@ -53,6 +54,7 @@ from proot_distro.operations.models import (
     ContainerInstallation,
     ContainerRename,
     ImageRemoval,
+    ImageBuild,
     InstalledContainer,
     Transfer,
 )
@@ -68,10 +70,12 @@ __all__ = (
     "ContainerInstallation",
     "ContainerRename",
     "ImageRemoval",
+    "ImageBuild",
     "InstalledContainer",
     "OperationContext",
     "Transfer",
     "backup_container",
+    "build_image",
     "clear_cache",
     "copy_path",
     "install_container",

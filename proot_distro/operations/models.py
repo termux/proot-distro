@@ -139,6 +139,17 @@ class ContainerInstallation:
     has_entrypoint: bool
 
 
+@dataclass(frozen=True)
+class ImageBuild:
+    """Images and optional artifacts produced by one Dockerfile build."""
+
+    images: Tuple[CachedImage, ...]
+    outputs: Tuple[Optional[str], ...]
+    installed_container: Optional[ContainerInstallation]
+    layer_count: int
+    size_bytes: int
+
+
 __all__ = (
     "ActiveSession",
     "ArchiveBackup",
@@ -149,6 +160,7 @@ __all__ = (
     "ContainerInstallation",
     "ContainerRename",
     "ImageRemoval",
+    "ImageBuild",
     "InstalledContainer",
     "Transfer",
 )

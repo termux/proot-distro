@@ -18,17 +18,16 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-"""Short-lived executor for API operations backed by CLI-era handlers.
+"""Short-lived configured executor for stateful API operations.
 
-The command handlers still own the mature mutation pipelines, including
-their cleanup, descriptor pinning, locks, and interruption rules. They also
-use process-oriented control flow (terminal output, signal handlers, and
-``SystemExit``), which must not leak into an embedding application. State
-paths are also bound into modules when their interpreter imports them. This
-module runs one requested stateful operation in a fresh process, applies that
-instance's paths before import, streams bounded event frames through a private
-descriptor, and reports a small JSON result to its parent. It is an
-implementation detail, not a daemon or client-server protocol.
+Shared services own migrated mutation pipelines, while the remaining session,
+push, and signalling adapters still use process-oriented command handlers.
+Neither their global state nor control flow may leak into an embedding
+application. This module runs one operation in a fresh process, applies that
+instance's paths before importing stateful modules, streams bounded event
+frames through a private descriptor, and reports a small JSON result to its
+parent. It is an implementation detail, not a daemon or client-server
+protocol.
 """
 
 import json
@@ -36,6 +35,7 @@ import os
 import socket
 import sys
 import urllib.parse
+from contextlib import nullcontext
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -395,13 +395,7 @@ def _restore(options: dict) -> dict:
 
 
 def _build(options: dict) -> dict:
-    from proot_distro.arch import get_device_cpu_arch
-    from proot_distro.commands.build import (
-        _derive_tag_from_path,
-        command_build,
-    )
-    from proot_distro.helpers.docker.refs import with_explicit_tag
-    from proot_distro.operations import list_images
+    from proot_distro.operations.build import build_image
 
     _apply_registry_credentials(options)
     build_output_fd = _channel_fd_from_env(
@@ -412,58 +406,41 @@ def _build(options: dict) -> dict:
     dockerfile_stream = _open_stream(
         options, "dockerfile_input", "rb"
     )
-    tags = list(options.get("tags") or [])
-    if not os.path.isdir(build_path):
-        raise _WorkerFailure(
-            "not_found", f"build context '{build_path}' does not exist"
-        )
-    dockerfile_path = dockerfile or os.path.join(build_path, "Dockerfile")
-    if dockerfile_stream is None and not os.path.isfile(dockerfile_path):
-        raise _WorkerFailure(
-            "not_found", f"Dockerfile '{dockerfile_path}' does not exist"
-        )
+    service_outputs = []
     output_files = []
     for index, output in enumerate(options.get("outputs") or []):
-        if output is not None and os.path.lexists(output):
-            raise _WorkerFailure(
-                "already_exists", f"build output '{output}' already exists"
-            )
-        if output is None:
+        if output is not None:
+            service_outputs.append(output)
+        else:
             stream = _open_stream(options, f"build_output_{index}", "wb")
             if stream is None:
                 raise ValueError("build output stream is not valid")
             output_files.append(stream)
+            service_outputs.append(stream)
     credential_channel = _credential_channel_from_env()
-    args = SimpleNamespace(
-        path=build_path,
-        dockerfile=dockerfile,
-        _api_dockerfile_file=dockerfile_stream,
-        _api_close_dockerfile_file=True,
-        tags=tags,
-        build_args=list(options.get("build_args") or []),
-        override_arch=options.get("architecture"),
-        target_stage=options.get("target"),
-        emulator=options.get("emulator"),
-        outputs=[
-            output for output in options.get("outputs") or []
-            if output is not None
-        ],
-        _api_output_files=output_files,
-        _api_build_output_fd=build_output_fd,
-        install_as=options.get("install_as"),
-        no_cache=options.get("no_cache", False),
-        verbose=False,
-        quiet=True,
-    )
     try:
-        if credential_channel is None:
-            command_build(args)
-        else:
+        credential_scope = nullcontext()
+        if credential_channel is not None:
             from proot_distro.helpers.docker.transport import (
                 use_basic_auth_provider,
             )
-            with use_basic_auth_provider(credential_channel):
-                command_build(args)
+            credential_scope = use_basic_auth_provider(credential_channel)
+        with credential_scope:
+            result = build_image(
+                build_path,
+                dockerfile_path=dockerfile,
+                dockerfile_file=dockerfile_stream,
+                tags=options.get("tags") or (),
+                build_args=options.get("build_args") or {},
+                architecture=options.get("architecture"),
+                target_stage=options.get("target"),
+                emulator=options.get("emulator"),
+                outputs=service_outputs,
+                install_as=options.get("install_as"),
+                no_cache=options.get("no_cache", False),
+                quiet=True,
+                build_output_fd=build_output_fd,
+            )
     finally:
         if dockerfile_stream is not None and not dockerfile_stream.closed:
             dockerfile_stream.close()
@@ -474,22 +451,13 @@ def _build(options: dict) -> dict:
         if credential_channel is not None:
             credential_channel.close()
 
-    if not tags:
-        dockerfile_for_tag = (
-            dockerfile if dockerfile is not None
-            else os.path.join(build_path, "Dockerfile")
-        )
-        tags = [_derive_tag_from_path(build_path, dockerfile_for_tag)]
-    tags = [with_explicit_tag(tag) for tag in tags]
-    architecture = options.get("architecture") or get_device_cpu_arch()
-    images = [
-        _image_result(image) for image in list_images()
-        if image.reference in tags and image.architecture == architecture
-    ]
     return {
-        "images": images,
-        "outputs": list(options.get("outputs") or []),
-        "installed_container": options.get("install_as"),
+        "images": [_image_result(image) for image in result.images],
+        "outputs": list(result.outputs),
+        "installed_container": (
+            result.installed_container.name
+            if result.installed_container is not None else None
+        ),
     }
 
 

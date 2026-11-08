@@ -68,7 +68,7 @@ internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the
 same services. Container, image, and session inventories plus container and
 cached-image removal, rename, cache cleanup, copy, move, synchronization,
-backup, restore, install, and reset are migrated.
+backup, restore, install, reset, and build orchestration are migrated.
 
 | Module | Role |
 | --- | --- |
@@ -83,6 +83,7 @@ backup, restore, install, and reset are migrated.
 | `operations/install.py` | Local archive, URL, and OCI installation with staged cleanup and rootfs fixups. |
 | `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
 | `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata. |
+| `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, and optional installation. |
 | `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |

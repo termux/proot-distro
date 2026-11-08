@@ -1695,7 +1695,7 @@ class ProotDistro:
             raise InvalidArgumentError(
                 "build_args must be a mapping of strings.", operation="build"
             )
-        encoded_build_args = []
+        encoded_build_args = {}
         for key, value in build_args.items():
             if (not isinstance(key, str) or not key
                     or not isinstance(value, str)):
@@ -1703,7 +1703,7 @@ class ProotDistro:
                     "build_args keys must be non-empty strings and values "
                     "must be strings.", operation="build"
                 )
-            encoded_build_args.append(f"{key}={value}")
+            encoded_build_args[key] = value
 
         if architecture is not None:
             if not isinstance(architecture, str):
