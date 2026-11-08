@@ -27,12 +27,15 @@ descriptor-safe inventory and registry implementations.
 
 import io
 import json
+import math
 import os
+import select
 import signal
 import socket
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from typing import BinaryIO, Callable, Mapping, Optional, Tuple
 
@@ -71,7 +74,9 @@ from proot_distro.api.errors import (
     NetworkError,
     NotFoundError,
     OperationError,
+    OperationCancelledError,
     PartialOperationError,
+    SessionStartupTimeoutError,
     UnsupportedOperationError,
 )
 from proot_distro.api.config import RuntimeConfig
@@ -267,6 +272,24 @@ def _path_or_stream(value, *, operation: str, argument: str,
     )
 
 
+def _detached_output(value, *, operation: str, argument: str,
+                     allow_stdout: bool = False):
+    """Validate an append-only detached output path or stdio sentinel."""
+    if value is None or value == subprocess.DEVNULL:
+        return None
+    if allow_stdout and value == subprocess.STDOUT:
+        return "stdout"
+    if isinstance(value, int):
+        raise InvalidArgumentError(
+            f"{argument} must be a host path, subprocess.DEVNULL, "
+            f"{'subprocess.STDOUT, ' if allow_stdout else ''}or None.",
+            operation=operation,
+        )
+    return _path_argument(
+        value, operation=operation, argument=argument, host_only=True
+    )
+
+
 def _string_argument(value, *, operation: str, argument: str,
                      allow_none: bool = False, allow_empty: bool = False):
     """Validate a string carried into a session argv or environment."""
@@ -338,6 +361,137 @@ def _signal_argument(value, *, operation: str) -> signal.Signals:
         raise InvalidArgumentError(
             f"invalid signal '{value}'.", operation=operation
         ) from None
+
+
+def _startup_controls(timeout, cancel_event, *, operation: str):
+    """Validate foreground session startup timeout and cancellation token."""
+    if timeout is not None:
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout < 0):
+            raise InvalidArgumentError(
+                "startup_timeout must be a finite non-negative number or "
+                "None.", operation=operation,
+            )
+        timeout = float(timeout)
+    if (cancel_event is not None
+            and not callable(getattr(cancel_event, "is_set", None))):
+        raise InvalidArgumentError(
+            "cancel_event must provide an is_set() method or be None.",
+            operation=operation,
+        )
+    if cancel_event is not None and cancel_event.is_set():
+        raise OperationCancelledError(
+            "session setup was cancelled.", operation=operation
+        )
+    return timeout, cancel_event
+
+
+def _stop_starting_session(process) -> None:
+    """Stop and reap a session worker that has not completed its handshake."""
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait()
+    except OSError:
+        pass
+
+
+def _read_session_startup(
+    fd: int,
+    operation: str,
+    event_handler: Optional[EventHandler],
+    timeout: Optional[float],
+    cancel_event,
+) -> Optional[str]:
+    """Read framed setup events until exec closes *fd*; return an error."""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    buffer = bytearray()
+    setup_error = None
+
+    def handle_frame(raw: bytes) -> None:
+        nonlocal setup_error
+        try:
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise TypeError
+            if "error" in payload:
+                message = payload["error"]
+                if not isinstance(message, str) or not message:
+                    raise TypeError
+                setup_error = message
+                return
+            event = payload["event"]
+            if not isinstance(event, dict):
+                raise TypeError
+            kind = EventKind(event["kind"])
+            message = event["message"]
+            if kind not in (EventKind.INFO, EventKind.WARNING):
+                raise ValueError
+            if not isinstance(message, str):
+                raise TypeError
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+            raise OperationError(
+                "session worker returned an invalid setup status.",
+                operation=operation,
+            ) from None
+        if event_handler is not None:
+            event_handler(OperationEvent(operation, kind, message))
+
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise OperationCancelledError(
+                "session setup was cancelled.", operation=operation
+            )
+        wait = None
+        if deadline is not None:
+            wait = max(0.0, deadline - time.monotonic())
+        if cancel_event is not None:
+            wait = 0.1 if wait is None else min(wait, 0.1)
+        try:
+            readable, _, _ = select.select([fd], [], [], wait)
+        except OSError as exc:
+            raise OperationError(
+                f"cannot wait for session startup status: {exc}",
+                operation=operation,
+            ) from exc
+        if not readable:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise SessionStartupTimeoutError(
+                    f"session setup exceeded {timeout:g} seconds.",
+                    operation=operation,
+                )
+            continue
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError as exc:
+            raise OperationError(
+                f"cannot read session startup status: {exc}",
+                operation=operation,
+            ) from exc
+        if not chunk:
+            if buffer:
+                raise OperationError(
+                    "session worker returned a truncated setup status.",
+                    operation=operation,
+                )
+            return setup_error
+        buffer.extend(chunk)
+        if len(buffer) > 65536 and b"\n" not in buffer:
+            raise OperationError(
+                "session worker returned an oversized setup status.",
+                operation=operation,
+            )
+        while b"\n" in buffer:
+            raw, _, remainder = buffer.partition(b"\n")
+            buffer[:] = remainder
+            if not raw or len(raw) > 65536:
+                raise OperationError(
+                    "session worker returned an invalid setup status.",
+                    operation=operation,
+                )
+            handle_frame(bytes(raw))
 
 
 def _worker_environment(config: RuntimeConfig) -> dict:
@@ -1691,9 +1845,14 @@ class ProotDistro:
         stdin,
         stdout,
         stderr,
+        startup_timeout,
+        cancel_event,
         **options,
     ) -> SessionProcess:
         operation = "start" if kind == "login" else "run"
+        startup_timeout, cancel_event = _startup_controls(
+            startup_timeout, cancel_event, operation=operation
+        )
         container = _require_name(container, operation=operation)
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
@@ -1769,13 +1928,11 @@ class ProotDistro:
         finally:
             os.close(request_write)
 
-        status = bytearray()
         try:
-            while len(status) <= 65536:
-                chunk = os.read(status_read, 65537 - len(status))
-                if not chunk:
-                    break
-                status.extend(chunk)
+            setup_error = _read_session_startup(
+                status_read, operation, self._context.event_handler,
+                startup_timeout, cancel_event,
+            )
         except KeyboardInterrupt:
             try:
                 process.send_signal(signal.SIGINT)
@@ -1783,32 +1940,14 @@ class ProotDistro:
                 pass
             process.wait()
             raise
-        except OSError as exc:
-            process.kill()
-            process.wait()
-            raise OperationError(
-                f"cannot read session startup status: {exc}",
-                operation=operation,
-            ) from exc
+        except BaseException:
+            _stop_starting_session(process)
+            raise
         finally:
             os.close(status_read)
-        if len(status) > 65536:
-            process.kill()
+        if setup_error is not None:
             process.wait()
-            raise OperationError(
-                "session worker returned an oversized setup status.",
-                operation=operation,
-            )
-        if status:
-            process.wait()
-            try:
-                payload = json.loads(bytes(status))
-                message = payload["error"]
-                if not isinstance(message, str):
-                    raise TypeError
-            except (KeyError, TypeError, ValueError, UnicodeDecodeError):
-                message = "session worker returned an invalid setup error."
-            raise OperationError(message, operation=operation)
+            raise OperationError(setup_error, operation=operation)
         return SessionProcess(
             self, process, container=container, kind=kind
         )
@@ -1837,6 +1976,8 @@ class ProotDistro:
         stdin=None,
         stdout=None,
         stderr=None,
+        startup_timeout: Optional[float] = None,
+        cancel_event=None,
     ) -> SessionProcess:
         """Start a login shell or shell-wrapped command inside a container."""
         options = self._session_options(
@@ -1850,7 +1991,8 @@ class ProotDistro:
         )
         return self._start_session(
             "login", container, arguments, stdin=stdin, stdout=stdout,
-            stderr=stderr, **options,
+            stderr=stderr, startup_timeout=startup_timeout,
+            cancel_event=cancel_event, **options,
         )
 
     def run(
@@ -1877,6 +2019,8 @@ class ProotDistro:
         stdin=None,
         stdout=None,
         stderr=None,
+        startup_timeout: Optional[float] = None,
+        cancel_event=None,
     ) -> SessionProcess:
         """Start the image Entrypoint/Cmd, optionally replacing Cmd arguments."""
         options = self._session_options(
@@ -1891,6 +2035,7 @@ class ProotDistro:
         return self._start_session(
             "run", container, arguments,
             stdin=stdin, stdout=stdout, stderr=stderr,
+            startup_timeout=startup_timeout, cancel_event=cancel_event,
             **options,
         )
 
@@ -1946,8 +2091,17 @@ class ProotDistro:
         emulator=None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
+        stdout=None,
+        stderr=None,
     ) -> DetachedSession:
-        """Start a detached login command with stdio connected to /dev/null."""
+        """Start a detached login command with optional append-only logs."""
+        stdout = _detached_output(
+            stdout, operation="start_detached", argument="stdout"
+        )
+        stderr = _detached_output(
+            stderr, operation="start_detached", argument="stderr",
+            allow_stdout=True,
+        )
         options = self._session_options(
             "start_detached", user=user, environment=environment, binds=binds,
             work_dir=work_dir, redirect_ports=redirect_ports,
@@ -1957,6 +2111,8 @@ class ProotDistro:
             no_kill_on_exit=no_kill_on_exit, emulator=emulator,
             kernel=kernel, hostname=hostname,
         )
+        options["detach_stdout"] = stdout
+        options["detach_stderr"] = stderr
         return self._start_detached_session(
             "login", container, arguments, options
         )
@@ -1982,8 +2138,17 @@ class ProotDistro:
         emulator=None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
+        stdout=None,
+        stderr=None,
     ) -> DetachedSession:
-        """Start the image Entrypoint/Cmd as a detached session."""
+        """Start the image Entrypoint/Cmd with optional append-only logs."""
+        stdout = _detached_output(
+            stdout, operation="run_detached", argument="stdout"
+        )
+        stderr = _detached_output(
+            stderr, operation="run_detached", argument="stderr",
+            allow_stdout=True,
+        )
         options = self._session_options(
             "run_detached", user=user, environment=environment, binds=binds,
             work_dir=work_dir, redirect_ports=redirect_ports,
@@ -1993,6 +2158,8 @@ class ProotDistro:
             no_kill_on_exit=no_kill_on_exit, emulator=emulator,
             kernel=kernel, hostname=hostname,
         )
+        options["detach_stdout"] = stdout
+        options["detach_stderr"] = stderr
         return self._start_detached_session(
             "run", container, arguments, options
         )

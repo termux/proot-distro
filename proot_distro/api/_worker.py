@@ -615,15 +615,38 @@ def _start_detached(options: dict) -> dict:
 
     args = _args(options)
     args.detach = True
+    stdout_fd = stderr_fd = None
+    session_options = options.get("options") or {}
+    stdout_path = session_options.get("detach_stdout")
+    stderr_path = session_options.get("detach_stderr")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        if stdout_path is not None:
+            stdout_fd = os.open(stdout_path, flags, 0o666)
+        if stderr_path == "stdout":
+            stderr_fd = stdout_fd
+        elif stderr_path is not None:
+            stderr_fd = os.open(stderr_path, flags, 0o666)
+    except OSError:
+        if stdout_fd is not None:
+            os.close(stdout_fd)
+        raise
+    args._detach_stdout_fd = stdout_fd
+    args._detach_stderr_fd = stderr_fd
     kind = options.get("kind")
-    if kind == "login":
-        from proot_distro.commands.login import command_login
-        pid = command_login(args)
-    elif kind == "run":
-        from proot_distro.commands.run import command_run
-        pid = command_run(args)
-    else:
-        raise ValueError("session kind is not valid")
+    try:
+        if kind == "login":
+            from proot_distro.commands.login import command_login
+            pid = command_login(args)
+        elif kind == "run":
+            from proot_distro.commands.run import command_run
+            pid = command_run(args)
+        else:
+            raise ValueError("session kind is not valid")
+    finally:
+        for fd in {stdout_fd, stderr_fd} - {None}:
+            os.close(fd)
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         raise RuntimeError("detached session did not return a valid PID")
     return {"pid": pid, "container": options["container"], "kind": kind}

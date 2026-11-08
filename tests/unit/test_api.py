@@ -24,6 +24,7 @@ from proot_distro.api import (
     InvalidArgumentError,
     NetworkError,
     NotFoundError,
+    OperationCancelledError,
     OperationError,
     OperationEvent,
     ProotDistro,
@@ -39,6 +40,7 @@ from proot_distro.api import (
     SessionCommand,
     SessionProcess,
     SessionSignalResult,
+    SessionStartupTimeoutError,
     TransferResult,
     UnsupportedOperationError,
 )
@@ -58,10 +60,12 @@ def test_public_exports_are_explicit():
         "ImageRemovalResult",
         "IntegrityError", "InvalidArgumentError", "NetworkError",
         "NotFoundError", "OperationError", "OperationEvent",
-        "PartialOperationError", "ProotDistro", "ProotDistroError", "PushResult",
+        "OperationCancelledError", "PartialOperationError", "ProotDistro",
+        "ProotDistroError", "PushResult",
         "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
         "SearchResult", "SessionCommand", "SessionInfo", "SessionProcess",
-        "SessionSignalResult", "TransferResult", "UnsupportedOperationError",
+        "SessionSignalResult", "SessionStartupTimeoutError", "TransferResult",
+        "UnsupportedOperationError",
     }
 
 
@@ -440,8 +444,10 @@ def test_public_errors_share_one_base():
     assert issubclass(NetworkError, ProotDistroError)
     assert issubclass(NotFoundError, ProotDistroError)
     assert issubclass(OperationError, ProotDistroError)
+    assert issubclass(OperationCancelledError, OperationError)
     assert issubclass(PartialOperationError, ProotDistroError)
     assert issubclass(UnsupportedOperationError, ProotDistroError)
+    assert issubclass(SessionStartupTimeoutError, OperationError)
 
 
 @pytest.mark.parametrize("kind,exception_type", [
@@ -514,3 +520,80 @@ def test_session_process_falls_back_when_registry_has_no_record():
 
     assert result.pids == ()
     assert raw.terminated is True
+
+
+def test_session_startup_status_timeout_is_typed():
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(SessionStartupTimeoutError) as exc:
+            program._read_session_startup(
+                read_fd, "start", None, 0.001, None
+            )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert exc.value.operation == "start"
+
+
+def test_session_startup_status_observes_cancellation():
+    class Cancellation:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(OperationCancelledError) as exc:
+            program._read_session_startup(
+                read_fd, "run", None, None, Cancellation()
+            )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert exc.value.operation == "run"
+
+
+def test_public_session_timeout_kills_and_reaps_setup_worker(monkeypatch):
+    class StalledWorker:
+        instances = []
+
+        def __init__(self, _argv, **kwargs):
+            request_fd, status_fd = kwargs["pass_fds"]
+            self.request_fd = os.dup(request_fd)
+            self.status_fd = os.dup(status_fd)
+            self.pid = 123
+            self.returncode = None
+            self.killed = False
+            self.waited = False
+            self.__class__.instances.append(self)
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+            for name in ("request_fd", "status_fd"):
+                fd = getattr(self, name)
+                if fd is not None:
+                    os.close(fd)
+                    setattr(self, name, None)
+
+        def wait(self):
+            self.waited = True
+            return self.returncode
+
+    pd = ProotDistro()
+    monkeypatch.setattr(pd, "list_containers", lambda: (
+        ContainerInfo("box", None, None, None),
+    ))
+    monkeypatch.setattr(program.subprocess, "Popen", StalledWorker)
+
+    with pytest.raises(SessionStartupTimeoutError):
+        pd.start("box", startup_timeout=0.001)
+
+    worker = StalledWorker.instances[0]
+    assert worker.killed is True
+    assert worker.waited is True

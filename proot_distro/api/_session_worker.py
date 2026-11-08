@@ -55,10 +55,11 @@ def _read_request(fd: int) -> dict:
     return request
 
 
-def _write_status(fd: int, message: str) -> None:
+def _write_frame(fd: int, payload: dict) -> None:
+    """Write one newline-delimited startup protocol frame."""
     data = json.dumps(
-        {"error": message}, ensure_ascii=True, separators=(",", ":")
-    ).encode("ascii")
+        payload, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii") + b"\n"
     while data:
         written = os.write(fd, data)
         data = data[written:]
@@ -100,7 +101,8 @@ def main() -> int:
         request_fd = _fd_from_env("_PROOT_DISTRO_SESSION_REQUEST_FD")
         status_fd = _fd_from_env("_PROOT_DISTRO_SESSION_STATUS_FD")
         # Success is status-fd EOF: the descriptor closes automatically when
-        # command_login execs proot. A setup failure writes one JSON object.
+        # command_login execs proot. Setup events and a possible final error
+        # are newline-delimited JSON frames written before that handshake.
         os.set_inheritable(status_fd, False)
         request = _read_request(request_fd)
         os.close(request_fd)
@@ -110,6 +112,10 @@ def main() -> int:
 
         def record(kind, text):
             logs.append((kind, text))
+            if kind in ("info", "warning"):
+                _write_frame(status_fd, {
+                    "event": {"kind": kind, "message": text},
+                })
 
         with capture_log_events(record):
             args = _args(request)
@@ -137,7 +143,7 @@ def main() -> int:
 
     if status_fd is not None:
         try:
-            _write_status(status_fd, message)
+            _write_frame(status_fd, {"error": message})
         except OSError:
             pass
         try:

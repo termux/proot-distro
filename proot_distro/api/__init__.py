@@ -34,8 +34,10 @@ from proot_distro.api.errors import (
     NetworkError,
     NotFoundError,
     OperationError,
+    OperationCancelledError,
     PartialOperationError,
     ProotDistroError,
+    SessionStartupTimeoutError,
     UnsupportedOperationError,
 )
 from proot_distro.api.config import RuntimeConfig
@@ -85,6 +87,7 @@ __all__ = (
     "NetworkError",
     "NotFoundError",
     "OperationError",
+    "OperationCancelledError",
     "OperationEvent",
     "PartialOperationError",
     "ProotDistro",
@@ -98,6 +101,7 @@ __all__ = (
     "SessionInfo",
     "SessionCommand",
     "SessionProcess",
+    "SessionStartupTimeoutError",
     "SessionSignalResult",
     "TransferResult",
     "UnsupportedOperationError",

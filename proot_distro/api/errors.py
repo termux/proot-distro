@@ -75,6 +75,14 @@ class OperationError(ProotDistroError):
     """An operation failed after its arguments were accepted."""
 
 
+class OperationCancelledError(OperationError):
+    """An operation was cancelled through its explicit cancellation token."""
+
+
+class SessionStartupTimeoutError(OperationError):
+    """A foreground session did not complete setup within its timeout."""
+
+
 __all__ = (
     "AuthenticationError",
     "AlreadyExistsError",
@@ -84,7 +92,9 @@ __all__ = (
     "NetworkError",
     "NotFoundError",
     "OperationError",
+    "OperationCancelledError",
     "PartialOperationError",
     "ProotDistroError",
+    "SessionStartupTimeoutError",
     "UnsupportedOperationError",
 )

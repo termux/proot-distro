@@ -20,6 +20,8 @@
 
 """Process handle returned by programmatic container sessions."""
 
+import subprocess
+
 
 class SessionProcess:
     """A running foreground login or image-entrypoint session.
@@ -66,6 +68,33 @@ class SessionProcess:
     def communicate(self, input=None, timeout=None):
         """Exchange data through requested pipes and wait for completion."""
         return self._process.communicate(input=input, timeout=timeout)
+
+    def __enter__(self):
+        """Return this running session for use in a ``with`` block."""
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        """Terminate, reap, and close pipe handles when leaving the block."""
+        self.close()
+        return False
+
+    def close(self, timeout=10.0):
+        """Stop a live session, escalating after *timeout*, and close pipes."""
+        try:
+            if self.poll() is None:
+                self.terminate()
+                try:
+                    self.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    self.kill()
+                    self.wait()
+            return self.returncode
+        finally:
+            closed = set()
+            for stream in (self.stdin, self.stdout, self.stderr):
+                if stream is not None and id(stream) not in closed:
+                    closed.add(id(stream))
+                    stream.close()
 
     def terminate(self):
         """Request graceful teardown of the complete tracked session tree."""

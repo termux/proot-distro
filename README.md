@@ -333,6 +333,7 @@ process.
 
 ```python
 import subprocess
+import threading
 
 process = pd.start(
     "my-container",
@@ -342,6 +343,18 @@ process = pd.start(
     stderr=subprocess.PIPE,
 )
 stdout, stderr = process.communicate(timeout=30)
+
+# Context management stops and reaps a session on every exit path.
+with pd.start("my-container", ["long-running-task"]) as process:
+    use_process(process)
+
+# Bound or cancel setup before proot has executed.
+cancel = threading.Event()
+process = pd.start(
+    "my-container",
+    startup_timeout=15,
+    cancel_event=cancel,
+)
 
 # Use the image's Entrypoint, replacing its Cmd arguments.
 server = pd.run("my-container", ["--port", "8080"])
@@ -361,16 +374,34 @@ redirection, shared home/tmp/X11, isolated or minimal mode, emulator, kernel,
 hostname, and the Termux proot-extension switches. `start` shell-wraps its
 arguments like CLI `login`; `run` applies the image Entrypoint/Cmd rules.
 
+`startup_timeout` is a non-negative number of seconds, or `None` for the
+compatible unbounded default. `cancel_event` can be a `threading.Event` or any
+object with `is_set()`. Cancellation is observed during setup; after a method
+returns, use the `SessionProcess` methods. A timeout raises
+`SessionStartupTimeoutError`, while cancellation raises
+`OperationCancelledError`. Setup information and warnings are delivered to
+the configured event handler immediately, before `start` or `run` returns.
+
+`SessionProcess` is a context manager. Leaving its block terminates the whole
+tracked session tree, waits up to ten seconds, escalates to `SIGKILL` when
+needed, reaps the process, and closes pipe handles created by `subprocess.PIPE`.
+
 `kill_session(PID_OR_CONTAINER, signal_name="TERM")` can also signal a PID or
 every active session of a container. `SessionProcess.terminate()` and
 `.kill()` call this tracked-tree operation with `SIGTERM` and `SIGKILL`.
 
 For a session that must outlive its launching process, use the detached
-variants. They connect all three standard streams to `/dev/null` and return an
-immutable `DetachedSession` containing its PID, container, and kind:
+variants. Standard input always uses `/dev/null`. Standard output and error
+also default to `/dev/null`, but can be append-only host paths. The methods
+return an immutable `DetachedSession` containing its PID, container, and kind:
 
 ```python
-session = pd.run_detached("my-container", ["--port", "8080"])
+session = pd.run_detached(
+    "my-container",
+    ["--port", "8080"],
+    stdout="./server.log",
+    stderr=subprocess.STDOUT,
+)
 pd.kill_session(session.pid)
 
 # Stop every tracked session in this RuntimeConfig.
@@ -378,7 +409,11 @@ pd.kill_all_sessions(signal_name="KILL")
 ```
 
 `start_detached` and `run_detached` daemonize only inside the one-shot worker;
-they never call `fork()` in the embedding application.
+they never call `fork()` in the embedding application. Detached output paths
+are opened in append mode before daemonization. `subprocess.DEVNULL` and
+`None` select `/dev/null`; `subprocess.STDOUT` is accepted for `stderr`.
+Persistent detached output does not accept `subprocess.PIPE` or in-memory
+streams because no parent-side pump remains after startup.
 
 ### Inspecting session commands
 
@@ -487,6 +522,8 @@ are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are intended for
 display; applications should use exception types and result models for control
 flow. Progress events also provide `current`, `total`, and `unit` when those
 values are known.
+Foreground session setup events are streamed through the close-on-exec startup
+handshake, so warnings arrive before the guest process starts.
 
 ```python
 from proot_distro.api import EventKind, ProotDistro
@@ -514,6 +551,8 @@ more precise classes without parsing display messages:
 | `IntegrityError` | Content failed digest or structural validation. |
 | `UnsupportedOperationError` | The resource does not support the operation, such as resetting a plain rootfs archive. |
 | `PartialOperationError` | Some entries were processed but the whole operation did not complete. |
+| `OperationCancelledError` | An explicit cancellation token stopped setup. |
+| `SessionStartupTimeoutError` | Foreground session setup exceeded its configured timeout. |
 | `OperationError` | Another operation failure without a more specific category. |
 
 Worker-backed methods exchange a structured internal error record. Exception

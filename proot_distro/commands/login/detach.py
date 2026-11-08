@@ -25,15 +25,16 @@
 # Daemonization is a textbook double-fork:
 #
 #   foreground ─fork→ child ─setsid→ ─fork→ grandchild (the daemon)
-#       │              │ _exit(0)              │ redirect 0/1/2 → /dev/null
+#       │              │ _exit(0)              │ detach stdin; redirect output
 #       │ waitpid      ▼ (reaped; grandchild   │ register_session()
 #       │ read pid ◀────  reparented to init)  │ write pid to pipe
 #       ▼ return pid                           └ execvpe(proot)
 #                                                 │ (refused: write the
 #                                                 ▼  reason, _exit)
 #
-# The pipe is the daemon's only way of saying anything -- its standard
-# streams are /dev/null by then -- and the write end is CLOEXEC, so a
+# The control pipe is the daemon's only setup reply -- its standard streams
+# are detached or routed to caller-selected log files by then -- and the write
+# end is CLOEXEC, so a
 # successful exec closes it and the foreground reads the PID alone. A
 # refused exec (E2BIG from an environment too large in total, ENOMEM,
 # a NUL in the argv) writes the reason after the PID instead, and the
@@ -56,7 +57,7 @@ from proot_distro.session import register_session
 
 
 def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
-                   rootfs_fd=None):
+                   rootfs_fd=None, stdout_fd=None, stderr_fd=None):
     """Launch proot as a detached daemon; return its PID, or None.
 
     Called from the foreground process in place of the usual
@@ -70,6 +71,10 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
     `--rootfs=.` so proot resolves the guest root against an inode
     rather than a name. The chdir happens in the grandchild, so the
     foreground's own working directory is left alone.
+
+    Standard input always becomes ``/dev/null``. *stdout_fd* and *stderr_fd*
+    are optional append-only descriptors opened by the API worker; omitted
+    outputs also become ``/dev/null``. Sources are closed after ``dup2``.
     """
     try:
         read_fd, write_fd = os.pipe()
@@ -130,9 +135,9 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
 
     # Grandchild — the daemon. From here any failure must end in
     # os._exit(); a traceback would be written to the already-detached
-    # (and soon /dev/null) standard streams.
+    # standard streams.
     try:
-        _redirect_std_to_devnull()
+        _redirect_std(stdout_fd=stdout_fd, stderr_fd=stderr_fd)
         if rootfs_fd is not None:
             os.fchdir(rootfs_fd)
         # Keep a reference until execvpe so the session fd (and its
@@ -160,13 +165,19 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
     os._exit(127)
 
 
-def _redirect_std_to_devnull() -> None:
-    """Point stdin, stdout and stderr at /dev/null for the daemon."""
+def _redirect_std(*, stdout_fd=None, stderr_fd=None) -> None:
+    """Detach stdio, optionally retaining append-only output descriptors."""
     devnull = os.open(os.devnull, os.O_RDWR)
-    for target in (0, 1, 2):
-        os.dup2(devnull, target)
-    if devnull > 2:
-        os.close(devnull)
+    sources = (
+        devnull,
+        devnull if stdout_fd is None else stdout_fd,
+        devnull if stderr_fd is None else stderr_fd,
+    )
+    for target, source in enumerate(sources):
+        os.dup2(source, target)
+    for fd in set(sources):
+        if fd > 2:
+            os.close(fd)
 
 
 def _safe_close(fd) -> None:

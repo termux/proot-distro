@@ -586,6 +586,8 @@ def _login_with_rootfs(container_name: str, args, lock,
             proot_bin, proot_args, child_env,
             register_kwargs=dict(reg, detach=True),
             rootfs_fd=rootfs_fd,
+            stdout_fd=getattr(args, "_detach_stdout_fd", None),
+            stderr_fd=getattr(args, "_detach_stderr_fd", None),
         )
         if pid is None:
             crit_error(f"failed to start detached session for container "
