@@ -592,8 +592,12 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     return True
 
 
+_DEFAULT_RETRY_REPORTER = object()
+
+
 def retry_http(operation, *, what: str, max_retries: int = 5,
-               retry_delay: int = 5):
+               retry_delay: int = 5,
+               on_retry=_DEFAULT_RETRY_REPORTER):
     """Run *operation* (a zero-arg callable performing one HTTP request),
     retrying transient failures with a delay and a logged notice.
 
@@ -607,6 +611,8 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
     The wait between attempts is *retry_delay*, or the Retry-After of a
     429 or 503 when that is longer -- is_retryable_http_error has already
     refused one past MAX_RETRY_AFTER, and the wait is held to it anyway.
+    By default retry notices use the CLI logger. Pass ``None`` to suppress
+    them or a callable to receive each notice programmatically.
     """
     for attempt in range(max_retries):
         try:
@@ -624,10 +630,13 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
             if wait is not None:
                 delay = max(retry_delay,
                             math.ceil(min(wait, MAX_RETRY_AFTER)))
-            log_info(
+            notice = (
                 f"{what}: attempt {attempt + 1}/{max_retries} failed "
                 f"({exc}); retrying in {delay}s..."
             )
+            reporter = log_info if on_retry is _DEFAULT_RETRY_REPORTER else on_retry
+            if reporter is not None:
+                reporter(notice)
             time.sleep(delay)
 
 

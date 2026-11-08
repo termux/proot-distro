@@ -22,6 +22,7 @@ tests/                   unit/, integration/, security/, live/ (see Tests)
 
 ```
 proot_distro/
+  api/                    Stable in-process Python interface
   cli.py  parser.py        Entry point, argparse construction
   commands/                One module (or subpackage) per subcommand
   helpers/                 Registry client, Dockerfile build engine, tar/layer I/O
@@ -38,6 +39,20 @@ proot_distro/
 | `cli.py` | `main()`: routes SIGQUIT to `KeyboardInterrupt`, refuses nested proot, probes for `proot`, parses, validates required positionals, enables quiet mode, calls the handler from `_COMMAND_HANDLERS`. |
 | `parser.py` | `build_parser()` plus `ALIAS_TO_CANONICAL` and `required_args_for()`. Help is handled manually (`add_help=False`) so a missing positional renders the command's help page instead of an argparse error. Termux-only options exist only when `IS_TERMUX`. |
 | `commands/help/` | `pages.py` holds every help page as plain data, `render.py` lays them out (stacked on narrow terminals, two columns on wide ones), `__init__.py` exposes `HELP_COMMANDS`. |
+
+### Programmatic API
+
+`proot_distro.api` is the stable, in-process Python interface. It does not
+imply a client-server relationship. `ProotDistro` delegates to the same safe
+state readers used by the CLI and returns immutable models instead of printing.
+Only names re-exported by `proot_distro.api` are public.
+
+| Module | Role |
+| --- | --- |
+| `api/program.py` | `ProotDistro` facade: container, image and session inventories and Docker Hub search. |
+| `api/models.py` | Frozen result records returned by public methods. |
+| `api/errors.py` | Stable exception hierarchy; no `SystemExit` crosses the API boundary. |
+| `api/events.py` | Optional synchronous informational events such as network retries. |
 
 ### Commands
 

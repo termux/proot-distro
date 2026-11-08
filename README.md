@@ -34,7 +34,8 @@ bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
 1. [Introduction](#introduction)
 2. [Installation](#installation)
 3. [Quick start](#quick-start)
-4. [Commands](#commands-reference)
+4. [Python API](#python-api)
+5. [Commands](#commands-reference)
    * [`install`](#install--install-a-container)
    * [`search`](#search--search-docker-hub-for-images)
    * [`build`](#build--build-an-image-from-a-dockerfile)
@@ -52,12 +53,12 @@ bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
    * [`copy`](#copy--copy-files-to-or-from-a-container)
    * [`sync`](#sync--synchronize-files-to-or-from-a-container)
    * [`clear-cache`](#clear-cache--delete-the-download-cache)
-5. [How PRoot-Distro works](#how-proot-distro-works)
-6. [Storage layout](#storage-layout)
-7. [Environment variables](#environment-variables)
-8. [Shell completions](#shell-completions)
-9. [Limitations](#limitations)
-10. [Donate](#donate)
+6. [How PRoot-Distro works](#how-proot-distro-works)
+7. [Storage layout](#storage-layout)
+8. [Environment variables](#environment-variables)
+9. [Shell completions](#shell-completions)
+10. [Limitations](#limitations)
+11. [Donate](#donate)
 
 ---
 
@@ -178,6 +179,56 @@ proot-distro reset ubuntu
 # Permanently remove a container
 proot-distro remove ubuntu
 ```
+
+---
+
+## Python API
+
+Python applications can inspect PRoot-Distro state and search Docker Hub
+through the standardized `proot_distro.api` interface. It uses the same local
+containers, image cache and session registry as the command-line utility.
+
+`ProotDistro` is an in-process programmatic interface. It is not a client for
+a server and does not start a persistent service.
+
+```python
+from proot_distro.api import ProotDistro, ProotDistroError
+
+pd = ProotDistro()
+
+for container in pd.list_containers():
+    print(container.name, container.image_reference)
+
+for image in pd.list_images():
+    print(image.identifier, image.architecture, image.complete)
+
+for session in pd.list_sessions():
+    print(session.pid, session.container, session.command)
+
+try:
+    result = pd.search("alpine", limit=5)
+except ProotDistroError as exc:
+    print(f"Search failed: {exc}")
+else:
+    for hit in result.hits:
+        print(hit.name)
+```
+
+The returned records are immutable. API operations do not print messages or
+terminate the application with `SystemExit`. Failures inherit from
+`ProotDistroError`. An optional event handler can receive network retry
+notices:
+
+```python
+pd = ProotDistro(event_handler=lambda event: print(event.message))
+```
+
+The first API release provides container, image and session inventories plus
+Docker Hub search. Container and image management operations will be added to
+the same interface while the existing CLI remains available.
+
+Only names imported from `proot_distro.api` are part of the stable public API.
+Other package modules are implementation details.
 
 ---
 

@@ -27,6 +27,13 @@ def test_no_args_shows_help(monkeypatch, capsys):
     assert capsys.readouterr().err  # something was printed
 
 
+def test_cli_keeps_its_historical_umask(monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(cli.os, "umask", seen.append)
+    assert _run(monkeypatch, []) == 0
+    assert seen == [0o022]
+
+
 def test_unknown_command(monkeypatch, capsys):
     assert _run(monkeypatch, ["frobnicate"]) == 1
     assert "unknown command" in capsys.readouterr().err

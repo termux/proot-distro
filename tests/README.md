@@ -16,7 +16,7 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
 
 ## Layout
 
-- `unit/` — pure-function correctness (names, paths, arch/ELF detection,
+- `unit/` — pure-function correctness (public API contracts, names, paths, arch/ELF detection,
   Dockerfile parsing + `${VAR}` expansion, digest validation, cache keys,
   layer diff/whiteouts, OCI writer, quoting, env injection, argparse, ...).
 - `security/` — containment of malformed/malicious input. Proves a hostile

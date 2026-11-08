@@ -249,6 +249,11 @@ def main() -> None:
     Validates the runtime environment, parses arguments, and dispatches
     to the chosen command's handler.
     """
+    # The standalone utility has historically used this umask. Keep that
+    # process policy at the CLI boundary: importing the programmatic API
+    # must not alter the embedding application's umask.
+    os.umask(0o022)
+
     # Route SIGQUIT (Ctrl-\) through KeyboardInterrupt so every
     # `except KeyboardInterrupt` block in the codebase handles it the
     # same as SIGINT (Ctrl-C). The default disposition of SIGQUIT is

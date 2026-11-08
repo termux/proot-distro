@@ -705,6 +705,7 @@ def _read_record(dir_fd: int, name: str, layer_fd=None,
             _text(payload.get("arch")) or arch
             or DOCKER_TO_ARCH.get(_text(image_config.get("architecture")), "")
         ),
+        "config_digest": config_digest,
         "image_id": config_digest.split(":")[-1],
         "layers": layers,
         "size": size,

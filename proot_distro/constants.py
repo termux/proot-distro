@@ -18,7 +18,7 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: All global constants and path variables for proot-distro.
+# Architecture: Default constants and path variables for proot-distro.
 # On Termux/Android, paths are rooted under TERMUX__PREFIX (env var). On a
 # regular Linux host, XDG base directories (~/.local/share, ~/.cache) are
 # used instead. IS_TERMUX is computed once at import time and drives both
@@ -36,9 +36,6 @@ try:
     PROGRAM_VERSION = version(PROGRAM_NAME)
 except PackageNotFoundError:
     PROGRAM_VERSION = "rolling"
-
-os.umask(0o022)
-
 
 # ---------------------------------------------------------------------------
 # Termux / Android detection

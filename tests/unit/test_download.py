@@ -367,6 +367,47 @@ def test_retry_http_logs_the_wait_it_takes(monkeypatch):
     assert any("retrying in 17s" in line for line in logged)
 
 
+def test_retry_http_can_report_without_cli_output(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(
+        download, "log_info",
+        lambda _line: pytest.fail("the CLI logger should not be called"),
+    )
+    notices = []
+    attempts = [0]
+
+    def op():
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise urllib.error.URLError("offline")
+        return "ok"
+
+    assert download.retry_http(
+        op, what="Job", max_retries=2, on_retry=notices.append,
+    ) == "ok"
+    assert len(notices) == 1
+    assert "attempt 1/2" in notices[0]
+
+
+def test_retry_http_can_suppress_notices(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(
+        download, "log_info",
+        lambda _line: pytest.fail("the CLI logger should not be called"),
+    )
+    attempts = [0]
+
+    def op():
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise urllib.error.URLError("offline")
+        return "ok"
+
+    assert download.retry_http(
+        op, what="Job", max_retries=2, on_retry=None,
+    ) == "ok"
+
+
 # ----- download_file plaintext detection ----------------------------------
 
 def test_download_file_plaintext_https_meaningful_error(tmp_path, monkeypatch):
