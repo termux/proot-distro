@@ -28,8 +28,10 @@ descriptor-safe inventory and registry implementations.
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Callable, Mapping, Optional, Tuple
 
@@ -382,9 +384,107 @@ def _structured_worker_error(operation: str, stdout: bytes):
     return exception_type(message, operation=operation)
 
 
+def _serve_credential_requests(sock, provider, operation: str):
+    """Serve worker credential requests; return a provider exception or None."""
+    def reject(error):
+        try:
+            sock.sendall(b'{"error":"credential provider failed"}\n')
+        except OSError:
+            pass
+        return error
+
+    buffer = bytearray()
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            return None
+        buffer.extend(chunk)
+        if len(buffer) > 1024 * 1024:
+            return reject(OperationError(
+                "credential worker request is too large.", operation=operation
+            ))
+        while b"\n" in buffer:
+            raw, _, remainder = buffer.partition(b"\n")
+            buffer[:] = remainder
+            try:
+                request_data = json.loads(raw)
+                registry = request_data["registry"]
+                repository = request_data["repository"]
+                actions = request_data["actions"]
+                if not all(isinstance(value, str) and value for value in (
+                    registry, repository, actions,
+                )):
+                    raise TypeError
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+                return reject(OperationError(
+                    "credential worker returned an invalid request.",
+                    operation=operation,
+                ))
+            try:
+                credentials = provider(CredentialRequest(
+                    registry, repository, operation
+                ))
+                if credentials is not None and not isinstance(
+                    credentials, RegistryCredentials
+                ):
+                    raise InvalidArgumentError(
+                        "credential_provider must return "
+                        "RegistryCredentials or None.", operation=operation,
+                    )
+            except BaseException as exc:
+                return reject(exc)
+            response = {
+                "credentials": (
+                    None if credentials is None else {
+                        "username": credentials.username,
+                        "password": credentials.password,
+                    }
+                ),
+            }
+            sock.sendall(json.dumps(
+                response, ensure_ascii=True, separators=(",", ":")
+            ).encode("ascii") + b"\n")
+
+
+def _communicate_with_credential_provider(
+    proc, request: bytes, sock, provider, operation: str,
+):
+    """Drain process pipes in a thread while serving credentials here."""
+    result = {}
+
+    def communicate():
+        try:
+            result["streams"] = proc.communicate(request)
+        except BaseException as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=communicate, daemon=True)
+    thread.start()
+    provider_error = None
+    try:
+        provider_error = _serve_credential_requests(
+            sock, provider, operation
+        )
+    except BaseException:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        raise
+    finally:
+        sock.close()
+        thread.join()
+    if "error" in result:
+        raise result["error"]
+    if provider_error is not None:
+        raise provider_error
+    return result["streams"]
+
+
 def _run_worker(operation: str, options: dict,
                 config: Optional[RuntimeConfig] = None,
-                event_handler: Optional[EventHandler] = None) -> dict:
+                event_handler: Optional[EventHandler] = None,
+                credential_provider: Optional[CredentialProvider] = None) -> dict:
     """Run one stateful operation in a child and return its JSON result."""
     config = config or RuntimeConfig.default()
     request = json.dumps(
@@ -392,22 +492,47 @@ def _run_worker(operation: str, options: dict,
         ensure_ascii=True,
         separators=(",", ":"),
     ).encode("ascii")
+    parent_credentials = child_credentials = None
+    pass_fds = ()
+    env = _worker_environment(config)
+    if credential_provider is not None:
+        try:
+            parent_credentials, child_credentials = socket.socketpair()
+        except OSError as exc:
+            raise OperationError(
+                f"cannot create credential provider channel: {exc}",
+                operation=operation,
+            ) from exc
+        env["_PROOT_DISTRO_CREDENTIAL_FD"] = str(child_credentials.fileno())
+        pass_fds = (child_credentials.fileno(),)
     try:
         proc = subprocess.Popen(
             [sys.executable, "-m", "proot_distro.api._worker"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=_worker_environment(config),
+            env=env,
+            pass_fds=pass_fds,
             start_new_session=True,
         )
     except (OSError, ValueError) as exc:
+        if parent_credentials is not None:
+            parent_credentials.close()
+            child_credentials.close()
         raise OperationError(
             f"cannot start the {operation} worker: {exc}", operation=operation,
         ) from exc
 
+    if child_credentials is not None:
+        child_credentials.close()
     try:
-        stdout, stderr = proc.communicate(request)
+        if parent_credentials is None:
+            stdout, stderr = proc.communicate(request)
+        else:
+            stdout, stderr = _communicate_with_credential_provider(
+                proc, request, parent_credentials, credential_provider,
+                operation,
+            )
     except KeyboardInterrupt:
         # Give the command handler the same interrupt the CLI would receive.
         # Rename defers it while rewriting l2s links, so communicate waits
@@ -496,9 +621,13 @@ class _OperationContext:
         if self.event_handler is not None:
             self.event_handler(OperationEvent(operation, kind, message))
 
-    def worker(self, operation: str, options: dict) -> dict:
+    def worker(
+        self, operation: str, options: dict, *,
+        credential_provider: Optional[CredentialProvider] = None,
+    ) -> dict:
         return _run_worker(
-            operation, options, self.config, self.event_handler
+            operation, options, self.config, self.event_handler,
+            credential_provider,
         )
 
     def credentials_for(
@@ -1066,6 +1195,10 @@ class ProotDistro:
                 operation="build",
             )
         build_credentials = credentials or self._context.credentials
+        build_provider = (
+            self._context.credential_provider
+            if build_credentials is None else None
+        )
 
         result = self._context.worker("build", {
             "path": path,
@@ -1081,7 +1214,7 @@ class ProotDistro:
             "credentials": self._context.credential_payload(
                 build_credentials
             ),
-        })
+        }, credential_provider=build_provider)
         raw_images = result.get("images")
         if not isinstance(raw_images, list):
             raise OperationError(

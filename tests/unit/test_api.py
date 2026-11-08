@@ -1,5 +1,6 @@
 import hashlib
 import os
+import socket
 import subprocess
 import sys
 
@@ -469,6 +470,22 @@ def test_worker_rejects_unknown_operation_without_traceback():
     assert exc.value.operation == "unknown"
     assert "not valid" in str(exc.value)
     assert "Traceback" not in str(exc.value)
+
+
+def test_credential_service_rejects_malformed_request_without_deadlock():
+    parent, worker = socket.socketpair()
+    try:
+        worker.sendall(b"not json\n")
+        error = program._serve_credential_requests(
+            parent, lambda _request: None, "build"
+        )
+        response = worker.recv(4096)
+    finally:
+        parent.close()
+        worker.close()
+
+    assert isinstance(error, OperationError)
+    assert b"credential provider failed" in response
 
 
 def test_session_process_falls_back_when_registry_has_no_record():

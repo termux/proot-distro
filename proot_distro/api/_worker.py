@@ -32,6 +32,7 @@ It is an implementation detail, not a daemon or client-server protocol.
 
 import json
 import os
+import socket
 import sys
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -49,6 +50,67 @@ class _WorkerFailure(Exception):
     def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
         self.kind = kind
+
+
+class _CredentialChannel:
+    """Synchronous registry credential requests over a private socket."""
+
+    def __init__(self, fd: int) -> None:
+        os.set_inheritable(fd, False)
+        self._socket = socket.socket(fileno=fd)
+        self._buffer = bytearray()
+        self._cache = {}
+
+    def close(self) -> None:
+        self._socket.close()
+
+    def _readline(self) -> bytes:
+        while b"\n" not in self._buffer:
+            chunk = self._socket.recv(65536)
+            if not chunk:
+                raise RuntimeError("credential provider channel closed")
+            self._buffer.extend(chunk)
+            if len(self._buffer) > 1024 * 1024:
+                raise RuntimeError("credential provider response is too large")
+        line, _, remainder = self._buffer.partition(b"\n")
+        self._buffer[:] = remainder
+        return bytes(line)
+
+    def __call__(self, registry: str, repository: str, actions: str):
+        key = (registry, repository, actions)
+        if key in self._cache:
+            return self._cache[key]
+        request = json.dumps({
+            "registry": registry,
+            "repository": repository,
+            "actions": actions,
+        }, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
+        self._socket.sendall(request)
+        response = json.loads(self._readline())
+        if not isinstance(response, dict) or response.get("error"):
+            raise RuntimeError("credential provider failed")
+        credentials = response.get("credentials")
+        if credentials is None:
+            result = None
+        elif isinstance(credentials, dict):
+            username = credentials.get("username")
+            password = credentials.get("password")
+            if not isinstance(username, str) or not isinstance(password, str):
+                raise RuntimeError("credential provider response is invalid")
+            result = (username, password)
+        else:
+            raise RuntimeError("credential provider response is invalid")
+        self._cache[key] = result
+        return result
+
+
+def _credential_channel_from_env():
+    raw = os.environ.pop("_PROOT_DISTRO_CREDENTIAL_FD", "")
+    if not raw:
+        return None
+    if not raw.isascii() or not raw.isdigit():
+        raise RuntimeError("credential provider descriptor is invalid")
+    return _CredentialChannel(int(raw))
 
 
 def _enable_structured_locks() -> None:
@@ -342,7 +404,8 @@ def _build(options: dict) -> dict:
             raise _WorkerFailure(
                 "already_exists", f"build output '{output}' already exists"
             )
-    command_build(SimpleNamespace(
+    credential_channel = _credential_channel_from_env()
+    args = SimpleNamespace(
         path=build_path,
         dockerfile=dockerfile,
         tags=tags,
@@ -355,7 +418,19 @@ def _build(options: dict) -> dict:
         no_cache=options.get("no_cache", False),
         verbose=False,
         quiet=True,
-    ))
+    )
+    try:
+        if credential_channel is None:
+            command_build(args)
+        else:
+            from proot_distro.helpers.docker.transport import (
+                use_basic_auth_provider,
+            )
+            with use_basic_auth_provider(credential_channel):
+                command_build(args)
+    finally:
+        if credential_channel is not None:
+            credential_channel.close()
 
     if not tags:
         dockerfile_for_tag = (

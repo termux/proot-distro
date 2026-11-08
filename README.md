@@ -294,9 +294,9 @@ pd.clear_cache(orphan=True)
 a single output path is also accepted. Dockerfile stdin is intentionally not
 used by the API: pass a Dockerfile path or leave it unset to use
 `PATH/Dockerfile`. A `credential_provider` can select credentials for
-`install`, `reset_container`, and `push`. For a build that pulls private base
-images, pass static credentials to `ProotDistro(credentials=...)` or directly
-to `build(credentials=...)`.
+`install`, `reset_container`, `push`, and each registry/repository encountered
+during a build. Static build credentials can still be supplied through
+`ProotDistro(credentials=...)` or directly to `build(credentials=...)`.
 
 ### Container processes
 
@@ -446,6 +446,12 @@ The provider receives a `CredentialRequest` containing `registry`,
 `credentials` and `credential_provider` cannot be used together. Public Docker
 Hub search never requests or sends registry credentials. A registry refusal
 raises `AuthenticationError` without including the password or token.
+
+During a multi-stage build, credential requests travel over a private
+bidirectional worker channel. The provider runs synchronously in the calling
+thread and may return different accounts for each registry. Secrets are not
+placed in argv or the worker environment, and the channel descriptor is
+close-on-exec so Dockerfile `RUN` children cannot inherit it.
 
 ### API events
 

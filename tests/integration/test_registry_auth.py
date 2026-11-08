@@ -24,6 +24,7 @@
 import hashlib
 import os
 import urllib.error
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -292,6 +293,69 @@ def test_api_build_pulls_private_base_with_explicit_credentials(
         "", "repository:team/api-base:pull",
     ]
     _assert_credentials_in_place(registry)
+
+
+def test_api_build_provider_authenticates_multiple_registries(
+        registry, tmp_path):
+    second = FakeRegistry()
+    second.users = {"bob": "other-secret"}
+    try:
+        registry.add_image("team/first", "1", FILES, CONFIG)
+        second.add_image("team/second", "1", FILES, CONFIG)
+        context = tmp_path / "multi-registry-build"
+        context.mkdir()
+        (context / "Dockerfile").write_text(
+            f"FROM {registry.host()}/team/first:1 AS first\n"
+            f"FROM {second.host()}/team/second:1\n"
+            "COPY --from=first /etc/motd /first-motd\n"
+        )
+        requests = []
+        caller_thread = threading.get_ident()
+
+        def credentials_for(request):
+            requests.append((request, threading.get_ident()))
+            if request.registry == registry.host():
+                return RegistryCredentials("alice", "s3cret")
+            if request.registry == second.host():
+                return RegistryCredentials("bob", "other-secret")
+            return None
+
+        result = ProotDistro(
+            credential_provider=credentials_for
+        ).build(context, tags=["multi-registry-api:1"])
+
+        assert [image.reference for image in result.images] == [
+            "multi-registry-api:1"
+        ]
+        assert {(request.registry, request.repository) for request, _ in requests} == {
+            (registry.host(), "team/first"),
+            (second.host(), "team/second"),
+        }
+        assert all(thread_id == caller_thread for _, thread_id in requests)
+        _assert_credentials_in_place(registry)
+        _assert_credentials_in_place(second, basic("bob", "other-secret"))
+    finally:
+        second.close()
+
+
+def test_api_build_provider_exception_propagates_to_caller(registry, tmp_path):
+    registry.add_image("team/provider-error", "1", FILES, CONFIG)
+    context = tmp_path / "provider-error-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/provider-error:1\n"
+    )
+    expected = LookupError("credential store unavailable")
+
+    def fail(_request):
+        raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro(credential_provider=fail).build(
+            context, tags=["provider-error-api:1"]
+        )
+
+    assert exc.value is expected
 
 
 def test_a_private_image_without_credentials_is_refused(registry, capsys):

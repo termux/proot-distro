@@ -71,6 +71,28 @@ def test_env_basic_auth_requires_colon(monkeypatch):
         transport.env_basic_auth()
 
 
+def test_basic_auth_provider_receives_registry_context(monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:ignored")
+    calls = []
+
+    def provider(registry, repository, actions):
+        calls.append((registry, repository, actions))
+        return "bob", "provider-secret"
+
+    with transport.use_basic_auth_provider(provider):
+        value = transport.env_basic_auth(
+            "registry.example", "team/private", "pull"
+        )
+        assert transport.auth_note() == " (credential provider)"
+
+    expected = "Basic " + base64.b64encode(
+        b"bob:provider-secret"
+    ).decode()
+    assert value == expected
+    assert calls == [("registry.example", "team/private", "pull")]
+    assert transport.env_basic_auth() != expected
+
+
 # ----- cross-host Authorization stripping ---------------------------------
 
 def _make_redirect(orig_url, new_url, allow_plaintext=False):

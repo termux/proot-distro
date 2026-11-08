@@ -51,7 +51,7 @@ Only names re-exported by `proot_distro.api` are public.
 | --- | --- |
 | `api/program.py` | `ProotDistro` facade: inventories, search, container lifecycle, transfers, archives, image build/push/removal, and cache cleanup. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
-| `api/credentials.py` | Redacted `RegistryCredentials`, provider requests, and the provider callable contract. |
+| `api/credentials.py` | Redacted credentials and provider requests; builds resolve multiple registries over a private bidirectional worker channel. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
 | `api/events.py` | Optional info, warning, progress, and retry events. |
