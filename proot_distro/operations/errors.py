@@ -47,4 +47,21 @@ class AmbiguousImageFailure(OperationFailure):
         )
 
 
-__all__ = ("AmbiguousImageFailure", "ImageNotFoundFailure")
+class TransferPartialFailure(OperationFailure):
+    """A transfer skipped entries after making observable progress."""
+
+    def __init__(self, message, result):
+        super().__init__(message)
+        self.result = result
+
+
+class TransferValidationFailure(OperationFailure):
+    """A transfer path or option cannot be used for the requested action."""
+
+
+__all__ = (
+    "AmbiguousImageFailure",
+    "ImageNotFoundFailure",
+    "TransferPartialFailure",
+    "TransferValidationFailure",
+)

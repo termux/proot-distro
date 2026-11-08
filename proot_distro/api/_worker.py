@@ -359,38 +359,34 @@ def _reset(options: dict) -> dict:
 
 
 def _copy(options: dict) -> dict:
-    from proot_distro.commands.copy import command_copy
+    from proot_distro.operations.copy import copy_path, move_path
 
-    command_copy(SimpleNamespace(
-        source=options["source"],
-        destination=options["destination"],
-        verbose=False,
-        quiet=True,
-        move=options.get("move", False),
-        recursive=options.get("recursive", False),
-        _api_raise_errors=True,
-    ))
+    if options.get("move", False):
+        result = move_path(options["source"], options["destination"])
+    else:
+        result = copy_path(
+            options["source"],
+            options["destination"],
+            recursive=options.get("recursive", False),
+        )
     return {
-        "source": options["source"],
-        "destination": options["destination"],
+        "source": result.source,
+        "destination": result.destination,
     }
 
 
 def _sync(options: dict) -> dict:
-    from proot_distro.commands.sync import command_sync
+    from proot_distro.operations.sync import sync_path
 
-    command_sync(SimpleNamespace(
-        source=options["source"],
-        destination=options["destination"],
-        verbose=False,
-        quiet=True,
+    result = sync_path(
+        options["source"],
+        options["destination"],
         checksum=options.get("checksum", False),
         delete=options.get("delete", False),
-        _api_raise_errors=True,
-    ))
+    )
     return {
-        "source": options["source"],
-        "destination": options["destination"],
+        "source": result.source,
+        "destination": result.destination,
     }
 
 
@@ -850,9 +846,8 @@ def main() -> int:
             if isinstance(exc, failure_type):
                 _write_error(kind, quote_error(exc))
                 return 1
-        from proot_distro.commands.copy import CopyPartialError
-        from proot_distro.commands.sync import SyncPartialError
-        if isinstance(exc, (CopyPartialError, SyncPartialError)):
+        from proot_distro.operations.errors import TransferPartialFailure
+        if isinstance(exc, TransferPartialFailure):
             _write_error("partial", quote_error(exc))
             return 1
         import tarfile

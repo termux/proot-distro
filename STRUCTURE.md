@@ -67,7 +67,8 @@ locking, secure state access, mutations, structured events, and immutable
 internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the
 same services. Container, image, and session inventories plus container and
-cached-image removal, rename, and cache cleanup are migrated.
+cached-image removal, rename, cache cleanup, copy, move, and synchronization
+are migrated.
 
 | Module | Role |
 | --- | --- |
@@ -75,6 +76,8 @@ cached-image removal, rename, and cache cleanup are migrated.
 | `operations/models.py` | Frozen internal results, separate from stable public API models. |
 | `operations/locks.py` | Typed, process-control-free adapter around non-blocking state locks. |
 | `operations/inventory.py` | Shared immutable container, cached-image, and live-session inventories. |
+| `operations/copy.py` | Descriptor-pinned copy and move services, including secure cross-device fallback. |
+| `operations/sync.py` | Descriptor-pinned mirroring, metadata comparison, progress, and optional pruning. |
 | `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |

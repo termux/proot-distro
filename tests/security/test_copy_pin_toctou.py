@@ -21,8 +21,10 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro import dirfd, paths
-from proot_distro.commands import copy as copy_mod
-from proot_distro.commands import sync as sync_mod
+from proot_distro.commands.copy import command_copy
+from proot_distro.commands.sync import command_sync
+from proot_distro.operations import copy as copy_mod
+from proot_distro.operations import sync as sync_mod
 from proot_distro.paths import container_rootfs
 
 
@@ -30,7 +32,7 @@ def _copy(source, destination, **over):
     base = dict(source=source, destination=destination, verbose=False,
                 move=False, recursive=False)
     base.update(over)
-    copy_mod.command_copy(SimpleNamespace(**base))
+    command_copy(SimpleNamespace(**base))
 
 
 def _swap_for_symlink(path, target):
@@ -213,7 +215,7 @@ def test_sync_aborts_when_component_swapped_after_resolve(
     )
 
     with pytest.raises(SystemExit) as exc:
-        sync_mod.command_sync(SimpleNamespace(
+        command_sync(SimpleNamespace(
             source=str(src), destination="box:/data", verbose=False,
             checksum=False, delete=False))
     assert exc.value.code == 1
@@ -313,7 +315,7 @@ def test_sync_makes_no_directories_outside_before_the_pin(
                         _racing_resolver("box:", attack))
 
     with pytest.raises(SystemExit):
-        sync_mod.command_sync(SimpleNamespace(
+        command_sync(SimpleNamespace(
             source=str(src), destination="box:/stage/deep/dest",
             verbose=False, checksum=False, delete=False))
 
@@ -443,7 +445,7 @@ def test_sync_swap_below_root_does_not_escape(
     # A subtree that could not be descended into is a skipped entry, so
     # the command reports the transfer incomplete rather than success.
     with pytest.raises(SystemExit) as exc:
-        sync_mod.command_sync(SimpleNamespace(
+        command_sync(SimpleNamespace(
             source=str(src), destination="box:/data", verbose=False,
             checksum=False, delete=False))
 
@@ -470,7 +472,7 @@ def test_sync_delete_does_not_walk_out_through_a_symlink(tmp_path, builders):
     src.mkdir()
     (src / "keep.txt").write_text("K")
 
-    sync_mod.command_sync(SimpleNamespace(
+    command_sync(SimpleNamespace(
         source=str(src), destination="box:/data", verbose=False,
         checksum=False, delete=True))
 

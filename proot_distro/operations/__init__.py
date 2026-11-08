@@ -29,6 +29,7 @@ from proot_distro.operations.containers import (
     remove_container,
     rename_container,
 )
+from proot_distro.operations.copy import copy_path, move_path
 from proot_distro.operations.cache import clear_cache
 from proot_distro.operations.images import remove_image
 from proot_distro.operations.inventory import (
@@ -36,6 +37,7 @@ from proot_distro.operations.inventory import (
     list_images,
     list_sessions,
 )
+from proot_distro.operations.sync import sync_path
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import (
     ActiveSession,
@@ -45,6 +47,7 @@ from proot_distro.operations.models import (
     ContainerRename,
     ImageRemoval,
     InstalledContainer,
+    Transfer,
 )
 
 
@@ -57,11 +60,15 @@ __all__ = (
     "ImageRemoval",
     "InstalledContainer",
     "OperationContext",
+    "Transfer",
     "clear_cache",
+    "copy_path",
     "list_containers",
     "list_images",
     "list_sessions",
+    "move_path",
     "remove_container",
     "remove_image",
     "rename_container",
+    "sync_path",
 )

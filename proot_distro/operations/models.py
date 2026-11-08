@@ -101,6 +101,16 @@ class ActiveSession:
     detached: bool
 
 
+@dataclass(frozen=True)
+class Transfer:
+    """A completed or partially completed filesystem transfer."""
+
+    operation: str
+    source: str
+    destination: str
+    failures: int = 0
+
+
 __all__ = (
     "ActiveSession",
     "CacheCleanup",
@@ -109,4 +119,5 @@ __all__ = (
     "ContainerRename",
     "ImageRemoval",
     "InstalledContainer",
+    "Transfer",
 )

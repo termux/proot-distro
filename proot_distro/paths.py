@@ -443,7 +443,9 @@ def container_from_spec(spec: str):
 _MAX_SYMLINK_HOPS = 40
 
 
-def _resolve_within_root(root: str, rel_path: str, spec: str) -> str:
+def _resolve_within_root(
+    root: str, rel_path: str, spec: str, *, raise_errors: bool = False,
+) -> str:
     """Resolve *rel_path* under *root* the way the guest would see it.
 
     Path components are consumed one at a time and every symlink met on
@@ -485,7 +487,10 @@ def _resolve_within_root(root: str, rel_path: str, spec: str) -> str:
 
         hops += 1
         if hops > _MAX_SYMLINK_HOPS:
-            crit_error(f"too many symbolic links while resolving '{spec}'.")
+            message = f"too many symbolic links while resolving '{spec}'."
+            if raise_errors:
+                raise OperationFailure(message)
+            crit_error(message)
             sys.exit(1)
         if target.startswith("/"):
             resolved = root
@@ -519,7 +524,10 @@ def _host_path(path: str, deref_leaf: bool) -> str:
     return os.path.join(os.path.realpath(parent), os.path.basename(path))
 
 
-def _walk_spec(rootfs: str, rel_path: str, spec: str, deref_leaf: bool) -> str:
+def _walk_spec(
+    rootfs: str, rel_path: str, spec: str, deref_leaf: bool, *,
+    raise_errors: bool = False,
+) -> str:
     """Resolve *rel_path* under *rootfs*, optionally keeping the last name.
 
     With deref_leaf=False only the parents are walked, for an operation
@@ -530,11 +538,20 @@ def _walk_spec(rootfs: str, rel_path: str, spec: str, deref_leaf: bool) -> str:
     if not deref_leaf:
         head, _, tail = rel_path.rstrip("/").rpartition("/")
         if tail and tail not in (os.curdir, os.pardir):
-            return os.path.join(_resolve_within_root(rootfs, head, spec), tail)
-    return _resolve_within_root(rootfs, rel_path, spec)
+            return os.path.join(
+                _resolve_within_root(
+                    rootfs, head, spec, raise_errors=raise_errors,
+                ),
+                tail,
+            )
+    return _resolve_within_root(
+        rootfs, rel_path, spec, raise_errors=raise_errors,
+    )
 
 
-def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
+def resolve_container_path(
+    spec: str, *, deref_leaf: bool = True, raise_errors: bool = False,
+) -> str:
     """Resolve a `name:path` or plain host path to an absolute host path.
 
     For a `name:path` spec the result is forced to stay inside the
@@ -564,23 +581,34 @@ def resolve_container_path(spec: str, *, deref_leaf: bool = True) -> str:
 
     rel_path = spec.partition(":")[2]
     if not is_valid_name(name):
-        crit_error(f"invalid container name '{name}' in spec '{spec}'.")
+        message = f"invalid container name '{name}' in spec '{spec}'."
+        if raise_errors:
+            raise OperationFailure(message)
+        crit_error(message)
         sys.exit(1)
     rootfs = os.path.normpath(container_rootfs(name))
     # The walk, not os.path.isdir(): the rootfs of a container whose
     # directory a guest re-pointed is a host directory, and answering
     # "it exists" is how a transfer ends up reading or writing there.
     if not container_is_installed(name):
-        crit_error(f"container '{name}' does not exist.")
+        message = f"container '{name}' does not exist."
+        if raise_errors:
+            raise OperationFailure(message)
+        crit_error(message)
         sys.exit(1)
     rel_path = rel_path.lstrip("/")
     # A `..` typed into the spec is a user mistake, not container content:
     # report it instead of silently clamping it to the rootfs.
     lexical = os.path.normpath(os.path.join(rootfs, rel_path))
     if lexical != rootfs and not lexical.startswith(rootfs + os.sep):
-        crit_error("destination path escapes the container directory.")
+        message = "destination path escapes the container directory."
+        if raise_errors:
+            raise OperationFailure(message)
+        crit_error(message)
         sys.exit(1)
-    return _walk_spec(rootfs, rel_path, spec, deref_leaf)
+    return _walk_spec(
+        rootfs, rel_path, spec, deref_leaf, raise_errors=raise_errors,
+    )
 
 
 def _overlap_path(spec: str, path: str, deref_leaf: bool) -> str:
@@ -623,7 +651,8 @@ def _overlap_path(spec: str, path: str, deref_leaf: bool) -> str:
 def refuse_src_dest_overlap(src_spec: str, src_path: str,
                             dest_spec: str, dest_path: str, *,
                             deref_leaf: bool = True,
-                            pruning: bool = False) -> None:
+                            pruning: bool = False,
+                            raise_errors: bool = False) -> None:
     """Exit when the two ends of a transfer overlap.
 
     Both paths are already resolved, so this weighs what the transfer will
@@ -659,23 +688,38 @@ def refuse_src_dest_overlap(src_spec: str, src_path: str,
         except OSError:
             same = False            # one of them does not exist yet: fine
     if same:
-        crit_error(f"'{src_spec}' and '{dest_spec}' are the same file.")
+        message = f"'{src_spec}' and '{dest_spec}' are the same file."
+        if raise_errors:
+            raise OperationFailure(message)
+        crit_error(message)
         sys.exit(1)
 
     if dest_cmp.startswith(src_cmp.rstrip(os.sep) + os.sep):
-        crit_error(f"cannot copy '{src_spec}' into itself: "
-                   f"'{dest_spec}' is inside it.")
+        message = (
+            f"cannot copy '{src_spec}' into itself: "
+            f"'{dest_spec}' is inside it."
+        )
+        if raise_errors:
+            raise OperationFailure(message)
+        crit_error(message)
         sys.exit(1)
 
     if pruning and src_cmp.startswith(dest_cmp.rstrip(os.sep) + os.sep):
-        crit_error(f"cannot sync '{src_spec}' into '{dest_spec}' with "
-                   f"'--delete': the source is inside the destination and "
-                   f"would be deleted as an orphan.")
+        message = (
+            f"cannot sync '{src_spec}' into '{dest_spec}' with '--delete': "
+            f"the source is inside the destination and would be deleted "
+            f"as an orphan."
+        )
+        if raise_errors:
+            raise OperationFailure(message)
+        crit_error(message)
         sys.exit(1)
 
 
-def resolve_container_child(spec: str, resolved: str, child: str, *,
-                            deref_leaf: bool = True) -> str:
+def resolve_container_child(
+    spec: str, resolved: str, child: str, *, deref_leaf: bool = True,
+    raise_errors: bool = False,
+) -> str:
     """Resolve *child* under the already-resolved container path *resolved*.
 
     `copy` and `sync` extend a destination directory with the source's
@@ -701,8 +745,10 @@ def resolve_container_child(spec: str, resolved: str, child: str, *,
     if name is None:
         return _host_path(joined, deref_leaf)
     rootfs = os.path.normpath(container_rootfs(name))
-    return _walk_spec(rootfs, os.path.relpath(joined, rootfs), spec,
-                      deref_leaf)
+    return _walk_spec(
+        rootfs, os.path.relpath(joined, rootfs), spec, deref_leaf,
+        raise_errors=raise_errors,
+    )
 
 
 # O_PATH opens a directory without needing read permission on it, which
@@ -783,7 +829,7 @@ def _descend(fd: int, part: str, create: bool) -> int:
 
 @contextmanager
 def pin_path(spec: str, resolved: str, *, inside: bool = False,
-             create: bool = False):
+             create: bool = False, raise_errors: bool = False):
     """Yield a PinnedPath for *resolved*, the result of resolving *spec*.
 
     resolve_container_path() returns a path with no symlink components,
@@ -837,7 +883,7 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False,
                 # for; open_container_rootfs walks down to it from the
                 # trust root for the same reason everything under it is
                 # walked from there.
-                fd = open_container_rootfs(name)
+                fd = open_container_rootfs(name, raise_errors=raise_errors)
                 for part in parts:
                     fd = _descend(fd, part, create)
         except OSError as exc:
@@ -847,12 +893,15 @@ def pin_path(spec: str, resolved: str, *, inside: bool = False,
             if isinstance(exc, _Refused):
                 # A component is a symlink now and was not at resolve
                 # time — exactly the race this guards against.
-                crit_error(
+                message = (
                     f"path '{spec}' changed while it was being resolved "
                     f"({exc.strerror}); refusing to continue."
                 )
             else:
-                crit_error(f"cannot open '{spec}': {exc.strerror}.")
+                message = f"cannot open '{spec}': {exc.strerror}."
+            if raise_errors:
+                raise OperationFailure(message) from exc
+            crit_error(message)
             sys.exit(1)
         yield PinnedPath(resolved, fd, leaf)
     finally:

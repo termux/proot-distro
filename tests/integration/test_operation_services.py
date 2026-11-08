@@ -17,13 +17,17 @@ from proot_distro.operations import (
     ImageRemoval,
     InstalledContainer,
     OperationContext,
+    Transfer,
     clear_cache,
+    copy_path,
     list_containers,
     list_images,
     list_sessions,
+    move_path,
     remove_container,
     remove_image,
     rename_container,
+    sync_path,
 )
 from proot_distro.constants import BASE_CACHE_DIR
 from proot_distro.helpers.docker.cache import (
@@ -70,6 +74,59 @@ def test_session_inventory_service_copies_registry_command(monkeypatch):
             "root", 10.5, True, False, True,
         ),
     )
+
+
+def test_transfer_services_return_results_and_contextual_events(
+    tmp_path, builders,
+):
+    builders.make_container("service-transfer")
+    source = tmp_path / "copy-source"
+    source.write_text("copy payload")
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    copied = copy_path(
+        str(source), "service-transfer:/copied", context=context
+    )
+    moved = move_path(
+        "service-transfer:/copied", str(tmp_path / "moved"),
+        context=context,
+    )
+
+    assert copied == Transfer(
+        "copy", str(source), "service-transfer:/copied", 0
+    )
+    assert moved == Transfer(
+        "move", "service-transfer:/copied", str(tmp_path / "moved"), 0
+    )
+    assert (tmp_path / "moved").read_text() == "copy payload"
+    assert not os.path.lexists(
+        os.path.join(container_rootfs("service-transfer"), "copied")
+    )
+    assert {phase for _kind, _message, phase, _resource in events} == {
+        "copy", "move",
+    }
+
+
+def test_sync_service_mirrors_directory(tmp_path, builders):
+    builders.make_container("service-sync")
+    source = tmp_path / "sync-source"
+    source.mkdir()
+    (source / "payload").write_text("synchronized")
+
+    result = sync_path(str(source), "service-sync:/mirror")
+
+    assert result == Transfer(
+        "sync", str(source), "service-sync:/mirror", 0
+    )
+    with open(os.path.join(
+        container_rootfs("service-sync"), "mirror", "payload"
+    )) as fh:
+        assert fh.read() == "synchronized"
 
 
 def test_remove_service_returns_result_and_structured_events(builders):
