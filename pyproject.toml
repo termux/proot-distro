@@ -16,6 +16,7 @@ test = ["pytest>=7"]
 
 [project.urls]
 'Homepage' = 'https://github.com/termux/proot-distro'
+'Funding' = 'https://patreon.com/SylirreOSS'
 'Repository' = 'https://github.com/termux/proot-distro'
 'Issue Tracker' = 'https://github.com/termux/proot-distro/issues'
 
