@@ -391,10 +391,7 @@ def _sync(options: dict) -> dict:
 
 
 def _backup(options: dict) -> dict:
-    from proot_distro.commands.backup import (
-        _compression_mode,
-        command_backup,
-    )
+    from proot_distro.operations.backup import backup_container
 
     output = options["output"]
     output_stream = _open_stream(options, "backup_output", "wb")
@@ -402,77 +399,42 @@ def _backup(options: dict) -> dict:
     if output is None:
         if output_stream is None:
             raise ValueError("backup output is not valid")
-        inferred_compression = ""
-        if compression is None:
-            compression = "none"
-    else:
-        try:
-            inferred_compression = _compression_mode(output)
-        except ValueError as exc:
-            raise _WorkerFailure("unsupported", str(exc)) from exc
-    if compression == "zstd":
-        from proot_distro.compress import ZSTD_AVAILABLE, unavailable_msg
-        if not ZSTD_AVAILABLE:
-            raise _WorkerFailure(
-                "unsupported", unavailable_msg("compression type 'zstd'")
-            )
-    from proot_distro.paths import container_is_installed
-    if not container_is_installed(options["name"]):
-        raise _WorkerFailure(
-            "not_found", f"container '{options['name']}' does not exist"
-        )
-    if output is not None and os.path.lexists(output):
-        raise _WorkerFailure(
-            "already_exists", f"backup output '{output}' already exists"
-        )
     try:
-        command_backup(SimpleNamespace(
-            container_name=options["name"],
-            output=output,
+        result = backup_container(
+            options["name"],
+            output_path=output,
+            output_file=output_stream,
             compression=compression,
-            verbose=False,
-            quiet=True,
-            _api_output_file=output_stream,
-        ))
+        )
     finally:
         if output_stream is not None:
             output_stream.close()
-    if compression is None:
-        mode = inferred_compression
-        compression = {
-            "": "none", "gz": "gzip", "bz2": "bzip2",
-            "xz": "xz", "zst": "zstd",
-        }[mode]
     return {
-        "container_name": options["name"],
-        "output": output,
-        "compression": compression,
-        "size_bytes": os.path.getsize(output) if output is not None else None,
+        "container_name": result.container_name,
+        "output": result.output,
+        "compression": result.compression,
+        "size_bytes": result.size_bytes,
     }
 
 
 def _restore(options: dict) -> dict:
-    from proot_distro.commands.restore import command_restore
+    from proot_distro.operations.restore import restore_container
 
     archive = options["archive"]
     archive_stream = _open_stream(options, "restore_input", "rb")
     if archive is None and archive_stream is None:
         raise ValueError("restore input is not valid")
-    if archive is not None and not os.path.isfile(archive):
-        raise _WorkerFailure(
-            "not_found", f"backup archive '{archive}' does not exist"
-        )
     try:
-        name = command_restore(SimpleNamespace(
-            archive=archive, verbose=False, quiet=True, _api_raise_errors=True,
-            _api_archive_file=archive_stream,
-        ))
+        result = restore_container(
+            archive_path=archive, archive_file=archive_stream
+        )
     finally:
         if archive_stream is not None:
             archive_stream.close()
-    if not isinstance(name, str):
-        raise RuntimeError("restore did not identify a container")
-    return {"container_name": name, "archive": archive}
+    return {
+        "container_name": result.container_name,
+        "archive": result.archive,
+    }
 
 
 def _build(options: dict) -> dict:

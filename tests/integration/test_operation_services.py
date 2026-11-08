@@ -3,6 +3,7 @@ import os
 import pytest
 
 import proot_distro.operations.inventory as inventory
+import proot_distro.operations.backup as backup_service
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
     NotFoundFailure,
@@ -10,6 +11,8 @@ from proot_distro.operation_errors import (
 )
 from proot_distro.operations import (
     ActiveSession,
+    ArchiveBackup,
+    ArchiveRestore,
     CacheCleanup,
     CachedImage,
     ContainerRemoval,
@@ -18,6 +21,7 @@ from proot_distro.operations import (
     InstalledContainer,
     OperationContext,
     Transfer,
+    backup_container,
     clear_cache,
     copy_path,
     list_containers,
@@ -27,6 +31,7 @@ from proot_distro.operations import (
     remove_container,
     remove_image,
     rename_container,
+    restore_container,
     sync_path,
 )
 from proot_distro.constants import BASE_CACHE_DIR
@@ -127,6 +132,68 @@ def test_sync_service_mirrors_directory(tmp_path, builders):
         container_rootfs("service-sync"), "mirror", "payload"
     )) as fh:
         assert fh.read() == "synchronized"
+
+
+def test_archive_services_return_results_and_contextual_events(
+    tmp_path, builders,
+):
+    builders.make_container("service-archive", files={
+        "var/payload": b"archived",
+    })
+    archive = tmp_path / "service-archive.tar.gz"
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    backup = backup_container(
+        "service-archive", output_path=str(archive), context=context
+    )
+    remove_container("service-archive")
+    restored = restore_container(
+        archive_path=str(archive), context=context
+    )
+
+    assert backup == ArchiveBackup(
+        "service-archive", str(archive), "gzip", archive.stat().st_size
+    )
+    assert restored == ArchiveRestore("service-archive", str(archive))
+    with open(os.path.join(
+        container_rootfs("service-archive"), "var", "payload"
+    ), "rb") as fh:
+        assert fh.read() == b"archived"
+    assert {phase for _kind, _message, phase, _resource in events} == {
+        "archive", "extract",
+    }
+
+
+def test_backup_path_is_not_published_after_archive_failure(
+    tmp_path, builders, monkeypatch,
+):
+    builders.make_container("service-broken-backup", files={
+        "payload": b"data",
+    })
+    archive = tmp_path / "broken.tar"
+    real_each_entry = backup_service._each_entry
+    calls = []
+
+    def fail_archive(*args, **kwargs):
+        calls.append(None)
+        if len(calls) == 2:
+            raise OSError("archive write failed")
+        return real_each_entry(*args, **kwargs)
+
+    monkeypatch.setattr(backup_service, "_each_entry", fail_archive)
+
+    with pytest.raises(OperationFailure):
+        backup_container(
+            "service-broken-backup", output_path=str(archive)
+        )
+
+    assert not archive.exists()
+    assert not list(tmp_path.glob("*.pd-backup"))
 
 
 def test_remove_service_returns_result_and_structured_events(builders):

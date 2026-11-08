@@ -111,8 +111,28 @@ class Transfer:
     failures: int = 0
 
 
+@dataclass(frozen=True)
+class ArchiveBackup:
+    """A container archive written to a path or caller-owned stream."""
+
+    container_name: str
+    output: Optional[str]
+    compression: str
+    size_bytes: Optional[int]
+
+
+@dataclass(frozen=True)
+class ArchiveRestore:
+    """A container restored from a path or caller-owned stream."""
+
+    container_name: str
+    archive: Optional[str]
+
+
 __all__ = (
     "ActiveSession",
+    "ArchiveBackup",
+    "ArchiveRestore",
     "CacheCleanup",
     "CachedImage",
     "ContainerRemoval",

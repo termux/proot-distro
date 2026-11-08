@@ -158,7 +158,9 @@ def open_container_rootfs(
     )
 
 
-def open_container_pair(name: str, *, create: bool = False):
+def open_container_pair(
+    name: str, *, create: bool = False, raise_errors: bool = False,
+):
     """Open containers/<name> and its rootfs. (container_fd, rootfs_fd).
 
     For a caller that needs both -- `login` reads the guest's passwd out
@@ -179,7 +181,9 @@ def open_container_pair(name: str, *, create: bool = False):
     The caller owns both descriptors and closes them; nothing is left
     open if this raises.
     """
-    container_fd = _open_container_path(container_dir(name), name, create)
+    container_fd = _open_container_path(
+        container_dir(name), name, create, raise_errors
+    )
     try:
         if create:
             return container_fd, dirfd.descend_at(
@@ -190,13 +194,16 @@ def open_container_pair(name: str, *, create: bool = False):
         except FileNotFoundError:
             raise
         except OSError as exc:
-            crit_error(
+            message = (
                 f"the storage of container '{name}' is not usable: "
                 f"'{quote_path(container_rootfs(name))}' is not a "
                 f"directory this program created ({exc.strerror}). "
                 f"Refusing to follow it; remove or move that entry and "
                 f"try again."
             )
+            if raise_errors:
+                raise OperationFailure(message) from exc
+            crit_error(message)
             sys.exit(1)
     except BaseException:
         os.close(container_fd)

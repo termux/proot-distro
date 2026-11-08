@@ -20,7 +20,7 @@ import tarfile
 
 import pytest
 
-from proot_distro.commands import backup as backup_mod
+from proot_distro.operations import backup as backup_mod
 
 
 @pytest.fixture
@@ -315,8 +315,8 @@ def test_backup_refuses_a_container_dir_swapped_after_the_check(
     name, host, swap = planted
     real_check = backup_mod.container_is_installed
 
-    def _check_then_swap(container):
-        answer = real_check(container)
+    def _check_then_swap(container, **kwargs):
+        answer = real_check(container, **kwargs)
         swap()
         return answer
 
@@ -339,8 +339,8 @@ def test_backup_holds_its_pin_across_a_mid_run_swap(tmp_path, planted,
     name, host, swap = planted
     real_fix = backup_mod._fix_permissions
 
-    def _fix_then_swap(container_fd, rootfs_dir):
-        real_fix(container_fd, rootfs_dir)
+    def _fix_then_swap(container_fd, rootfs_dir, context=None):
+        real_fix(container_fd, rootfs_dir, context)
         swap()
 
     monkeypatch.setattr(backup_mod, "_fix_permissions", _fix_then_swap)
