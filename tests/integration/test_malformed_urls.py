@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.commands import install as install_mod
+from proot_distro.operations import install as install_mod
 from proot_distro.commands.build import command_build
 from proot_distro.commands.install import command_install
 from proot_distro.paths import container_dir

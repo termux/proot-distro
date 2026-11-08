@@ -68,7 +68,7 @@ internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the
 same services. Container, image, and session inventories plus container and
 cached-image removal, rename, cache cleanup, copy, move, synchronization,
-backup, and restore are migrated.
+backup, restore, install, and reset are migrated.
 
 | Module | Role |
 | --- | --- |
@@ -80,6 +80,9 @@ backup, and restore are migrated.
 | `operations/sync.py` | Descriptor-pinned mirroring, metadata comparison, progress, and optional pruning. |
 | `operations/backup.py` | Descriptor-safe container archive creation with atomic path publication and stream output. |
 | `operations/restore.py` | Validated single-container archive extraction with deferred destructive commit. |
+| `operations/install.py` | Local archive, URL, and OCI installation with staged cleanup and rootfs fixups. |
+| `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
+| `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata. |
 | `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
@@ -92,7 +95,7 @@ what the command takes (see `locking.py`).
 
 | Command (aliases) | Module | Does | Lock |
 | --- | --- | --- | --- |
-| `install` (`add`, `i`, `in`, `ins`) | `install.py`, `install_local.py` | Pull a reference, or unpack a local/URL OCI layout or rootfs tarball, into `containers/<name>/`. Writes `manifest.json`. | container, exclusive |
+| `install` (`add`, `i`, `in`, `ins`) | `install.py` | Pull a reference, or unpack a local/URL OCI layout or rootfs tarball, into `containers/<name>/`. Writes `manifest.json`. | container, exclusive |
 | `remove` (`rm`) | `remove.py` | Delete a container, or with `--image` a cached image. | container, exclusive; `--image`: build lock |
 | `rename` | `rename.py` | Rename a container and rewrite its l2s symlinks. | exclusive |
 | `reset` | `reset.py` | Reinstall from the image recorded in `manifest.json`. | exclusive |

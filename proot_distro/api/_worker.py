@@ -278,45 +278,16 @@ def _list_sessions(_options: dict) -> dict:
 
 
 def _install(options: dict) -> dict:
-    from proot_distro.commands.install import (
-        _derive_local_name,
-        _is_local_path,
-        _is_url,
-        command_install,
-    )
-    from proot_distro.helpers.docker.refs import derive_alias
+    from proot_distro.operations.install import install_container
 
-    source = options["source"]
-    name = options.get("name")
-    if name:
-        installed_name = name
-    elif _is_local_path(source):
-        installed_name = _derive_local_name(os.path.expanduser(source))
-    elif _is_url(source):
-        url_path = source.split("?", 1)[0].split("#", 1)[0]
-        installed_name = _derive_local_name(url_path)
-    else:
-        installed_name = derive_alias(source)
-    if _is_local_path(source) and not os.path.isfile(os.path.expanduser(source)):
-        raise _WorkerFailure(
-            "not_found", f"local archive '{source}' does not exist"
-        )
-    from proot_distro.paths import container_entry_lstat
-    if container_entry_lstat(installed_name) is not None:
-        raise _WorkerFailure(
-            "already_exists", f"container '{installed_name}' already exists"
-        )
     _apply_registry_credentials(options)
-    command_install(SimpleNamespace(
-        image_ref=source,
-        custom_container_name=name,
-        override_arch=options.get("architecture"),
+    result = install_container(
+        options["source"],
+        name=options.get("name"),
+        architecture=options.get("architecture"),
         allow_insecure=options.get("allow_insecure", False),
-        quiet=True,
-        _api_raise_errors=True,
-    ))
-
-    return {"container_name": installed_name}
+    )
+    return {"container_name": result.name}
 
 
 def _remove(options: dict) -> dict:
@@ -337,25 +308,11 @@ def _rename(options: dict) -> dict:
 
 
 def _reset(options: dict) -> dict:
-    from proot_distro.commands.reset import command_reset
-    from proot_distro.paths import container_image_origin, container_is_installed
+    from proot_distro.operations.reset import reset_container
 
-    name = options["name"]
-    if not container_is_installed(name):
-        raise _WorkerFailure(
-            "not_found", f"container '{name}' is not installed"
-        )
-    image_ref, _arch = container_image_origin(name)
-    if not image_ref:
-        raise _WorkerFailure(
-            "unsupported",
-            f"container '{name}' has no OCI manifest and cannot be reset",
-        )
     _apply_registry_credentials(options)
-    command_reset(SimpleNamespace(
-        container_name=name, quiet=True, _api_raise_errors=True,
-    ))
-    return {"container_name": name}
+    result = reset_container(options["name"])
+    return {"container_name": result.name}
 
 
 def _copy(options: dict) -> dict:

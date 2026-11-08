@@ -37,14 +37,13 @@ import hashlib
 import json
 import os
 import re
-import sys
 import tarfile
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.compress import require_read_support
-from proot_distro.message import log_info
 from proot_distro.operation_errors import IntegrityFailure
-from proot_distro.progress import clear_bar, progress_active
+from proot_distro.operations.context import OperationContext
+from proot_distro.progress import clear_bar
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER, DOCKER_TO_ARCH, apply_layer, layer_cache_path,
     open_verified_layer, require_data_digest, split_digest,
@@ -351,7 +350,7 @@ def _oci_cache_layer(tf, member_map, digest):
     return fd
 
 
-def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
+def _extract_oci(tf, member_map, rootfs_fd, dist_arch, context):
     """Install from an OCI image layout (tf already open).
 
     Reads index.json, selects the manifest for *dist_arch*, caches each
@@ -418,16 +417,25 @@ def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
         layer_fd = open_verified_layer(digest)
 
         if layer_fd is not None:
-            log_info(f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
-                     f"skipping.")
+            context.info(
+                f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
+                f"skipping.",
+                phase="install", resource=digest,
+            )
         else:
             # Absent, or present with content that no longer hashes to its
             # digest — either way the archive in hand is the better copy.
-            log_info(f"{short_id}: Caching layer "
-                     f"{i + 1}/{n_layers}{size_str}...")
+            context.info(
+                f"{short_id}: Caching layer "
+                f"{i + 1}/{n_layers}{size_str}...",
+                phase="install", resource=digest,
+            )
             layer_fd = _oci_cache_layer(tf, member_map, digest)
 
-        log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
+        context.info(
+            f"{short_id}: Applying layer {i + 1}/{n_layers}...",
+            phase="install", resource=digest,
+        )
         try:
             apply_layer(layer_fd, rootfs_fd, digest=digest)
         finally:
@@ -489,7 +497,7 @@ def _index_oci_members(tf) -> dict:
 
 
 def install_from_local_file(
-    archive_path: str, rootfs_fd: int, dist_arch: str
+    archive_path: str, rootfs_fd: int, dist_arch: str, context=None,
 ):
     """Open *archive_path*, detect its format, and extract into *rootfs_fd*.
 
@@ -502,6 +510,8 @@ def install_from_local_file(
     Detection uses a streaming probe that reads at most the first 500
     member headers — fast even on compressed multi-GB images.
     """
+    context = context if context is not None else OperationContext()
+
     # A zstd outer archive needs Python 3.14; without it the probe below
     # sees a corrupt tar and would report it as one.
     require_read_support(archive_path, f"archive '{archive_path}'")
@@ -524,14 +534,17 @@ def install_from_local_file(
         # OCI image layout: blobs are accessed by digest in arbitrary
         # order, so random access — and therefore an index — is required.
         with tarfile.open(archive_path, "r:*") as tf:
-            if progress_active():
-                log_info("Indexing OCI archive...")
-                sys.stderr.flush()
+            context.info(
+                "Indexing OCI archive...",
+                phase="install", resource=archive_path,
+            )
             try:
                 member_map = _index_oci_members(tf)
             finally:
                 clear_bar()
-            return _extract_oci(tf, member_map, rootfs_fd, dist_arch)
+            return _extract_oci(
+                tf, member_map, rootfs_fd, dist_arch, context
+            )
 
     strip = detect_strip_count(probe_names)
     extract_plain_tar(archive_path, strip, rootfs_fd)

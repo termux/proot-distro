@@ -16,6 +16,7 @@ from proot_distro.operations import (
     CacheCleanup,
     CachedImage,
     ContainerRemoval,
+    ContainerInstallation,
     ContainerRename,
     ImageRemoval,
     InstalledContainer,
@@ -24,6 +25,7 @@ from proot_distro.operations import (
     backup_container,
     clear_cache,
     copy_path,
+    install_container,
     list_containers,
     list_images,
     list_sessions,
@@ -32,6 +34,7 @@ from proot_distro.operations import (
     remove_image,
     rename_container,
     restore_container,
+    reset_container,
     sync_path,
 )
 from proot_distro.constants import BASE_CACHE_DIR
@@ -194,6 +197,83 @@ def test_backup_path_is_not_published_after_archive_failure(
 
     assert not archive.exists()
     assert not list(tmp_path.glob("*.pd-backup"))
+
+
+def test_install_service_returns_result_and_contextual_events(
+    tmp_path, builders,
+):
+    archive = tmp_path / "service-install.tar.gz"
+    builders.make_tar(
+        str(archive),
+        builders.rootfs_members([{
+            "name": "etc/service-installed",
+            "type": "file",
+            "data": b"installed",
+        }]),
+        compression="gz",
+    )
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    result = install_container(
+        str(archive), name="service-install", context=context
+    )
+
+    assert isinstance(result, ContainerInstallation)
+    assert result.name == "service-install"
+    assert result.source == str(archive)
+    assert result.has_entrypoint is False
+    with open(os.path.join(
+        container_rootfs("service-install"), "etc", "service-installed"
+    ), "rb") as fh:
+        assert fh.read() == b"installed"
+    assert events
+    assert all(
+        phase == "install"
+        for _kind, _message, phase, _resource in events
+    )
+
+
+def test_reset_service_rebuilds_from_cached_image(builders):
+    architecture = "x86_64"
+    digest, size, diff_id = builders.seed_cached_layer([{
+        "name": "etc/reset-service",
+        "type": "file",
+        "data": b"reset",
+    }])
+    manifest = {
+        "schemaVersion": 2,
+        "layers": [{
+            "digest": digest,
+            "size": size,
+            "mediaType": OCI_LAYER_MEDIA,
+        }],
+    }
+    image_config = {"config": {}, "rootfs": {"diff_ids": [diff_id]}}
+    save_manifest_cache(
+        "service-reset:1", architecture, manifest,
+        "library/service-reset", image_config,
+    )
+    builders.make_container("service-reset", manifest={
+        "image_ref": "service-reset:1",
+        "arch": architecture,
+        "manifest": manifest,
+        "image_config": image_config,
+    })
+
+    result = reset_container("service-reset")
+
+    assert result == ContainerInstallation(
+        "service-reset", "service-reset:1", architecture, False
+    )
+    with open(os.path.join(
+        container_rootfs("service-reset"), "etc", "reset-service"
+    ), "rb") as fh:
+        assert fh.read() == b"reset"
 
 
 def test_remove_service_returns_result_and_structured_events(builders):

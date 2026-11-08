@@ -59,9 +59,14 @@ class TransferValidationFailure(OperationFailure):
     """A transfer path or option cannot be used for the requested action."""
 
 
+class InstallValidationFailure(OperationFailure):
+    """An install source, name, or architecture is not usable."""
+
+
 __all__ = (
     "AmbiguousImageFailure",
     "ImageNotFoundFailure",
+    "InstallValidationFailure",
     "TransferPartialFailure",
     "TransferValidationFailure",
 )

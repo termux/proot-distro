@@ -129,6 +129,16 @@ class ArchiveRestore:
     archive: Optional[str]
 
 
+@dataclass(frozen=True)
+class ContainerInstallation:
+    """A container installed from an archive, URL, or OCI reference."""
+
+    name: str
+    source: str
+    architecture: str
+    has_entrypoint: bool
+
+
 __all__ = (
     "ActiveSession",
     "ArchiveBackup",
@@ -136,6 +146,7 @@ __all__ = (
     "CacheCleanup",
     "CachedImage",
     "ContainerRemoval",
+    "ContainerInstallation",
     "ContainerRename",
     "ImageRemoval",
     "InstalledContainer",
