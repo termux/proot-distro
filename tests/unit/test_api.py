@@ -8,17 +8,21 @@ import pytest
 from proot_distro.api import (
     AuthenticationError,
     BackupResult,
+    BuildResult,
+    CacheCleanupResult,
     ContainerInfo,
     CredentialProvider,
     CredentialRequest,
     EventKind,
     ImageInfo,
+    ImageRemovalResult,
     InvalidArgumentError,
     NetworkError,
     OperationError,
     OperationEvent,
     ProotDistro,
     ProotDistroError,
+    PushResult,
     RegistryCredentials,
     RestoreResult,
     RuntimeConfig,
@@ -36,10 +40,11 @@ def test_public_exports_are_explicit():
     import proot_distro.api as api
 
     assert set(api.__all__) == {
-        "AuthenticationError", "BackupResult", "ContainerInfo", "CredentialProvider",
-        "CredentialRequest", "EventKind", "ImageInfo",
+        "AuthenticationError", "BackupResult", "BuildResult",
+        "CacheCleanupResult", "ContainerInfo", "CredentialProvider",
+        "CredentialRequest", "EventKind", "ImageInfo", "ImageRemovalResult",
         "InvalidArgumentError", "NetworkError", "OperationError",
-        "OperationEvent", "ProotDistro", "ProotDistroError",
+        "OperationEvent", "ProotDistro", "ProotDistroError", "PushResult",
         "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
         "SearchResult", "SessionInfo", "TransferResult",
     }

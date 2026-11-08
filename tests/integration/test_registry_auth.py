@@ -32,7 +32,7 @@ from _builders import pull_image_into
 from _registry import CA_FILE, FakeRegistry, basic
 from proot_distro import constants
 from proot_distro.api import (
-    AuthenticationError, ProotDistro, RegistryCredentials,
+    AuthenticationError, ProotDistro, PushResult, RegistryCredentials,
 )
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
@@ -271,6 +271,29 @@ def test_api_reports_rejected_credentials_without_revealing_secret(registry):
     assert secret not in str(exc.value)
 
 
+def test_api_build_pulls_private_base_with_explicit_credentials(
+        registry, tmp_path):
+    registry.add_image("team/api-base", "1", FILES, CONFIG)
+    context = tmp_path / "api-private-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/api-base:1\n"
+        'CMD ["/bin/sh"]\n'
+    )
+
+    result = ProotDistro(credentials=RegistryCredentials(
+        "alice", "s3cret"
+    )).build(context, tags=["api-private-build:1"])
+
+    assert [image.reference for image in result.images] == [
+        "api-private-build:1"
+    ]
+    assert registry.token_scopes() == [
+        "", "repository:team/api-base:pull",
+    ]
+    _assert_credentials_in_place(registry)
+
+
 def test_a_private_image_without_credentials_is_refused(registry, capsys):
     registry.add_image("team/private", "1", FILES, CONFIG)
     with pytest.raises(SystemExit) as exc:
@@ -475,6 +498,39 @@ def test_a_pushed_image_is_installed_back_with_credentials(
     assert registry.token_scopes() == ["", "repository:team/app:pull,push",
                                        "", "repository:team/app:pull"]
     _assert_credentials_in_place(registry)
+
+
+def test_api_push_uses_explicit_credentials(registry, builders, monkeypatch):
+    arch = get_device_cpu_arch()
+    ref = f"{registry.host()}/team/api-push:1"
+    _built(builders, ref, arch, "team/api-push")
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:wrong")
+
+    result = ProotDistro(credentials=RegistryCredentials(
+        "alice", "s3cret"
+    )).push(ref)
+
+    assert isinstance(result, PushResult)
+    assert result.repository == "team/api-push"
+    assert result.tag == "1"
+    assert result.bytes_uploaded > 0
+    assert ("team/api-push", "1") in registry.manifests
+    _assert_credentials_in_place(registry)
+
+
+def test_api_push_reports_rejected_credentials(registry, builders):
+    arch = get_device_cpu_arch()
+    ref = f"{registry.host()}/team/api-push-refused:1"
+    _built(builders, ref, arch, "team/api-push-refused")
+    secret = "wrong-push-secret"
+
+    with pytest.raises(AuthenticationError) as exc:
+        ProotDistro(credentials=RegistryCredentials(
+            "alice", secret
+        )).push(ref)
+
+    assert exc.value.operation == "push"
+    assert secret not in str(exc.value)
 
 
 def test_a_push_without_credentials_is_refused(registry, builders, capsys):

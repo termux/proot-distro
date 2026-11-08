@@ -49,7 +49,7 @@ Only names re-exported by `proot_distro.api` are public.
 
 | Module | Role |
 | --- | --- |
-| `api/program.py` | `ProotDistro` facade: inventories, search, container lifecycle, transfers, backup, and restore. |
+| `api/program.py` | `ProotDistro` facade: inventories, search, container lifecycle, transfers, archives, image build/push/removal, and cache cleanup. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
 | `api/credentials.py` | Redacted `RegistryCredentials`, provider requests, and the provider callable contract. |
 | `api/models.py` | Frozen result records returned by public methods. |

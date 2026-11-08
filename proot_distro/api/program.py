@@ -31,7 +31,7 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, Mapping, Optional, Tuple
 
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import (
@@ -46,7 +46,12 @@ from proot_distro.helpers.docker.search import (
     SEARCH_LIMIT_MAX,
     search_images,
 )
-from proot_distro.helpers.docker.refs import InvalidReference, parse_reference
+from proot_distro.helpers.docker.refs import (
+    InvalidReference,
+    parse_reference,
+    parse_tag_reference,
+    with_explicit_tag,
+)
 from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
 from proot_distro.paths import installed_container_names, read_container_manifest
@@ -67,8 +72,12 @@ from proot_distro.api.credentials import (
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
     BackupResult,
+    BuildResult,
+    CacheCleanupResult,
     ContainerInfo,
     ImageInfo,
+    ImageRemovalResult,
+    PushResult,
     SearchHit,
     SearchResult,
     SessionInfo,
@@ -812,6 +821,286 @@ class ProotDistro:
             )
         return RestoreResult(
             self._installed_container(name, "restore"), archive
+        )
+
+    def build(
+        self,
+        path,
+        *,
+        dockerfile=None,
+        tags=(),
+        build_args: Optional[Mapping[str, str]] = None,
+        architecture: Optional[str] = None,
+        target: Optional[str] = None,
+        emulator=None,
+        outputs=(),
+        install_as: Optional[str] = None,
+        no_cache: bool = False,
+        credentials: Optional[RegistryCredentials] = None,
+    ) -> BuildResult:
+        """Build an OCI image from a Dockerfile and context directory."""
+        path = _path_argument(
+            path, operation="build", argument="path", host_only=True
+        )
+        if dockerfile is not None:
+            dockerfile = _path_argument(
+                dockerfile, operation="build", argument="dockerfile",
+                host_only=True,
+            )
+        if isinstance(tags, str):
+            tags = (tags,)
+        try:
+            tags = tuple(tags)
+        except TypeError:
+            raise InvalidArgumentError(
+                "tags must be an iterable of image references.",
+                operation="build",
+            ) from None
+        canonical_tags = []
+        for tag in tags:
+            if not isinstance(tag, str):
+                raise InvalidArgumentError(
+                    "every tag must be a string.", operation="build"
+                )
+            try:
+                parse_tag_reference(tag)
+            except InvalidReference as exc:
+                raise InvalidArgumentError(
+                    f"invalid build tag '{tag}': {exc}", operation="build"
+                ) from None
+            canonical_tags.append(with_explicit_tag(tag))
+
+        if build_args is None:
+            build_args = {}
+        if not isinstance(build_args, Mapping):
+            raise InvalidArgumentError(
+                "build_args must be a mapping of strings.", operation="build"
+            )
+        encoded_build_args = []
+        for key, value in build_args.items():
+            if (not isinstance(key, str) or not key
+                    or not isinstance(value, str)):
+                raise InvalidArgumentError(
+                    "build_args keys must be non-empty strings and values "
+                    "must be strings.", operation="build"
+                )
+            encoded_build_args.append(f"{key}={value}")
+
+        if architecture is not None:
+            if not isinstance(architecture, str):
+                raise InvalidArgumentError(
+                    "architecture must be a string or None.", operation="build"
+                )
+            architecture = normalize_arch(architecture)
+            if architecture is None:
+                raise InvalidArgumentError(
+                    "unsupported build architecture.", operation="build"
+                )
+        if target is not None and (not isinstance(target, str) or not target):
+            raise InvalidArgumentError(
+                "target must be a non-empty string or None.", operation="build"
+            )
+        if emulator is not None:
+            emulator = _path_argument(
+                emulator, operation="build", argument="emulator",
+                host_only=True,
+            )
+        if isinstance(outputs, (str, os.PathLike)):
+            outputs = (outputs,)
+        try:
+            outputs = tuple(_path_argument(
+                output, operation="build", argument="output", host_only=True
+            ) for output in outputs)
+        except TypeError:
+            raise InvalidArgumentError(
+                "outputs must be an iterable of host paths.", operation="build"
+            ) from None
+        if install_as is not None:
+            _require_name(
+                install_as, operation="build", argument="install_as"
+            )
+        if not isinstance(no_cache, bool):
+            raise InvalidArgumentError(
+                "no_cache must be a boolean.", operation="build"
+            )
+        if credentials is not None and not isinstance(
+            credentials, RegistryCredentials
+        ):
+            raise InvalidArgumentError(
+                "credentials must be RegistryCredentials or None.",
+                operation="build",
+            )
+        build_credentials = credentials or self._context.credentials
+
+        result = self._context.worker("build", {
+            "path": path,
+            "dockerfile": dockerfile,
+            "tags": canonical_tags,
+            "build_args": encoded_build_args,
+            "architecture": architecture,
+            "target": target,
+            "emulator": emulator,
+            "outputs": outputs,
+            "install_as": install_as,
+            "no_cache": no_cache,
+            "credentials": self._context.credential_payload(
+                build_credentials
+            ),
+        })
+        raw_images = result.get("images")
+        if not isinstance(raw_images, list):
+            raise OperationError(
+                "build worker returned invalid images.", operation="build"
+            )
+        try:
+            images = tuple(ImageInfo(**item) for item in raw_images)
+        except (TypeError, ValueError):
+            raise OperationError(
+                "build worker returned invalid images.", operation="build"
+            ) from None
+        if not images:
+            raise OperationError(
+                "build completed without a cached image result.",
+                operation="build",
+            )
+        if tuple(result.get("outputs", ())) != outputs:
+            raise OperationError(
+                "build worker returned invalid output paths.", operation="build"
+            )
+        installed = None
+        if install_as is not None:
+            installed = self._installed_container(install_as, "build")
+        return BuildResult(images, outputs, installed)
+
+    def push(
+        self,
+        image_ref: str,
+        *,
+        architecture: Optional[str] = None,
+        allow_insecure: bool = False,
+    ) -> PushResult:
+        """Push one cached image tag to its registry."""
+        if not isinstance(image_ref, str) or not image_ref:
+            raise InvalidArgumentError(
+                "image_ref must be a non-empty string.", operation="push"
+            )
+        try:
+            reference = parse_tag_reference(image_ref)
+        except InvalidReference as exc:
+            raise InvalidArgumentError(
+                f"invalid push reference: {exc}", operation="push"
+            ) from None
+        image_ref = with_explicit_tag(image_ref)
+        if architecture is not None:
+            if not isinstance(architecture, str):
+                raise InvalidArgumentError(
+                    "architecture must be a string or None.", operation="push"
+                )
+            architecture = normalize_arch(architecture)
+            if architecture is None:
+                raise InvalidArgumentError(
+                    "unsupported push architecture.", operation="push"
+                )
+        if not isinstance(allow_insecure, bool):
+            raise InvalidArgumentError(
+                "allow_insecure must be a boolean.", operation="push"
+            )
+        registry_credentials = self._context.credentials_for(
+            reference.registry or "docker.io", reference.repo, "push"
+        )
+        result = self._context.worker("push", {
+            "image_ref": image_ref,
+            "architecture": architecture,
+            "allow_insecure": allow_insecure,
+            "credentials": self._context.credential_payload(
+                registry_credentials
+            ),
+        })
+        try:
+            registry = result["registry"]
+            repository = result["repo"]
+            tag = result["tag"]
+            digest = result.get("manifest_digest") or None
+            uploaded = result["bytes_uploaded"]
+            if (not all(isinstance(v, str) and v
+                        for v in (registry, repository, tag))
+                    or (digest is not None and not isinstance(digest, str))
+                    or isinstance(uploaded, bool)
+                    or not isinstance(uploaded, int)
+                    or uploaded < 0):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise OperationError(
+                "push worker returned an invalid result.", operation="push"
+            ) from None
+        return PushResult(registry, repository, tag, digest, uploaded)
+
+    def remove_image(
+        self, identifier: str, *, architecture: Optional[str] = None,
+    ) -> ImageRemovalResult:
+        """Remove cached image variants addressed by reference or image ID."""
+        if (not isinstance(identifier, str) or not identifier
+                or "\0" in identifier):
+            raise InvalidArgumentError(
+                "identifier must be a non-empty string without NUL bytes.",
+                operation="remove_image",
+            )
+        if architecture is not None:
+            if not isinstance(architecture, str):
+                raise InvalidArgumentError(
+                    "architecture must be a string or None.",
+                    operation="remove_image",
+                )
+            architecture = normalize_arch(architecture)
+            if architecture is None:
+                raise InvalidArgumentError(
+                    "unsupported image architecture.",
+                    operation="remove_image",
+                )
+        result = self._context.worker("remove_image", {
+            "identifier": identifier,
+            "architecture": architecture,
+        })
+        raw_removed = result.get("removed")
+        if not isinstance(raw_removed, list):
+            raise OperationError(
+                "remove_image worker returned an invalid result.",
+                operation="remove_image",
+            )
+        try:
+            removed = tuple(ImageInfo(**item) for item in raw_removed)
+        except (TypeError, ValueError):
+            raise OperationError(
+                "remove_image worker returned an invalid result.",
+                operation="remove_image",
+            ) from None
+        return ImageRemovalResult(removed)
+
+    def clear_cache(
+        self, *, orphan: bool = False, build_cache: bool = False,
+    ) -> CacheCleanupResult:
+        """Clear all cache data or selected orphan/build-cache data."""
+        if not isinstance(orphan, bool) or not isinstance(build_cache, bool):
+            raise InvalidArgumentError(
+                "orphan and build_cache must be booleans.",
+                operation="clear_cache",
+            )
+        result = self._context.worker("clear_cache", {
+            "orphan": orphan,
+            "build_cache": build_cache,
+        })
+        before = result.get("bytes_before")
+        after = result.get("bytes_after")
+        if (isinstance(before, bool) or not isinstance(before, int)
+                or isinstance(after, bool) or not isinstance(after, int)
+                or before < 0 or after < 0):
+            raise OperationError(
+                "clear_cache worker returned an invalid result.",
+                operation="clear_cache",
+            )
+        mode = "build_cache" if build_cache else ("orphan" if orphan else "all")
+        return CacheCleanupResult(
+            mode, before, after, max(0, before - after)
         )
 
     def search(

@@ -118,10 +118,51 @@ class RestoreResult:
     archive: str
 
 
+@dataclass(frozen=True)
+class BuildResult:
+    """Images and optional artifacts produced by a Dockerfile build."""
+
+    images: Tuple[ImageInfo, ...]
+    outputs: Tuple[str, ...]
+    installed_container: Optional[ContainerInfo]
+
+
+@dataclass(frozen=True)
+class PushResult:
+    """The registry result of publishing one image tag."""
+
+    registry: str
+    repository: str
+    tag: str
+    manifest_digest: Optional[str]
+    bytes_uploaded: int
+
+
+@dataclass(frozen=True)
+class ImageRemovalResult:
+    """Cached image variants removed by one operation."""
+
+    removed: Tuple[ImageInfo, ...]
+
+
+@dataclass(frozen=True)
+class CacheCleanupResult:
+    """Disk usage before and after a cache cleanup."""
+
+    mode: str
+    bytes_before: int
+    bytes_after: int
+    bytes_reclaimed: int
+
+
 __all__ = (
     "BackupResult",
+    "BuildResult",
+    "CacheCleanupResult",
     "ContainerInfo",
     "ImageInfo",
+    "ImageRemovalResult",
+    "PushResult",
     "SearchHit",
     "SearchResult",
     "SessionInfo",

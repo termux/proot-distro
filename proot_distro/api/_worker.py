@@ -222,6 +222,114 @@ def _restore(options: dict) -> dict:
     return {"container_name": name, "archive": archive}
 
 
+def _build(options: dict) -> dict:
+    from proot_distro.arch import get_device_cpu_arch
+    from proot_distro.api.program import _image_inventory
+    from proot_distro.commands.build import (
+        _derive_tag_from_path,
+        command_build,
+    )
+    from proot_distro.helpers.docker.refs import with_explicit_tag
+
+    _apply_registry_credentials(options)
+    build_path = options["path"]
+    dockerfile = options.get("dockerfile")
+    tags = list(options.get("tags") or [])
+    command_build(SimpleNamespace(
+        path=build_path,
+        dockerfile=dockerfile,
+        tags=tags,
+        build_args=list(options.get("build_args") or []),
+        override_arch=options.get("architecture"),
+        target_stage=options.get("target"),
+        emulator=options.get("emulator"),
+        outputs=list(options.get("outputs") or []),
+        install_as=options.get("install_as"),
+        no_cache=options.get("no_cache", False),
+        verbose=False,
+        quiet=True,
+    ))
+
+    if not tags:
+        dockerfile_for_tag = (
+            dockerfile if dockerfile is not None
+            else os.path.join(build_path, "Dockerfile")
+        )
+        tags = [_derive_tag_from_path(build_path, dockerfile_for_tag)]
+    tags = [with_explicit_tag(tag) for tag in tags]
+    architecture = options.get("architecture") or get_device_cpu_arch()
+    images = [
+        asdict(image) for image in _image_inventory()
+        if image.reference in tags and image.architecture == architecture
+    ]
+    return {
+        "images": images,
+        "outputs": list(options.get("outputs") or []),
+        "installed_container": options.get("install_as"),
+    }
+
+
+def _push(options: dict) -> dict:
+    from proot_distro.commands.push import command_push
+
+    _apply_registry_credentials(options)
+    result = command_push(SimpleNamespace(
+        image_ref=options["image_ref"],
+        override_arch=options.get("architecture"),
+        allow_insecure=options.get("allow_insecure", False),
+        quiet=True,
+        _api_raise_errors=True,
+    ))
+    if not isinstance(result, dict):
+        raise RuntimeError("push did not return a result")
+    return result
+
+
+def _remove_image(options: dict) -> dict:
+    from proot_distro.api.program import _image_inventory
+    from proot_distro.commands.remove import command_remove
+
+    before = _image_inventory()
+    command_remove(SimpleNamespace(
+        target=options["identifier"],
+        image=True,
+        override_arch=options.get("architecture"),
+        verbose=False,
+        quiet=True,
+    ))
+    after = set(_image_inventory())
+    return {
+        "removed": [asdict(image) for image in before if image not in after],
+    }
+
+
+def _cache_size() -> int:
+    from proot_distro.commands.clear_cache import _open_cache_root, _tree_size
+
+    try:
+        root_fd = _open_cache_root()
+    except FileNotFoundError:
+        return 0
+    try:
+        return _tree_size(root_fd)
+    finally:
+        os.close(root_fd)
+
+
+def _clear_cache(options: dict) -> dict:
+    from proot_distro.commands.clear_cache import command_clear_cache
+
+    before = _cache_size()
+    command_clear_cache(SimpleNamespace(
+        orphan=options.get("orphan", False),
+        build_cache=options.get("build_cache", False),
+        verbose=False,
+        quiet=True,
+    ))
+    after = _cache_size()
+    return {"bytes_before": before, "bytes_after": after}
+
+
 _OPERATIONS = {
     "list_containers": _list_containers,
     "list_images": _list_images,
@@ -235,6 +343,10 @@ _OPERATIONS = {
     "sync": _sync,
     "backup": _backup,
     "restore": _restore,
+    "build": _build,
+    "push": _push,
+    "remove_image": _remove_image,
+    "clear_cache": _clear_cache,
 }
 
 

@@ -267,6 +267,37 @@ CLI. A `pathlib.Path` always means a host path and is converted to an absolute
 path. `backup` and `restore` require host files; they never read or write the
 embedding application's standard streams.
 
+Images can be built, pushed, removed, and cleaned from the cache:
+
+```python
+build = pd.build(
+    "./context",
+    tags=["myuser/myapp:1"],
+    build_args={"VERSION": "1"},
+    outputs=["./myapp.oci.tar"],
+    install_as="myapp",
+)
+
+published = pd.push("myuser/myapp:1")
+pd.remove_image("myuser/myapp:1")
+pd.clear_cache(orphan=True)
+```
+
+| Method | Action |
+|---|---|
+| `build(PATH, ...)` | Build a Dockerfile, optionally export OCI archives and install a container. |
+| `push(IMAGE, architecture=None, allow_insecure=False)` | Push one cached image tag and return its digest and uploaded byte count. |
+| `remove_image(IDENTIFIER, architecture=None)` | Remove image variants by reference, ID prefix, or cache identifier. |
+| `clear_cache(orphan=False, build_cache=False)` | Clear all cache data, orphan layers, or the Dockerfile build cache. |
+
+`build_args` is a mapping of strings. `tags` and `outputs` accept iterables;
+a single output path is also accepted. Dockerfile stdin is intentionally not
+used by the API: pass a Dockerfile path or leave it unset to use
+`PATH/Dockerfile`. A `credential_provider` can select credentials for
+`install`, `reset_container`, and `push`. For a build that pulls private base
+images, pass static credentials to `ProotDistro(credentials=...)` or directly
+to `build(credentials=...)`.
+
 Mutating operations run in a short-lived child process so their signal and
 cleanup behavior cannot alter the embedding application. This worker exits
 when the method finishes; it is not a persistent service.

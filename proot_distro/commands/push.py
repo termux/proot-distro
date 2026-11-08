@@ -47,7 +47,11 @@ from proot_distro.constants import PROGRAM_NAME
 
 
 def command_push(args):
-    """Implements `proot-distro push`."""
+    """Implement `proot-distro push` and return the registry result.
+
+    The CLI ignores the return value. The public API uses it for a structured
+    result without repeating any registry request.
+    """
     image_ref = getattr(args, "image_ref", None) or ""
     override_arch = getattr(args, "override_arch", None) or ""
     quiet = bool(getattr(args, "quiet", False))
@@ -111,16 +115,20 @@ def command_push(args):
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         log_error(f"Network error: {exc}")
+        if getattr(args, "_api_raise_errors", False):
+            raise
         sys.exit(1)
     except RuntimeError as exc:
         if sys.stderr.isatty():
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
         log_error(f"Error: {exc}")
+        if getattr(args, "_api_raise_errors", False):
+            raise
         sys.exit(1)
 
     if quiet:
-        return
+        return result
 
     log_info("Push complete.")
     msg()
@@ -134,3 +142,4 @@ def command_push(args):
     msg(f"{C['CYAN']}Uploaded:   "
         f"{C['GREEN']}{fmt_size(result['bytes_uploaded'])}{C['RST']}")
     msg()
+    return result

@@ -58,6 +58,7 @@ from proot_distro.helpers.download import (
 )
 from proot_distro.helpers.docker.refs import parse_tag_reference
 from proot_distro.helpers.docker.transport import (
+    RegistryAuthenticationError,
     auth_note,
     get_auth_token,
     insecure_for,
@@ -434,7 +435,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)
         if refusal:
-            raise RuntimeError(refusal) from exc
+            error = (RegistryAuthenticationError
+                     if exc.code in (401, 403) else RuntimeError)
+            raise error(refusal) from exc
         raise
 
     n_layers = len(layers)
@@ -471,7 +474,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         except urllib.error.HTTPError as exc:
             refusal = _refusal_msg(image_ref, parsed, exc)
             if refusal:
-                raise RuntimeError(refusal) from exc
+                error = (RegistryAuthenticationError
+                         if exc.code in (401, 403) else RuntimeError)
+                raise error(refusal) from exc
             raise
 
     cfg_short = expected_cfg_digest.split(":")[-1][:12]
@@ -489,7 +494,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)
         if refusal:
-            raise RuntimeError(refusal) from exc
+            error = (RegistryAuthenticationError
+                     if exc.code in (401, 403) else RuntimeError)
+            raise error(refusal) from exc
         raise
 
     manifest_media = manifest.get("mediaType") or OCI_MANIFEST_MEDIA
@@ -503,7 +510,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)
         if refusal:
-            raise RuntimeError(refusal) from exc
+            error = (RegistryAuthenticationError
+                     if exc.code in (401, 403) else RuntimeError)
+            raise error(refusal) from exc
         raise
     bytes_uploaded += len(manifest_bytes)
 

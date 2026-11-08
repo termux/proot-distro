@@ -27,7 +27,7 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
 - `integration/` — the public mutation API and real `command_*` pipelines
   driven with
   `types.SimpleNamespace` args, against the sandboxed runtime tree
-  (API + CLI install / backup→restore / build→install / copy / sync / rename / reset /
+  (API + CLI install / backup→restore / build→install / image removal / cache cleanup / copy / sync / rename / reset /
   clear-cache / CLI dispatch / `login --get-proot-cmd`), and pull / push
   authentication end to end against `_registry.py` (below).
 - `live/` — opt-in smoke tests behind `@pytest.mark.live`, skipped unless
