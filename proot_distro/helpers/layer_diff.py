@@ -410,7 +410,7 @@ def _make_progress_callback(total_size):
         return (lambda _done: None), (lambda: None)
 
     def _show(done):
-        draw_bytes_bar(done, total_size, noun="packed")
+        draw_bytes_bar(done, total_size, noun="packed", phase="layer-pack")
 
     return _show, clear_bar
 

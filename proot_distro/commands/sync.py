@@ -158,7 +158,10 @@ class _Ctx:
         # Suppress the bar in verbose mode: per-file log lines already
         # provide feedback and the bar would flicker between each line.
         if not self.verbose:
-            draw_count_bar(self.done, self.total, unit="files")
+            draw_count_bar(
+                self.done, self.total, unit="files", phase="sync",
+                resource=self.dest_spec,
+            )
 
 
 def _rel(rel, name):

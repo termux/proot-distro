@@ -58,17 +58,23 @@ def test_progress_active_false_without_tty():
 def test_structured_progress_capture_works_without_tty(capsys):
     events = []
     with progress.capture_progress_events(
-        lambda message, current, total, unit: events.append(
-            (message, current, total, unit)
+        lambda message, current, total, unit, phase, resource: events.append(
+            (message, current, total, unit, phase, resource)
         )
     ):
         assert progress.progress_active() is True
-        progress.draw_bytes_bar(25, 100, label="Downloading")
-        progress.draw_count_bar(3, 10, label="Copying", unit="files")
+        progress.draw_bytes_bar(
+            25, 100, label="Downloading", phase="download",
+            resource="sha256:abc",
+        )
+        progress.draw_count_bar(
+            3, 10, label="Copying", unit="files", phase="copy",
+            resource="box:/tmp",
+        )
         progress.clear_bar()
 
     assert events == [
-        ("Downloading", 25, 100, "bytes"),
-        ("Copying", 3, 10, "files"),
+        ("Downloading", 25, 100, "bytes", "download", "sha256:abc"),
+        ("Copying", 3, 10, "files", "copy", "box:/tmp"),
     ]
     assert capsys.readouterr() == ("", "")

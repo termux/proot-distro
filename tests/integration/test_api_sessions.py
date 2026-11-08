@@ -126,6 +126,8 @@ def test_foreground_setup_warnings_stream_as_events(
         event.operation == "start"
         and event.kind == EventKind.WARNING
         and "overlaps" in event.message
+        and event.phase == "session-setup"
+        and event.resource == "warning-box"
         for event in events
     )
 

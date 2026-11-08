@@ -40,9 +40,10 @@ class OperationEvent:
 
     Event messages are intended for display and are not a machine-readable
     error interface. Failures are represented by the documented exception
-    classes instead. ``phase`` groups related progress or output records;
+    classes instead. ``phase`` is a machine-readable operation stage;
     ``resource`` optionally identifies the image, layer, path, or other object
-    the producer is processing.
+    the producer is processing. Either may be absent when no useful context is
+    available.
     """
 
     operation: str

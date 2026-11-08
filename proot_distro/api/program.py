@@ -433,13 +433,21 @@ def _read_session_startup(
                 raise ValueError
             if not isinstance(message, str):
                 raise TypeError
+            phase = event.get("phase")
+            resource = event.get("resource")
+            if phase is not None and not isinstance(phase, str):
+                raise TypeError
+            if resource is not None and not isinstance(resource, str):
+                raise TypeError
         except (KeyError, TypeError, ValueError, UnicodeDecodeError):
             raise OperationError(
                 "session worker returned an invalid setup status.",
                 operation=operation,
             ) from None
         if event_handler is not None:
-            event_handler(OperationEvent(operation, kind, message))
+            event_handler(OperationEvent(
+                operation, kind, message, phase=phase, resource=resource,
+            ))
 
     while True:
         if cancel_event is not None and cancel_event.is_set():
@@ -697,6 +705,7 @@ def _communicate_with_channels(
     credential_sock=None,
     credential_provider=None,
     build_output_fd=None,
+    build_output_resource=None,
 ):
     """Drain process pipes while serving live channels in the caller thread."""
     result = {}
@@ -777,6 +786,7 @@ def _communicate_with_channels(
                         event_handler(OperationEvent(
                             operation, EventKind.INFO, message,
                             phase="build-output",
+                            resource=build_output_resource,
                         ))
                     os.close(build_output_fd)
                     build_output_open = False
@@ -786,6 +796,7 @@ def _communicate_with_channels(
                         event_handler(OperationEvent(
                             operation, EventKind.INFO, message,
                             phase="build-output",
+                            resource=build_output_resource,
                         ))
                 else:
                     build_decoder.decode(chunk)
@@ -1044,6 +1055,15 @@ def _run_worker(operation: str, options: dict,
     pump_threads, stream_errors, stream_counts = _start_stream_pumps(
         proc, parent_inputs, parent_outputs, operation
     )
+    build_output_resource = None
+    if operation == "build":
+        tags = options.get("tags")
+        if isinstance(tags, list) and tags:
+            build_output_resource = tags[0]
+        else:
+            build_output_resource = (
+                options.get("install_as") or options.get("path")
+            )
     try:
         stdout, stderr = _communicate_with_channels(
             proc,
@@ -1054,6 +1074,7 @@ def _run_worker(operation: str, options: dict,
             credential_sock=parent_credentials,
             credential_provider=credential_provider,
             build_output_fd=build_output_read,
+            build_output_resource=build_output_resource,
         )
     except KeyboardInterrupt:
         raise
@@ -1105,9 +1126,14 @@ class _OperationContext:
     credentials: Optional[RegistryCredentials]
     credential_provider: Optional[CredentialProvider]
 
-    def event(self, operation: str, kind: EventKind, message: str) -> None:
+    def event(
+        self, operation: str, kind: EventKind, message: str, *,
+        phase: Optional[str] = None, resource: Optional[str] = None,
+    ) -> None:
         if self.event_handler is not None:
-            self.event_handler(OperationEvent(operation, kind, message))
+            self.event_handler(OperationEvent(
+                operation, kind, message, phase=phase, resource=resource,
+            ))
 
     def worker(
         self, operation: str, options: dict, *,
@@ -1211,8 +1237,13 @@ class ProotDistro:
         """The immutable runtime configuration used by this instance."""
         return self._context.config
 
-    def _event(self, operation: str, kind: EventKind, message: str) -> None:
-        self._context.event(operation, kind, message)
+    def _event(
+        self, operation: str, kind: EventKind, message: str, *,
+        phase: Optional[str] = None, resource: Optional[str] = None,
+    ) -> None:
+        self._context.event(
+            operation, kind, message, phase=phase, resource=resource,
+        )
 
     def list_containers(self) -> Tuple[ContainerInfo, ...]:
         """Return installed containers sorted by name."""
@@ -2542,7 +2573,10 @@ class ProotDistro:
             )
 
         def on_retry(message: str) -> None:
-            self._event("search", EventKind.RETRY, message)
+            self._event(
+                "search", EventKind.RETRY, message,
+                phase="network", resource=normalized,
+            )
 
         try:
             records, total = search_images(

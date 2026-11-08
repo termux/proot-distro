@@ -290,7 +290,9 @@ def _extract_stream(raw_fh, total_size, rootfs_fd, *, strip,
                     deferred_links=deferred_links,
                     deferred_dirs=deferred_dirs,
                 )
-                draw_bytes_bar(counter.count, total_size)
+                draw_bytes_bar(
+                    counter.count, total_size, phase="extract",
+                )
 
         # All regular files written; now copy hard links. Both endpoints
         # are re-resolved here (not at defer time) so a symlink planted

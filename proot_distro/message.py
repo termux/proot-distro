@@ -177,7 +177,7 @@ _event_sink = ContextVar("proot_distro_message_event_sink", default=None)
 
 @contextmanager
 def capture_log_events(sink):
-    """Route structured log helpers to *sink(kind, text)* temporarily.
+    """Route logs to *sink(kind, text, phase, resource)* temporarily.
 
     This is internal plumbing for the programmatic API worker. Plain msg()
     output is deliberately not captured: it contains CLI layout and command
@@ -190,11 +190,13 @@ def capture_log_events(sink):
         _event_sink.reset(token)
 
 
-def _emit_event(kind: str, text: str) -> bool:
+def _emit_event(
+    kind: str, text: str, *, phase=None, resource=None,
+) -> bool:
     sink = _event_sink.get()
     if sink is None:
         return False
-    sink(kind, text)
+    sink(kind, text, phase, resource)
     return True
 
 
@@ -240,6 +242,15 @@ def msg(*args):
 def log_info(text: str):
     """Emit a `[*] text` info line. No-op under --quiet."""
     if _emit_event("info", text):
+        return
+    if _quiet:
+        return
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
+
+
+def log_retry(text: str, *, resource=None):
+    """Emit a retry notice, retaining the CLI's ordinary info styling."""
+    if _emit_event("retry", text, phase="network", resource=resource):
         return
     if _quiet:
         return

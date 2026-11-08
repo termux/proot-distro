@@ -595,7 +595,10 @@ def _run_backup(
 
     def _draw_bar() -> None:
         nonlocal _last_shown
-        draw_bytes_bar(done_size, total_size)
+        draw_bytes_bar(
+            done_size, total_size, phase="archive",
+            resource=container_name,
+        )
         _last_shown = done_size
 
     def _on_read(n: int) -> None:

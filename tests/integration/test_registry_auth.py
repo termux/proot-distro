@@ -593,6 +593,8 @@ def test_api_push_uses_explicit_credentials(registry, builders, monkeypatch):
         event.kind == EventKind.PROGRESS
         and event.operation == "push"
         and event.unit == "bytes"
+        and event.phase == "upload"
+        and event.resource.startswith("sha256:")
         for event in events
     )
     _assert_credentials_in_place(registry)

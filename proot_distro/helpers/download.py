@@ -49,7 +49,7 @@ import urllib.request
 
 from proot_distro.atomic import atomic_write
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
-from proot_distro.message import msg, log_info, log_error, quote_path
+from proot_distro.message import msg, log_info, log_error, log_retry, quote_path
 from proot_distro.operation_errors import NetworkFailure
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
@@ -598,7 +598,7 @@ _DEFAULT_RETRY_REPORTER = object()
 
 def retry_http(operation, *, what: str, max_retries: int = 5,
                retry_delay: int = 5,
-               on_retry=_DEFAULT_RETRY_REPORTER):
+               on_retry=_DEFAULT_RETRY_REPORTER, resource=None):
     """Run *operation* (a zero-arg callable performing one HTTP request),
     retrying transient failures with a delay and a logged notice.
 
@@ -613,7 +613,8 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
     429 or 503 when that is longer -- is_retryable_http_error has already
     refused one past MAX_RETRY_AFTER, and the wait is held to it anyway.
     By default retry notices use the CLI logger. Pass ``None`` to suppress
-    them or a callable to receive each notice programmatically.
+    them or a callable to receive each notice programmatically. *resource* is
+    attached only to structured default-logger events.
     """
     for attempt in range(max_retries):
         try:
@@ -635,9 +636,10 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
                 f"{what}: attempt {attempt + 1}/{max_retries} failed "
                 f"({exc}); retrying in {delay}s..."
             )
-            reporter = log_info if on_retry is _DEFAULT_RETRY_REPORTER else on_retry
-            if reporter is not None:
-                reporter(notice)
+            if on_retry is _DEFAULT_RETRY_REPORTER:
+                log_retry(notice, resource=resource)
+            elif on_retry is not None:
+                on_retry(notice)
             time.sleep(delay)
 
 
@@ -650,7 +652,9 @@ def sha256_file(path: str) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
             processed += len(chunk)
-            draw_bytes_bar(processed, total, noun="processed")
+            draw_bytes_bar(
+                processed, total, noun="processed", phase="verify",
+            )
     clear_bar()
     return h.hexdigest()
 
@@ -669,10 +673,19 @@ def download_file(
     """
     opener = http_opener(insecure=insecure)
     try:
-        host = urllib.parse.urlsplit(url).netloc or url
+        parsed_url = urllib.parse.urlsplit(url)
+        host = parsed_url.netloc or url
+        event_resource = urllib.parse.urlunsplit((
+            parsed_url.scheme,
+            parsed_url.netloc.rsplit("@", 1)[-1],
+            parsed_url.path,
+            "",
+            "",
+        ))
     except ValueError:
         # Not a URL at all; the request below says so, inside the net.
         host = url
+        event_resource = None
 
     def _attempt():
         req = new_request(
@@ -688,7 +701,10 @@ def download_file(
                         break
                     fh.write(chunk)
                     downloaded += len(chunk)
-                    draw_bytes_bar(downloaded, total, noun="downloaded")
+                    draw_bytes_bar(
+                        downloaded, total, noun="downloaded",
+                        phase="download",
+                    )
                 # Inside atomic_write, so a short answer takes the
                 # temporary with it instead of publishing part of an
                 # archive as the whole of one.
@@ -698,7 +714,8 @@ def download_file(
 
     try:
         retry_http(_attempt, what=f"Downloading {url}",
-                   max_retries=max_retries, retry_delay=retry_delay)
+                   max_retries=max_retries, retry_delay=retry_delay,
+                   resource=event_resource)
     except KeyboardInterrupt:
         clear_bar()
         raise

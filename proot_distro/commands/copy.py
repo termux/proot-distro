@@ -161,7 +161,9 @@ def _copy_tree_pinned(src_pin, dest_pin, verbose, dest_display, *,
                 if verbose:
                     log_info(f"Copying: '{shown(rel)}'")
                 elif total:
-                    draw_count_bar(done[0], total, unit="entries")
+                    draw_count_bar(
+                        done[0], total, unit="entries", phase="copy",
+                    )
 
             def on_skip(rel):
                 done[0] += 1

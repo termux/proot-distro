@@ -61,18 +61,22 @@ def test_log_event_capture_is_structured_and_context_local(capsys):
     captured = []
     message.set_quiet(True)
     with message.capture_log_events(
-        lambda kind, text: captured.append((kind, text))
+        lambda kind, text, phase, resource: captured.append(
+            (kind, text, phase, resource)
+        )
     ):
         message.log_info("phase")
+        message.log_retry("try again", resource="sha256:abc")
         message.warn("careful")
         message.log_error("failed")
         message.crit_error("fatal")
 
     assert captured == [
-        ("info", "phase"),
-        ("warning", "careful"),
-        ("error", "failed"),
-        ("error", "fatal"),
+        ("info", "phase", None, None),
+        ("retry", "try again", "network", "sha256:abc"),
+        ("warning", "careful", None, None),
+        ("error", "failed", None, None),
+        ("error", "fatal", None, None),
     ]
     assert capsys.readouterr() == ("", "")
 

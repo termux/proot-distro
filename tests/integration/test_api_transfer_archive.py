@@ -49,7 +49,9 @@ def test_recursive_copy_emits_progress(tmp_path, builders):
 
     assert any(event.kind == EventKind.PROGRESS for event in events)
     assert any(
-        event.kind == EventKind.PROGRESS and event.phase == event.message
+        event.kind == EventKind.PROGRESS
+        and event.phase == "copy"
+        and event.resource == "box:/tree"
         for event in events
     )
     assert open(os.path.join(container_rootfs("box"), "tree", "a")).read() == "a"

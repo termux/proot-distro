@@ -135,7 +135,9 @@ def _manifest_body(
         require_complete_body(len(body), declared, f"Manifest for '{repo}'")
         return body, ct
 
-    body, ct = retry_http(_attempt, what=f"Fetching manifest {ref}")
+    body, ct = retry_http(
+        _attempt, what=f"Fetching manifest {ref}", resource=ref,
+    )
     # A reference containing ':' is a digest, not a tag: the registry's
     # answer is content-addressed, so it has to hash to what we asked
     # for. This is the only check standing between a hostile mirror (or
@@ -348,7 +350,9 @@ def _download_config(
         require_complete_body(len(data), declared, "Image config blob")
         return data
 
-    body = retry_http(_attempt, what="Fetching image config")
+    body = retry_http(
+        _attempt, what="Fetching image config", resource=cfg_digest,
+    )
     return require_data_digest(body, cfg_digest, what="Image config blob")
 
 

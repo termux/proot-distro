@@ -497,9 +497,15 @@ def command_restore(args):
             # handed: a member named with ESC repaints the terminal.
             log_info(f"Extracting: '{quote_path(member_name)}'")
         if counter is not None and total_size:
-            draw_bytes_bar(counter.count, total_size)
+            draw_bytes_bar(
+                counter.count, total_size, phase="extract",
+                resource=archive,
+            )
         else:
-            draw_bytes_bar(done_size, 0, noun="extracted")
+            draw_bytes_bar(
+                done_size, 0, noun="extracted", phase="extract",
+                resource=archive,
+            )
 
     def _check_bare_root(member_name: str) -> bool:
         """Return True if this member has no real subdirectory (reject)."""

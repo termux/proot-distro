@@ -55,7 +55,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
 | `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context. |
-| `api/_worker.py` | One-shot child executor that applies per-instance paths and isolates CLI-oriented process control. Not a daemon or public protocol. |
+| `api/_worker.py` | One-shot child executor that applies per-instance paths, adds safe default event resources, and isolates CLI-oriented process control. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
 
@@ -118,10 +118,10 @@ Roughly bottom-up. Higher entries import lower ones.
 | Module | Role |
 | --- | --- |
 | `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. |
-| `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, API event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
+| `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
 | `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, and unsupported failures; workers map them to public API exceptions while CLI catches remain unchanged. |
 | `names.py` | The one container-name rule. |
-| `progress.py` | Shared stderr progress bar and structured API progress routing. |
+| `progress.py` | Shared stderr progress bar and structured API progress routing with explicit phase/resource metadata. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |
 | `dirfd.py` | `openat(2)`-based file operations: every call takes `(dir_fd, name)` and opens with `O_NOFOLLOW`. Also copy, remove, and tree walks that hold one fd per level. |
 | `statedir.py` | Walks down from a trust root (`RUNTIME_DIR`, `BASE_CACHE_DIR`) one `O_NOFOLLOW` step at a time and returns the descriptor. |

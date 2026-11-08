@@ -125,6 +125,7 @@ def test_build_run_output_streams_as_live_events(tmp_path):
     assert any(
         event.operation == "build"
         and event.phase == "build-output"
+        and event.resource == "event-output:1"
         and "streamed RUN output" in event.message
         for event in events
     )

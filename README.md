@@ -521,9 +521,16 @@ Pass `event_handler` to receive immutable `OperationEvent` records. Event kinds
 are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are intended for
 display; applications should use exception types and result models for control
 flow. Progress events also provide `current`, `total`, and `unit` when those
-values are known. `phase` identifies a progress phase or special stream such
-as `build-output`; `resource` identifies an affected object when the producer
-has one.
+values are known. `phase` is a machine-readable stage name. Current values are
+`network`, `verify`, `download`, `layer-download`, `extract`, `copy`, `sync`,
+`archive`, `layer-pack`, `upload`, `build-output`, and `session-setup`.
+Applications must allow additional phase names in future releases.
+
+`resource` identifies the primary container, image, layer digest, path, search
+query, or other object when one is known. A more specific producer resource,
+such as a layer digest, takes precedence over the operation's default subject.
+URL resources exclude user information, queries, and fragments so credentials
+and access tokens are not exposed through event metadata.
 
 Foreground session setup events are streamed through the close-on-exec startup
 handshake, so warnings arrive before the guest process starts.
@@ -541,8 +548,10 @@ pd = ProotDistro(event_handler=show_event)
 Worker-backed operations deliver events live over a private bounded channel;
 they are no longer collected until completion. Dockerfile `RUN` output arrives
 as `INFO` events with `phase="build-output"`, and registry upload progress
-arrives as `PROGRESS` events. Callbacks run synchronously in the thread that
-called the API method and apply backpressure, so they should return promptly.
+arrives as `PROGRESS` events. Retried network requests use `RETRY` with
+`phase="network"`; applications do not need to parse retry message text.
+Callbacks run synchronously in the thread that called the API method and apply
+backpressure, so they should return promptly.
 
 If an event callback raises, its original exception propagates and the worker
 is stopped. The operation may already have changed state or written part of a

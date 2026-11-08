@@ -46,6 +46,7 @@ from proot_distro.api import (
     UnsupportedOperationError,
 )
 from proot_distro.api import program
+from proot_distro.api import _worker
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import canonical_json
 
@@ -304,7 +305,10 @@ def test_search_forwards_retry_as_event(monkeypatch):
     result = ProotDistro(event_handler=events.append).search("none")
 
     assert result.hits == ()
-    assert events == [OperationEvent("search", EventKind.RETRY, "retry notice")]
+    assert events == [OperationEvent(
+        "search", EventKind.RETRY, "retry notice",
+        phase="network", resource="none",
+    )]
 
 
 def test_search_suppresses_retry_without_handler(monkeypatch):
@@ -517,6 +521,22 @@ def test_worker_event_frame_rejects_invalid_context():
         program._operation_event("copy", b'{"kind":"info","message":1}')
 
     assert exc.value.operation == "copy"
+
+
+def test_worker_event_resource_strips_url_secrets():
+    resource = _worker._default_event_resource("install", {
+        "source": "https://user:secret@example.test/rootfs.tar?token=hidden#x",
+        "name": None,
+    })
+
+    assert resource == "https://example.test/rootfs.tar"
+
+
+def test_worker_event_resource_prefers_public_operation_subject():
+    assert _worker._default_event_resource("copy", {
+        "source": "/host/source",
+        "destination": "box:/srv/data",
+    }) == "box:/srv/data"
 
 
 def test_session_process_falls_back_when_registry_has_no_record():

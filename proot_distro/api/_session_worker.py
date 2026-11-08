@@ -110,11 +110,16 @@ def main() -> int:
         os.umask(0o022)
         set_quiet(True)
 
-        def record(kind, text):
+        def record(kind, text, phase, resource):
             logs.append((kind, text))
             if kind in ("info", "warning"):
                 _write_frame(status_fd, {
-                    "event": {"kind": kind, "message": text},
+                    "event": {
+                        "kind": kind,
+                        "message": text,
+                        "phase": phase or "session-setup",
+                        "resource": resource or request.get("container"),
+                    },
                 })
 
         with capture_log_events(record):

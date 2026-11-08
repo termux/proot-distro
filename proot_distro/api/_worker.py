@@ -35,6 +35,7 @@ import json
 import os
 import socket
 import sys
+import urllib.parse
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -151,6 +152,54 @@ def _write_event(fd: int, event: dict) -> None:
     while data:
         written = os.write(fd, data)
         data = data[written:]
+
+
+def _safe_source_resource(source):
+    """Return a display-safe source without URL credentials or queries."""
+    if not isinstance(source, str) or not source:
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(source)
+    except ValueError:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return source
+    authority = parsed.netloc.rsplit("@", 1)[-1]
+    return urllib.parse.urlunsplit((
+        parsed.scheme, authority, parsed.path, "", "",
+    ))
+
+
+def _default_event_resource(operation: str, options: dict):
+    """Identify the operation's primary subject for otherwise bare events."""
+    if operation == "install":
+        return options.get("name") or _safe_source_resource(
+            options.get("source")
+        )
+    if operation in ("remove_container", "reset_container"):
+        return options.get("name")
+    if operation == "rename_container":
+        return options.get("new_name")
+    if operation in ("copy", "sync"):
+        return options.get("destination")
+    if operation == "backup":
+        return options.get("name")
+    if operation == "restore":
+        return options.get("archive")
+    if operation == "build":
+        tags = options.get("tags")
+        if isinstance(tags, list) and tags:
+            return tags[0]
+        return options.get("install_as") or options.get("path")
+    if operation == "push":
+        return options.get("image_ref")
+    if operation == "remove_image":
+        return options.get("identifier")
+    if operation in ("start_detached", "inspect_session"):
+        return options.get("container")
+    if operation == "kill_session":
+        return options.get("target")
+    return None
 
 
 def _enable_structured_locks() -> None:
@@ -757,12 +806,15 @@ def main() -> int:
     events = []
     errors = []
     operation = ""
+    event_resource = None
     event_fd = _channel_fd_from_env("_PROOT_DISTRO_EVENT_FD")
 
-    def record(kind, text):
+    def record(kind, text, phase, resource):
         event = {
             "kind": "warning" if kind == "error" else kind,
             "message": text,
+            "phase": phase,
+            "resource": resource or event_resource,
         }
         if event_fd is None:
             events.append(event)
@@ -771,21 +823,26 @@ def main() -> int:
         if kind == "error":
             errors.append(text)
 
-    def record_progress(message, current, total, unit):
+    def record_progress(
+        message, current, total, unit, phase, resource,
+    ):
         event = {
             "kind": "progress",
             "message": message,
             "current": current,
             "total": total,
             "unit": unit,
-            "phase": message,
+            "phase": phase,
+            "resource": resource or event_resource,
         }
         if event_fd is None:
             # A directly-invoked worker has no live event consumer. Coalesce
             # adjacent updates so its fallback result remains bounded.
             if (events and events[-1].get("kind") == "progress"
                     and events[-1].get("message") == message
-                    and events[-1].get("unit") == unit):
+                    and events[-1].get("unit") == unit
+                    and events[-1].get("phase") == phase
+                    and events[-1].get("resource") == event["resource"]):
                 events[-1] = event
             else:
                 events.append(event)
@@ -794,6 +851,7 @@ def main() -> int:
 
     try:
         operation, options = _read_request()
+        event_resource = _default_event_resource(operation, options)
         _enable_structured_locks()
         with capture_log_events(record):
             with capture_progress_events(record_progress):
@@ -855,7 +913,7 @@ def main() -> int:
     for event in events:
         if event["kind"] == "error":
             event = {**event, "kind": "warning"}
-        if event["kind"] in ("info", "warning", "progress"):
+        if event["kind"] in ("info", "warning", "progress", "retry"):
             result["_events"].append(event)
     _write_result(result)
     return 0

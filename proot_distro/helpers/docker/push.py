@@ -141,7 +141,9 @@ def _blob_exists(
             return 200 <= resp.status < 300
 
     try:
-        return retry_http(_attempt, what=f"Checking {digest[:19]}")
+        return retry_http(
+            _attempt, what=f"Checking {digest[:19]}", resource=digest,
+        )
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False
@@ -151,11 +153,12 @@ def _blob_exists(
 class _ProgressReader:
     """File wrapper that draws an upload progress bar as read() runs."""
 
-    def __init__(self, fh, total: int, label: str):
+    def __init__(self, fh, total: int, label: str, resource: str):
         self._fh = fh
         self.total = total
         self.sent = 0
         self._label = label
+        self._resource = resource
         self._progress = progress_active()
         self._last_shown = 0
 
@@ -166,7 +169,8 @@ class _ProgressReader:
                                or len(data) == 0):
             self._last_shown = self.sent
             draw_bytes_bar(
-                self.sent, self.total, label=self._label, noun="uploaded"
+                self.sent, self.total, label=self._label, noun="uploaded",
+                phase="upload", resource=self._resource,
             )
         return data
 
@@ -217,7 +221,9 @@ def _upload_blob_bytes(
                     f"Blob upload failed for {digest}: HTTP {resp.status}"
                 )
 
-    retry_http(_attempt, what=f"Uploading {digest[:19]}")
+    retry_http(
+        _attempt, what=f"Uploading {digest[:19]}", resource=digest,
+    )
 
 
 def _upload_blob_fd(
@@ -252,7 +258,9 @@ def _upload_blob_fd(
         try:
             os.lseek(src_fd, 0, os.SEEK_SET)
             with open(src_fd, "rb", closefd=False) as fh:
-                reader = _ProgressReader(fh, size, label or digest[:19])
+                reader = _ProgressReader(
+                    fh, size, label or digest[:19], digest,
+                )
                 put_req = new_request(
                     put_url,
                     data=reader,
@@ -273,7 +281,9 @@ def _upload_blob_fd(
         finally:
             clear_bar()
 
-    retry_http(_attempt, what=f"Uploading {label or digest[:19]}")
+    retry_http(
+        _attempt, what=f"Uploading {label or digest[:19]}", resource=digest,
+    )
 
 
 def _put_manifest(
@@ -300,7 +310,9 @@ def _put_manifest(
                 )
             return resp.headers.get("Docker-Content-Digest", "")
 
-    return retry_http(_attempt, what=f"Uploading manifest {reference}")
+    return retry_http(
+        _attempt, what=f"Uploading manifest {reference}", resource=reference,
+    )
 
 
 def _refusal_msg(image_ref: str, ref, exc: urllib.error.HTTPError) -> str:
