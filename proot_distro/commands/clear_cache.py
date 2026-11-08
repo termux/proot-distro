@@ -86,6 +86,7 @@ from proot_distro import dirfd, statedir
 from proot_distro.message import (
     crit_error, log_info, log_error, quote_error, quote_path,
 )
+from proot_distro.operation_errors import BusyFailure, IntegrityFailure
 from proot_distro.progress import fmt_size
 
 
@@ -297,7 +298,8 @@ def command_clear_cache(args) -> None:
 # Layer sweep (--orphan / --build-cache)
 # ---------------------------------------------------------------------------
 
-def _referenced_blob_names(with_build_index: bool) -> set:
+def _referenced_blob_names(with_build_index: bool, *,
+                           raise_errors: bool = False) -> set:
     """Return the layer-cache file names that are still referenced.
 
     The manifest cache is always a reference source; the build index is
@@ -313,6 +315,10 @@ def _referenced_blob_names(with_build_index: bool) -> set:
             f"read, so the layers it holds cannot be identified. Nothing "
             f"was removed."
         )
+        if raise_errors:
+            raise IntegrityFailure(
+                f"cached image entry '{unreadable[0]}' cannot be read"
+            )
         sys.exit(1)
 
     if with_build_index:
@@ -324,6 +330,10 @@ def _referenced_blob_names(with_build_index: bool) -> set:
                 f"'{PROGRAM_NAME} clear-cache --build-cache' to drop the "
                 f"index and collect them."
             )
+            if raise_errors:
+                raise IntegrityFailure(
+                    "the build cache index cannot be read"
+                )
             sys.exit(1)
         digests |= build_digests
 
@@ -430,6 +440,10 @@ def _sweep_layers(args, drop_build_index: bool) -> None:
             f"not be read. Nothing was deleted; restore access to it and "
             f"try again."
         )
+        if getattr(args, "_api_raise_errors", False):
+            raise BusyFailure(
+                f"cannot determine cache lock state: {exc}"
+            ) from exc
         sys.exit(1)
     if busy:
         why = (
@@ -444,11 +458,18 @@ def _sweep_layers(args, drop_build_index: bool) -> None:
             f"another {PROGRAM_NAME} command is running{busy[0][1]}. "
             f"{why}; try again once it has finished."
         )
+        if getattr(args, "_api_raise_errors", False):
+            raise BusyFailure(
+                f"another {PROGRAM_NAME} command is running{busy[0][1]}"
+            )
         sys.exit(1)
 
     # Computed before anything is deleted, so a reference source that
     # cannot be read leaves the cache exactly as it was.
-    keep = _referenced_blob_names(with_build_index=not drop_build_index)
+    keep = _referenced_blob_names(
+        with_build_index=not drop_build_index,
+        raise_errors=bool(getattr(args, "_api_raise_errors", False)),
+    )
 
     index_removed, reclaimed = False, 0
     if drop_build_index:

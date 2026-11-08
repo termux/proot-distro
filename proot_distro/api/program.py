@@ -54,7 +54,9 @@ from proot_distro.helpers.docker.refs import (
 )
 from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
-from proot_distro.paths import installed_container_names, read_container_manifest
+from proot_distro.paths import (
+    container_from_spec, installed_container_names, read_container_manifest,
+)
 from proot_distro.session import active_sessions
 
 from proot_distro.api.errors import (
@@ -818,6 +820,28 @@ class ProotDistro:
         destination = _path_argument(
             destination, operation=operation, argument="destination"
         )
+        source_container = container_from_spec(source)
+        destination_container = container_from_spec(destination)
+        if source_container or destination_container:
+            installed = {item.name for item in self.list_containers()}
+            for role, container in (
+                ("source", source_container),
+                ("destination", destination_container),
+            ):
+                if container and container not in installed:
+                    raise NotFoundError(
+                        f"{role} container '{container}' is not installed.",
+                        operation=operation,
+                    )
+        if source_container is None:
+            source_path = os.path.expanduser(source)
+            exists = (os.path.lexists(source_path) if operation == "move"
+                      else os.path.exists(source_path))
+            if not exists:
+                raise NotFoundError(
+                    f"source path '{source}' does not exist.",
+                    operation=operation,
+                )
         result = self._context.worker(operation, {
             "source": source,
             "destination": destination,

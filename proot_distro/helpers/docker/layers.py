@@ -29,6 +29,7 @@ import os
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.progress import clear_bar, draw_bytes_bar
+from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.helpers.download import (
     declared_length, new_request, require_complete_body, retry_http,
 )
@@ -104,7 +105,7 @@ def download_blob(
                     )
                 actual_hex = hasher.hexdigest()
                 if actual_hex != expected_hex.lower():
-                    raise RuntimeError(
+                    raise IntegrityFailure(
                         f"Layer integrity check failed for digest '{digest}': "
                         f"expected {expected_hex}, got {actual_hex}."
                     )

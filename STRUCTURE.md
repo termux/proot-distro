@@ -119,6 +119,7 @@ Roughly bottom-up. Higher entries import lower ones.
 | --- | --- |
 | `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. |
 | `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, API event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
+| `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, and unsupported failures; workers map them to public API exceptions while CLI catches remain unchanged. |
 | `names.py` | The one container-name rule. |
 | `progress.py` | Shared stderr progress bar and structured API progress routing. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |

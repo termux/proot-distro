@@ -50,6 +50,7 @@ import urllib.request
 from proot_distro.atomic import atomic_write
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
 from proot_distro.message import msg, log_info, log_error, quote_path
+from proot_distro.operation_errors import NetworkFailure
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
@@ -707,7 +708,7 @@ def download_file(
         # one once retries are spent); translate them into a meaningful error
         # instead of leaking a raw SSL/HTTP error to the user.
         if isinstance(exc, RedirectRefused) and exc.plaintext:
-            raise RuntimeError(
+            raise NetworkFailure(
                 f"Cannot download {url}: {exc} If you trust this source "
                 f"and the network path to it, re-run with "
                 f"'--allow-insecure' to follow the redirect."
@@ -715,10 +716,10 @@ def download_file(
         if isinstance(exc, urllib.error.URLError):
             # An untrusted/expired/self-signed certificate.
             if not insecure and is_cert_verification_error(exc):
-                raise RuntimeError(certificate_error_msg(host)) from exc
+                raise NetworkFailure(certificate_error_msg(host)) from exc
             # A plaintext-HTTP reply to an https:// URL.
             if is_plaintext_http_tls_error(exc):
-                raise RuntimeError(
+                raise NetworkFailure(
                     f"The URL '{url}' uses HTTPS, but the server at "
                     f"'{host}' responded over plain HTTP (no TLS). If you "
                     f"trust this source, retry with the same URL using the "
@@ -728,7 +729,7 @@ def download_file(
             if (isinstance(exc, urllib.error.HTTPError)
                     and 400 <= exc.code < 500
                     and exc.code not in (408, 429)):
-                raise RuntimeError(
+                raise NetworkFailure(
                     f"Cannot download {url}: HTTP {exc.code} {exc.reason}"
                 ) from exc
-        raise RuntimeError(f"Cannot download {url}: {exc}") from exc
+        raise NetworkFailure(f"Cannot download {url}: {exc}") from exc

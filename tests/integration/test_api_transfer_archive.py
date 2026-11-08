@@ -5,10 +5,12 @@ import pytest
 from proot_distro.api import (
     AlreadyExistsError,
     BackupResult,
+    BusyError,
     EventKind,
     InvalidArgumentError,
     IntegrityError,
     NotFoundError,
+    UnsupportedOperationError,
     ProotDistro,
     RestoreResult,
     TransferResult,
@@ -122,6 +124,15 @@ def test_backup_refuses_existing_output(tmp_path, builders):
     assert archive.read_bytes() == b"keep"
 
 
+def test_backup_unsupported_extension_is_typed_error(tmp_path, builders):
+    builders.make_container("box")
+
+    with pytest.raises(UnsupportedOperationError) as exc:
+        ProotDistro().backup("box", tmp_path / "box.tar.lz4")
+
+    assert exc.value.operation == "backup"
+
+
 def test_restore_missing_archive_is_typed_error(tmp_path):
     with pytest.raises(NotFoundError) as exc:
         ProotDistro().restore(tmp_path / "missing.tar")
@@ -136,6 +147,32 @@ def test_restore_corrupt_archive_is_integrity_error(tmp_path):
         ProotDistro().restore(archive)
 
     assert exc.value.operation == "restore"
+
+
+def test_restore_busy_container_is_typed_error(tmp_path, builders):
+    from proot_distro.locking import ContainerLock
+
+    builders.make_container("restore-busy", files={"data": b"x"})
+    archive = tmp_path / "restore-busy.tar"
+    pd = ProotDistro()
+    pd.backup("restore-busy", archive)
+    lock = ContainerLock("restore-busy", exclusive=False, command="login")
+    assert lock.acquire()
+    try:
+        with pytest.raises(BusyError) as exc:
+            pd.restore(archive)
+    finally:
+        lock.release()
+    assert exc.value.operation == "restore"
+
+
+def test_transfer_missing_source_is_typed_error(tmp_path, builders):
+    builders.make_container("box")
+
+    with pytest.raises(NotFoundError) as exc:
+        ProotDistro().copy(tmp_path / "missing", "box:/missing")
+
+    assert exc.value.operation == "copy"
 
 
 @pytest.mark.parametrize("method,args,kwargs,operation", [

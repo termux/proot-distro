@@ -43,6 +43,7 @@ import tarfile
 from proot_distro.atomic import atomic_replace
 from proot_distro.compress import require_read_support
 from proot_distro.message import log_info
+from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.progress import clear_bar, progress_active
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER, DOCKER_TO_ARCH, apply_layer, layer_cache_path,
@@ -151,15 +152,19 @@ def _oci_open_member(tf, member_map, path):
     """Return a readable file object for one regular member of the archive."""
     member = member_map.get(path)
     if member is None:
-        raise RuntimeError(f"OCI archive is missing required file: {path}")
+        raise IntegrityFailure(f"OCI archive is missing required file: {path}")
     if not member.isreg():
         # Reject hardlinks and symlinks: Python's extractfile() follows them
         # within the archive, letting a crafted outer tar redirect a read to
         # an unrelated member (e.g. a layer blob used as index.json).
-        raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
+        raise IntegrityFailure(
+            f"OCI archive entry is not a regular file: {path}"
+        )
     fobj = tf.extractfile(member)
     if fobj is None:
-        raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
+        raise IntegrityFailure(
+            f"OCI archive entry is not a regular file: {path}"
+        )
     return fobj
 
 
@@ -177,7 +182,7 @@ def _oci_read_capped(tf, member_map, path) -> bytes:
     finally:
         fobj.close()
     if len(data) > _MAX_JSON_BYTES:
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"OCI archive entry '{path}' is larger than "
             f"{_MAX_JSON_BYTES} bytes; refusing to read it."
         )
@@ -196,12 +201,12 @@ def _oci_json_object(data: bytes, what: str) -> dict:
     try:
         payload = json.loads(data)
     except (ValueError, UnicodeDecodeError) as exc:
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"{what} is not valid JSON. The archive is corrupt or is not "
             f"an OCI image."
         ) from exc
     if not isinstance(payload, dict):
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"{what} is not a JSON object. The archive is corrupt or is "
             f"not an OCI image."
         )

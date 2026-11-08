@@ -8,6 +8,7 @@ from proot_distro.api import (
     BusyError,
     ContainerInfo,
     EventKind,
+    IntegrityError,
     InvalidArgumentError,
     NotFoundError,
     ProotDistro,
@@ -131,6 +132,20 @@ def test_install_existing_container_is_typed_error(tmp_path, builders):
 
     with pytest.raises(AlreadyExistsError) as exc:
         pd.install(archive, name="duplicate")
+
+    assert exc.value.operation == "install"
+
+
+def test_install_corrupt_oci_archive_is_integrity_error(tmp_path, builders):
+    archive = tmp_path / "corrupt.oci.tar"
+    builders.make_oci_archive(
+        archive,
+        [[{"name": "etc/file", "type": "file", "data": b"x"}]],
+        bad_index_digest="sha256:" + "00" * 32,
+    )
+
+    with pytest.raises(IntegrityError) as exc:
+        ProotDistro().install(archive, name="corrupt-oci")
 
     assert exc.value.operation == "install"
 

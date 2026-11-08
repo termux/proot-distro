@@ -1,4 +1,5 @@
 import os
+import json
 
 import pytest
 
@@ -6,13 +7,18 @@ from proot_distro.api import (
     AlreadyExistsError,
     BuildResult,
     CacheCleanupResult,
+    BusyError,
     EventKind,
     ImageRemovalResult,
+    IntegrityError,
     InvalidArgumentError,
     NotFoundError,
     ProotDistro,
 )
+from proot_distro.arch import get_device_cpu_arch
 from proot_distro.helpers.docker.cache import layer_cache_path
+from proot_distro.helpers.docker.cache import manifest_cache_path
+from proot_distro.constants import MANIFEST_CACHE_DIR
 from proot_distro.paths import container_rootfs
 
 
@@ -117,6 +123,49 @@ def test_build_refuses_existing_output_with_typed_error(tmp_path):
 
     assert exc.value.operation == "build"
     assert output.read_bytes() == b"keep"
+
+
+def test_push_corrupt_config_is_integrity_error(tmp_path):
+    context = _context(tmp_path)
+    pd = ProotDistro()
+    pd.build(context, tags=["integrity-api:1"])
+    architecture = get_device_cpu_arch()
+    path = manifest_cache_path("integrity-api:1", architecture)
+    with open(path) as fh:
+        cached = json.load(fh)
+    cached["image_config"]["config"]["Env"] = ["CHANGED=1"]
+    with open(path, "w") as fh:
+        json.dump(cached, fh)
+
+    with pytest.raises(IntegrityError) as exc:
+        pd.push("integrity-api:1", architecture=architecture)
+
+    assert exc.value.operation == "push"
+
+
+def test_orphan_cleanup_busy_lock_is_typed_error(builders):
+    from proot_distro.locking import BuildLock
+
+    lock = BuildLock("busy-cache:1", "x86_64", command="build")
+    assert lock.acquire()
+    try:
+        with pytest.raises(BusyError) as exc:
+            ProotDistro().clear_cache(orphan=True)
+    finally:
+        lock.release()
+
+    assert exc.value.operation == "clear_cache"
+
+
+def test_orphan_cleanup_unreadable_manifest_is_integrity_error():
+    path = os.path.join(MANIFEST_CACHE_DIR, "broken.json")
+    with open(path, "w") as fh:
+        fh.write("not json")
+
+    with pytest.raises(IntegrityError) as exc:
+        ProotDistro().clear_cache(orphan=True)
+
+    assert exc.value.operation == "clear_cache"
 
 
 @pytest.mark.parametrize("method,args,kwargs,operation", [

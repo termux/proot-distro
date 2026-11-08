@@ -44,6 +44,7 @@ import os
 import urllib.error
 
 from proot_distro.compress import ZSTD_AVAILABLE, unsupported_msg
+from proot_distro.operation_errors import NetworkFailure
 from proot_distro.message import log_info, log_error, warn
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.download import (
@@ -583,7 +584,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 log_error(f"{missing} of {len(layers)} layer(s) for "
                           f"'{image_ref}' ({arch}) are not in the local "
                           f"cache.")
-                raise RuntimeError(f"Network error: {net_err}") from net_err
+                raise NetworkFailure(f"Network error: {net_err}") from net_err
     else:
         try:
             manifest, auth, base, documents = _resolve_single_manifest(
@@ -619,7 +620,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                         f"on the registry."
                     ) from net_err
             log_error(f"No cached manifest found for '{image_ref}' ({arch}).")
-            raise RuntimeError(f"Network error: {net_err}") from net_err
+            raise NetworkFailure(f"Network error: {net_err}") from net_err
         if not ref.digest:
             image_config = _fetch_config_blob(
                 repo, cfg_digest, auth, base, insecure
@@ -694,7 +695,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                         raise RuntimeError(
                             rate_limited_msg(image_ref, ref, dl_err)
                         ) from dl_err
-                raise RuntimeError(f"Network error: {dl_err}") from dl_err
+                raise NetworkFailure(f"Network error: {dl_err}") from dl_err
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
         try:

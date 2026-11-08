@@ -259,6 +259,16 @@ def _backup(options: dict) -> dict:
 
     output = options["output"]
     compression = options.get("compression")
+    try:
+        inferred_compression = _compression_mode(output)
+    except ValueError as exc:
+        raise _WorkerFailure("unsupported", str(exc)) from exc
+    if compression == "zstd":
+        from proot_distro.compress import ZSTD_AVAILABLE, unavailable_msg
+        if not ZSTD_AVAILABLE:
+            raise _WorkerFailure(
+                "unsupported", unavailable_msg("compression type 'zstd'")
+            )
     from proot_distro.paths import container_is_installed
     if not container_is_installed(options["name"]):
         raise _WorkerFailure(
@@ -276,7 +286,7 @@ def _backup(options: dict) -> dict:
         quiet=True,
     ))
     if compression is None:
-        mode = _compression_mode(output)
+        mode = inferred_compression
         compression = {
             "": "none", "gz": "gzip", "bz2": "bzip2",
             "xz": "xz", "zst": "zstd",
@@ -451,6 +461,7 @@ def _clear_cache(options: dict) -> dict:
         build_cache=options.get("build_cache", False),
         verbose=False,
         quiet=True,
+        _api_raise_errors=True,
     ))
     after = _cache_size()
     return {"bytes_before": before, "bytes_after": after}
@@ -610,9 +621,26 @@ def main() -> int:
         from proot_distro.helpers.docker.transport import (
             RegistryAuthenticationError,
         )
+        from proot_distro.operation_errors import (
+            BusyFailure,
+            IntegrityFailure,
+            NetworkFailure,
+            NotFoundFailure,
+            UnsupportedFailure,
+        )
         if isinstance(exc, RegistryAuthenticationError):
             _write_error("authentication", quote_error(exc))
             return 1
+        for failure_type, kind in (
+            (BusyFailure, "busy"),
+            (IntegrityFailure, "integrity"),
+            (NetworkFailure, "network"),
+            (NotFoundFailure, "not_found"),
+            (UnsupportedFailure, "unsupported"),
+        ):
+            if isinstance(exc, failure_type):
+                _write_error(kind, quote_error(exc))
+                return 1
         from proot_distro.commands.copy import CopyPartialError
         from proot_distro.commands.sync import SyncPartialError
         if isinstance(exc, (CopyPartialError, SyncPartialError)):

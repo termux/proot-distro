@@ -68,6 +68,9 @@ from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import (
     C, msg, log_info, log_error, crit_error, quote_error, quote_path,
 )
+from proot_distro.operation_errors import (
+    BusyFailure, IntegrityFailure, UnsupportedFailure,
+)
 from proot_distro.progress import (
     ByteCounter, clear_bar, draw_bytes_bar, progress_active,
 )
@@ -518,6 +521,8 @@ def command_restore(args):
             subject = "the archive on stdin"
         if unsupported:
             crit_error(unsupported_msg(subject))
+            if getattr(args, "_api_raise_errors", False):
+                raise UnsupportedFailure(unsupported_msg(subject))
             sys.exit(1)
 
     raw_fh = None
@@ -577,6 +582,10 @@ def command_restore(args):
                     log_error(f"Cannot restore: provided file has invalid "
                               f"structure. Only archives created by "
                               f"'{PROGRAM_NAME} backup' are supported.")
+                    if getattr(args, "_api_raise_errors", False):
+                        raise IntegrityFailure(
+                            "backup archive has invalid structure"
+                        )
                     sys.exit(1)
 
                 container_name, parts = _dest_path(member.name)
@@ -598,13 +607,16 @@ def command_restore(args):
                         clear_bar()
                         detail = lock.blocked_detail()
                         if detail:
-                            log_error(f"Cannot restore: cannot lock "
-                                      f"container '{container_name}': "
-                                      f"{detail}")
+                            message = (f"Cannot restore: cannot lock "
+                                       f"container '{container_name}': "
+                                       f"{detail}")
                         else:
-                            log_error(f"Cannot restore: container "
-                                      f"'{container_name}' is busy"
-                                      f"{lock.holder_hint()}.")
+                            message = (f"Cannot restore: container "
+                                       f"'{container_name}' is busy"
+                                       f"{lock.holder_hint()}.")
+                        log_error(message)
+                        if getattr(args, "_api_raise_errors", False):
+                            raise BusyFailure(message)
                         sys.exit(1)
                     log_info(f"Destination: {restore_name}")
                 elif container_name != restore_name:
@@ -613,6 +625,10 @@ def command_restore(args):
                               f"one container ('{restore_name}' and "
                               f"'{container_name}'). Restore handles a single "
                               f"container at a time.")
+                    if getattr(args, "_api_raise_errors", False):
+                        raise IntegrityFailure(
+                            "backup archive contains more than one container"
+                        )
                     sys.exit(1)
 
                 # Non-rootfs members (only manifest.json in a real backup)
@@ -642,6 +658,10 @@ def command_restore(args):
                                 f"archives created by '{PROGRAM_NAME} "
                                 f"backup' are supported."
                             )
+                            if getattr(args, "_api_raise_errors", False):
+                                raise IntegrityFailure(
+                                    "backup manifest exceeds its size limit"
+                                )
                             sys.exit(1)
                         pending_manifest = (data, stat.S_IMODE(member.mode))
                         _on_entry(member.size, member.name)
@@ -721,6 +741,10 @@ def command_restore(args):
             log_error(f"Cannot restore: archive does not contain a "
                       f"container rootfs. Only archives created by "
                       f"'{PROGRAM_NAME} backup' are supported.")
+            if getattr(args, "_api_raise_errors", False):
+                raise IntegrityFailure(
+                    "backup archive does not contain a container rootfs"
+                )
             sys.exit(1)
 
         if not _rootfs_is_a_directory(root_fd):
@@ -734,6 +758,10 @@ def command_restore(args):
             log_error(f"Cannot restore: archive did not produce a valid "
                       f"container rootfs. Only archives created by "
                       f"'{PROGRAM_NAME} backup' are supported.")
+            if getattr(args, "_api_raise_errors", False):
+                raise IntegrityFailure(
+                    "backup archive did not produce a valid container rootfs"
+                )
             sys.exit(1)
 
         # Apply deferred directory modes now that all writes are done.
