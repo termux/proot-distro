@@ -81,9 +81,11 @@ from proot_distro.api.models import (
     SearchHit,
     SearchResult,
     SessionInfo,
+    SessionSignalResult,
     RestoreResult,
     TransferResult,
 )
+from proot_distro.api.process import SessionProcess
 
 
 EventHandler = Callable[[OperationEvent], None]
@@ -208,6 +210,56 @@ def _path_argument(value, *, operation: str, argument: str,
     if host_only or path_like:
         value = os.path.abspath(os.path.expanduser(value))
     return value
+
+
+def _string_argument(value, *, operation: str, argument: str,
+                     allow_none: bool = False, allow_empty: bool = False):
+    """Validate a string carried into a session argv or environment."""
+    if value is None and allow_none:
+        return None
+    if not isinstance(value, str) or (not value and not allow_empty):
+        suffix = " or None" if allow_none else ""
+        raise InvalidArgumentError(
+            f"{argument} must be a non-empty string{suffix}.",
+            operation=operation,
+        )
+    if "\0" in value:
+        raise InvalidArgumentError(
+            f"{argument} must not contain a NUL byte.", operation=operation
+        )
+    try:
+        os.fsencode(value)
+    except UnicodeError:
+        raise InvalidArgumentError(
+            f"{argument} cannot be represented by the host.",
+            operation=operation,
+        ) from None
+    return value
+
+
+def _string_list(value, *, operation: str, argument: str) -> Tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raise InvalidArgumentError(
+            f"{argument} must be an iterable of strings, not one string.",
+            operation=operation,
+        )
+    try:
+        items = tuple(value)
+    except TypeError:
+        raise InvalidArgumentError(
+            f"{argument} must be an iterable of strings.", operation=operation
+        ) from None
+    return tuple(_string_argument(
+        item, operation=operation, argument=f"{argument} item"
+    ) for item in items)
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    while data:
+        written = os.write(fd, data)
+        data = data[written:]
 
 
 def _worker_environment(config: RuntimeConfig) -> dict:
@@ -1101,6 +1153,361 @@ class ProotDistro:
         mode = "build_cache" if build_cache else ("orphan" if orphan else "all")
         return CacheCleanupResult(
             mode, before, after, max(0, before - after)
+        )
+
+    def _session_options(
+        self,
+        operation: str,
+        *,
+        user,
+        environment,
+        binds,
+        work_dir,
+        redirect_ports,
+        shared_home,
+        shared_tmp,
+        shared_x11,
+        isolated,
+        minimal,
+        no_link2symlink,
+        no_sysvipc,
+        no_kill_on_exit,
+        emulator,
+        kernel,
+        hostname,
+    ) -> dict:
+        user = _string_argument(
+            user, operation=operation, argument="user"
+        )
+        if environment is None:
+            environment = {}
+        if not isinstance(environment, Mapping):
+            raise InvalidArgumentError(
+                "environment must be a mapping of strings.",
+                operation=operation,
+            )
+        env_entries = []
+        for key, value in environment.items():
+            key = _string_argument(
+                key, operation=operation, argument="environment key"
+            )
+            if "=" in key:
+                raise InvalidArgumentError(
+                    "environment keys must not contain '='.",
+                    operation=operation,
+                )
+            value = _string_argument(
+                value, operation=operation, argument="environment value",
+                allow_empty=True,
+            )
+            env_entries.append(f"{key}={value}")
+        binds = _string_list(
+            binds, operation=operation, argument="binds"
+        )
+        work_dir = _string_argument(
+            work_dir, operation=operation, argument="work_dir",
+            allow_none=True,
+        )
+        emulator = (
+            None if emulator is None else _path_argument(
+                emulator, operation=operation, argument="emulator",
+                host_only=True,
+            )
+        )
+        kernel = _string_argument(
+            kernel, operation=operation, argument="kernel", allow_none=True
+        )
+        hostname = _string_argument(
+            hostname, operation=operation, argument="hostname", allow_none=True
+        )
+        flags = {
+            "redirect_ports": redirect_ports,
+            "shared_home": shared_home,
+            "shared_tmp": shared_tmp,
+            "shared_x11": shared_x11,
+            "isolated": isolated,
+            "minimal": minimal,
+            "no_link2symlink": no_link2symlink,
+            "no_sysvipc": no_sysvipc,
+            "no_kill_on_exit": no_kill_on_exit,
+        }
+        if not all(isinstance(value, bool) for value in flags.values()):
+            raise InvalidArgumentError(
+                "session feature flags must be booleans.", operation=operation
+            )
+        if isolated and minimal:
+            raise InvalidArgumentError(
+                "isolated and minimal are mutually exclusive.",
+                operation=operation,
+            )
+        return {
+            "user": user,
+            "env": env_entries,
+            "bind": binds,
+            "work_dir": work_dir,
+            "emulator": emulator,
+            "kernel": kernel,
+            "hostname": hostname,
+            **flags,
+        }
+
+    def _start_session(
+        self,
+        kind: str,
+        container: str,
+        arguments,
+        *,
+        stdin,
+        stdout,
+        stderr,
+        **options,
+    ) -> SessionProcess:
+        operation = "start" if kind == "login" else "run"
+        container = _require_name(container, operation=operation)
+        arguments = _string_list(
+            arguments, operation=operation, argument="arguments"
+        )
+        request = json.dumps({
+            "kind": kind,
+            "container": container,
+            "arguments": arguments,
+            "options": options,
+        }, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        if len(request) > 1024 * 1024:
+            raise InvalidArgumentError(
+                "session configuration is too large.", operation=operation
+            )
+
+        request_read = request_write = status_read = status_write = None
+        try:
+            request_read, request_write = os.pipe()
+            status_read, status_write = os.pipe()
+        except OSError as exc:
+            for fd in (request_read, request_write, status_read, status_write):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            raise OperationError(
+                f"cannot create session control pipes: {exc}",
+                operation=operation,
+            ) from exc
+        env = _worker_environment(self.config)
+        env["_PROOT_DISTRO_SESSION_REQUEST_FD"] = str(request_read)
+        env["_PROOT_DISTRO_SESSION_STATUS_FD"] = str(status_write)
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "proot_distro.api._session_worker"],
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                env=env,
+                pass_fds=(request_read, status_write),
+            )
+        except (OSError, ValueError) as exc:
+            for fd in (request_read, request_write, status_read, status_write):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise OperationError(
+                f"cannot start the session worker: {exc}",
+                operation=operation,
+            ) from exc
+
+        os.close(request_read)
+        os.close(status_write)
+        try:
+            _write_all(request_write, request)
+        except OSError as exc:
+            process.kill()
+            process.wait()
+            os.close(status_read)
+            raise OperationError(
+                f"cannot configure the session worker: {exc}",
+                operation=operation,
+            ) from exc
+        finally:
+            os.close(request_write)
+
+        status = bytearray()
+        try:
+            while len(status) <= 65536:
+                chunk = os.read(status_read, 65537 - len(status))
+                if not chunk:
+                    break
+                status.extend(chunk)
+        except KeyboardInterrupt:
+            try:
+                process.send_signal(signal.SIGINT)
+            except OSError:
+                pass
+            process.wait()
+            raise
+        except OSError as exc:
+            process.kill()
+            process.wait()
+            raise OperationError(
+                f"cannot read session startup status: {exc}",
+                operation=operation,
+            ) from exc
+        finally:
+            os.close(status_read)
+        if len(status) > 65536:
+            process.kill()
+            process.wait()
+            raise OperationError(
+                "session worker returned an oversized setup status.",
+                operation=operation,
+            )
+        if status:
+            process.wait()
+            try:
+                payload = json.loads(bytes(status))
+                message = payload["error"]
+                if not isinstance(message, str):
+                    raise TypeError
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+                message = "session worker returned an invalid setup error."
+            raise OperationError(message, operation=operation)
+        return SessionProcess(
+            self, process, container=container, kind=kind
+        )
+
+    def start(
+        self,
+        container: str,
+        arguments=(),
+        *,
+        user: str = "root",
+        environment: Optional[Mapping[str, str]] = None,
+        binds=(),
+        work_dir: Optional[str] = None,
+        redirect_ports: bool = False,
+        shared_home: bool = False,
+        shared_tmp: bool = False,
+        shared_x11: bool = False,
+        isolated: bool = False,
+        minimal: bool = False,
+        no_link2symlink: bool = False,
+        no_sysvipc: bool = False,
+        no_kill_on_exit: bool = False,
+        emulator=None,
+        kernel: Optional[str] = None,
+        hostname: Optional[str] = None,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+    ) -> SessionProcess:
+        """Start a login shell or shell-wrapped command inside a container."""
+        options = self._session_options(
+            "start", user=user, environment=environment, binds=binds,
+            work_dir=work_dir, redirect_ports=redirect_ports,
+            shared_home=shared_home, shared_tmp=shared_tmp,
+            shared_x11=shared_x11, isolated=isolated, minimal=minimal,
+            no_link2symlink=no_link2symlink, no_sysvipc=no_sysvipc,
+            no_kill_on_exit=no_kill_on_exit, emulator=emulator,
+            kernel=kernel, hostname=hostname,
+        )
+        return self._start_session(
+            "login", container, arguments, stdin=stdin, stdout=stdout,
+            stderr=stderr, **options,
+        )
+
+    def run(
+        self,
+        container: str,
+        arguments=(),
+        *,
+        user: str = "root",
+        environment: Optional[Mapping[str, str]] = None,
+        binds=(),
+        work_dir: Optional[str] = None,
+        redirect_ports: bool = False,
+        shared_home: bool = False,
+        shared_tmp: bool = False,
+        shared_x11: bool = False,
+        isolated: bool = False,
+        minimal: bool = False,
+        no_link2symlink: bool = False,
+        no_sysvipc: bool = False,
+        no_kill_on_exit: bool = False,
+        emulator=None,
+        kernel: Optional[str] = None,
+        hostname: Optional[str] = None,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+    ) -> SessionProcess:
+        """Start the image Entrypoint/Cmd, optionally replacing Cmd arguments."""
+        options = self._session_options(
+            "run", user=user, environment=environment, binds=binds,
+            work_dir=work_dir, redirect_ports=redirect_ports,
+            shared_home=shared_home, shared_tmp=shared_tmp,
+            shared_x11=shared_x11, isolated=isolated, minimal=minimal,
+            no_link2symlink=no_link2symlink, no_sysvipc=no_sysvipc,
+            no_kill_on_exit=no_kill_on_exit, emulator=emulator,
+            kernel=kernel, hostname=hostname,
+        )
+        return self._start_session(
+            "run", container, arguments,
+            stdin=stdin, stdout=stdout, stderr=stderr,
+            **options,
+        )
+
+    def kill_session(
+        self, target, *, signal_name="TERM",
+    ) -> SessionSignalResult:
+        """Signal a tracked session PID or every session of a container."""
+        if isinstance(target, bool):
+            target = None
+        if isinstance(target, int) and target > 0:
+            target_text = str(target)
+        elif isinstance(target, str) and target:
+            if not (target.isascii() and target.isdigit()):
+                _require_name(target, operation="kill_session")
+            target_text = target
+        else:
+            raise InvalidArgumentError(
+                "target must be a positive PID or container name.",
+                operation="kill_session",
+            )
+        try:
+            if isinstance(signal_name, bool):
+                raise ValueError
+            if isinstance(signal_name, int):
+                selected_signal = signal.Signals(signal_name)
+            elif isinstance(signal_name, signal.Signals):
+                selected_signal = signal_name
+            elif isinstance(signal_name, str):
+                raw = signal_name.strip().upper()
+                if raw.isdigit():
+                    selected_signal = signal.Signals(int(raw))
+                else:
+                    if not raw.startswith("SIG"):
+                        raw = "SIG" + raw
+                    selected_signal = signal.Signals[raw]
+            else:
+                raise ValueError
+        except (KeyError, ValueError):
+            raise InvalidArgumentError(
+                f"invalid signal '{signal_name}'.", operation="kill_session"
+            ) from None
+        result = self._context.worker("kill_session", {
+            "target": target_text,
+            "signal": selected_signal.name,
+        })
+        pids = result.get("pids")
+        if (not isinstance(pids, list)
+                or any(isinstance(pid, bool) or not isinstance(pid, int)
+                       or pid <= 0 for pid in pids)):
+            raise OperationError(
+                "kill_session worker returned an invalid result.",
+                operation="kill_session",
+            )
+        return SessionSignalResult(
+            target_text, selected_signal.name, tuple(pids)
         )
 
     def search(

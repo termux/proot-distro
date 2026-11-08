@@ -29,6 +29,8 @@ from proot_distro.api import (
     SearchHit,
     SearchResult,
     SessionInfo,
+    SessionProcess,
+    SessionSignalResult,
     TransferResult,
 )
 from proot_distro.api import program
@@ -46,7 +48,8 @@ def test_public_exports_are_explicit():
         "InvalidArgumentError", "NetworkError", "OperationError",
         "OperationEvent", "ProotDistro", "ProotDistroError", "PushResult",
         "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
-        "SearchResult", "SessionInfo", "TransferResult",
+        "SearchResult", "SessionInfo", "SessionProcess",
+        "SessionSignalResult", "TransferResult",
     }
 
 
@@ -429,3 +432,31 @@ def test_worker_rejects_unknown_operation_without_traceback():
     assert exc.value.operation == "unknown"
     assert "not valid" in str(exc.value)
     assert "Traceback" not in str(exc.value)
+
+
+def test_session_process_falls_back_when_registry_has_no_record():
+    class Owner:
+        def kill_session(self, pid, *, signal_name):
+            return SessionSignalResult(str(pid), "SIG" + signal_name, ())
+
+    class Process:
+        pid = 123
+        returncode = None
+        stdin = stdout = stderr = None
+
+        def __init__(self):
+            self.terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+    raw = Process()
+    handle = SessionProcess(Owner(), raw, container="box", kind="login")
+
+    result = handle.terminate()
+
+    assert result.pids == ()
+    assert raw.terminated is True

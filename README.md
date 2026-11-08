@@ -298,6 +298,46 @@ used by the API: pass a Dockerfile path or leave it unset to use
 images, pass static credentials to `ProotDistro(credentials=...)` or directly
 to `build(credentials=...)`.
 
+### Container processes
+
+`start` opens a login session, while `run` executes the image's Entrypoint and
+Cmd. Both return a `SessionProcess`; they never replace the application
+process.
+
+```python
+import subprocess
+
+process = pd.start(
+    "my-container",
+    ["uname", "-a"],
+    environment={"APP_MODE": "test"},
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+stdout, stderr = process.communicate(timeout=30)
+
+# Use the image's Entrypoint, replacing its Cmd arguments.
+server = pd.run("my-container", ["--port", "8080"])
+
+# Signals the complete tracked guest process tree, not only its proot parent.
+server.terminate()
+server.wait(timeout=10)
+```
+
+Without explicit `stdin`, `stdout`, or `stderr`, the session inherits the
+application's corresponding file descriptors. Values such as
+`subprocess.PIPE`, `subprocess.DEVNULL`, open files, and file descriptors use
+the normal `subprocess.Popen` conventions.
+
+Both methods support `user`, `environment`, `binds`, `work_dir`, port
+redirection, shared home/tmp/X11, isolated or minimal mode, emulator, kernel,
+hostname, and the Termux proot-extension switches. `start` shell-wraps its
+arguments like CLI `login`; `run` applies the image Entrypoint/Cmd rules.
+
+`kill_session(PID_OR_CONTAINER, signal_name="TERM")` can also signal a PID or
+every active session of a container. `SessionProcess.terminate()` and
+`.kill()` call this tracked-tree operation with `SIGTERM` and `SIGKILL`.
+
 Mutating operations run in a short-lived child process so their signal and
 cleanup behavior cannot alter the embedding application. This worker exits
 when the method finishes; it is not a persistent service.

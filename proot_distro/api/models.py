@@ -155,6 +155,15 @@ class CacheCleanupResult:
     bytes_reclaimed: int
 
 
+@dataclass(frozen=True)
+class SessionSignalResult:
+    """Tracked session roots selected for one signal operation."""
+
+    target: str
+    signal: str
+    pids: Tuple[int, ...]
+
+
 __all__ = (
     "BackupResult",
     "BuildResult",
@@ -166,6 +175,7 @@ __all__ = (
     "SearchHit",
     "SearchResult",
     "SessionInfo",
+    "SessionSignalResult",
     "RestoreResult",
     "TransferResult",
 )

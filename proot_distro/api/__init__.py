@@ -50,10 +50,12 @@ from proot_distro.api.models import (
     SearchHit,
     SearchResult,
     SessionInfo,
+    SessionSignalResult,
     RestoreResult,
     TransferResult,
 )
 from proot_distro.api.program import ProotDistro
+from proot_distro.api.process import SessionProcess
 
 
 __all__ = (
@@ -80,5 +82,7 @@ __all__ = (
     "SearchHit",
     "SearchResult",
     "SessionInfo",
+    "SessionProcess",
+    "SessionSignalResult",
     "TransferResult",
 )

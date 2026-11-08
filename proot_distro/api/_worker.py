@@ -330,6 +330,21 @@ def _clear_cache(options: dict) -> dict:
     return {"bytes_before": before, "bytes_after": after}
 
 
+def _kill_session(options: dict) -> dict:
+    from proot_distro.commands.kill import _select_sessions, command_kill
+    from proot_distro.session import active_sessions
+
+    target = options["target"]
+    selected = _select_sessions(active_sessions(), target, False)
+    pids = [session["pid"] for session in selected]
+    command_kill(SimpleNamespace(
+        target=target,
+        all=False,
+        signal=options.get("signal"),
+    ))
+    return {"pids": pids}
+
+
 _OPERATIONS = {
     "list_containers": _list_containers,
     "list_images": _list_images,
@@ -347,6 +362,7 @@ _OPERATIONS = {
     "push": _push,
     "remove_image": _remove_image,
     "clear_cache": _clear_cache,
+    "kill_session": _kill_session,
 }
 
 

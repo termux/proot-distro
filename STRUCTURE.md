@@ -56,6 +56,8 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/errors.py` | Stable exception hierarchy, including registry authentication failures; no `SystemExit` crosses the API boundary. |
 | `api/events.py` | Optional info, warning, progress, and retry events. |
 | `api/_worker.py` | One-shot child executor that applies per-instance paths and isolates CLI-oriented process control. Not a daemon or public protocol. |
+| `api/process.py` | Stable `SessionProcess` handle for foreground login and image-entrypoint sessions. |
+| `api/_session_worker.py` | Configured child that receives setup over a private fd and becomes proot; exec-time fd closure is its startup handshake. |
 
 ### Commands
 
