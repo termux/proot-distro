@@ -241,6 +241,32 @@ and these container-management methods:
 | `rename_container(OLD, NEW)` | Rename a container and update its link2symlink entries. |
 | `reset_container(NAME)` | Reinstall an OCI container from its recorded image. All changes in its rootfs are lost. |
 
+Files and backups use explicit method arguments instead of CLI stdin/stdout:
+
+```python
+pd.copy("./settings.ini", "my-container:/etc/myapp/settings.ini")
+pd.copy("./assets", "my-container:/opt/assets", recursive=True)
+pd.move("my-container:/tmp/result", "./result")
+pd.sync("./site", "my-container:/srv/site", checksum=True, delete=True)
+
+backup = pd.backup("my-container", "./my-container.tar.gz")
+pd.remove_container("my-container")
+restored = pd.restore(backup.output)
+```
+
+| Method | Action |
+|---|---|
+| `copy(SOURCE, DESTINATION, recursive=False)` | Copy a file, or a directory with `recursive=True`. |
+| `move(SOURCE, DESTINATION)` | Move a file or directory. |
+| `sync(SOURCE, DESTINATION, checksum=False, delete=False)` | Synchronize paths and optionally remove destination-only entries. |
+| `backup(NAME, OUTPUT, compression=None)` | Write a backup to a new host file. Compression can be inferred from its extension. |
+| `restore(ARCHIVE)` | Restore one container from a host backup file. |
+
+`copy`, `move`, and `sync` accept the same `container:path` syntax as the
+CLI. A `pathlib.Path` always means a host path and is converted to an absolute
+path. `backup` and `restore` require host files; they never read or write the
+embedding application's standard streams.
+
 Mutating operations run in a short-lived child process so their signal and
 cleanup behavior cannot alter the embedding application. This worker exits
 when the method finishes; it is not a persistent service.

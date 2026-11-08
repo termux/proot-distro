@@ -66,11 +66,14 @@ from proot_distro.api.credentials import (
 )
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
+    BackupResult,
     ContainerInfo,
     ImageInfo,
     SearchHit,
     SearchResult,
     SessionInfo,
+    RestoreResult,
+    TransferResult,
 )
 
 
@@ -163,6 +166,39 @@ def _require_name(name, *, operation: str, argument: str = "name") -> str:
             operation=operation,
         )
     return name
+
+
+def _path_argument(value, *, operation: str, argument: str,
+                   host_only: bool = False) -> str:
+    """Validate an API path or ``container:path`` specification."""
+    path_like = isinstance(value, os.PathLike)
+    try:
+        value = os.fspath(value)
+    except TypeError:
+        raise InvalidArgumentError(
+            f"{argument} must be a string or path-like object.",
+            operation=operation,
+        ) from None
+    if not isinstance(value, str) or not value:
+        raise InvalidArgumentError(
+            f"{argument} must be a non-empty text path.",
+            operation=operation,
+        )
+    if "\0" in value:
+        raise InvalidArgumentError(
+            f"{argument} must not contain a NUL byte.",
+            operation=operation,
+        )
+    try:
+        os.fsencode(value)
+    except UnicodeError:
+        raise InvalidArgumentError(
+            f"{argument} cannot be represented as a filesystem path.",
+            operation=operation,
+        ) from None
+    if host_only or path_like:
+        value = os.path.abspath(os.path.expanduser(value))
+    return value
 
 
 def _worker_environment(config: RuntimeConfig) -> dict:
@@ -648,6 +684,135 @@ class ProotDistro:
             ),
         })
         return self._installed_container(name, "reset_container")
+
+    def _transfer(
+        self,
+        operation: str,
+        source,
+        destination,
+        **options,
+    ) -> TransferResult:
+        source = _path_argument(
+            source, operation=operation, argument="source"
+        )
+        destination = _path_argument(
+            destination, operation=operation, argument="destination"
+        )
+        result = self._context.worker(operation, {
+            "source": source,
+            "destination": destination,
+            **options,
+        })
+        if (result.get("source") != source
+                or result.get("destination") != destination):
+            raise OperationError(
+                f"{operation} worker returned an invalid result.",
+                operation=operation,
+            )
+        return TransferResult(operation, source, destination)
+
+    def copy(
+        self, source, destination, *, recursive: bool = False,
+    ) -> TransferResult:
+        """Copy a file or directory between host and container paths."""
+        if not isinstance(recursive, bool):
+            raise InvalidArgumentError(
+                "recursive must be a boolean.", operation="copy"
+            )
+        return self._transfer(
+            "copy", source, destination, move=False, recursive=recursive
+        )
+
+    def move(self, source, destination) -> TransferResult:
+        """Move a file or directory between host and container paths."""
+        return self._transfer(
+            "move", source, destination, move=True, recursive=False
+        )
+
+    def sync(
+        self,
+        source,
+        destination,
+        *,
+        checksum: bool = False,
+        delete: bool = False,
+    ) -> TransferResult:
+        """Synchronize a file or directory to another path."""
+        if not isinstance(checksum, bool):
+            raise InvalidArgumentError(
+                "checksum must be a boolean.", operation="sync"
+            )
+        if not isinstance(delete, bool):
+            raise InvalidArgumentError(
+                "delete must be a boolean.", operation="sync"
+            )
+        return self._transfer(
+            "sync", source, destination, checksum=checksum, delete=delete
+        )
+
+    def backup(
+        self,
+        name: str,
+        output,
+        *,
+        compression: Optional[str] = None,
+    ) -> BackupResult:
+        """Write a container backup to an explicit host file."""
+        name = _require_name(name, operation="backup")
+        output = _path_argument(
+            output, operation="backup", argument="output", host_only=True
+        )
+        allowed = (None, "gzip", "bzip2", "xz", "zstd", "none")
+        if compression not in allowed:
+            raise InvalidArgumentError(
+                "compression must be gzip, bzip2, xz, zstd, none, or None.",
+                operation="backup",
+            )
+        result = self._context.worker("backup", {
+            "name": name,
+            "output": output,
+            "compression": compression,
+        })
+        try:
+            result_name = result["container_name"]
+            result_output = result["output"]
+            result_compression = result["compression"]
+            size_bytes = result["size_bytes"]
+            if (result_name != name or result_output != output
+                    or result_compression not in allowed[1:]
+                    or isinstance(size_bytes, bool)
+                    or not isinstance(size_bytes, int)
+                    or size_bytes < 0):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise OperationError(
+                "backup worker returned an invalid result.",
+                operation="backup",
+            ) from None
+        return BackupResult(
+            name, output, result_compression, size_bytes
+        )
+
+    def restore(self, archive) -> RestoreResult:
+        """Restore one container from an explicit host backup file."""
+        archive = _path_argument(
+            archive, operation="restore", argument="archive", host_only=True
+        )
+        result = self._context.worker("restore", {"archive": archive})
+        name = result.get("container_name")
+        if not isinstance(name, str) or not is_valid_name(name):
+            raise OperationError(
+                "restore worker returned an invalid container name.",
+                operation="restore",
+            )
+        if result.get("archive") != archive:
+            raise OperationError(
+                "restore worker returned an invalid archive path.",
+                operation="restore",
+            )
+        return RestoreResult(
+            self._installed_container(name, "restore"), archive
+        )
 
     def search(
         self, query: str, *, limit: int = SEARCH_DEFAULT_LIMIT,

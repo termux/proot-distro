@@ -7,6 +7,7 @@ import pytest
 
 from proot_distro.api import (
     AuthenticationError,
+    BackupResult,
     ContainerInfo,
     CredentialProvider,
     CredentialRequest,
@@ -19,10 +20,12 @@ from proot_distro.api import (
     ProotDistro,
     ProotDistroError,
     RegistryCredentials,
+    RestoreResult,
     RuntimeConfig,
     SearchHit,
     SearchResult,
     SessionInfo,
+    TransferResult,
 )
 from proot_distro.api import program
 from proot_distro.helpers.docker.cache import save_manifest_cache
@@ -33,12 +36,12 @@ def test_public_exports_are_explicit():
     import proot_distro.api as api
 
     assert set(api.__all__) == {
-        "AuthenticationError", "ContainerInfo", "CredentialProvider",
+        "AuthenticationError", "BackupResult", "ContainerInfo", "CredentialProvider",
         "CredentialRequest", "EventKind", "ImageInfo",
         "InvalidArgumentError", "NetworkError", "OperationError",
         "OperationEvent", "ProotDistro", "ProotDistroError",
-        "RegistryCredentials", "RuntimeConfig", "SearchHit", "SearchResult",
-        "SessionInfo",
+        "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
+        "SearchResult", "SessionInfo", "TransferResult",
     }
 
 

@@ -438,7 +438,7 @@ def _write_hardlink(dir_fd: int, name: str, member, source) -> None:
         os.close(fd)
 
 
-def command_restore(args) -> None:
+def command_restore(args):
     """Reinstate a single container from a tar backup.
 
     An archive is expected to hold exactly one container (this is all
@@ -454,6 +454,9 @@ def command_restore(args) -> None:
     therefore leaves the target untouched and is rejected; an archive that
     writes a broken (non-directory) rootfs has that partial result removed
     so no rootfs-less container is left behind.
+
+    Returns the restored container name. The CLI ignores it; the public API
+    uses it to build a structured result without parsing archive names again.
     """
     archive = getattr(args, "archive", None)
     verbose = getattr(args, "verbose", False)
@@ -769,6 +772,8 @@ def command_restore(args) -> None:
                 pass
         if lock is not None:
             lock.release()
+
+    return restore_name
 
 
 def _rootfs_is_a_directory(root_fd: int) -> bool:

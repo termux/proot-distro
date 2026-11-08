@@ -91,10 +91,40 @@ class SearchResult:
     hits: Tuple[SearchHit, ...]
 
 
+@dataclass(frozen=True)
+class TransferResult:
+    """A completed copy, move, or synchronization operation."""
+
+    operation: str
+    source: str
+    destination: str
+
+
+@dataclass(frozen=True)
+class BackupResult:
+    """A container backup written to a host file."""
+
+    container: str
+    output: str
+    compression: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class RestoreResult:
+    """A container restored from a host archive."""
+
+    container: ContainerInfo
+    archive: str
+
+
 __all__ = (
+    "BackupResult",
     "ContainerInfo",
     "ImageInfo",
     "SearchHit",
     "SearchResult",
     "SessionInfo",
+    "RestoreResult",
+    "TransferResult",
 )

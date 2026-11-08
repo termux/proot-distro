@@ -147,6 +147,81 @@ def _reset(options: dict) -> dict:
     return {"container_name": name}
 
 
+def _copy(options: dict) -> dict:
+    from proot_distro.commands.copy import command_copy
+
+    command_copy(SimpleNamespace(
+        source=options["source"],
+        destination=options["destination"],
+        verbose=False,
+        quiet=True,
+        move=options.get("move", False),
+        recursive=options.get("recursive", False),
+    ))
+    return {
+        "source": options["source"],
+        "destination": options["destination"],
+    }
+
+
+def _sync(options: dict) -> dict:
+    from proot_distro.commands.sync import command_sync
+
+    command_sync(SimpleNamespace(
+        source=options["source"],
+        destination=options["destination"],
+        verbose=False,
+        quiet=True,
+        checksum=options.get("checksum", False),
+        delete=options.get("delete", False),
+    ))
+    return {
+        "source": options["source"],
+        "destination": options["destination"],
+    }
+
+
+def _backup(options: dict) -> dict:
+    from proot_distro.commands.backup import (
+        _compression_mode,
+        command_backup,
+    )
+
+    output = options["output"]
+    compression = options.get("compression")
+    command_backup(SimpleNamespace(
+        container_name=options["name"],
+        output=output,
+        compression=compression,
+        verbose=False,
+        quiet=True,
+    ))
+    if compression is None:
+        mode = _compression_mode(output)
+        compression = {
+            "": "none", "gz": "gzip", "bz2": "bzip2",
+            "xz": "xz", "zst": "zstd",
+        }[mode]
+    return {
+        "container_name": options["name"],
+        "output": output,
+        "compression": compression,
+        "size_bytes": os.path.getsize(output),
+    }
+
+
+def _restore(options: dict) -> dict:
+    from proot_distro.commands.restore import command_restore
+
+    archive = options["archive"]
+    name = command_restore(SimpleNamespace(
+        archive=archive, verbose=False, quiet=True,
+    ))
+    if not isinstance(name, str):
+        raise RuntimeError("restore did not identify a container")
+    return {"container_name": name, "archive": archive}
+
+
 _OPERATIONS = {
     "list_containers": _list_containers,
     "list_images": _list_images,
@@ -155,6 +230,11 @@ _OPERATIONS = {
     "remove_container": _remove,
     "rename_container": _rename,
     "reset_container": _reset,
+    "copy": _copy,
+    "move": _copy,
+    "sync": _sync,
+    "backup": _backup,
+    "restore": _restore,
 }
 
 

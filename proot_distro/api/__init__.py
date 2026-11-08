@@ -40,17 +40,21 @@ from proot_distro.api.credentials import (
 )
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
+    BackupResult,
     ContainerInfo,
     ImageInfo,
     SearchHit,
     SearchResult,
     SessionInfo,
+    RestoreResult,
+    TransferResult,
 )
 from proot_distro.api.program import ProotDistro
 
 
 __all__ = (
     "AuthenticationError",
+    "BackupResult",
     "ContainerInfo",
     "CredentialProvider",
     "CredentialRequest",
@@ -64,7 +68,9 @@ __all__ = (
     "ProotDistroError",
     "RuntimeConfig",
     "RegistryCredentials",
+    "RestoreResult",
     "SearchHit",
     "SearchResult",
     "SessionInfo",
+    "TransferResult",
 )
