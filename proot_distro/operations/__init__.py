@@ -31,24 +31,36 @@ from proot_distro.operations.containers import (
 )
 from proot_distro.operations.cache import clear_cache
 from proot_distro.operations.images import remove_image
+from proot_distro.operations.inventory import (
+    list_containers,
+    list_images,
+    list_sessions,
+)
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import (
+    ActiveSession,
     CacheCleanup,
     CachedImage,
     ContainerRemoval,
     ContainerRename,
     ImageRemoval,
+    InstalledContainer,
 )
 
 
 __all__ = (
+    "ActiveSession",
     "CacheCleanup",
     "CachedImage",
     "ContainerRemoval",
     "ContainerRename",
     "ImageRemoval",
+    "InstalledContainer",
     "OperationContext",
     "clear_cache",
+    "list_containers",
+    "list_images",
+    "list_sessions",
     "remove_container",
     "remove_image",
     "rename_container",

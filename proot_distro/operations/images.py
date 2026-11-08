@@ -45,7 +45,8 @@ from proot_distro.operations.errors import (
     ImageNotFoundFailure,
 )
 from proot_distro.operations.locks import operation_lock
-from proot_distro.operations.models import CachedImage, ImageRemoval
+from proot_distro.operations.inventory import cached_image_from_record
+from proot_distro.operations.models import ImageRemoval
 from proot_distro.paths import container_image_origin, installed_container_names
 from proot_distro.progress import fmt_size
 
@@ -55,29 +56,6 @@ _MIN_ID_PREFIX = 4
 
 def _context(value):
     return value if value is not None else OperationContext()
-
-
-def _text(value):
-    return value if isinstance(value, str) else ""
-
-
-def _record(record) -> CachedImage:
-    reference = _text(record.get("image_ref"))
-    cache_image_id = _text(record.get("image_id"))
-    return CachedImage(
-        identifier=(reference or cache_image_id[:12] or record["key"]),
-        reference=reference,
-        repository=_text(record.get("repo")),
-        architecture=_text(record.get("arch")),
-        image_id=_text(record.get("config_digest")),
-        size_bytes=record["size"],
-        layer_count=len(record["layers"]),
-        missing_layers=record["missing"],
-        created=_text(record.get("created")),
-        cached_at=float(record["cached_at"]),
-        cache_key=record["key"],
-        cache_image_id=cache_image_id,
-    )
 
 
 def _display(record) -> str:
@@ -107,12 +85,12 @@ def remove_image(
     targets = _resolve_images(identifier, architecture)
     if not targets:
         similar = tuple(
-            _record(record) for record in iter_cached_images()
+            cached_image_from_record(record) for record in iter_cached_images()
             if _same_name(record, identifier)
         )
         raise ImageNotFoundFailure(identifier, architecture, similar)
 
-    removed = tuple(_record(record) for record in targets)
+    removed = tuple(cached_image_from_record(record) for record in targets)
     with ExitStack() as locks:
         for lock in _image_locks(identifier, targets):
             locks.enter_context(operation_lock(lock))
@@ -144,7 +122,8 @@ def _resolve_images(identifier: str, architecture) -> list:
 
     if len({record["image_id"] for record in matches}) > 1:
         raise AmbiguousImageFailure(
-            identifier, tuple(_record(record) for record in matches)
+            identifier,
+            tuple(cached_image_from_record(record) for record in matches),
         )
     return matches
 

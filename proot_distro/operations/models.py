@@ -21,6 +21,7 @@
 """Immutable internal results returned by shared operation services."""
 
 from dataclasses import dataclass
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,16 @@ class ContainerRename:
 
     old_name: str
     new_name: str
+
+
+@dataclass(frozen=True)
+class InstalledContainer:
+    """An installed container and its recorded image origin."""
+
+    name: str
+    image_reference: Optional[str]
+    architecture: Optional[str]
+    image_id: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -75,10 +86,27 @@ class ImageRemoval:
     dependent_containers: tuple
 
 
+@dataclass(frozen=True)
+class ActiveSession:
+    """One validated live session registry record."""
+
+    pid: int
+    container: str
+    kind: str
+    command: Tuple[str, ...]
+    user: str
+    start_time: float
+    isolated: bool
+    minimal: bool
+    detached: bool
+
+
 __all__ = (
+    "ActiveSession",
     "CacheCleanup",
     "CachedImage",
     "ContainerRemoval",
     "ContainerRename",
     "ImageRemoval",
+    "InstalledContainer",
 )

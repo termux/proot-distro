@@ -47,7 +47,6 @@ from proot_distro.constants import (
     TERMUX_HOME,
     TERMUX_PREFIX,
 )
-from proot_distro.helpers.docker.cache import iter_cached_images
 from proot_distro.helpers.docker.search import (
     SEARCH_DEFAULT_LIMIT,
     SEARCH_LIMIT_MAX,
@@ -61,10 +60,7 @@ from proot_distro.helpers.docker.refs import (
 )
 from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
-from proot_distro.paths import (
-    container_from_spec, installed_container_names, read_container_manifest,
-)
-from proot_distro.session import active_sessions
+from proot_distro.paths import container_from_spec
 
 from proot_distro.api.errors import (
     AlreadyExistsError,
@@ -111,81 +107,6 @@ EventHandler = Callable[[OperationEvent], None]
 
 _MAX_WORKER_ERROR_BYTES = 64 * 1024
 _MAX_WORKER_EVENT_BYTES = 64 * 1024
-
-
-def _text(value) -> Optional[str]:
-    """Return a non-empty string as-is, otherwise None."""
-    return value if isinstance(value, str) and value else None
-
-
-def _container_info(name: str) -> ContainerInfo:
-    """Build public metadata for one already-validated container name."""
-    try:
-        data = read_container_manifest(name)
-    except (OSError, ValueError):
-        data = {}
-
-    image_ref = _text(data.get("image_ref"))
-    architecture = _text(data.get("arch"))
-    manifest = data.get("manifest")
-    if not isinstance(manifest, dict):
-        manifest = {}
-    config = manifest.get("config")
-    if not isinstance(config, dict):
-        config = {}
-    image_id = _text(config.get("digest"))
-
-    return ContainerInfo(
-        name=name,
-        image_reference=image_ref,
-        architecture=architecture,
-        image_id=image_id,
-    )
-
-
-def _container_inventory() -> Tuple[ContainerInfo, ...]:
-    """Read container records using the active process configuration."""
-    return tuple(_container_info(name) for name in installed_container_names())
-
-
-def _image_inventory() -> Tuple[ImageInfo, ...]:
-    """Read image records using the active process configuration."""
-    images = []
-    for record in iter_cached_images():
-        reference = _text(record["image_ref"])
-        image_hex = _text(record["image_id"])
-        identifier = reference or (image_hex[:12] if image_hex else record["key"])
-        images.append(ImageInfo(
-            identifier=identifier,
-            reference=reference,
-            repository=_text(record["repo"]),
-            architecture=_text(record["arch"]),
-            image_id=_text(record.get("config_digest")),
-            size_bytes=record["size"],
-            layer_count=len(record["layers"]),
-            missing_layers=record["missing"],
-            created=_text(record["created"]),
-            cached_at=float(record["cached_at"]),
-        ))
-    return tuple(images)
-
-
-def _session_inventory() -> Tuple[SessionInfo, ...]:
-    """Read session records using the active process configuration."""
-    return tuple(
-        SessionInfo(
-            pid=record["pid"],
-            container=record["container"],
-            kind=record["kind"],
-            command=tuple(record["command"]),
-            user=record["user"],
-            start_time=record["start_time"],
-            isolated=record["isolated"],
-            minimal=record["minimal"],
-            detached=record["detach"],
-        )
-        for record in active_sessions()
-    )
 
 
 def _require_name(name, *, operation: str, argument: str = "name") -> str:

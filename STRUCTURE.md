@@ -66,14 +66,15 @@ Core operations are being extracted into `operations/`. These services own
 locking, secure state access, mutations, structured events, and immutable
 internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the
-same services. Container and cached-image removal, rename, and cache cleanup
-are the first migrated slice.
+same services. Container, image, and session inventories plus container and
+cached-image removal, rename, and cache cleanup are migrated.
 
 | Module | Role |
 | --- | --- |
 | `operations/context.py` | Explicit event emitter and verbose preference supplied to services. |
 | `operations/models.py` | Frozen internal results, separate from stable public API models. |
 | `operations/locks.py` | Typed, process-control-free adapter around non-blocking state locks. |
+| `operations/inventory.py` | Shared immutable container, cached-image, and live-session inventories. |
 | `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |

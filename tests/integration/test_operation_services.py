@@ -2,18 +2,25 @@ import os
 
 import pytest
 
+import proot_distro.operations.inventory as inventory
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
     NotFoundFailure,
     OperationFailure,
 )
 from proot_distro.operations import (
+    ActiveSession,
     CacheCleanup,
+    CachedImage,
     ContainerRemoval,
     ContainerRename,
     ImageRemoval,
+    InstalledContainer,
     OperationContext,
     clear_cache,
+    list_containers,
+    list_images,
+    list_sessions,
     remove_container,
     remove_image,
     rename_container,
@@ -25,6 +32,44 @@ from proot_distro.helpers.docker.cache import (
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
 from proot_distro.operations.errors import ImageNotFoundFailure
 from proot_distro.paths import container_dir, container_rootfs
+
+
+def test_container_inventory_service_returns_recorded_origin(builders):
+    manifest = builders.simple_image_manifest("service/app:1", "aarch64")
+    digest = "sha256:" + "ab" * 32
+    manifest["manifest"]["config"] = {"digest": digest}
+    builders.make_container("service-inventory", manifest=manifest)
+
+    assert list_containers() == (
+        InstalledContainer(
+            "service-inventory", "service/app:1", "aarch64", digest
+        ),
+    )
+
+
+def test_session_inventory_service_copies_registry_command(monkeypatch):
+    command = ["/bin/sh", "-l"]
+    monkeypatch.setattr(inventory, "active_sessions", lambda: [{
+        "pid": 123,
+        "container": "service-session",
+        "kind": "login",
+        "command": command,
+        "user": "root",
+        "start_time": 10.5,
+        "isolated": True,
+        "minimal": False,
+        "detach": True,
+    }])
+
+    result = list_sessions()
+    command.append("changed")
+
+    assert result == (
+        ActiveSession(
+            123, "service-session", "login", ("/bin/sh", "-l"),
+            "root", 10.5, True, False, True,
+        ),
+    )
 
 
 def test_remove_service_returns_result_and_structured_events(builders):
@@ -141,6 +186,11 @@ def test_image_removal_service_returns_records_and_events(builders):
             (kind, message, phase, resource)
         )
     )
+
+    images = list_images()
+    assert len(images) == 1
+    assert isinstance(images[0], CachedImage)
+    assert images[0].reference == "service-image:1"
 
     result = remove_image("service-image:1", context=context)
 

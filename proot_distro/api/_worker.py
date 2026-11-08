@@ -243,22 +243,38 @@ def _apply_registry_credentials(options: dict) -> None:
     os.environ["PD_DOCKER_AUTH"] = f"{username}:{password}"
 
 
-def _list_containers(_options: dict) -> dict:
-    from proot_distro.api.program import _container_inventory
+def _image_result(image) -> dict:
+    """Serialize an internal cached-image record to the public API shape."""
+    return {
+        "identifier": image.identifier,
+        "reference": image.reference or None,
+        "repository": image.repository or None,
+        "architecture": image.architecture or None,
+        "image_id": image.image_id or None,
+        "size_bytes": image.size_bytes,
+        "layer_count": image.layer_count,
+        "missing_layers": image.missing_layers,
+        "created": image.created or None,
+        "cached_at": image.cached_at,
+    }
 
-    return {"items": [asdict(item) for item in _container_inventory()]}
+
+def _list_containers(_options: dict) -> dict:
+    from proot_distro.operations import list_containers
+
+    return {"items": [asdict(item) for item in list_containers()]}
 
 
 def _list_images(_options: dict) -> dict:
-    from proot_distro.api.program import _image_inventory
+    from proot_distro.operations import list_images
 
-    return {"items": [asdict(item) for item in _image_inventory()]}
+    return {"items": [_image_result(item) for item in list_images()]}
 
 
 def _list_sessions(_options: dict) -> dict:
-    from proot_distro.api.program import _session_inventory
+    from proot_distro.operations import list_sessions
 
-    return {"items": [asdict(item) for item in _session_inventory()]}
+    return {"items": [asdict(item) for item in list_sessions()]}
 
 
 def _install(options: dict) -> dict:
@@ -465,12 +481,12 @@ def _restore(options: dict) -> dict:
 
 def _build(options: dict) -> dict:
     from proot_distro.arch import get_device_cpu_arch
-    from proot_distro.api.program import _image_inventory
     from proot_distro.commands.build import (
         _derive_tag_from_path,
         command_build,
     )
     from proot_distro.helpers.docker.refs import with_explicit_tag
+    from proot_distro.operations import list_images
 
     _apply_registry_credentials(options)
     build_output_fd = _channel_fd_from_env(
@@ -552,7 +568,7 @@ def _build(options: dict) -> dict:
     tags = [with_explicit_tag(tag) for tag in tags]
     architecture = options.get("architecture") or get_device_cpu_arch()
     images = [
-        asdict(image) for image in _image_inventory()
+        _image_result(image) for image in list_images()
         if image.reference in tags and image.architecture == architecture
     ]
     return {
@@ -564,15 +580,15 @@ def _build(options: dict) -> dict:
 
 def _push(options: dict) -> dict:
     from proot_distro.commands.push import command_push
-    from proot_distro.api.program import _image_inventory
     from proot_distro.arch import get_device_cpu_arch
+    from proot_distro.operations import list_images
 
     _apply_registry_credentials(options)
     architecture = options.get("architecture") or get_device_cpu_arch()
     if not any(
         image.reference == options["image_ref"]
         and image.architecture == architecture
-        for image in _image_inventory()
+        for image in list_images()
     ):
         raise _WorkerFailure(
             "not_found",
@@ -597,18 +613,7 @@ def _remove_image(options: dict) -> dict:
         options["identifier"], architecture=options.get("architecture")
     )
     return {
-        "removed": [{
-            "identifier": image.identifier,
-            "reference": image.reference or None,
-            "repository": image.repository or None,
-            "architecture": image.architecture or None,
-            "image_id": image.image_id or None,
-            "size_bytes": image.size_bytes,
-            "layer_count": image.layer_count,
-            "missing_layers": image.missing_layers,
-            "created": image.created or None,
-            "cached_at": image.cached_at,
-        } for image in result.removed],
+        "removed": [_image_result(image) for image in result.removed],
     }
 
 
