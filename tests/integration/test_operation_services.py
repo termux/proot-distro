@@ -11,12 +11,19 @@ from proot_distro.operations import (
     CacheCleanup,
     ContainerRemoval,
     ContainerRename,
+    ImageRemoval,
     OperationContext,
     clear_cache,
     remove_container,
+    remove_image,
     rename_container,
 )
 from proot_distro.constants import BASE_CACHE_DIR
+from proot_distro.helpers.docker.cache import (
+    iter_cached_images, save_manifest_cache,
+)
+from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
+from proot_distro.operations.errors import ImageNotFoundFailure
 from proot_distro.paths import container_dir, container_rootfs
 
 
@@ -112,3 +119,44 @@ def test_cache_service_returns_counts_and_structured_events():
         phase == "clear-cache" and resource == "all"
         for _kind, _message, phase, resource in events
     )
+
+
+def test_image_removal_service_returns_records_and_events(builders):
+    digest, size, _diff = builders.seed_cached_layer([
+        {"name": "etc/service-image", "type": "file", "data": b"image"},
+    ])
+    save_manifest_cache(
+        "service-image:1", "x86_64", {
+            "schemaVersion": 2,
+            "layers": [{
+                "digest": digest,
+                "size": size,
+                "mediaType": OCI_LAYER_MEDIA,
+            }],
+        }, "library/service-image", {},
+    )
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    result = remove_image("service-image:1", context=context)
+
+    assert isinstance(result, ImageRemoval)
+    assert [item.reference for item in result.removed] == ["service-image:1"]
+    assert result.reclaimed_bytes > 0
+    assert iter_cached_images() == []
+    assert events
+    assert all(
+        phase == "remove-image"
+        for _kind, _message, phase, _resource in events
+    )
+
+
+def test_image_removal_service_raises_typed_missing_failure():
+    with pytest.raises(ImageNotFoundFailure) as exc:
+        remove_image("service-missing:1")
+
+    assert exc.value.identifier == "service-missing:1"

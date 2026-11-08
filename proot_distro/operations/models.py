@@ -48,4 +48,37 @@ class ContainerRename:
     new_name: str
 
 
-__all__ = ("CacheCleanup", "ContainerRemoval", "ContainerRename")
+@dataclass(frozen=True)
+class CachedImage:
+    """Validated cached-image metadata used by operation services."""
+
+    identifier: str
+    reference: str
+    repository: str
+    architecture: str
+    image_id: str
+    size_bytes: int
+    layer_count: int
+    missing_layers: int
+    created: str
+    cached_at: float
+    cache_key: str
+    cache_image_id: str
+
+
+@dataclass(frozen=True)
+class ImageRemoval:
+    """Images removed together with cleanup accounting and dependents."""
+
+    removed: tuple
+    reclaimed_bytes: int
+    dependent_containers: tuple
+
+
+__all__ = (
+    "CacheCleanup",
+    "CachedImage",
+    "ContainerRemoval",
+    "ContainerRename",
+    "ImageRemoval",
+)

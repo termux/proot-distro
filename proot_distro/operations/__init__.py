@@ -30,20 +30,26 @@ from proot_distro.operations.containers import (
     rename_container,
 )
 from proot_distro.operations.cache import clear_cache
+from proot_distro.operations.images import remove_image
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import (
     CacheCleanup,
+    CachedImage,
     ContainerRemoval,
     ContainerRename,
+    ImageRemoval,
 )
 
 
 __all__ = (
     "CacheCleanup",
+    "CachedImage",
     "ContainerRemoval",
     "ContainerRename",
+    "ImageRemoval",
     "OperationContext",
     "clear_cache",
     "remove_container",
+    "remove_image",
     "rename_container",
 )

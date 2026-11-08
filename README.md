@@ -560,8 +560,8 @@ display; applications should use exception types and result models for control
 flow. Progress events also provide `current`, `total`, and `unit` when those
 values are known. `phase` is a machine-readable stage name. Current values are
 `network`, `verify`, `download`, `layer-download`, `extract`, `copy`, `sync`,
-`archive`, `layer-pack`, `upload`, `remove`, `rename`, `clear-cache`,
-`build-output`, and `session-setup`.
+`archive`, `layer-pack`, `upload`, `remove`, `remove-image`, `rename`,
+`clear-cache`, `build-output`, and `session-setup`.
 Applications must allow additional phase names in future releases.
 
 `resource` identifies the primary container, image, layer digest, path, search

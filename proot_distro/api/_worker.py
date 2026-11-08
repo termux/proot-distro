@@ -591,37 +591,24 @@ def _push(options: dict) -> dict:
 
 
 def _remove_image(options: dict) -> dict:
-    from proot_distro.api.program import _image_inventory
-    from proot_distro.commands.remove import command_remove
-    from proot_distro.helpers.docker.refs import with_explicit_tag
+    from proot_distro.operations import remove_image
 
-    before = _image_inventory()
-    identifier = options["identifier"]
-    architecture = options.get("architecture")
-    wanted_ref = with_explicit_tag(identifier)
-    matches = []
-    for image in before:
-        if architecture and image.architecture != architecture:
-            continue
-        image_hex = (image.image_id or "").partition(":")[2]
-        if (image.reference == wanted_ref or image.identifier == identifier
-                or (len(identifier) >= 4 and image_hex.startswith(
-                    identifier.lower()))):
-            matches.append(image)
-    if not matches:
-        raise _WorkerFailure(
-            "not_found", f"no cached image matches '{identifier}'"
-        )
-    command_remove(SimpleNamespace(
-        target=identifier,
-        image=True,
-        override_arch=architecture,
-        verbose=False,
-        quiet=True,
-    ))
-    after = set(_image_inventory())
+    result = remove_image(
+        options["identifier"], architecture=options.get("architecture")
+    )
     return {
-        "removed": [asdict(image) for image in before if image not in after],
+        "removed": [{
+            "identifier": image.identifier,
+            "reference": image.reference or None,
+            "repository": image.repository or None,
+            "architecture": image.architecture or None,
+            "image_id": image.image_id or None,
+            "size_bytes": image.size_bytes,
+            "layer_count": image.layer_count,
+            "missing_layers": image.missing_layers,
+            "created": image.created or None,
+            "cached_at": image.cached_at,
+        } for image in result.removed],
     }
 
 

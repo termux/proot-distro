@@ -133,7 +133,8 @@ def test_build_run_output_streams_as_live_events(tmp_path):
 
 def test_remove_image_returns_removed_variants(tmp_path):
     context = _context(tmp_path)
-    pd = ProotDistro()
+    events = []
+    pd = ProotDistro(event_handler=events.append)
     pd.build(context, tags=["remove-api:1"])
 
     result = pd.remove_image("remove-api:1")
@@ -141,6 +142,12 @@ def test_remove_image_returns_removed_variants(tmp_path):
     assert isinstance(result, ImageRemovalResult)
     assert [image.reference for image in result.removed] == ["remove-api:1"]
     assert all(image.reference != "remove-api:1" for image in pd.list_images())
+    assert any(
+        event.operation == "remove_image"
+        and event.phase == "remove-image"
+        and event.resource == "remove-api:1"
+        for event in events
+    )
 
 
 def test_clear_cache_reports_actual_regular_file_usage(tmp_path):
