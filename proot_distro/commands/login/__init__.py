@@ -78,8 +78,13 @@ from proot_distro.commands.login.proot_cmd import build_proot_args
 from proot_distro.commands.login.quoting import dq
 
 
-def command_login(args) -> None:
-    """Spawn an interactive shell (or custom command) inside the container."""
+def command_login(args):
+    """Spawn a shell/command, returning its PID only when detached.
+
+    Foreground success replaces the process and therefore never returns. The
+    CLI ignores the detached PID; the programmatic API uses it as structured
+    session metadata.
+    """
     container_name = args.container_name
     require_valid_name(container_name)
 
@@ -92,7 +97,7 @@ def command_login(args) -> None:
     with ContainerLock(
         container_name, exclusive=False, command="login", inheritable=True
     ) as lock:
-        _command_login_inner(container_name, args, lock)
+        return _command_login_inner(container_name, args, lock)
 
 
 def _detect_dist_type(rootfs: str, rootfs_fd=None) -> str:
@@ -326,7 +331,7 @@ def _command_login_inner(container_name: str, args, lock) -> None:
         crit_error(f"container '{container_name}' is not installed.")
         sys.exit(1)
     try:
-        _login_with_rootfs(
+        return _login_with_rootfs(
             container_name, args, lock, container_fd, rootfs_fd,
         )
     finally:
@@ -590,7 +595,7 @@ def _login_with_rootfs(container_name: str, args, lock,
         msg(f"{C['CYAN']}Stop session:   "
             f"{C['GREEN']}{PROGRAM_NAME} kill {pid}{C['RST']}")
         msg()
-        return
+        return pid
 
     # Record this session for `ps`. Best-effort; the returned fd holds an
     # inheritable flock that proot keeps open for the whole session, so

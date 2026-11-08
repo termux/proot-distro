@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from proot_distro.api import (
+    DetachedSession,
     InvalidArgumentError,
     OperationError,
     NotFoundError,
@@ -97,6 +98,47 @@ def test_live_session_is_listed_and_terminated_as_tree(builders, fake_proot):
     assert process.wait(timeout=10) is not None
 
 
+def test_detached_session_is_registered_and_can_be_stopped(
+        builders, fake_proot):
+    builders.make_container("detached-box")
+    pd = _program(fake_proot)
+
+    session = pd.start_detached(
+        "detached-box", environment={"FAKE_PROOT_SLEEP": "1"}
+    )
+    try:
+        assert isinstance(session, DetachedSession)
+        assert session.kind == "login"
+        records = pd.list_sessions()
+        assert any(record.pid == session.pid and record.detached
+                   for record in records)
+    finally:
+        pd.kill_session(session.pid, signal_name="KILL")
+
+
+def test_run_detached_and_kill_all_sessions(builders, fake_proot):
+    builders.make_container("run-detached", manifest={
+        "image_config": {"config": {"Cmd": ["/bin/server"]}},
+    })
+    builders.make_container("login-detached")
+    pd = _program(fake_proot)
+    try:
+        first = pd.run_detached(
+            "run-detached", environment={"FAKE_PROOT_SLEEP": "1"}
+        )
+        second = pd.start_detached(
+            "login-detached", ["server"],
+            environment={"FAKE_PROOT_SLEEP": "1"},
+        )
+        result = pd.kill_all_sessions(signal_name="KILL")
+        assert set(result.pids) >= {first.pid, second.pid}
+        assert result.target == "*"
+        assert result.signal == "SIGKILL"
+        assert pd.list_sessions() == ()
+    finally:
+        pd.kill_all_sessions(signal_name="KILL")
+
+
 def test_start_failure_is_operation_error_without_terminal_output(
         builders, tmp_path, capsys):
     builders.make_container("box")
@@ -122,8 +164,12 @@ def test_start_missing_container_is_typed_error(fake_proot):
     ("start", ("box",), {"environment": {"BAD=KEY": "x"}}, "start"),
     ("start", ("box",), {"isolated": True, "minimal": True}, "start"),
     ("run", ("box", ["bad\0arg"]), {}, "run"),
+    ("start_detached", ("box", "echo"), {}, "start_detached"),
+    ("run_detached", ("box",), {"environment": []}, "run_detached"),
     ("kill_session", (0,), {}, "kill_session"),
     ("kill_session", (123,), {"signal_name": "NOPE"}, "kill_session"),
+    ("kill_all_sessions", (), {"signal_name": "NOPE"},
+     "kill_all_sessions"),
 ])
 def test_session_validation_happens_before_process_start(
         method, args, kwargs, operation, monkeypatch):

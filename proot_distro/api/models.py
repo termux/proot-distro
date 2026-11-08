@@ -164,11 +164,21 @@ class SessionSignalResult:
     pids: Tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class DetachedSession:
+    """A detached login or image-entrypoint session started by the API."""
+
+    pid: int
+    container: str
+    kind: str
+
+
 __all__ = (
     "BackupResult",
     "BuildResult",
     "CacheCleanupResult",
     "ContainerInfo",
+    "DetachedSession",
     "ImageInfo",
     "ImageRemovalResult",
     "PushResult",

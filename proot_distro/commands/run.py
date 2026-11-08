@@ -109,8 +109,8 @@ def _working_dir(img_cfg: dict, container_name: str) -> str:
     return value or "/"
 
 
-def command_run(args) -> None:
-    """Execute the container image's Entrypoint/Cmd inside proot."""
+def command_run(args):
+    """Execute the image Entrypoint/Cmd, returning a detached PID if used."""
     container_name = args.container_name
     run_args = getattr(args, "run_args", []) or []
 
@@ -149,4 +149,4 @@ def command_run(args) -> None:
     # Signal to command_login to bypass shell wrapping and run inner directly.
     args._run_inner = inner
     args.login_cmd = []
-    command_login(args)
+    return command_login(args)

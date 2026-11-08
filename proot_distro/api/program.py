@@ -81,6 +81,7 @@ from proot_distro.api.models import (
     BuildResult,
     CacheCleanupResult,
     ContainerInfo,
+    DetachedSession,
     ImageInfo,
     ImageRemovalResult,
     PushResult,
@@ -266,6 +267,29 @@ def _write_all(fd: int, data: bytes) -> None:
     while data:
         written = os.write(fd, data)
         data = data[written:]
+
+
+def _signal_argument(value, *, operation: str) -> signal.Signals:
+    """Normalize a signal number or name for a public session method."""
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            return signal.Signals(value)
+        if isinstance(value, signal.Signals):
+            return value
+        if isinstance(value, str):
+            raw = value.strip().upper()
+            if raw.isdigit():
+                return signal.Signals(int(raw))
+            if not raw.startswith("SIG"):
+                raw = "SIG" + raw
+            return signal.Signals[raw]
+        raise ValueError
+    except (KeyError, ValueError):
+        raise InvalidArgumentError(
+            f"invalid signal '{value}'.", operation=operation
+        ) from None
 
 
 def _worker_environment(config: RuntimeConfig) -> dict:
@@ -1497,6 +1521,109 @@ class ProotDistro:
             **options,
         )
 
+    def _start_detached_session(
+        self, kind: str, container: str, arguments, options: dict,
+    ) -> DetachedSession:
+        operation = "start_detached" if kind == "login" else "run_detached"
+        container = _require_name(container, operation=operation)
+        arguments = _string_list(
+            arguments, operation=operation, argument="arguments"
+        )
+        if not any(
+            item.name == container for item in self.list_containers()
+        ):
+            raise NotFoundError(
+                f"container '{container}' is not installed.",
+                operation=operation,
+            )
+        result = self._context.worker(operation, {
+            "kind": kind,
+            "container": container,
+            "arguments": arguments,
+            "options": options,
+        })
+        pid = result.get("pid")
+        if (isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0
+                or result.get("container") != container
+                or result.get("kind") != kind):
+            raise OperationError(
+                "detached session worker returned an invalid result.",
+                operation=operation,
+            )
+        return DetachedSession(pid, container, kind)
+
+    def start_detached(
+        self,
+        container: str,
+        arguments=(),
+        *,
+        user: str = "root",
+        environment: Optional[Mapping[str, str]] = None,
+        binds=(),
+        work_dir: Optional[str] = None,
+        redirect_ports: bool = False,
+        shared_home: bool = False,
+        shared_tmp: bool = False,
+        shared_x11: bool = False,
+        isolated: bool = False,
+        minimal: bool = False,
+        no_link2symlink: bool = False,
+        no_sysvipc: bool = False,
+        no_kill_on_exit: bool = False,
+        emulator=None,
+        kernel: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> DetachedSession:
+        """Start a detached login command with stdio connected to /dev/null."""
+        options = self._session_options(
+            "start_detached", user=user, environment=environment, binds=binds,
+            work_dir=work_dir, redirect_ports=redirect_ports,
+            shared_home=shared_home, shared_tmp=shared_tmp,
+            shared_x11=shared_x11, isolated=isolated, minimal=minimal,
+            no_link2symlink=no_link2symlink, no_sysvipc=no_sysvipc,
+            no_kill_on_exit=no_kill_on_exit, emulator=emulator,
+            kernel=kernel, hostname=hostname,
+        )
+        return self._start_detached_session(
+            "login", container, arguments, options
+        )
+
+    def run_detached(
+        self,
+        container: str,
+        arguments=(),
+        *,
+        user: str = "root",
+        environment: Optional[Mapping[str, str]] = None,
+        binds=(),
+        work_dir: Optional[str] = None,
+        redirect_ports: bool = False,
+        shared_home: bool = False,
+        shared_tmp: bool = False,
+        shared_x11: bool = False,
+        isolated: bool = False,
+        minimal: bool = False,
+        no_link2symlink: bool = False,
+        no_sysvipc: bool = False,
+        no_kill_on_exit: bool = False,
+        emulator=None,
+        kernel: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> DetachedSession:
+        """Start the image Entrypoint/Cmd as a detached session."""
+        options = self._session_options(
+            "run_detached", user=user, environment=environment, binds=binds,
+            work_dir=work_dir, redirect_ports=redirect_ports,
+            shared_home=shared_home, shared_tmp=shared_tmp,
+            shared_x11=shared_x11, isolated=isolated, minimal=minimal,
+            no_link2symlink=no_link2symlink, no_sysvipc=no_sysvipc,
+            no_kill_on_exit=no_kill_on_exit, emulator=emulator,
+            kernel=kernel, hostname=hostname,
+        )
+        return self._start_detached_session(
+            "run", container, arguments, options
+        )
+
     def kill_session(
         self, target, *, signal_name="TERM",
     ) -> SessionSignalResult:
@@ -1514,27 +1641,9 @@ class ProotDistro:
                 "target must be a positive PID or container name.",
                 operation="kill_session",
             )
-        try:
-            if isinstance(signal_name, bool):
-                raise ValueError
-            if isinstance(signal_name, int):
-                selected_signal = signal.Signals(signal_name)
-            elif isinstance(signal_name, signal.Signals):
-                selected_signal = signal_name
-            elif isinstance(signal_name, str):
-                raw = signal_name.strip().upper()
-                if raw.isdigit():
-                    selected_signal = signal.Signals(int(raw))
-                else:
-                    if not raw.startswith("SIG"):
-                        raw = "SIG" + raw
-                    selected_signal = signal.Signals[raw]
-            else:
-                raise ValueError
-        except (KeyError, ValueError):
-            raise InvalidArgumentError(
-                f"invalid signal '{signal_name}'.", operation="kill_session"
-            ) from None
+        selected_signal = _signal_argument(
+            signal_name, operation="kill_session"
+        )
         result = self._context.worker("kill_session", {
             "target": target_text,
             "signal": selected_signal.name,
@@ -1550,6 +1659,26 @@ class ProotDistro:
         return SessionSignalResult(
             target_text, selected_signal.name, tuple(pids)
         )
+
+    def kill_all_sessions(self, *, signal_name="TERM") -> SessionSignalResult:
+        """Signal every active tracked session in this runtime."""
+        selected_signal = _signal_argument(
+            signal_name, operation="kill_all_sessions"
+        )
+        result = self._context.worker("kill_session", {
+            "target": None,
+            "all": True,
+            "signal": selected_signal.name,
+        })
+        pids = result.get("pids")
+        if (not isinstance(pids, list)
+                or any(isinstance(pid, bool) or not isinstance(pid, int)
+                       or pid <= 0 for pid in pids)):
+            raise OperationError(
+                "kill_all_sessions worker returned an invalid result.",
+                operation="kill_all_sessions",
+            )
+        return SessionSignalResult("*", selected_signal.name, tuple(pids))
 
     def search(
         self, query: str, *, limit: int = SEARCH_DEFAULT_LIMIT,

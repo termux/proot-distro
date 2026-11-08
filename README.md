@@ -338,6 +338,21 @@ arguments like CLI `login`; `run` applies the image Entrypoint/Cmd rules.
 every active session of a container. `SessionProcess.terminate()` and
 `.kill()` call this tracked-tree operation with `SIGTERM` and `SIGKILL`.
 
+For a session that must outlive its launching process, use the detached
+variants. They connect all three standard streams to `/dev/null` and return an
+immutable `DetachedSession` containing its PID, container, and kind:
+
+```python
+session = pd.run_detached("my-container", ["--port", "8080"])
+pd.kill_session(session.pid)
+
+# Stop every tracked session in this RuntimeConfig.
+pd.kill_all_sessions(signal_name="KILL")
+```
+
+`start_detached` and `run_detached` daemonize only inside the one-shot worker;
+they never call `fork()` in the embedding application.
+
 Mutating operations run in a short-lived child process so their signal and
 cleanup behavior cannot alter the embedding application. This worker exits
 when the method finishes; it is not a persistent service.

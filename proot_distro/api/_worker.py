@@ -460,15 +460,35 @@ def _kill_session(options: dict) -> dict:
     from proot_distro.commands.kill import _select_sessions, command_kill
     from proot_distro.session import active_sessions
 
-    target = options["target"]
-    selected = _select_sessions(active_sessions(), target, False)
+    kill_all = options.get("all", False)
+    target = options.get("target")
+    selected = _select_sessions(active_sessions(), target, kill_all)
     pids = [session["pid"] for session in selected]
     command_kill(SimpleNamespace(
         target=target,
-        all=False,
+        all=kill_all,
         signal=options.get("signal"),
     ))
     return {"pids": pids}
+
+
+def _start_detached(options: dict) -> dict:
+    from proot_distro.api._session_worker import _args
+
+    args = _args(options)
+    args.detach = True
+    kind = options.get("kind")
+    if kind == "login":
+        from proot_distro.commands.login import command_login
+        pid = command_login(args)
+    elif kind == "run":
+        from proot_distro.commands.run import command_run
+        pid = command_run(args)
+    else:
+        raise ValueError("session kind is not valid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise RuntimeError("detached session did not return a valid PID")
+    return {"pid": pid, "container": options["container"], "kind": kind}
 
 
 _OPERATIONS = {
@@ -489,6 +509,8 @@ _OPERATIONS = {
     "remove_image": _remove_image,
     "clear_cache": _clear_cache,
     "kill_session": _kill_session,
+    "start_detached": _start_detached,
+    "run_detached": _start_detached,
 }
 
 
