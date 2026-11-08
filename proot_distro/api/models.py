@@ -102,20 +102,20 @@ class TransferResult:
 
 @dataclass(frozen=True)
 class BackupResult:
-    """A container backup written to a host file."""
+    """A container backup written to a host path or caller-owned stream."""
 
     container: str
-    output: str
+    output: Optional[str]
     compression: str
     size_bytes: int
 
 
 @dataclass(frozen=True)
 class RestoreResult:
-    """A container restored from a host archive."""
+    """A container restored from a host path or caller-owned stream."""
 
     container: ContainerInfo
-    archive: str
+    archive: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ class BuildResult:
     """Images and optional artifacts produced by a Dockerfile build."""
 
     images: Tuple[ImageInfo, ...]
-    outputs: Tuple[str, ...]
+    outputs: Tuple[Optional[str], ...]
     installed_container: Optional[ContainerInfo]
 
 

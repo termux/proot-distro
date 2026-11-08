@@ -241,7 +241,8 @@ and these container-management methods:
 | `rename_container(OLD, NEW)` | Rename a container and update its link2symlink entries. |
 | `reset_container(NAME)` | Reinstall an OCI container from its recorded image. All changes in its rootfs are lost. |
 
-Files and backups use explicit method arguments instead of CLI stdin/stdout:
+Files and backups use explicit paths or caller-owned binary streams instead of
+the embedding application's standard input and output:
 
 ```python
 pd.copy("./settings.ini", "my-container:/etc/myapp/settings.ini")
@@ -252,6 +253,13 @@ pd.sync("./site", "my-container:/srv/site", checksum=True, delete=True)
 backup = pd.backup("my-container", "./my-container.tar.gz")
 pd.remove_container("my-container")
 restored = pd.restore(backup.output)
+
+# Streams are useful for memory buffers, sockets, and application pipelines.
+import io
+archive = io.BytesIO()
+pd.backup("my-container", archive, compression="gzip")
+archive.seek(0)
+pd.restore(archive)
 ```
 
 | Method | Action |
@@ -259,13 +267,13 @@ restored = pd.restore(backup.output)
 | `copy(SOURCE, DESTINATION, recursive=False)` | Copy a file, or a directory with `recursive=True`. |
 | `move(SOURCE, DESTINATION)` | Move a file or directory. |
 | `sync(SOURCE, DESTINATION, checksum=False, delete=False)` | Synchronize paths and optionally remove destination-only entries. |
-| `backup(NAME, OUTPUT, compression=None)` | Write a backup to a new host file. Compression can be inferred from its extension. |
-| `restore(ARCHIVE)` | Restore one container from a host backup file. |
+| `backup(NAME, OUTPUT, compression=None)` | Write a backup to a new host file or writable binary stream. Compression is inferred only for paths. |
+| `restore(ARCHIVE)` | Restore one container from a host backup path or readable binary stream. |
 
 `copy`, `move`, and `sync` accept the same `container:path` syntax as the
 CLI. A `pathlib.Path` always means a host path and is converted to an absolute
-path. `backup` and `restore` require host files; they never read or write the
-embedding application's standard streams.
+path. Stream backups default to no compression; pass `compression="gzip"`,
+`"bzip2"`, `"xz"`, or `"zstd"` explicitly when needed.
 
 Images can be built, pushed, removed, and cleaned from the cache:
 
@@ -276,6 +284,15 @@ build = pd.build(
     build_args={"VERSION": "1"},
     outputs=["./myapp.oci.tar"],
     install_as="myapp",
+)
+
+dockerfile = io.BytesIO(b"FROM scratch\nCOPY rootfs/ /\n")
+oci_archive = io.BytesIO()
+pd.build(
+    "./context",
+    dockerfile=dockerfile,
+    tags=["myuser/myapp:streamed"],
+    outputs=[oci_archive],
 )
 
 published = pd.push("myuser/myapp:1")
@@ -291,12 +308,22 @@ pd.clear_cache(orphan=True)
 | `clear_cache(orphan=False, build_cache=False)` | Clear all cache data, orphan layers, or the Dockerfile build cache. |
 
 `build_args` is a mapping of strings. `tags` and `outputs` accept iterables;
-a single output path is also accepted. Dockerfile stdin is intentionally not
-used by the API: pass a Dockerfile path or leave it unset to use
-`PATH/Dockerfile`. A `credential_provider` can select credentials for
+a single output path or writable binary stream is also accepted. A Dockerfile
+may be a path or readable binary stream. Streamed OCI outputs are uncompressed
+tar archives; path suffixes continue to select output compression. A
+`credential_provider` can select credentials for
 `install`, `reset_container`, `push`, and each registry/repository encountered
 during a build. Static build credentials can still be supplied through
 `ProotDistro(credentials=...)` or directly to `build(credentials=...)`.
+
+Streams are consumed from their current position and need not be seekable.
+The API never closes, seeks, or flushes caller-owned streams. A successful
+method call means every output byte was passed to `write()`. `BackupResult`
+uses `output=None`, `RestoreResult` uses `archive=None`, and `BuildResult`
+uses `None` at each streamed output position. If an operation or stream method
+fails, output streams can contain a partial archive; path outputs retain their
+atomic-write behavior. Exceptions raised by `read()` or `write()` propagate
+to the caller.
 
 ### Container processes
 

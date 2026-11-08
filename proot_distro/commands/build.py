@@ -60,6 +60,7 @@ from proot_distro.helpers.oci_writer import (
     build_manifest_and_config,
     store_in_cache,
     write_oci_archive,
+    write_oci_archive_fileobj,
 )
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER, InvalidReference, parse_tag_reference, with_explicit_tag,
@@ -72,7 +73,7 @@ from proot_distro.progress import fmt_size
 # Top-level command
 # ---------------------------------------------------------------------------
 
-def _read_dockerfile(dockerfile: str):
+def _read_dockerfile(dockerfile: str, fileobj=None):
     """The Dockerfile's bytes, or None when there are more than the cap.
 
     "-" is stdin, read as bytes like the file so both decode the same
@@ -80,7 +81,9 @@ def _read_dockerfile(dockerfile: str):
     MAX_DOCKERFILE_BYTES is read and its presence is the refusal, so the
     bound is on what arrives rather than on a size the file declares.
     """
-    if dockerfile == "-":
+    if fileobj is not None:
+        data = fileobj.read(MAX_DOCKERFILE_BYTES + 1)
+    elif dockerfile == "-":
         data = sys.stdin.buffer.read(MAX_DOCKERFILE_BYTES + 1)
     else:
         with open(dockerfile, "rb") as fh:
@@ -95,12 +98,14 @@ def command_build(args):
 
     build_path = getattr(args, "path", None) or "."
     dockerfile_path = getattr(args, "dockerfile", None)
+    dockerfile_file = getattr(args, "_api_dockerfile_file", None)
     tags = list(getattr(args, "tags", []) or [])
     build_args = _parse_build_args(getattr(args, "build_args", None) or [])
     override_arch = getattr(args, "override_arch", None) or ""
     target_stage = getattr(args, "target_stage", None) or None
     emulator = getattr(args, "emulator", None) or ""
     outputs = list(getattr(args, "outputs", []) or [])
+    output_files = list(getattr(args, "_api_output_files", []) or [])
     install_as = getattr(args, "install_as", None)
 
     if dockerfile_path is not None and not dockerfile_path:
@@ -134,16 +139,21 @@ def command_build(args):
         crit_error(f"build context '{build_dir}' is not a directory.")
         sys.exit(1)
 
-    if dockerfile != "-" and not os.path.isfile(dockerfile):
+    if (dockerfile_file is None and dockerfile != "-"
+            and not os.path.isfile(dockerfile)):
         crit_error(f"required file '{dockerfile}' does not exist.")
         sys.exit(1)
 
     # ----- read + parse Dockerfile -----
     try:
-        raw = _read_dockerfile(dockerfile)
+        raw = _read_dockerfile(dockerfile, dockerfile_file)
     except OSError as exc:
         crit_error(f"cannot read Dockerfile: {exc}")
         sys.exit(1)
+    finally:
+        if (dockerfile_file is not None
+                and getattr(args, "_api_close_dockerfile_file", False)):
+            dockerfile_file.close()
     if raw is None:
         crit_error(
             f"Dockerfile is larger than {MAX_DOCKERFILE_BYTES} bytes; "
@@ -305,6 +315,14 @@ def command_build(args):
                     write_oci_archive(out_abs, manifest, image_config, primary_tag)
                 except (OSError, RuntimeError) as exc:
                     log_error(f"Cannot write '{out_file}': {exc}")
+                    sys.exit(1)
+            for output_file in output_files:
+                try:
+                    write_oci_archive_fileobj(
+                        output_file, manifest, image_config, primary_tag
+                    )
+                except (OSError, RuntimeError) as exc:
+                    log_error(f"Cannot write OCI archive stream: {exc}")
                     sys.exit(1)
 
             # Build summary.

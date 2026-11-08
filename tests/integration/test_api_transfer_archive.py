@@ -1,3 +1,4 @@
+import io
 import os
 
 import pytest
@@ -112,6 +113,100 @@ def test_backup_restore_roundtrip(tmp_path, builders, capsys):
     assert capsys.readouterr() == ("", "")
 
 
+def test_backup_restore_roundtrip_with_binary_streams(builders):
+    builders.make_container("stream-box", files={
+        "var/data": b"streamed payload",
+    })
+    archive = io.BytesIO()
+    pd = ProotDistro()
+
+    backup = pd.backup("stream-box", archive, compression="gzip")
+
+    assert backup.output is None
+    assert backup.compression == "gzip"
+    assert backup.size_bytes == len(archive.getvalue())
+    assert not archive.closed
+
+    pd.remove_container("stream-box")
+    archive.seek(0)
+    restored = pd.restore(archive)
+
+    assert restored.container.name == "stream-box"
+    assert restored.archive is None
+    assert not archive.closed
+    assert open(os.path.join(
+        container_rootfs("stream-box"), "var", "data"
+    ), "rb").read() == b"streamed payload"
+
+
+def test_archive_streams_are_sequential_and_support_short_writes(builders):
+    builders.make_container("sequential-box", files={"payload": b"value"})
+
+    class ShortWriter:
+        def __init__(self):
+            self.data = bytearray()
+
+        def write(self, data):
+            count = min(17, len(data))
+            self.data.extend(data[:count])
+            return count
+
+    class ChunkReader:
+        def __init__(self, data):
+            self.data = data
+            self.offset = 0
+
+        def read(self, size=-1):
+            if self.offset >= len(self.data):
+                return b""
+            size = min(size, 31)
+            chunk = self.data[self.offset:self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+    output = ShortWriter()
+    pd = ProotDistro()
+    backup = pd.backup("sequential-box", output)
+    assert backup.compression == "none"
+    pd.remove_container("sequential-box")
+
+    restored = pd.restore(ChunkReader(bytes(output.data)))
+
+    assert restored.container.name == "sequential-box"
+    assert open(os.path.join(
+        container_rootfs("sequential-box"), "payload"
+    ), "rb").read() == b"value"
+
+
+def test_backup_stream_exception_propagates_from_caller(builders):
+    builders.make_container("broken-output", files={"payload": b"value"})
+    expected = LookupError("stream destination unavailable")
+
+    class BrokenOutput:
+        def write(self, _data):
+            raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro().backup(
+            "broken-output", BrokenOutput(), compression="none"
+        )
+
+    assert exc.value is expected
+
+
+def test_restore_stream_exception_propagates_from_caller():
+    expected = LookupError("stream source unavailable")
+
+    class BrokenInput:
+        def read(self, _size=-1):
+            raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro().restore(BrokenInput())
+
+    assert exc.value is expected
+
+
 def test_backup_refuses_existing_output(tmp_path, builders):
     builders.make_container("box")
     archive = tmp_path / "existing.tar"
@@ -183,7 +278,9 @@ def test_transfer_missing_source_is_typed_error(tmp_path, builders):
     ("sync", ("a", "box:/x"), {"delete": 1}, "sync"),
     ("backup", ("bad/name", "out.tar"), {}, "backup"),
     ("backup", ("box", "out.tar"), {"compression": "zip"}, "backup"),
+    ("backup", ("box", io.StringIO()), {}, "backup"),
     ("restore", ("",), {}, "restore"),
+    ("restore", (io.StringIO(),), {}, "restore"),
 ])
 def test_transfer_and_archive_validation_happens_before_worker(
         method, args, kwargs, operation, monkeypatch):

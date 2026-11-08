@@ -25,6 +25,7 @@ the same state as the command-line utility and delegates to the same
 descriptor-safe inventory and registry implementations.
 """
 
+import io
 import json
 import os
 import signal
@@ -33,7 +34,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Tuple
+from typing import BinaryIO, Callable, Mapping, Optional, Tuple
 
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import (
@@ -222,6 +223,48 @@ def _path_argument(value, *, operation: str, argument: str,
     if host_only or path_like:
         value = os.path.abspath(os.path.expanduser(value))
     return value
+
+
+def _binary_stream(value, *, operation: str, argument: str,
+                   readable: bool = False, writable: bool = False) -> BinaryIO:
+    """Validate a caller-owned sequential binary stream without consuming it."""
+    method_name = "read" if readable else "write"
+    capability_name = "readable" if readable else "writable"
+    if isinstance(value, io.TextIOBase) or not callable(
+        getattr(value, method_name, None)
+    ):
+        raise InvalidArgumentError(
+            f"{argument} must be a binary {capability_name} stream.",
+            operation=operation,
+        )
+    capability = getattr(value, capability_name, None)
+    if callable(capability):
+        try:
+            capable = capability()
+        except (OSError, ValueError) as exc:
+            raise InvalidArgumentError(
+                f"{argument} is not an open {capability_name} stream: {exc}",
+                operation=operation,
+            ) from None
+        if not capable:
+            raise InvalidArgumentError(
+                f"{argument} must be a binary {capability_name} stream.",
+                operation=operation,
+            )
+    return value
+
+
+def _path_or_stream(value, *, operation: str, argument: str,
+                    readable: bool = False, writable: bool = False):
+    """Return ``(path, None)`` or ``(None, stream)`` for a public argument."""
+    if isinstance(value, (str, os.PathLike)):
+        return _path_argument(
+            value, operation=operation, argument=argument, host_only=True
+        ), None
+    return None, _binary_stream(
+        value, operation=operation, argument=argument,
+        readable=readable, writable=writable,
+    )
 
 
 def _string_argument(value, *, operation: str, argument: str,
@@ -481,30 +524,156 @@ def _communicate_with_credential_provider(
     return result["streams"]
 
 
+def _kill_worker(proc) -> None:
+    """Best-effort termination used when a caller-owned stream fails."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _write_stream_chunk(stream, chunk: bytes, operation: str) -> None:
+    """Write all of *chunk*, including through short-writing streams."""
+    view = memoryview(chunk)
+    while view:
+        written = stream.write(view)
+        if (isinstance(written, bool) or not isinstance(written, int)
+                or written <= 0 or written > len(view)):
+            raise InvalidArgumentError(
+                "output stream write() must return a positive byte count.",
+                operation=operation,
+            )
+        view = view[written:]
+
+
+def _start_stream_pumps(
+    proc,
+    parent_inputs,
+    parent_outputs,
+    operation: str,
+):
+    """Copy caller streams through worker pipes and report errors/counts."""
+    threads = []
+    errors = []
+    counts = {}
+    error_lock = threading.Lock()
+
+    def fail(exc) -> None:
+        with error_lock:
+            if not errors:
+                errors.append(exc)
+                _kill_worker(proc)
+
+    def pump_input(fd: int, stream) -> None:
+        try:
+            with os.fdopen(fd, "wb", buffering=0) as destination:
+                while True:
+                    chunk = stream.read(128 * 1024)
+                    if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                        raise InvalidArgumentError(
+                            "input stream read() must return bytes.",
+                            operation=operation,
+                        )
+                    if not chunk:
+                        break
+                    _write_all(destination.fileno(), bytes(chunk))
+        except BrokenPipeError:
+            # The worker may intentionally stop after a bounded read, or may
+            # reject an operation before consuming the whole input.
+            pass
+        except BaseException as exc:
+            fail(exc)
+
+    def pump_output(name: str, fd: int, stream) -> None:
+        total = 0
+        try:
+            with os.fdopen(fd, "rb", buffering=0) as source:
+                while True:
+                    chunk = source.read(128 * 1024)
+                    if not chunk:
+                        break
+                    _write_stream_chunk(stream, chunk, operation)
+                    total += len(chunk)
+            counts[name] = total
+        except BaseException as exc:
+            fail(exc)
+
+    for fd, stream in parent_inputs:
+        thread = threading.Thread(
+            target=pump_input, args=(fd, stream), daemon=True
+        )
+        thread.start()
+        threads.append(thread)
+    for name, fd, stream in parent_outputs:
+        thread = threading.Thread(
+            target=pump_output, args=(name, fd, stream), daemon=True
+        )
+        thread.start()
+        threads.append(thread)
+    return threads, errors, counts
+
+
 def _run_worker(operation: str, options: dict,
                 config: Optional[RuntimeConfig] = None,
                 event_handler: Optional[EventHandler] = None,
-                credential_provider: Optional[CredentialProvider] = None) -> dict:
+                credential_provider: Optional[CredentialProvider] = None,
+                input_streams: Optional[Mapping[str, BinaryIO]] = None,
+                output_streams: Optional[Mapping[str, BinaryIO]] = None) -> dict:
     """Run one stateful operation in a child and return its JSON result."""
     config = config or RuntimeConfig.default()
+    options = dict(options)
+    child_stream_fds = {}
+    parent_inputs = []
+    parent_outputs = []
+    child_pipe_fds = []
+    try:
+        for name, stream in (input_streams or {}).items():
+            child_fd, parent_fd = os.pipe()
+            child_stream_fds[name] = child_fd
+            child_pipe_fds.append(child_fd)
+            parent_inputs.append((parent_fd, stream))
+        for name, stream in (output_streams or {}).items():
+            parent_fd, child_fd = os.pipe()
+            child_stream_fds[name] = child_fd
+            child_pipe_fds.append(child_fd)
+            parent_outputs.append((name, parent_fd, stream))
+    except OSError as exc:
+        for fd in child_pipe_fds:
+            os.close(fd)
+        for fd, _stream in parent_inputs:
+            os.close(fd)
+        for _name, fd, _stream in parent_outputs:
+            os.close(fd)
+        raise OperationError(
+            f"cannot create the {operation} stream channel: {exc}",
+            operation=operation,
+        ) from exc
+    if child_stream_fds:
+        options["_stream_fds"] = child_stream_fds
     request = json.dumps(
         {"operation": operation, "options": options},
         ensure_ascii=True,
         separators=(",", ":"),
     ).encode("ascii")
     parent_credentials = child_credentials = None
-    pass_fds = ()
+    pass_fds = tuple(child_pipe_fds)
     env = _worker_environment(config)
     if credential_provider is not None:
         try:
             parent_credentials, child_credentials = socket.socketpair()
         except OSError as exc:
+            for fd in child_pipe_fds:
+                os.close(fd)
+            for fd, _stream in parent_inputs:
+                os.close(fd)
+            for _name, fd, _stream in parent_outputs:
+                os.close(fd)
             raise OperationError(
                 f"cannot create credential provider channel: {exc}",
                 operation=operation,
             ) from exc
         env["_PROOT_DISTRO_CREDENTIAL_FD"] = str(child_credentials.fileno())
-        pass_fds = (child_credentials.fileno(),)
+        pass_fds += (child_credentials.fileno(),)
     try:
         proc = subprocess.Popen(
             [sys.executable, "-m", "proot_distro.api._worker"],
@@ -519,12 +688,23 @@ def _run_worker(operation: str, options: dict,
         if parent_credentials is not None:
             parent_credentials.close()
             child_credentials.close()
+        for fd in child_pipe_fds:
+            os.close(fd)
+        for fd, _stream in parent_inputs:
+            os.close(fd)
+        for _name, fd, _stream in parent_outputs:
+            os.close(fd)
         raise OperationError(
             f"cannot start the {operation} worker: {exc}", operation=operation,
         ) from exc
 
     if child_credentials is not None:
         child_credentials.close()
+    for fd in child_pipe_fds:
+        os.close(fd)
+    pump_threads, stream_errors, stream_counts = _start_stream_pumps(
+        proc, parent_inputs, parent_outputs, operation
+    )
     try:
         if parent_credentials is None:
             stdout, stderr = proc.communicate(request)
@@ -544,12 +724,15 @@ def _run_worker(operation: str, options: dict,
         proc.communicate()
         raise
     except BaseException:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
+        _kill_worker(proc)
         proc.wait()
         raise
+    finally:
+        for thread in pump_threads:
+            thread.join()
+
+    if stream_errors:
+        raise stream_errors[0]
 
     if proc.returncode != 0:
         structured = _structured_worker_error(operation, stdout)
@@ -605,6 +788,8 @@ def _run_worker(operation: str, options: dict,
     if event_handler is not None:
         for event in events:
             event_handler(event)
+    if stream_counts:
+        result["_stream_bytes"] = stream_counts
     return result
 
 
@@ -624,10 +809,12 @@ class _OperationContext:
     def worker(
         self, operation: str, options: dict, *,
         credential_provider: Optional[CredentialProvider] = None,
+        input_streams: Optional[Mapping[str, BinaryIO]] = None,
+        output_streams: Optional[Mapping[str, BinaryIO]] = None,
     ) -> dict:
         return _run_worker(
             operation, options, self.config, self.event_handler,
-            credential_provider,
+            credential_provider, input_streams, output_streams,
         )
 
     def credentials_for(
@@ -1030,10 +1217,10 @@ class ProotDistro:
         *,
         compression: Optional[str] = None,
     ) -> BackupResult:
-        """Write a container backup to an explicit host file."""
+        """Write a container backup to a host path or binary stream."""
         name = _require_name(name, operation="backup")
-        output = _path_argument(
-            output, operation="backup", argument="output", host_only=True
+        output_path, output_stream = _path_or_stream(
+            output, operation="backup", argument="output", writable=True
         )
         allowed = (None, "gzip", "bzip2", "xz", "zstd", "none")
         if compression not in allowed:
@@ -1043,15 +1230,21 @@ class ProotDistro:
             )
         result = self._context.worker("backup", {
             "name": name,
-            "output": output,
+            "output": output_path,
             "compression": compression,
-        })
+        }, output_streams=(
+            {"backup_output": output_stream} if output_stream is not None
+            else None
+        ))
         try:
             result_name = result["container_name"]
             result_output = result["output"]
             result_compression = result["compression"]
-            size_bytes = result["size_bytes"]
-            if (result_name != name or result_output != output
+            if output_stream is None:
+                size_bytes = result["size_bytes"]
+            else:
+                size_bytes = result["_stream_bytes"]["backup_output"]
+            if (result_name != name or result_output != output_path
                     or result_compression not in allowed[1:]
                     or isinstance(size_bytes, bool)
                     or not isinstance(size_bytes, int)
@@ -1063,28 +1256,34 @@ class ProotDistro:
                 operation="backup",
             ) from None
         return BackupResult(
-            name, output, result_compression, size_bytes
+            name, output_path, result_compression, size_bytes
         )
 
     def restore(self, archive) -> RestoreResult:
-        """Restore one container from an explicit host backup file."""
-        archive = _path_argument(
-            archive, operation="restore", argument="archive", host_only=True
+        """Restore one container from a host path or binary stream."""
+        archive_path, archive_stream = _path_or_stream(
+            archive, operation="restore", argument="archive", readable=True
         )
-        result = self._context.worker("restore", {"archive": archive})
+        result = self._context.worker(
+            "restore", {"archive": archive_path},
+            input_streams=(
+                {"restore_input": archive_stream}
+                if archive_stream is not None else None
+            ),
+        )
         name = result.get("container_name")
         if not isinstance(name, str) or not is_valid_name(name):
             raise OperationError(
                 "restore worker returned an invalid container name.",
                 operation="restore",
             )
-        if result.get("archive") != archive:
+        if result.get("archive") != archive_path:
             raise OperationError(
                 "restore worker returned an invalid archive path.",
                 operation="restore",
             )
         return RestoreResult(
-            self._installed_container(name, "restore"), archive
+            self._installed_container(name, "restore"), archive_path
         )
 
     def build(
@@ -1106,10 +1305,11 @@ class ProotDistro:
         path = _path_argument(
             path, operation="build", argument="path", host_only=True
         )
+        dockerfile_stream = None
         if dockerfile is not None:
-            dockerfile = _path_argument(
+            dockerfile, dockerfile_stream = _path_or_stream(
                 dockerfile, operation="build", argument="dockerfile",
-                host_only=True,
+                readable=True,
             )
         if isinstance(tags, str):
             tags = (tags,)
@@ -1169,16 +1369,26 @@ class ProotDistro:
                 emulator, operation="build", argument="emulator",
                 host_only=True,
             )
-        if isinstance(outputs, (str, os.PathLike)):
+        if (isinstance(outputs, (str, os.PathLike))
+                or callable(getattr(outputs, "write", None))):
             outputs = (outputs,)
         try:
-            outputs = tuple(_path_argument(
-                output, operation="build", argument="output", host_only=True
-            ) for output in outputs)
+            raw_outputs = tuple(outputs)
         except TypeError:
             raise InvalidArgumentError(
-                "outputs must be an iterable of host paths.", operation="build"
+                "outputs must be an iterable of host paths or binary streams.",
+                operation="build",
             ) from None
+        output_paths = []
+        build_output_streams = {}
+        for index, output in enumerate(raw_outputs):
+            output_path, output_stream = _path_or_stream(
+                output, operation="build", argument="output", writable=True
+            )
+            output_paths.append(output_path)
+            if output_stream is not None:
+                build_output_streams[f"build_output_{index}"] = output_stream
+        outputs = tuple(output_paths)
         if install_as is not None:
             _require_name(
                 install_as, operation="build", argument="install_as"
@@ -1214,7 +1424,12 @@ class ProotDistro:
             "credentials": self._context.credential_payload(
                 build_credentials
             ),
-        }, credential_provider=build_provider)
+        }, credential_provider=build_provider,
+            input_streams=(
+                {"dockerfile_input": dockerfile_stream}
+                if dockerfile_stream is not None else None
+            ),
+            output_streams=build_output_streams or None)
         raw_images = result.get("images")
         if not isinstance(raw_images, list):
             raise OperationError(

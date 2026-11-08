@@ -113,6 +113,18 @@ def _credential_channel_from_env():
     return _CredentialChannel(int(raw))
 
 
+def _open_stream(options: dict, name: str, mode: str):
+    """Open one inherited API stream descriptor and prevent exec leakage."""
+    streams = options.get("_stream_fds")
+    if not isinstance(streams, dict):
+        return None
+    fd = streams.get(name)
+    if isinstance(fd, bool) or not isinstance(fd, int) or fd <= 2:
+        return None
+    os.set_inheritable(fd, False)
+    return os.fdopen(fd, mode)
+
+
 def _enable_structured_locks() -> None:
     """Turn context-manager lock conflicts into structured failures."""
     from proot_distro.locking import _FlockBase
@@ -320,11 +332,19 @@ def _backup(options: dict) -> dict:
     )
 
     output = options["output"]
+    output_stream = _open_stream(options, "backup_output", "wb")
     compression = options.get("compression")
-    try:
-        inferred_compression = _compression_mode(output)
-    except ValueError as exc:
-        raise _WorkerFailure("unsupported", str(exc)) from exc
+    if output is None:
+        if output_stream is None:
+            raise ValueError("backup output is not valid")
+        inferred_compression = ""
+        if compression is None:
+            compression = "none"
+    else:
+        try:
+            inferred_compression = _compression_mode(output)
+        except ValueError as exc:
+            raise _WorkerFailure("unsupported", str(exc)) from exc
     if compression == "zstd":
         from proot_distro.compress import ZSTD_AVAILABLE, unavailable_msg
         if not ZSTD_AVAILABLE:
@@ -336,17 +356,22 @@ def _backup(options: dict) -> dict:
         raise _WorkerFailure(
             "not_found", f"container '{options['name']}' does not exist"
         )
-    if os.path.lexists(output):
+    if output is not None and os.path.lexists(output):
         raise _WorkerFailure(
             "already_exists", f"backup output '{output}' already exists"
         )
-    command_backup(SimpleNamespace(
-        container_name=options["name"],
-        output=output,
-        compression=compression,
-        verbose=False,
-        quiet=True,
-    ))
+    try:
+        command_backup(SimpleNamespace(
+            container_name=options["name"],
+            output=output,
+            compression=compression,
+            verbose=False,
+            quiet=True,
+            _api_output_file=output_stream,
+        ))
+    finally:
+        if output_stream is not None:
+            output_stream.close()
     if compression is None:
         mode = inferred_compression
         compression = {
@@ -357,7 +382,7 @@ def _backup(options: dict) -> dict:
         "container_name": options["name"],
         "output": output,
         "compression": compression,
-        "size_bytes": os.path.getsize(output),
+        "size_bytes": os.path.getsize(output) if output is not None else None,
     }
 
 
@@ -365,13 +390,21 @@ def _restore(options: dict) -> dict:
     from proot_distro.commands.restore import command_restore
 
     archive = options["archive"]
-    if not os.path.isfile(archive):
+    archive_stream = _open_stream(options, "restore_input", "rb")
+    if archive is None and archive_stream is None:
+        raise ValueError("restore input is not valid")
+    if archive is not None and not os.path.isfile(archive):
         raise _WorkerFailure(
             "not_found", f"backup archive '{archive}' does not exist"
         )
-    name = command_restore(SimpleNamespace(
-        archive=archive, verbose=False, quiet=True, _api_raise_errors=True,
-    ))
+    try:
+        name = command_restore(SimpleNamespace(
+            archive=archive, verbose=False, quiet=True, _api_raise_errors=True,
+            _api_archive_file=archive_stream,
+        ))
+    finally:
+        if archive_stream is not None:
+            archive_stream.close()
     if not isinstance(name, str):
         raise RuntimeError("restore did not identify a container")
     return {"container_name": name, "archive": archive}
@@ -389,31 +422,46 @@ def _build(options: dict) -> dict:
     _apply_registry_credentials(options)
     build_path = options["path"]
     dockerfile = options.get("dockerfile")
+    dockerfile_stream = _open_stream(
+        options, "dockerfile_input", "rb"
+    )
     tags = list(options.get("tags") or [])
     if not os.path.isdir(build_path):
         raise _WorkerFailure(
             "not_found", f"build context '{build_path}' does not exist"
         )
     dockerfile_path = dockerfile or os.path.join(build_path, "Dockerfile")
-    if not os.path.isfile(dockerfile_path):
+    if dockerfile_stream is None and not os.path.isfile(dockerfile_path):
         raise _WorkerFailure(
             "not_found", f"Dockerfile '{dockerfile_path}' does not exist"
         )
-    for output in options.get("outputs") or []:
-        if os.path.lexists(output):
+    output_files = []
+    for index, output in enumerate(options.get("outputs") or []):
+        if output is not None and os.path.lexists(output):
             raise _WorkerFailure(
                 "already_exists", f"build output '{output}' already exists"
             )
+        if output is None:
+            stream = _open_stream(options, f"build_output_{index}", "wb")
+            if stream is None:
+                raise ValueError("build output stream is not valid")
+            output_files.append(stream)
     credential_channel = _credential_channel_from_env()
     args = SimpleNamespace(
         path=build_path,
         dockerfile=dockerfile,
+        _api_dockerfile_file=dockerfile_stream,
+        _api_close_dockerfile_file=True,
         tags=tags,
         build_args=list(options.get("build_args") or []),
         override_arch=options.get("architecture"),
         target_stage=options.get("target"),
         emulator=options.get("emulator"),
-        outputs=list(options.get("outputs") or []),
+        outputs=[
+            output for output in options.get("outputs") or []
+            if output is not None
+        ],
+        _api_output_files=output_files,
         install_as=options.get("install_as"),
         no_cache=options.get("no_cache", False),
         verbose=False,
@@ -429,6 +477,10 @@ def _build(options: dict) -> dict:
             with use_basic_auth_provider(credential_channel):
                 command_build(args)
     finally:
+        if dockerfile_stream is not None and not dockerfile_stream.closed:
+            dockerfile_stream.close()
+        for output_file in output_files:
+            output_file.close()
         if credential_channel is not None:
             credential_channel.close()
 

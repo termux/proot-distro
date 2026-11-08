@@ -462,6 +462,7 @@ def command_restore(args):
     uses it to build a structured result without parsing archive names again.
     """
     archive = getattr(args, "archive", None)
+    archive_file = getattr(args, "_api_archive_file", None)
     verbose = getattr(args, "verbose", False)
 
     if archive:
@@ -474,7 +475,7 @@ def command_restore(args):
         if not os.access(archive, os.R_OK):
             crit_error(f"file '{archive}' is not readable.")
             sys.exit(1)
-    else:
+    elif archive_file is None:
         if sys.stdin.isatty():
             msg()
             crit_error("archive file path is not specified and "
@@ -516,9 +517,12 @@ def command_restore(args):
             unsupported, subject = file_is_zstd(archive), f"archive '{archive}'"
         else:
             unsupported = header_is_zstd(
-                sys.stdin.buffer.peek(len(ZSTD_MAGIC))
+                (archive_file or sys.stdin.buffer).peek(len(ZSTD_MAGIC))
             )
-            subject = "the archive on stdin"
+            subject = (
+                "the API archive stream" if archive_file is not None
+                else "the archive on stdin"
+            )
         if unsupported:
             crit_error(unsupported_msg(subject))
             if getattr(args, "_api_raise_errors", False):
@@ -568,9 +572,10 @@ def command_restore(args):
             counter = ByteCounter(raw_fh)
             tf_kwargs = dict(fileobj=counter, mode='r|*')
         else:
-            header = sys.stdin.buffer.peek(6)[:6]
+            input_file = archive_file or sys.stdin.buffer
+            header = input_file.peek(6)[:6]
             comp = _detect_compression(header)
-            tf_kwargs = dict(fileobj=sys.stdin.buffer, mode=f'r|{comp}')
+            tf_kwargs = dict(fileobj=input_file, mode=f'r|{comp}')
 
         with tarfile.open(**tf_kwargs) as tf:
             for member in tf:

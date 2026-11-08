@@ -1,5 +1,7 @@
-import os
+import io
 import json
+import os
+import tarfile
 
 import pytest
 
@@ -58,6 +60,46 @@ def test_build_returns_images_outputs_and_installed_container(tmp_path):
         container_rootfs("api-built"), "etc", "hostname"
     )).read() == "api-build\n"
     assert any(event.kind == EventKind.INFO for event in events)
+
+
+def test_build_accepts_dockerfile_and_oci_output_streams(tmp_path):
+    context = tmp_path / "stream-context"
+    (context / "rootfs").mkdir(parents=True)
+    (context / "rootfs" / "payload").write_bytes(b"stream build")
+    dockerfile = io.BytesIO(b"FROM scratch\nCOPY rootfs/ /\n")
+    archive = io.BytesIO()
+
+    result = ProotDistro().build(
+        context,
+        dockerfile=dockerfile,
+        tags=["stream-build:1"],
+        outputs=archive,
+    )
+
+    assert result.outputs == (None,)
+    assert not dockerfile.closed
+    assert not archive.closed
+    archive.seek(0)
+    with tarfile.open(fileobj=archive, mode="r:") as image:
+        names = image.getnames()
+    assert names[0] == "oci-layout"
+    assert "index.json" in names
+
+
+def test_build_supports_mixed_path_and_stream_outputs(tmp_path):
+    context = _context(tmp_path)
+    path_output = tmp_path / "mixed.oci.tar"
+    stream_output = io.BytesIO()
+
+    result = ProotDistro().build(
+        context,
+        tags=["mixed-output:1"],
+        outputs=[path_output, stream_output],
+    )
+
+    assert result.outputs == (str(path_output), None)
+    assert path_output.is_file()
+    assert stream_output.getvalue().startswith(b"oci-layout")
 
 
 def test_remove_image_returns_removed_variants(tmp_path):
@@ -173,6 +215,8 @@ def test_orphan_cleanup_unreadable_manifest_is_integrity_error():
     ("build", ("context",), {"tags": ["BAD TAG"]}, "build"),
     ("build", ("context",), {"build_args": []}, "build"),
     ("build", ("context",), {"no_cache": 1}, "build"),
+    ("build", ("context",), {"dockerfile": io.StringIO()}, "build"),
+    ("build", ("context",), {"outputs": [io.StringIO()]}, "build"),
     ("push", ("",), {}, "push"),
     ("push", ("image@sha256:" + "a" * 64,), {}, "push"),
     ("push", ("image:1",), {"architecture": "unknown"}, "push"),

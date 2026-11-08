@@ -49,7 +49,7 @@ Only names re-exported by `proot_distro.api` are public.
 
 | Module | Role |
 | --- | --- |
-| `api/program.py` | `ProotDistro` facade: inventories, search, container lifecycle, transfers, archives, image build/push/removal, and cache cleanup. |
+| `api/program.py` | `ProotDistro` facade: inventories, lifecycle, transfers, archives, images, cache cleanup, and caller-owned binary stream channels. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
 | `api/credentials.py` | Redacted credentials and provider requests; builds resolve multiple registries over a private bidirectional worker channel. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
@@ -106,7 +106,7 @@ what the command takes (see `locking.py`).
 | `helpers/build_engine/` | Dockerfile interpreter. `engine.py` (`BuildEngine`: FROM, dispatch, history), `stage.py` (per-FROM state and descriptors), `handlers.py` (metadata-only instructions and the dispatch table), `run_step.py` (RUN under proot), `copy_step.py` (COPY/ADD), `users.py`, `dockerignore.py`, `parsing.py`, `constants.py`, `errors.py`. |
 | `helpers/layer_diff.py` | Snapshot the rootfs before and after a RUN, diff, write a gzipped OCI layer with whiteouts. |
 | `helpers/build_cache.py` | Recipe-hash index so unchanged steps replay a cached layer. |
-| `helpers/oci_writer.py` | Final `build` outputs: manifest cache entry and OCI image-layout tarball. |
+| `helpers/oci_writer.py` | Final `build` outputs: manifest cache entry plus atomic path or sequential stream OCI tarballs. |
 | `helpers/tar_extract.py` | The single streaming tar -> rootfs extractor, used for layers and plain tarballs. |
 | `helpers/rootfs.py` | Post-extraction fixups: `resolv.conf`, `/etc/hosts`, Android uid/gid entries. |
 | `helpers/download.py` | HTTP opener, redirect policy, retries (honouring `Retry-After`, giving up on a spent quota), `download_file`, `sha256_file`. |

@@ -452,6 +452,7 @@ def command_backup(args) -> None:
     """Archive an installed container to a tar file or stdout."""
     container_name = args.container_name
     output_path = getattr(args, "output", None)
+    output_file = getattr(args, "_api_output_file", None)
     compression_arg = getattr(args, "compression", None)
     verbose = getattr(args, "verbose", False)
 
@@ -485,13 +486,19 @@ def command_backup(args) -> None:
             except ValueError as exc:
                 crit_error(str(exc))
                 sys.exit(1)
-    else:
+    elif output_file is None:
         if sys.stdout.isatty():
             crit_error(f"archive data cannot be printed to "
                        f"console. Please use option '--output' to "
                        f"specify a file or pipe the output to "
                        f"another command.")
             sys.exit(1)
+        compression = (
+            _COMPRESSION_ARG_MAP[compression_arg]
+            if compression_arg is not None
+            else ''
+        )
+    else:
         compression = (
             _COMPRESSION_ARG_MAP[compression_arg]
             if compression_arg is not None
@@ -522,6 +529,7 @@ def command_backup(args) -> None:
             _run_backup(
                 container_fd, rootfs_fd, container_name, rootfs_dir,
                 manifest_path, output_path, compression, verbose,
+                output_file=output_file,
             )
         finally:
             os.close(rootfs_fd)
@@ -530,12 +538,14 @@ def command_backup(args) -> None:
 
 def _run_backup(
     container_fd, rootfs_fd, container_name, rootfs_dir, manifest_path,
-    output_path, compression, verbose,
+    output_path, compression, verbose, output_file=None,
 ):
     log_info(f"Backing up '{container_name}'...")
 
     if output_path:
         log_info(f"Will write backup data to '{output_path}'.")
+    elif output_file is not None:
+        log_info("Will write backup data to an API output stream.")
     else:
         log_info("Will write backup data to stdout.")
 
@@ -610,12 +620,14 @@ def _run_backup(
             # proot_distro.compress.
             return open_tar_writer(
                 output_path,
-                None if output_path else sys.stdout.buffer,
+                None if output_path else (output_file or sys.stdout.buffer),
             )
         tar_mode = f'w:{compression}' if output_path else f'w|{compression}'
         return tarfile.open(
             output_path if output_path else None,
-            fileobj=None if output_path else sys.stdout.buffer,
+            fileobj=(
+                None if output_path else (output_file or sys.stdout.buffer)
+            ),
             mode=tar_mode,
         )
 
