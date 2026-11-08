@@ -22,11 +22,15 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
 
 class EventKind(str, Enum):
     """Kinds of informational events an operation may emit."""
 
+    INFO = "info"
+    WARNING = "warning"
+    PROGRESS = "progress"
     RETRY = "retry"
 
 
@@ -42,6 +46,9 @@ class OperationEvent:
     operation: str
     kind: EventKind
     message: str
+    current: Optional[int] = None
+    total: Optional[int] = None
+    unit: Optional[str] = None
 
 
 __all__ = ("EventKind", "OperationEvent")

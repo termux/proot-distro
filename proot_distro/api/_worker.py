@@ -36,10 +36,26 @@ import sys
 from dataclasses import asdict
 from types import SimpleNamespace
 
-from proot_distro.message import quote_error, set_quiet
+from proot_distro.message import capture_log_events, quote_error, set_quiet
+from proot_distro.progress import capture_progress_events
 
 
 _MAX_INPUT_BYTES = 1024 * 1024
+
+
+def _apply_registry_credentials(options: dict) -> None:
+    """Apply one validated credential payload to this one-shot worker."""
+    credentials = options.get("credentials")
+    if credentials is None:
+        os.environ.pop("PD_DOCKER_AUTH", None)
+        return
+    if not isinstance(credentials, dict):
+        raise ValueError("registry credentials are not valid")
+    username = credentials.get("username")
+    password = credentials.get("password")
+    if not isinstance(username, str) or not isinstance(password, str):
+        raise ValueError("registry credentials are not valid")
+    os.environ["PD_DOCKER_AUTH"] = f"{username}:{password}"
 
 
 def _list_containers(_options: dict) -> dict:
@@ -71,12 +87,14 @@ def _install(options: dict) -> dict:
 
     source = options["source"]
     name = options.get("name")
+    _apply_registry_credentials(options)
     command_install(SimpleNamespace(
         image_ref=source,
         custom_container_name=name,
         override_arch=options.get("architecture"),
         allow_insecure=options.get("allow_insecure", False),
         quiet=True,
+        _api_raise_errors=True,
     ))
 
     if name:
@@ -122,7 +140,10 @@ def _reset(options: dict) -> dict:
     from proot_distro.commands.reset import command_reset
 
     name = options["name"]
-    command_reset(SimpleNamespace(container_name=name, quiet=True))
+    _apply_registry_credentials(options)
+    command_reset(SimpleNamespace(
+        container_name=name, quiet=True, _api_raise_errors=True,
+    ))
     return {"container_name": name}
 
 
@@ -161,18 +182,60 @@ def main() -> int:
     """Execute one operation read from stdin; return a process exit code."""
     os.umask(0o022)
     set_quiet(True)
+    events = []
+
+    def record(kind, text):
+        events.append({"kind": kind, "message": text})
+
+    def record_progress(message, current, total, unit):
+        event = {
+            "kind": "progress",
+            "message": message,
+            "current": current,
+            "total": total,
+            "unit": unit,
+        }
+        # Progress producers can update once per chunk. Preserve ordering
+        # across phases but coalesce adjacent updates of the same phase so a
+        # large image cannot make the worker result grow with every chunk.
+        if (events and events[-1].get("kind") == "progress"
+                and events[-1].get("message") == message
+                and events[-1].get("unit") == unit):
+            events[-1] = event
+        else:
+            events.append(event)
+
     try:
         operation, options = _read_request()
-        result = _OPERATIONS[operation](options)
+        with capture_log_events(record):
+            with capture_progress_events(record_progress):
+                result = _OPERATIONS[operation](options)
     except SystemExit as exc:
+        for event in events:
+            if event["kind"] == "error":
+                sys.stderr.write(f"Error: {event['message']}\n")
+        sys.stderr.flush()
         code = exc.code if isinstance(exc.code, int) else 1
         return code if code != 0 else 1
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
+        from proot_distro.helpers.docker.transport import (
+            RegistryAuthenticationError,
+        )
+        if isinstance(exc, RegistryAuthenticationError):
+            sys.stderr.write(f"Error: {quote_error(exc)}\n")
+            sys.stderr.flush()
+            return 4
         sys.stderr.write(f"Error: operation failed: {quote_error(exc)}\n")
         sys.stderr.flush()
         return 1
+    result["_events"] = []
+    for event in events:
+        if event["kind"] == "error":
+            event = {**event, "kind": "warning"}
+        if event["kind"] in ("info", "warning", "progress"):
+            result["_events"].append(event)
     _write_result(result)
     return 0
 

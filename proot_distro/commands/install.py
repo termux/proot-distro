@@ -186,6 +186,7 @@ def command_install(args) -> None:
         _run_install(
             install_name, image_ref, local_path, url, dist_arch,
             allow_insecure,
+            raise_errors=bool(getattr(args, "_api_raise_errors", False)),
         )
 
 
@@ -241,6 +242,7 @@ def _run_install(
     url,
     dist_arch: str,
     allow_insecure: bool = False,
+    raise_errors: bool = False,
 ) -> None:
     """Inner install logic — called with the container lock already held."""
     container_path = container_dir(install_name)
@@ -381,6 +383,8 @@ def _run_install(
         clear_bar()
         log_error("Aborted by user.")
         _cleanup()
+        if raise_errors:
+            raise
         sys.exit(1)
     except (EOFError, OSError, tarfile.TarError, RuntimeError) as exc:
         clear_bar()
@@ -390,6 +394,8 @@ def _run_install(
             "distribution image."
         )
         _cleanup()
+        if raise_errors:
+            raise
         sys.exit(1)
     except Exception:
         _cleanup()

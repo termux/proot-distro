@@ -270,6 +270,62 @@ The runtime root also cannot be placed inside the cache root.
 Each `ProotDistro` instance keeps its configuration, so multiple applications
 or test environments can use independent state in the same Python process.
 
+### Registry credentials
+
+API registry credentials are explicit. The API does not inherit
+`PD_DOCKER_AUTH`; that environment variable remains the CLI interface.
+
+```python
+from proot_distro.api import ProotDistro, RegistryCredentials
+
+pd = ProotDistro(credentials=RegistryCredentials(
+    username="myuser",
+    password="my-password-or-token",
+))
+pd.install("myuser/private-image:1", name="private-image")
+```
+
+The password is omitted from the credential object's `repr()`. It is sent to
+the short-lived worker through its private input pipe and is applied only to
+that registry operation.
+
+An application using several registries can provide credentials on demand:
+
+```python
+from proot_distro.api import RegistryCredentials
+
+def credentials_for(request):
+    if request.registry == "ghcr.io":
+        return RegistryCredentials("myuser", "my-token")
+    return None
+
+pd = ProotDistro(credential_provider=credentials_for)
+```
+
+The provider receives a `CredentialRequest` containing `registry`,
+`repository`, and `operation`. It must return `RegistryCredentials` or `None`.
+`credentials` and `credential_provider` cannot be used together. Public Docker
+Hub search never requests or sends registry credentials. A registry refusal
+raises `AuthenticationError` without including the password or token.
+
+### API events
+
+Pass `event_handler` to receive immutable `OperationEvent` records. Event kinds
+are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are intended for
+display; applications should use exception types and result models for control
+flow. Progress events also provide `current`, `total`, and `unit` when those
+values are known.
+
+```python
+from proot_distro.api import EventKind, ProotDistro
+
+def show_event(event):
+    if event.kind in (EventKind.INFO, EventKind.PROGRESS):
+        print(event.message)
+
+pd = ProotDistro(event_handler=show_event)
+```
+
 ---
 
 ## Commands reference

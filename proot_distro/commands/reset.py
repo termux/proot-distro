@@ -97,5 +97,8 @@ def command_reset(args) -> None:
                 image_ref=image_ref,
                 custom_container_name=container_name,
                 override_arch=override_arch,
+                _api_raise_errors=bool(getattr(
+                    args, "_api_raise_errors", False
+                )),
             )
         )

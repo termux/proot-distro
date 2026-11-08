@@ -31,6 +31,9 @@ import pytest
 from _builders import pull_image_into
 from _registry import CA_FILE, FakeRegistry, basic
 from proot_distro import constants
+from proot_distro.api import (
+    AuthenticationError, ProotDistro, RegistryCredentials,
+)
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
 from proot_distro.commands.install import command_install
@@ -230,6 +233,42 @@ def test_a_private_image_is_pulled_with_credentials(
     assert registry.token_scopes() == ["", "repository:team/private:pull"]
     assert len(registry.seen("cdn")) == 2           # config and layer
     _assert_credentials_in_place(registry)
+
+
+def test_api_installs_private_image_with_explicit_credentials(
+        registry, monkeypatch):
+    registry.add_image("team/api-private", "1", FILES, CONFIG)
+    # API credentials are operation-scoped and must win over an ambient CLI
+    # variable that the embedding application happened to inherit.
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:wrong")
+
+    result = ProotDistro(credentials=RegistryCredentials(
+        "alice", "s3cret"
+    )).install(
+        f"{registry.host()}/team/api-private:1", name="api-private"
+    )
+
+    assert result.name == "api-private"
+    assert open(os.path.join(
+        constants.CONTAINERS_DIR, "api-private", "rootfs", "etc", "motd"
+    ), "rb").read() == b"private bits\n"
+    _assert_credentials_in_place(registry)
+
+
+def test_api_reports_rejected_credentials_without_revealing_secret(registry):
+    registry.add_image("team/api-refused", "1", FILES, CONFIG)
+    secret = "definitely-wrong-secret"
+
+    with pytest.raises(AuthenticationError) as exc:
+        ProotDistro(credentials=RegistryCredentials(
+            "alice", secret
+        )).install(
+            f"{registry.host()}/team/api-refused:1", name="api-refused"
+        )
+
+    assert exc.value.operation == "install"
+    assert "credentials" in str(exc.value).lower()
+    assert secret not in str(exc.value)
 
 
 def test_a_private_image_without_credentials_is_refused(registry, capsys):

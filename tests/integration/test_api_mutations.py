@@ -5,6 +5,7 @@ import pytest
 
 from proot_distro.api import (
     ContainerInfo,
+    EventKind,
     InvalidArgumentError,
     OperationError,
     ProotDistro,
@@ -32,6 +33,24 @@ def test_install_local_archive_returns_container_info(tmp_path, builders,
     assert result == ContainerInfo("api-box", None, None, None)
     assert os.path.isfile(os.path.join(container_rootfs("api-box"),
                                        "etc", "os-release"))
+    assert capsys.readouterr() == ("", "")
+
+
+def test_install_emits_structured_events_without_terminal_output(
+        tmp_path, builders, capsys):
+    archive = _rootfs_archive(tmp_path, builders, "events-rootfs.tar.gz")
+    events = []
+
+    ProotDistro(event_handler=events.append).install(
+        archive, name="events-box"
+    )
+
+    assert events
+    assert all(event.operation in ("install", "list_containers")
+               for event in events)
+    assert any(event.kind == EventKind.INFO for event in events)
+    assert any(event.kind == EventKind.PROGRESS for event in events)
+    assert any("Installing" in event.message for event in events)
     assert capsys.readouterr() == ("", "")
 
 

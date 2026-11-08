@@ -43,11 +43,16 @@ class NetworkError(ProotDistroError):
     """An operation failed while communicating with a remote service."""
 
 
+class AuthenticationError(ProotDistroError):
+    """A registry refused credentials or denied their requested access."""
+
+
 class OperationError(ProotDistroError):
     """An operation failed after its arguments were accepted."""
 
 
 __all__ = (
+    "AuthenticationError",
     "InvalidArgumentError",
     "NetworkError",
     "OperationError",

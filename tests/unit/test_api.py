@@ -6,7 +6,10 @@ import sys
 import pytest
 
 from proot_distro.api import (
+    AuthenticationError,
     ContainerInfo,
+    CredentialProvider,
+    CredentialRequest,
     EventKind,
     ImageInfo,
     InvalidArgumentError,
@@ -15,6 +18,7 @@ from proot_distro.api import (
     OperationEvent,
     ProotDistro,
     ProotDistroError,
+    RegistryCredentials,
     RuntimeConfig,
     SearchHit,
     SearchResult,
@@ -29,9 +33,11 @@ def test_public_exports_are_explicit():
     import proot_distro.api as api
 
     assert set(api.__all__) == {
-        "ContainerInfo", "EventKind", "ImageInfo", "InvalidArgumentError",
-        "NetworkError", "OperationError", "OperationEvent", "ProotDistro",
-        "ProotDistroError", "RuntimeConfig", "SearchHit", "SearchResult",
+        "AuthenticationError", "ContainerInfo", "CredentialProvider",
+        "CredentialRequest", "EventKind", "ImageInfo",
+        "InvalidArgumentError", "NetworkError", "OperationError",
+        "OperationEvent", "ProotDistro", "ProotDistroError",
+        "RegistryCredentials", "RuntimeConfig", "SearchHit", "SearchResult",
         "SessionInfo",
     }
 
@@ -57,6 +63,40 @@ def test_constructor_rejects_non_callable_event_handler():
 def test_constructor_rejects_unknown_config_type():
     with pytest.raises(InvalidArgumentError) as exc:
         ProotDistro(config={})
+    assert exc.value.operation == "initialize"
+
+
+def test_registry_credentials_hide_password_from_repr():
+    credentials = RegistryCredentials("alice", "very-secret")
+    assert credentials.username == "alice"
+    assert credentials.password == "very-secret"
+    assert "very-secret" not in repr(credentials)
+
+
+@pytest.mark.parametrize("username,password", [
+    ("", "secret"),
+    ("user:name", "secret"),
+    ("alice", ""),
+    ("alice\0", "secret"),
+    ("alice", "secret\0"),
+])
+def test_registry_credentials_validate_fields(username, password):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RegistryCredentials(username, password)
+    assert exc.value.operation == "configure"
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"credentials": "alice:secret"},
+    {"credential_provider": "provider"},
+    {
+        "credentials": RegistryCredentials("alice", "secret"),
+        "credential_provider": lambda _request: None,
+    },
+])
+def test_constructor_validates_credential_configuration(kwargs):
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro(**kwargs)
     assert exc.value.operation == "initialize"
 
 
@@ -100,6 +140,13 @@ def test_worker_environment_carries_runtime_config(tmp_path):
     assert env["_PROOT_DISTRO_API_RUNTIME_DIR"] == config.runtime_dir
     assert env["_PROOT_DISTRO_API_CACHE_DIR"] == config.cache_dir
     assert env["PD_PROOT_BIN"] == config.proot_path
+
+
+def test_worker_environment_does_not_inherit_cli_credentials(tmp_path,
+                                                             monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:secret")
+    config = RuntimeConfig(tmp_path / "state", tmp_path / "cache")
+    assert "PD_DOCKER_AUTH" not in program._worker_environment(config)
 
 
 def test_empty_inventories_return_tuples(capsys):
@@ -241,6 +288,105 @@ def test_search_suppresses_retry_without_handler(monkeypatch):
     ProotDistro().search("none")
 
 
+def test_credential_provider_receives_canonical_registry_request(monkeypatch):
+    requests = []
+    worker_calls = []
+
+    def provider(request):
+        requests.append(request)
+        return RegistryCredentials("alice", "secret")
+
+    def worker(operation, options, *_args, **_kwargs):
+        worker_calls.append((operation, options))
+        if operation == "install":
+            return {"container_name": "alpine"}
+        return {"items": [{
+            "name": "alpine", "image_reference": "alpine:latest",
+            "architecture": "x86_64", "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    result = ProotDistro(credential_provider=provider).install("alpine")
+
+    assert result.name == "alpine"
+    assert requests == [CredentialRequest(
+        registry="docker.io",
+        repository="library/alpine",
+        operation="install",
+    )]
+    install_options = worker_calls[0][1]
+    assert install_options["credentials"] == {
+        "username": "alice", "password": "secret",
+    }
+
+
+def test_credential_provider_is_not_called_for_local_install(tmp_path,
+                                                             monkeypatch):
+    archive = tmp_path / "rootfs.tar"
+
+    def provider(_request):
+        pytest.fail("local installs must not request registry credentials")
+
+    def worker(operation, _options, *_args, **_kwargs):
+        if operation == "install":
+            return {"container_name": "local"}
+        return {"items": [{
+            "name": "local", "image_reference": None,
+            "architecture": None, "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    ProotDistro(credential_provider=provider).install(archive, name="local")
+
+
+def test_credential_provider_must_return_credentials(monkeypatch):
+    monkeypatch.setattr(
+        program, "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail("worker should not start"),
+    )
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro(credential_provider=lambda _request: "alice:secret").install(
+            "alpine"
+        )
+    assert exc.value.operation == "install"
+
+
+def test_reset_resolves_credentials_for_recorded_image(monkeypatch):
+    requests = []
+    reset_options = []
+
+    def provider(request):
+        requests.append(request)
+        return RegistryCredentials("alice", "secret")
+
+    def worker(operation, options, *_args, **_kwargs):
+        if operation == "list_containers":
+            return {"items": [{
+                "name": "box",
+                "image_reference": "ghcr.io/example/private:1",
+                "architecture": "x86_64",
+                "image_id": None,
+            }]}
+        if operation == "reset_container":
+            reset_options.append(options)
+            return {"container_name": "box"}
+        raise AssertionError(operation)
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    result = ProotDistro(credential_provider=provider).reset_container("box")
+
+    assert result.name == "box"
+    assert requests == [CredentialRequest(
+        registry="ghcr.io",
+        repository="example/private",
+        operation="reset_container",
+    )]
+    assert reset_options == [{
+        "name": "box",
+        "credentials": {"username": "alice", "password": "secret"},
+    }]
+
+
 def test_search_translates_network_error(monkeypatch):
     def fail(*args, **kwargs):
         from urllib.error import URLError
@@ -263,6 +409,7 @@ def test_search_translates_operation_error(monkeypatch):
 
 
 def test_public_errors_share_one_base():
+    assert issubclass(AuthenticationError, ProotDistroError)
     assert issubclass(InvalidArgumentError, ProotDistroError)
     assert issubclass(NetworkError, ProotDistroError)
     assert issubclass(OperationError, ProotDistroError)

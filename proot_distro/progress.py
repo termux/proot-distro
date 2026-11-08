@@ -31,6 +31,8 @@
 # when the user pipes our output into gpg, ssh-askpass, etc.
 
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from proot_distro.message import C, is_quiet, tty_safe_for_writes
 
@@ -38,6 +40,18 @@ from proot_distro.message import C, is_quiet, tty_safe_for_writes
 # Default redraw threshold: callers that throttle bar updates by raw bytes
 # should aim for ~256 KiB between writes so the terminal isn't flooded.
 REDRAW_THRESHOLD_BYTES = 262144
+
+_event_sink = ContextVar("proot_distro_progress_event_sink", default=None)
+
+
+@contextmanager
+def capture_progress_events(sink):
+    """Route progress updates to *sink(message, current, total, unit)*."""
+    token = _event_sink.set(sink)
+    try:
+        yield
+    finally:
+        _event_sink.reset(token)
 
 
 def fmt_size(n_bytes: int) -> str:
@@ -78,8 +92,10 @@ class ByteCounter:
 
 
 def progress_active() -> bool:
-    """Return True when progress output should be written to stderr."""
-    return sys.stderr.isatty() and not is_quiet()
+    """Return True when terminal or structured progress is active."""
+    return _event_sink.get() is not None or (
+        sys.stderr.isatty() and not is_quiet()
+    )
 
 
 def draw_bytes_bar(
@@ -99,6 +115,10 @@ def draw_bytes_bar(
     No-op when stderr is not a TTY, the process is in quiet mode, or
     another program is currently holding the TTY for interactive I/O.
     """
+    sink = _event_sink.get()
+    if sink is not None:
+        sink(label or noun, done, total or None, "bytes")
+        return
     if not progress_active() or not tty_safe_for_writes():
         return
     pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
@@ -123,6 +143,10 @@ def draw_count_bar(
     unit: str = "files",
 ) -> None:
     """Draw a [####----] progress line keyed by item count rather than bytes."""
+    sink = _event_sink.get()
+    if sink is not None:
+        sink(label or unit, done, total, unit)
+        return
     if not progress_active() or not tty_safe_for_writes():
         return
     pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
@@ -140,6 +164,8 @@ def draw_count_bar(
 
 def clear_bar() -> None:
     """Erase the current progress line. No-op when output is inactive."""
+    if _event_sink.get() is not None:
+        return
     if not progress_active() or not tty_safe_for_writes():
         return
     sys.stderr.write("\r\033[K")

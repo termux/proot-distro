@@ -554,6 +554,10 @@ def _parse_bearer_challenge(header_value: str) -> dict:
     }
 
 
+class RegistryAuthenticationError(RuntimeError):
+    """A registry refused credentials or their requested permission."""
+
+
 def env_basic_auth() -> str:
     """Return a Basic auth header value from PD_DOCKER_AUTH, or ''.
 
@@ -691,7 +695,7 @@ def _check_credentials(
     except urllib.error.HTTPError as exc:
         if exc.code in rejected:
             _release(exc)
-            raise RuntimeError(
+            raise RegistryAuthenticationError(
                 credentials_rejected_msg(registry, exc.code)
             ) from exc
         raise

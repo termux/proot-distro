@@ -53,3 +53,22 @@ def test_byte_counter_attr_passthrough():
 def test_progress_active_false_without_tty():
     # Under pytest capture stderr is not a TTY.
     assert progress.progress_active() is False
+
+
+def test_structured_progress_capture_works_without_tty(capsys):
+    events = []
+    with progress.capture_progress_events(
+        lambda message, current, total, unit: events.append(
+            (message, current, total, unit)
+        )
+    ):
+        assert progress.progress_active() is True
+        progress.draw_bytes_bar(25, 100, label="Downloading")
+        progress.draw_count_bar(3, 10, label="Copying", unit="files")
+        progress.clear_bar()
+
+    assert events == [
+        ("Downloading", 25, 100, "bytes"),
+        ("Copying", 3, 10, "files"),
+    ]
+    assert capsys.readouterr() == ("", "")

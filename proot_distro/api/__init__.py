@@ -26,12 +26,18 @@ policy; modules elsewhere in the package remain implementation details.
 """
 
 from proot_distro.api.errors import (
+    AuthenticationError,
     InvalidArgumentError,
     NetworkError,
     OperationError,
     ProotDistroError,
 )
 from proot_distro.api.config import RuntimeConfig
+from proot_distro.api.credentials import (
+    CredentialProvider,
+    CredentialRequest,
+    RegistryCredentials,
+)
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
     ContainerInfo,
@@ -44,7 +50,10 @@ from proot_distro.api.program import ProotDistro
 
 
 __all__ = (
+    "AuthenticationError",
     "ContainerInfo",
+    "CredentialProvider",
+    "CredentialRequest",
     "EventKind",
     "ImageInfo",
     "InvalidArgumentError",
@@ -54,6 +63,7 @@ __all__ = (
     "ProotDistro",
     "ProotDistroError",
     "RuntimeConfig",
+    "RegistryCredentials",
     "SearchHit",
     "SearchResult",
     "SessionInfo",

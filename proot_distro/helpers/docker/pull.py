@@ -69,6 +69,7 @@ from proot_distro.helpers.docker.media import (
 )
 from proot_distro.helpers.docker.refs import ARCH_TO_DOCKER, parse_reference
 from proot_distro.helpers.docker.transport import (
+    RegistryAuthenticationError,
     auth_denied_msg,
     auth_note,
     MAX_METADATA_BYTES,
@@ -567,7 +568,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
             except NETWORK_ERRORS as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
                     if net_err.code in (401, 403):
-                        raise RuntimeError(
+                        raise RegistryAuthenticationError(
                             auth_denied_msg(image_ref, net_err.code)
                         ) from net_err
                     if net_err.code == 429:
@@ -605,7 +606,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
         except NETWORK_ERRORS as net_err:
             if isinstance(net_err, urllib.error.HTTPError):
                 if net_err.code in (401, 403):
-                    raise RuntimeError(
+                    raise RegistryAuthenticationError(
                         auth_denied_msg(image_ref, net_err.code)
                     ) from net_err
                 if net_err.code == 429:
@@ -686,7 +687,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 # and passes through untouched.
                 if isinstance(dl_err, urllib.error.HTTPError):
                     if dl_err.code in (401, 403):
-                        raise RuntimeError(
+                        raise RegistryAuthenticationError(
                             auth_denied_msg(image_ref, dl_err.code)
                         ) from dl_err
                     if dl_err.code == 429:

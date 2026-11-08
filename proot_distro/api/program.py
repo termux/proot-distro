@@ -46,17 +46,24 @@ from proot_distro.helpers.docker.search import (
     SEARCH_LIMIT_MAX,
     search_images,
 )
+from proot_distro.helpers.docker.refs import InvalidReference, parse_reference
 from proot_distro.helpers.download import NETWORK_ERRORS
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
 from proot_distro.paths import installed_container_names, read_container_manifest
 from proot_distro.session import active_sessions
 
 from proot_distro.api.errors import (
+    AuthenticationError,
     InvalidArgumentError,
     NetworkError,
     OperationError,
 )
 from proot_distro.api.config import RuntimeConfig
+from proot_distro.api.credentials import (
+    CredentialProvider,
+    CredentialRequest,
+    RegistryCredentials,
+)
 from proot_distro.api.events import EventKind, OperationEvent
 from proot_distro.api.models import (
     ContainerInfo,
@@ -162,6 +169,9 @@ def _worker_environment(config: RuntimeConfig) -> dict:
     """Environment that recreates this process's default state roots."""
     env = os.environ.copy()
     env["PD_FORCE_NO_COLORS"] = "1"
+    # API credentials are explicit and operation-scoped. Do not inherit the
+    # CLI's ambient registry password into an unrelated application call.
+    env.pop("PD_DOCKER_AUTH", None)
     env["_PROOT_DISTRO_API_RUNTIME_DIR"] = config.runtime_dir
     env["_PROOT_DISTRO_API_CACHE_DIR"] = config.cache_dir
     if config.proot_path is None:
@@ -215,7 +225,8 @@ def _worker_error(operation: str, stderr: bytes) -> OperationError:
 
 
 def _run_worker(operation: str, options: dict,
-                config: Optional[RuntimeConfig] = None) -> dict:
+                config: Optional[RuntimeConfig] = None,
+                event_handler: Optional[EventHandler] = None) -> dict:
     """Run one stateful operation in a child and return its JSON result."""
     config = config or RuntimeConfig.default()
     request = json.dumps(
@@ -257,6 +268,9 @@ def _run_worker(operation: str, options: dict,
         proc.wait()
         raise
 
+    if proc.returncode == 4:
+        detail = _worker_error(operation, stderr)
+        raise AuthenticationError(str(detail), operation=operation)
     if proc.returncode != 0:
         raise _worker_error(operation, stderr)
     try:
@@ -271,6 +285,43 @@ def _run_worker(operation: str, options: dict,
             f"{operation} worker returned an invalid result.",
             operation=operation,
         )
+    raw_events = result.pop("_events", [])
+    if not isinstance(raw_events, list):
+        raise OperationError(
+            f"{operation} worker returned invalid events.",
+            operation=operation,
+        )
+    events = []
+    for raw_event in raw_events:
+        try:
+            kind = EventKind(raw_event["kind"])
+            message = raw_event["message"]
+            if not isinstance(message, str):
+                raise TypeError
+            current = raw_event.get("current")
+            total = raw_event.get("total")
+            unit = raw_event.get("unit")
+            if current is not None and (
+                isinstance(current, bool) or not isinstance(current, int)
+            ):
+                raise TypeError
+            if total is not None and (
+                isinstance(total, bool) or not isinstance(total, int)
+            ):
+                raise TypeError
+            if unit is not None and not isinstance(unit, str):
+                raise TypeError
+        except (KeyError, TypeError, ValueError):
+            raise OperationError(
+                f"{operation} worker returned an invalid event.",
+                operation=operation,
+            ) from None
+        events.append(OperationEvent(
+            operation, kind, message, current, total, unit
+        ))
+    if event_handler is not None:
+        for event in events:
+            event_handler(event)
     return result
 
 
@@ -280,13 +331,47 @@ class _OperationContext:
 
     config: RuntimeConfig
     event_handler: Optional[EventHandler]
+    credentials: Optional[RegistryCredentials]
+    credential_provider: Optional[CredentialProvider]
 
     def event(self, operation: str, kind: EventKind, message: str) -> None:
         if self.event_handler is not None:
             self.event_handler(OperationEvent(operation, kind, message))
 
     def worker(self, operation: str, options: dict) -> dict:
-        return _run_worker(operation, options, self.config)
+        return _run_worker(
+            operation, options, self.config, self.event_handler
+        )
+
+    def credentials_for(
+        self, registry: str, repository: str, operation: str,
+    ) -> Optional[RegistryCredentials]:
+        """Resolve explicit credentials for one registry operation."""
+        if self.credentials is not None:
+            return self.credentials
+        if self.credential_provider is None:
+            return None
+        request = CredentialRequest(registry, repository, operation)
+        credentials = self.credential_provider(request)
+        if credentials is not None and not isinstance(
+            credentials, RegistryCredentials
+        ):
+            raise InvalidArgumentError(
+                "credential_provider must return RegistryCredentials or None.",
+                operation=operation,
+            )
+        return credentials
+
+    @staticmethod
+    def credential_payload(
+        credentials: Optional[RegistryCredentials],
+    ) -> Optional[dict]:
+        if credentials is None:
+            return None
+        return {
+            "username": credentials.username,
+            "password": credentials.password,
+        }
 
 
 class ProotDistro:
@@ -307,6 +392,8 @@ class ProotDistro:
         config: Optional[RuntimeConfig] = None,
         *,
         event_handler: Optional[EventHandler] = None,
+        credentials: Optional[RegistryCredentials] = None,
+        credential_provider: Optional[CredentialProvider] = None,
     ) -> None:
         if config is None:
             config = RuntimeConfig.default()
@@ -319,7 +406,28 @@ class ProotDistro:
             raise InvalidArgumentError(
                 "event_handler must be callable or None.", operation="initialize"
             )
-        self._context = _OperationContext(config, event_handler)
+        if credentials is not None and not isinstance(
+            credentials, RegistryCredentials
+        ):
+            raise InvalidArgumentError(
+                "credentials must be RegistryCredentials or None.",
+                operation="initialize",
+            )
+        if credential_provider is not None and not callable(
+            credential_provider
+        ):
+            raise InvalidArgumentError(
+                "credential_provider must be callable or None.",
+                operation="initialize",
+            )
+        if credentials is not None and credential_provider is not None:
+            raise InvalidArgumentError(
+                "credentials and credential_provider are mutually exclusive.",
+                operation="initialize",
+            )
+        self._context = _OperationContext(
+            config, event_handler, credentials, credential_provider
+        )
 
     @property
     def config(self) -> RuntimeConfig:
@@ -428,6 +536,16 @@ class ProotDistro:
             # pipeline, whose string syntax deliberately treats bare tokens
             # as image references for CLI compatibility.
             source = os.path.abspath(os.path.expanduser(source))
+        is_local = source.startswith(("/", "./", "../", "~"))
+        is_url = source.startswith(("http://", "https://"))
+        reference = None
+        if not is_local and not is_url:
+            try:
+                reference = parse_reference(source)
+            except InvalidReference as exc:
+                raise InvalidArgumentError(
+                    f"invalid image reference: {exc}", operation="install"
+                ) from None
         if name is not None:
             _require_name(name, operation="install")
         if architecture is not None:
@@ -448,11 +566,22 @@ class ProotDistro:
                 "allow_insecure must be a boolean.", operation="install"
             )
 
+        registry_credentials = None
+        if reference is not None:
+            registry_credentials = self._context.credentials_for(
+                reference.registry or "docker.io",
+                reference.repo,
+                "install",
+            )
+
         result = self._context.worker("install", {
             "source": source,
             "name": name,
             "architecture": architecture,
             "allow_insecure": allow_insecure,
+            "credentials": self._context.credential_payload(
+                registry_credentials
+            ),
         })
         installed_name = result.get("container_name")
         if not isinstance(installed_name, str):
@@ -495,7 +624,29 @@ class ProotDistro:
     def reset_container(self, name: str) -> ContainerInfo:
         """Reinstall a container from its recorded OCI image."""
         name = _require_name(name, operation="reset_container")
-        self._context.worker("reset_container", {"name": name})
+        current = None
+        for container in self.list_containers():
+            if container.name == name:
+                current = container
+                break
+        registry_credentials = None
+        if current is not None and current.image_reference:
+            try:
+                reference = parse_reference(current.image_reference)
+            except InvalidReference:
+                reference = None
+            if reference is not None:
+                registry_credentials = self._context.credentials_for(
+                    reference.registry or "docker.io",
+                    reference.repo,
+                    "reset_container",
+                )
+        self._context.worker("reset_container", {
+            "name": name,
+            "credentials": self._context.credential_payload(
+                registry_credentials
+            ),
+        })
         return self._installed_container(name, "reset_container")
 
     def search(

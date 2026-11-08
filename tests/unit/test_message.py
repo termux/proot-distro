@@ -57,6 +57,30 @@ def test_warn_format(capsys):
     assert "careful" in err
 
 
+def test_log_event_capture_is_structured_and_context_local(capsys):
+    captured = []
+    message.set_quiet(True)
+    with message.capture_log_events(
+        lambda kind, text: captured.append((kind, text))
+    ):
+        message.log_info("phase")
+        message.warn("careful")
+        message.log_error("failed")
+        message.crit_error("fatal")
+
+    assert captured == [
+        ("info", "phase"),
+        ("warning", "careful"),
+        ("error", "failed"),
+        ("error", "fatal"),
+    ]
+    assert capsys.readouterr() == ("", "")
+
+    message.set_quiet(False)
+    message.log_info("outside")
+    assert "outside" in capsys.readouterr().err
+
+
 # ----- quote_path ---------------------------------------------------------
 
 def test_quote_path_leaves_ordinary_names_alone():
