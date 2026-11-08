@@ -325,6 +325,44 @@ fails, output streams can contain a partial archive; path outputs retain their
 atomic-write behavior. Exceptions raised by `read()` or `write()` propagate
 to the caller.
 
+### Cancelling operations
+
+Worker-backed methods accept `cancel_event`. It can be a `threading.Event` or
+any object with an `is_set()` method:
+
+```python
+import threading
+
+from proot_distro.api import OperationCancelledError
+
+cancel = threading.Event()
+
+# Another thread can call cancel.set().
+try:
+    pd.build("./context", tags=["example:1"], cancel_event=cancel)
+except OperationCancelledError:
+    print("Build cancelled")
+```
+
+Cancellation applies to inventories, container and image management,
+transfers, archives, builds, pushes, cache cleanup, detached startup, command
+inspection, and session signalling. A token that is already set prevents the
+worker from starting and prevents registry credential providers from being
+called. Foreground `start` and `run` use the same token contract during setup.
+
+When cancellation is observed, the API sends `SIGINT` to the isolated worker
+process group. It then waits for command cleanup, atomic-file handling, event
+delivery, and stream pumps before raising `OperationCancelledError`. The token
+is polled every 0.1 seconds while waiting on worker channels. A callback,
+credential provider, or caller-owned stream method that is currently running
+must return before the calling thread can check it again.
+
+Cancellation is cooperative, not a transaction rollback. Container changes,
+copied entries, registry uploads, or detached startup may already have
+completed. Caller-owned output streams may contain partial data. Existing
+atomic path-output guarantees still apply. After cancellation, inspect the
+affected resource before retrying a destructive operation.
+
 ### Container processes
 
 `start` opens a login session, while `run` executes the image's Entrypoint and
@@ -375,9 +413,8 @@ hostname, and the Termux proot-extension switches. `start` shell-wraps its
 arguments like CLI `login`; `run` applies the image Entrypoint/Cmd rules.
 
 `startup_timeout` is a non-negative number of seconds, or `None` for the
-compatible unbounded default. `cancel_event` can be a `threading.Event` or any
-object with `is_set()`. Cancellation is observed during setup; after a method
-returns, use the `SessionProcess` methods. A timeout raises
+compatible unbounded default. Cancellation is observed during setup; after a
+method returns, use the `SessionProcess` methods. A timeout raises
 `SessionStartupTimeoutError`, while cancellation raises
 `OperationCancelledError`. Setup information and warnings are delivered to
 the configured event handler immediately, before `start` or `run` returns.
@@ -575,7 +612,7 @@ more precise classes without parsing display messages:
 | `IntegrityError` | Content failed digest or structural validation. |
 | `UnsupportedOperationError` | The resource does not support the operation, such as resetting a plain rootfs archive. |
 | `PartialOperationError` | Some entries were processed but the whole operation did not complete. |
-| `OperationCancelledError` | An explicit cancellation token stopped setup. |
+| `OperationCancelledError` | An explicit cancellation token stopped an operation or session setup. |
 | `SessionStartupTimeoutError` | Foreground session setup exceeded its configured timeout. |
 | `OperationError` | Another operation failure without a more specific category. |
 

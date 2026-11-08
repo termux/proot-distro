@@ -1,9 +1,11 @@
 import hashlib
+import inspect
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -537,6 +539,81 @@ def test_worker_event_resource_prefers_public_operation_subject():
         "source": "/host/source",
         "destination": "box:/srv/data",
     }) == "box:/srv/data"
+
+
+def test_worker_channel_cancellation_interrupts_and_drains(monkeypatch):
+    event_read, event_write = os.pipe()
+    stopped = threading.Event()
+    signals = []
+
+    class Process:
+        pid = 321
+
+        def communicate(self, _request):
+            assert stopped.wait(5)
+            return b"", b""
+
+    def interrupt(pid, selected_signal):
+        signals.append((pid, selected_signal))
+        stopped.set()
+        os.close(event_write)
+
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(program.os, "killpg", interrupt)
+
+    with pytest.raises(OperationCancelledError) as exc:
+        program._communicate_with_channels(
+            Process(), b"{}", event_read, None, "copy",
+            cancel_event=cancelled,
+        )
+
+    assert exc.value.operation == "copy"
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_pre_cancelled_worker_does_not_start(monkeypatch):
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(
+        program.subprocess, "Popen",
+        lambda *_args, **_kwargs: pytest.fail("worker must not start"),
+    )
+
+    with pytest.raises(OperationCancelledError) as exc:
+        program._run_worker("list_images", {}, cancel_event=cancelled)
+
+    assert exc.value.operation == "list_images"
+
+
+def test_worker_backed_public_methods_accept_cancellation():
+    methods = (
+        "list_containers", "list_images", "list_sessions", "install",
+        "remove_container", "rename_container", "reset_container", "copy",
+        "move", "sync", "backup", "restore", "build", "push",
+        "remove_image", "clear_cache", "start_detached", "run_detached",
+        "inspect_start", "inspect_run", "kill_session", "kill_all_sessions",
+    )
+
+    for name in methods:
+        assert "cancel_event" in inspect.signature(
+            getattr(ProotDistro, name)
+        ).parameters
+
+
+def test_pre_cancelled_install_does_not_request_credentials():
+    cancelled = threading.Event()
+    cancelled.set()
+
+    def credentials(_request):
+        pytest.fail("credential provider must not be called")
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(credential_provider=credentials).install(
+            "example.test/team/image:1", cancel_event=cancelled
+        )
+
+    assert exc.value.operation == "install"
 
 
 def test_session_process_falls_back_when_registry_has_no_record():

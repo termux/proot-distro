@@ -34,7 +34,7 @@ from _registry import CA_FILE, FakeRegistry, basic
 from proot_distro import constants
 from proot_distro.api import (
     AuthenticationError, EventKind, ProotDistro, PushResult,
-    RegistryCredentials,
+    OperationCancelledError, RegistryCredentials,
 )
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
@@ -344,6 +344,28 @@ def test_api_build_provider_authenticates_multiple_registries(
         _assert_credentials_in_place(second, basic("bob", "other-secret"))
     finally:
         second.close()
+
+
+def test_build_cancellation_during_credential_request(registry, tmp_path):
+    registry.add_image("team/cancel-build", "1", FILES, CONFIG)
+    context = tmp_path / "cancel-provider-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/cancel-build:1\n"
+    )
+    cancelled = threading.Event()
+
+    def credentials_for(_request):
+        cancelled.set()
+        return RegistryCredentials("alice", "s3cret")
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(credential_provider=credentials_for).build(
+            context, tags=["cancel-provider:1"],
+            cancel_event=cancelled,
+        )
+
+    assert exc.value.operation == "build"
 
 
 def test_api_build_provider_exception_propagates_to_caller(registry, tmp_path):

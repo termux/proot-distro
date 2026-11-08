@@ -12,6 +12,7 @@ from proot_distro.api import (
     InvalidArgumentError,
     IntegrityError,
     NotFoundError,
+    OperationCancelledError,
     UnsupportedOperationError,
     ProotDistro,
     RestoreResult,
@@ -82,6 +83,28 @@ def test_live_event_handler_exception_stops_worker(
     assert callback_threads and set(callback_threads) == {caller_thread}
     destination = os.path.join(container_rootfs("event-box"), "tree")
     assert len(os.listdir(destination)) < 100
+
+
+def test_cancellation_interrupts_recursive_copy(tmp_path, builders):
+    builders.make_container("cancel-copy")
+    source = tmp_path / "cancel-source"
+    source.mkdir()
+    for index in range(1000):
+        (source / f"item-{index}").write_bytes(b"payload")
+    cancelled = threading.Event()
+
+    def cancel_on_progress(event):
+        if event.kind == EventKind.PROGRESS:
+            cancelled.set()
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(event_handler=cancel_on_progress).copy(
+            source, "cancel-copy:/tree", recursive=True,
+            cancel_event=cancelled,
+        )
+
+    assert exc.value.operation == "copy"
+    assert cancelled.is_set()
 
 
 def test_move_removes_source(tmp_path, builders):

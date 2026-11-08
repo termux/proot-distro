@@ -365,6 +365,23 @@ def _signal_argument(value, *, operation: str) -> signal.Signals:
         ) from None
 
 
+def _cancel_control(
+    cancel_event, *, operation: str, subject: str = "operation",
+):
+    """Validate a cooperative cancellation token and reject a pre-set one."""
+    if (cancel_event is not None
+            and not callable(getattr(cancel_event, "is_set", None))):
+        raise InvalidArgumentError(
+            "cancel_event must provide an is_set() method or be None.",
+            operation=operation,
+        )
+    if cancel_event is not None and cancel_event.is_set():
+        raise OperationCancelledError(
+            f"{subject} was cancelled.", operation=operation
+        )
+    return cancel_event
+
+
 def _startup_controls(timeout, cancel_event, *, operation: str):
     """Validate foreground session startup timeout and cancellation token."""
     if timeout is not None:
@@ -375,17 +392,9 @@ def _startup_controls(timeout, cancel_event, *, operation: str):
                 "None.", operation=operation,
             )
         timeout = float(timeout)
-    if (cancel_event is not None
-            and not callable(getattr(cancel_event, "is_set", None))):
-        raise InvalidArgumentError(
-            "cancel_event must provide an is_set() method or be None.",
-            operation=operation,
-        )
-    if cancel_event is not None and cancel_event.is_set():
-        raise OperationCancelledError(
-            "session setup was cancelled.", operation=operation
-        )
-    return timeout, cancel_event
+    return timeout, _cancel_control(
+        cancel_event, operation=operation, subject="session setup"
+    )
 
 
 def _stop_starting_session(process) -> None:
@@ -706,6 +715,7 @@ def _communicate_with_channels(
     credential_provider=None,
     build_output_fd=None,
     build_output_resource=None,
+    cancel_event=None,
 ):
     """Drain process pipes while serving live channels in the caller thread."""
     result = {}
@@ -727,6 +737,7 @@ def _communicate_with_channels(
     event_open = True
     credential_open = credential_sock is not None
     build_output_open = build_output_fd is not None
+    cancelled = False
 
     def close_channels() -> None:
         nonlocal event_open, credential_open, build_output_open
@@ -742,6 +753,13 @@ def _communicate_with_channels(
 
     try:
         while event_open or credential_open or build_output_open:
+            if (not cancelled and cancel_event is not None
+                    and cancel_event.is_set()):
+                cancelled = True
+                try:
+                    os.killpg(proc.pid, signal.SIGINT)
+                except OSError:
+                    pass
             readers = []
             if event_open:
                 readers.append(event_fd)
@@ -749,7 +767,9 @@ def _communicate_with_channels(
                 readers.append(credential_sock)
             if build_output_open:
                 readers.append(build_output_fd)
-            readable, _, _ = select.select(readers, [], [])
+            readable, _, _ = select.select(
+                readers, [], [], 0.1 if cancel_event is not None else None
+            )
             if event_open and event_fd in readable:
                 chunk = os.read(event_fd, 65536)
                 if not chunk:
@@ -801,7 +821,15 @@ def _communicate_with_channels(
                 else:
                     build_decoder.decode(chunk)
             if credential_open and credential_sock in readable:
-                chunk = credential_sock.recv(65536)
+                try:
+                    chunk = credential_sock.recv(65536)
+                except OSError as exc:
+                    chunk = b""
+                    if not cancelled and provider_error is None:
+                        provider_error = OperationError(
+                            f"credential worker channel failed: {exc}",
+                            operation=operation,
+                        )
                 if not chunk:
                     if credential_buffer and provider_error is None:
                         provider_error = OperationError(
@@ -848,10 +876,14 @@ def _communicate_with_channels(
     finally:
         close_channels()
     thread.join()
-    if "error" in result:
-        raise result["error"]
     if provider_error is not None:
         raise provider_error
+    if cancelled:
+        raise OperationCancelledError(
+            f"{operation} was cancelled.", operation=operation
+        )
+    if "error" in result:
+        raise result["error"]
     return result["streams"]
 
 
@@ -949,8 +981,11 @@ def _run_worker(operation: str, options: dict,
                 event_handler: Optional[EventHandler] = None,
                 credential_provider: Optional[CredentialProvider] = None,
                 input_streams: Optional[Mapping[str, BinaryIO]] = None,
-                output_streams: Optional[Mapping[str, BinaryIO]] = None) -> dict:
+                output_streams: Optional[Mapping[str, BinaryIO]] = None,
+                cancel_event=None, reported_operation=None) -> dict:
     """Run one stateful operation in a child and return its JSON result."""
+    api_operation = reported_operation or operation
+    cancel_event = _cancel_control(cancel_event, operation=api_operation)
     config = config or RuntimeConfig.default()
     options = dict(options)
     child_stream_fds = {}
@@ -986,8 +1021,8 @@ def _run_worker(operation: str, options: dict,
             if fd is not None:
                 os.close(fd)
         raise OperationError(
-            f"cannot create the {operation} stream channel: {exc}",
-            operation=operation,
+            f"cannot create the {api_operation} stream channel: {exc}",
+            operation=api_operation,
         ) from exc
     if child_stream_fds:
         options["_stream_fds"] = child_stream_fds
@@ -1017,7 +1052,7 @@ def _run_worker(operation: str, options: dict,
                 os.close(build_output_read)
             raise OperationError(
                 f"cannot create credential provider channel: {exc}",
-                operation=operation,
+                operation=api_operation,
             ) from exc
         env["_PROOT_DISTRO_CREDENTIAL_FD"] = str(child_credentials.fileno())
         pass_fds += (child_credentials.fileno(),)
@@ -1045,7 +1080,8 @@ def _run_worker(operation: str, options: dict,
         if build_output_read is not None:
             os.close(build_output_read)
         raise OperationError(
-            f"cannot start the {operation} worker: {exc}", operation=operation,
+            f"cannot start the {api_operation} worker: {exc}",
+            operation=api_operation,
         ) from exc
 
     if child_credentials is not None:
@@ -1053,7 +1089,7 @@ def _run_worker(operation: str, options: dict,
     for fd in child_pipe_fds:
         os.close(fd)
     pump_threads, stream_errors, stream_counts = _start_stream_pumps(
-        proc, parent_inputs, parent_outputs, operation
+        proc, parent_inputs, parent_outputs, api_operation
     )
     build_output_resource = None
     if operation == "build":
@@ -1070,11 +1106,12 @@ def _run_worker(operation: str, options: dict,
             request,
             event_read,
             event_handler,
-            operation,
+            api_operation,
             credential_sock=parent_credentials,
             credential_provider=credential_provider,
             build_output_fd=build_output_read,
             build_output_resource=build_output_resource,
+            cancel_event=cancel_event,
         )
     except KeyboardInterrupt:
         raise
@@ -1090,27 +1127,27 @@ def _run_worker(operation: str, options: dict,
         raise stream_errors[0]
 
     if proc.returncode != 0:
-        structured = _structured_worker_error(operation, stdout)
+        structured = _structured_worker_error(api_operation, stdout)
         if structured is not None:
             raise structured
-        raise _worker_error(operation, stderr)
+        raise _worker_error(api_operation, stderr)
     try:
         result = json.loads(stdout)
     except (ValueError, UnicodeDecodeError) as exc:
         raise OperationError(
-            f"{operation} worker returned an invalid result.",
-            operation=operation,
+            f"{api_operation} worker returned an invalid result.",
+            operation=api_operation,
         ) from exc
     if not isinstance(result, dict):
         raise OperationError(
-            f"{operation} worker returned an invalid result.",
-            operation=operation,
+            f"{api_operation} worker returned an invalid result.",
+            operation=api_operation,
         )
     raw_events = result.pop("_events", [])
     if not isinstance(raw_events, list) or raw_events:
         raise OperationError(
-            f"{operation} worker returned invalid events.",
-            operation=operation,
+            f"{api_operation} worker returned invalid events.",
+            operation=api_operation,
         )
     if stream_counts:
         result["_stream_bytes"] = stream_counts
@@ -1140,10 +1177,13 @@ class _OperationContext:
         credential_provider: Optional[CredentialProvider] = None,
         input_streams: Optional[Mapping[str, BinaryIO]] = None,
         output_streams: Optional[Mapping[str, BinaryIO]] = None,
+        cancel_event=None,
+        reported_operation=None,
     ) -> dict:
         return _run_worker(
             operation, options, self.config, self.event_handler,
-            credential_provider, input_streams, output_streams,
+            credential_provider, input_streams, output_streams, cancel_event,
+            reported_operation,
         )
 
     def credentials_for(
@@ -1245,26 +1285,39 @@ class ProotDistro:
             operation, kind, message, phase=phase, resource=resource,
         )
 
-    def list_containers(self) -> Tuple[ContainerInfo, ...]:
-        """Return installed containers sorted by name."""
-        result = self._context.worker("list_containers", {})
+    def _containers(
+        self, cancel_event, operation: str,
+    ) -> Tuple[ContainerInfo, ...]:
+        """Return container inventory attributed to the calling operation."""
+        if cancel_event is None and operation != "list_containers":
+            return self.list_containers()
+        result = self._context.worker(
+            "list_containers", {}, cancel_event=cancel_event,
+            reported_operation=operation,
+        )
         items = result.get("items")
         if not isinstance(items, list):
             raise OperationError(
                 "container inventory worker returned an invalid result.",
-                operation="list_containers",
+                operation=operation,
             )
         try:
             return tuple(ContainerInfo(**item) for item in items)
         except (TypeError, ValueError):
             raise OperationError(
                 "container inventory worker returned an invalid result.",
-                operation="list_containers",
+                operation=operation,
             ) from None
 
-    def list_images(self) -> Tuple[ImageInfo, ...]:
+    def list_containers(self, *, cancel_event=None) -> Tuple[ContainerInfo, ...]:
+        """Return installed containers sorted by name."""
+        return self._containers(cancel_event, "list_containers")
+
+    def list_images(self, *, cancel_event=None) -> Tuple[ImageInfo, ...]:
         """Return locally cached OCI images in deterministic order."""
-        result = self._context.worker("list_images", {})
+        result = self._context.worker(
+            "list_images", {}, cancel_event=cancel_event
+        )
         items = result.get("items")
         if not isinstance(items, list):
             raise OperationError(
@@ -1279,9 +1332,11 @@ class ProotDistro:
                 operation="list_images",
             ) from None
 
-    def list_sessions(self) -> Tuple[SessionInfo, ...]:
+    def list_sessions(self, *, cancel_event=None) -> Tuple[SessionInfo, ...]:
         """Return validated records for every live PRoot-Distro session."""
-        result = self._context.worker("list_sessions", {})
+        result = self._context.worker(
+            "list_sessions", {}, cancel_event=cancel_event
+        )
         items = result.get("items")
         if not isinstance(items, list):
             raise OperationError(
@@ -1306,9 +1361,11 @@ class ProotDistro:
                 operation="list_sessions",
             ) from None
 
-    def _installed_container(self, name: str, operation: str) -> ContainerInfo:
+    def _installed_container(
+        self, name: str, operation: str, cancel_event=None,
+    ) -> ContainerInfo:
         """Return *name* from this instance's configured state."""
-        for container in self.list_containers():
+        for container in self._containers(cancel_event, operation):
             if container.name == name:
                 return container
         raise OperationError(
@@ -1323,8 +1380,10 @@ class ProotDistro:
         name: Optional[str] = None,
         architecture: Optional[str] = None,
         allow_insecure: bool = False,
+        cancel_event=None,
     ) -> ContainerInfo:
         """Install a container from an image reference, URL, or archive."""
+        cancel_event = _cancel_control(cancel_event, operation="install")
         source_is_path = isinstance(source, os.PathLike)
         try:
             source = os.fspath(source)
@@ -1376,6 +1435,7 @@ class ProotDistro:
 
         registry_credentials = None
         if reference is not None:
+            _cancel_control(cancel_event, operation="install")
             registry_credentials = self._context.credentials_for(
                 reference.registry or "docker.io",
                 reference.repo,
@@ -1390,28 +1450,42 @@ class ProotDistro:
             "credentials": self._context.credential_payload(
                 registry_credentials
             ),
-        })
+        }, cancel_event=cancel_event)
         installed_name = result.get("container_name")
         if not isinstance(installed_name, str):
             raise OperationError(
                 "install worker did not identify the installed container.",
                 operation="install",
             )
-        return self._installed_container(installed_name, "install")
+        return self._installed_container(
+            installed_name, "install", cancel_event
+        )
 
-    def remove_container(self, name: str) -> ContainerInfo:
+    def remove_container(
+        self, name: str, *, cancel_event=None,
+    ) -> ContainerInfo:
         """Permanently remove a container and return its former metadata."""
+        cancel_event = _cancel_control(
+            cancel_event, operation="remove_container"
+        )
         name = _require_name(name, operation="remove_container")
         previous = None
-        for container in self.list_containers():
+        for container in self._containers(cancel_event, "remove_container"):
             if container.name == name:
                 previous = container
                 break
-        self._context.worker("remove_container", {"name": name})
+        self._context.worker(
+            "remove_container", {"name": name}, cancel_event=cancel_event
+        )
         return previous or ContainerInfo(name, None, None, None)
 
-    def rename_container(self, old_name: str, new_name: str) -> ContainerInfo:
+    def rename_container(
+        self, old_name: str, new_name: str, *, cancel_event=None,
+    ) -> ContainerInfo:
         """Rename a container and return its metadata under the new name."""
+        cancel_event = _cancel_control(
+            cancel_event, operation="rename_container"
+        )
         old_name = _require_name(
             old_name, operation="rename_container", argument="old_name"
         )
@@ -1426,14 +1500,21 @@ class ProotDistro:
         self._context.worker("rename_container", {
             "old_name": old_name,
             "new_name": new_name,
-        })
-        return self._installed_container(new_name, "rename_container")
+        }, cancel_event=cancel_event)
+        return self._installed_container(
+            new_name, "rename_container", cancel_event
+        )
 
-    def reset_container(self, name: str) -> ContainerInfo:
+    def reset_container(
+        self, name: str, *, cancel_event=None,
+    ) -> ContainerInfo:
         """Reinstall a container from its recorded OCI image."""
+        cancel_event = _cancel_control(
+            cancel_event, operation="reset_container"
+        )
         name = _require_name(name, operation="reset_container")
         current = None
-        for container in self.list_containers():
+        for container in self._containers(cancel_event, "reset_container"):
             if container.name == name:
                 current = container
                 break
@@ -1444,6 +1525,7 @@ class ProotDistro:
             except InvalidReference:
                 reference = None
             if reference is not None:
+                _cancel_control(cancel_event, operation="reset_container")
                 registry_credentials = self._context.credentials_for(
                     reference.registry or "docker.io",
                     reference.repo,
@@ -1454,16 +1536,20 @@ class ProotDistro:
             "credentials": self._context.credential_payload(
                 registry_credentials
             ),
-        })
-        return self._installed_container(name, "reset_container")
+        }, cancel_event=cancel_event)
+        return self._installed_container(
+            name, "reset_container", cancel_event
+        )
 
     def _transfer(
         self,
         operation: str,
         source,
         destination,
+        cancel_event=None,
         **options,
     ) -> TransferResult:
+        cancel_event = _cancel_control(cancel_event, operation=operation)
         source = _path_argument(
             source, operation=operation, argument="source"
         )
@@ -1473,7 +1559,9 @@ class ProotDistro:
         source_container = container_from_spec(source)
         destination_container = container_from_spec(destination)
         if source_container or destination_container:
-            installed = {item.name for item in self.list_containers()}
+            installed = {
+                item.name for item in self._containers(cancel_event, operation)
+            }
             for role, container in (
                 ("source", source_container),
                 ("destination", destination_container),
@@ -1496,7 +1584,7 @@ class ProotDistro:
             "source": source,
             "destination": destination,
             **options,
-        })
+        }, cancel_event=cancel_event)
         if (result.get("source") != source
                 or result.get("destination") != destination):
             raise OperationError(
@@ -1507,6 +1595,7 @@ class ProotDistro:
 
     def copy(
         self, source, destination, *, recursive: bool = False,
+        cancel_event=None,
     ) -> TransferResult:
         """Copy a file or directory between host and container paths."""
         if not isinstance(recursive, bool):
@@ -1514,13 +1603,15 @@ class ProotDistro:
                 "recursive must be a boolean.", operation="copy"
             )
         return self._transfer(
-            "copy", source, destination, move=False, recursive=recursive
+            "copy", source, destination, cancel_event=cancel_event,
+            move=False, recursive=recursive,
         )
 
-    def move(self, source, destination) -> TransferResult:
+    def move(self, source, destination, *, cancel_event=None) -> TransferResult:
         """Move a file or directory between host and container paths."""
         return self._transfer(
-            "move", source, destination, move=True, recursive=False
+            "move", source, destination, cancel_event=cancel_event,
+            move=True, recursive=False,
         )
 
     def sync(
@@ -1530,6 +1621,7 @@ class ProotDistro:
         *,
         checksum: bool = False,
         delete: bool = False,
+        cancel_event=None,
     ) -> TransferResult:
         """Synchronize a file or directory to another path."""
         if not isinstance(checksum, bool):
@@ -1541,7 +1633,8 @@ class ProotDistro:
                 "delete must be a boolean.", operation="sync"
             )
         return self._transfer(
-            "sync", source, destination, checksum=checksum, delete=delete
+            "sync", source, destination, cancel_event=cancel_event,
+            checksum=checksum, delete=delete,
         )
 
     def backup(
@@ -1550,8 +1643,10 @@ class ProotDistro:
         output,
         *,
         compression: Optional[str] = None,
+        cancel_event=None,
     ) -> BackupResult:
         """Write a container backup to a host path or binary stream."""
+        cancel_event = _cancel_control(cancel_event, operation="backup")
         name = _require_name(name, operation="backup")
         output_path, output_stream = _path_or_stream(
             output, operation="backup", argument="output", writable=True
@@ -1569,7 +1664,7 @@ class ProotDistro:
         }, output_streams=(
             {"backup_output": output_stream} if output_stream is not None
             else None
-        ))
+        ), cancel_event=cancel_event)
         try:
             result_name = result["container_name"]
             result_output = result["output"]
@@ -1593,8 +1688,9 @@ class ProotDistro:
             name, output_path, result_compression, size_bytes
         )
 
-    def restore(self, archive) -> RestoreResult:
+    def restore(self, archive, *, cancel_event=None) -> RestoreResult:
         """Restore one container from a host path or binary stream."""
+        cancel_event = _cancel_control(cancel_event, operation="restore")
         archive_path, archive_stream = _path_or_stream(
             archive, operation="restore", argument="archive", readable=True
         )
@@ -1604,6 +1700,7 @@ class ProotDistro:
                 {"restore_input": archive_stream}
                 if archive_stream is not None else None
             ),
+            cancel_event=cancel_event,
         )
         name = result.get("container_name")
         if not isinstance(name, str) or not is_valid_name(name):
@@ -1617,7 +1714,8 @@ class ProotDistro:
                 operation="restore",
             )
         return RestoreResult(
-            self._installed_container(name, "restore"), archive_path
+            self._installed_container(name, "restore", cancel_event),
+            archive_path,
         )
 
     def build(
@@ -1634,8 +1732,10 @@ class ProotDistro:
         install_as: Optional[str] = None,
         no_cache: bool = False,
         credentials: Optional[RegistryCredentials] = None,
+        cancel_event=None,
     ) -> BuildResult:
         """Build an OCI image from a Dockerfile and context directory."""
+        cancel_event = _cancel_control(cancel_event, operation="build")
         path = _path_argument(
             path, operation="build", argument="path", host_only=True
         )
@@ -1763,7 +1863,8 @@ class ProotDistro:
                 {"dockerfile_input": dockerfile_stream}
                 if dockerfile_stream is not None else None
             ),
-            output_streams=build_output_streams or None)
+            output_streams=build_output_streams or None,
+            cancel_event=cancel_event)
         raw_images = result.get("images")
         if not isinstance(raw_images, list):
             raise OperationError(
@@ -1786,7 +1887,9 @@ class ProotDistro:
             )
         installed = None
         if install_as is not None:
-            installed = self._installed_container(install_as, "build")
+            installed = self._installed_container(
+                install_as, "build", cancel_event
+            )
         return BuildResult(images, outputs, installed)
 
     def push(
@@ -1795,8 +1898,10 @@ class ProotDistro:
         *,
         architecture: Optional[str] = None,
         allow_insecure: bool = False,
+        cancel_event=None,
     ) -> PushResult:
         """Push one cached image tag to its registry."""
+        cancel_event = _cancel_control(cancel_event, operation="push")
         if not isinstance(image_ref, str) or not image_ref:
             raise InvalidArgumentError(
                 "image_ref must be a non-empty string.", operation="push"
@@ -1822,6 +1927,7 @@ class ProotDistro:
             raise InvalidArgumentError(
                 "allow_insecure must be a boolean.", operation="push"
             )
+        _cancel_control(cancel_event, operation="push")
         registry_credentials = self._context.credentials_for(
             reference.registry or "docker.io", reference.repo, "push"
         )
@@ -1832,7 +1938,7 @@ class ProotDistro:
             "credentials": self._context.credential_payload(
                 registry_credentials
             ),
-        })
+        }, cancel_event=cancel_event)
         try:
             registry = result["registry"]
             repository = result["repo"]
@@ -1854,8 +1960,12 @@ class ProotDistro:
 
     def remove_image(
         self, identifier: str, *, architecture: Optional[str] = None,
+        cancel_event=None,
     ) -> ImageRemovalResult:
         """Remove cached image variants addressed by reference or image ID."""
+        cancel_event = _cancel_control(
+            cancel_event, operation="remove_image"
+        )
         if (not isinstance(identifier, str) or not identifier
                 or "\0" in identifier):
             raise InvalidArgumentError(
@@ -1877,7 +1987,7 @@ class ProotDistro:
         result = self._context.worker("remove_image", {
             "identifier": identifier,
             "architecture": architecture,
-        })
+        }, cancel_event=cancel_event)
         raw_removed = result.get("removed")
         if not isinstance(raw_removed, list):
             raise OperationError(
@@ -1895,8 +2005,10 @@ class ProotDistro:
 
     def clear_cache(
         self, *, orphan: bool = False, build_cache: bool = False,
+        cancel_event=None,
     ) -> CacheCleanupResult:
         """Clear all cache data or selected orphan/build-cache data."""
+        cancel_event = _cancel_control(cancel_event, operation="clear_cache")
         if not isinstance(orphan, bool) or not isinstance(build_cache, bool):
             raise InvalidArgumentError(
                 "orphan and build_cache must be booleans.",
@@ -1905,7 +2017,7 @@ class ProotDistro:
         result = self._context.worker("clear_cache", {
             "orphan": orphan,
             "build_cache": build_cache,
-        })
+        }, cancel_event=cancel_event)
         before = result.get("bytes_before")
         after = result.get("bytes_after")
         if (isinstance(before, bool) or not isinstance(before, int)
@@ -2038,7 +2150,8 @@ class ProotDistro:
             arguments, operation=operation, argument="arguments"
         )
         if not any(
-            item.name == container for item in self.list_containers()
+            item.name == container
+            for item in self._containers(cancel_event, operation)
         ):
             raise NotFoundError(
                 f"container '{container}' is not installed.",
@@ -2221,14 +2334,17 @@ class ProotDistro:
 
     def _start_detached_session(
         self, kind: str, container: str, arguments, options: dict,
+        cancel_event=None,
     ) -> DetachedSession:
         operation = "start_detached" if kind == "login" else "run_detached"
+        cancel_event = _cancel_control(cancel_event, operation=operation)
         container = _require_name(container, operation=operation)
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
         )
         if not any(
-            item.name == container for item in self.list_containers()
+            item.name == container
+            for item in self._containers(cancel_event, operation)
         ):
             raise NotFoundError(
                 f"container '{container}' is not installed.",
@@ -2239,7 +2355,7 @@ class ProotDistro:
             "container": container,
             "arguments": arguments,
             "options": options,
-        })
+        }, cancel_event=cancel_event)
         pid = result.get("pid")
         if (isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0
                 or result.get("container") != container
@@ -2273,6 +2389,7 @@ class ProotDistro:
         hostname: Optional[str] = None,
         stdout=None,
         stderr=None,
+        cancel_event=None,
     ) -> DetachedSession:
         """Start a detached login command with optional append-only logs."""
         stdout = _detached_output(
@@ -2294,7 +2411,8 @@ class ProotDistro:
         options["detach_stdout"] = stdout
         options["detach_stderr"] = stderr
         return self._start_detached_session(
-            "login", container, arguments, options
+            "login", container, arguments, options,
+            cancel_event=cancel_event,
         )
 
     def run_detached(
@@ -2320,6 +2438,7 @@ class ProotDistro:
         hostname: Optional[str] = None,
         stdout=None,
         stderr=None,
+        cancel_event=None,
     ) -> DetachedSession:
         """Start the image Entrypoint/Cmd with optional append-only logs."""
         stdout = _detached_output(
@@ -2341,19 +2460,23 @@ class ProotDistro:
         options["detach_stdout"] = stdout
         options["detach_stderr"] = stderr
         return self._start_detached_session(
-            "run", container, arguments, options
+            "run", container, arguments, options,
+            cancel_event=cancel_event,
         )
 
     def _inspect_session_command(
         self, kind: str, container: str, arguments, options: dict,
+        cancel_event=None,
     ) -> SessionCommand:
         operation = "inspect_start" if kind == "login" else "inspect_run"
+        cancel_event = _cancel_control(cancel_event, operation=operation)
         container = _require_name(container, operation=operation)
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
         )
         if not any(
-            item.name == container for item in self.list_containers()
+            item.name == container
+            for item in self._containers(cancel_event, operation)
         ):
             raise NotFoundError(
                 f"container '{container}' is not installed.",
@@ -2364,7 +2487,7 @@ class ProotDistro:
             "container": container,
             "arguments": arguments,
             "options": options,
-        })
+        }, cancel_event=cancel_event)
         try:
             executable = result["executable"]
             argv = tuple(result["argv"])
@@ -2431,6 +2554,7 @@ class ProotDistro:
         emulator=None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
+        cancel_event=None,
     ) -> SessionCommand:
         """Inspect the path-based command corresponding to :meth:`start`."""
         options = self._session_options(
@@ -2443,7 +2567,8 @@ class ProotDistro:
             kernel=kernel, hostname=hostname,
         )
         return self._inspect_session_command(
-            "login", container, arguments, options
+            "login", container, arguments, options,
+            cancel_event=cancel_event,
         )
 
     def inspect_run(
@@ -2467,6 +2592,7 @@ class ProotDistro:
         emulator=None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
+        cancel_event=None,
     ) -> SessionCommand:
         """Inspect the path-based command corresponding to :meth:`run`."""
         options = self._session_options(
@@ -2479,13 +2605,17 @@ class ProotDistro:
             kernel=kernel, hostname=hostname,
         )
         return self._inspect_session_command(
-            "run", container, arguments, options
+            "run", container, arguments, options,
+            cancel_event=cancel_event,
         )
 
     def kill_session(
-        self, target, *, signal_name="TERM",
+        self, target, *, signal_name="TERM", cancel_event=None,
     ) -> SessionSignalResult:
         """Signal a tracked session PID or every session of a container."""
+        cancel_event = _cancel_control(
+            cancel_event, operation="kill_session"
+        )
         if isinstance(target, bool):
             target = None
         if isinstance(target, int) and target > 0:
@@ -2505,7 +2635,7 @@ class ProotDistro:
         result = self._context.worker("kill_session", {
             "target": target_text,
             "signal": selected_signal.name,
-        })
+        }, cancel_event=cancel_event)
         pids = result.get("pids")
         if (not isinstance(pids, list)
                 or any(isinstance(pid, bool) or not isinstance(pid, int)
@@ -2518,8 +2648,13 @@ class ProotDistro:
             target_text, selected_signal.name, tuple(pids)
         )
 
-    def kill_all_sessions(self, *, signal_name="TERM") -> SessionSignalResult:
+    def kill_all_sessions(
+        self, *, signal_name="TERM", cancel_event=None,
+    ) -> SessionSignalResult:
         """Signal every active tracked session in this runtime."""
+        cancel_event = _cancel_control(
+            cancel_event, operation="kill_all_sessions"
+        )
         selected_signal = _signal_argument(
             signal_name, operation="kill_all_sessions"
         )
@@ -2527,7 +2662,7 @@ class ProotDistro:
             "target": None,
             "all": True,
             "signal": selected_signal.name,
-        })
+        }, cancel_event=cancel_event, reported_operation="kill_all_sessions")
         pids = result.get("pids")
         if (not isinstance(pids, list)
                 or any(isinstance(pid, bool) or not isinstance(pid, int)

@@ -173,6 +173,22 @@ def test_cancelled_session_setup_does_not_start_worker(builders, fake_proot):
     assert exc.value.operation == "start"
 
 
+def test_pre_cancelled_detached_setup_does_not_start_session(
+        builders, fake_proot):
+    builders.make_container("cancelled-detached")
+    cancelled = threading.Event()
+    cancelled.set()
+    pd = _program(fake_proot)
+
+    with pytest.raises(OperationCancelledError) as exc:
+        pd.start_detached(
+            "cancelled-detached", cancel_event=cancelled
+        )
+
+    assert exc.value.operation == "start_detached"
+    assert pd.list_sessions() == ()
+
+
 def test_inspect_start_returns_path_based_launch_description(
         builders, fake_proot, tmp_path):
     builders.make_container("inspect-box")
@@ -341,6 +357,8 @@ def test_start_missing_container_is_typed_error(fake_proot):
     ("run", ("box", ["bad\0arg"]), {}, "run"),
     ("start", ("box",), {"startup_timeout": -1}, "start"),
     ("run", ("box",), {"cancel_event": object()}, "run"),
+    ("start_detached", ("box",), {"cancel_event": object()},
+     "start_detached"),
     ("start_detached", ("box", "echo"), {}, "start_detached"),
     ("start_detached", ("box",), {"stdout": subprocess.PIPE},
      "start_detached"),
