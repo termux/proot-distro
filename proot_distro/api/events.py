@@ -40,7 +40,9 @@ class OperationEvent:
 
     Event messages are intended for display and are not a machine-readable
     error interface. Failures are represented by the documented exception
-    classes instead.
+    classes instead. ``phase`` groups related progress or output records;
+    ``resource`` optionally identifies the image, layer, path, or other object
+    the producer is processing.
     """
 
     operation: str
@@ -49,6 +51,8 @@ class OperationEvent:
     current: Optional[int] = None
     total: Optional[int] = None
     unit: Optional[str] = None
+    phase: Optional[str] = None
+    resource: Optional[str] = None
 
 
 __all__ = ("EventKind", "OperationEvent")

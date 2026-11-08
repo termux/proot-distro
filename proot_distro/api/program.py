@@ -25,6 +25,7 @@ the same state as the command-line utility and delegates to the same
 descriptor-safe inventory and registry implementations.
 """
 
+import codecs
 import io
 import json
 import math
@@ -109,6 +110,7 @@ from proot_distro.api.process import SessionProcess
 EventHandler = Callable[[OperationEvent], None]
 
 _MAX_WORKER_ERROR_BYTES = 64 * 1024
+_MAX_WORKER_EVENT_BYTES = 64 * 1024
 
 
 def _text(value) -> Optional[str]:
@@ -581,15 +583,59 @@ def _structured_worker_error(operation: str, stdout: bytes):
     return exception_type(message, operation=operation)
 
 
+def _reject_credential_request(sock) -> None:
+    try:
+        sock.sendall(b'{"error":"credential provider failed"}\n')
+    except OSError:
+        pass
+
+
+def _handle_credential_request(raw, sock, provider, operation: str) -> None:
+    """Validate and answer one worker credential request frame."""
+    try:
+        request_data = json.loads(raw)
+        registry = request_data["registry"]
+        repository = request_data["repository"]
+        actions = request_data["actions"]
+        if not all(isinstance(value, str) and value for value in (
+            registry, repository, actions,
+        )):
+            raise TypeError
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        _reject_credential_request(sock)
+        raise OperationError(
+            "credential worker returned an invalid request.",
+            operation=operation,
+        ) from None
+    try:
+        credentials = provider(CredentialRequest(
+            registry, repository, operation
+        ))
+        if credentials is not None and not isinstance(
+            credentials, RegistryCredentials
+        ):
+            raise InvalidArgumentError(
+                "credential_provider must return RegistryCredentials or None.",
+                operation=operation,
+            )
+    except BaseException:
+        _reject_credential_request(sock)
+        raise
+    response = {
+        "credentials": (
+            None if credentials is None else {
+                "username": credentials.username,
+                "password": credentials.password,
+            }
+        ),
+    }
+    sock.sendall(json.dumps(
+        response, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii") + b"\n")
+
+
 def _serve_credential_requests(sock, provider, operation: str):
     """Serve worker credential requests; return a provider exception or None."""
-    def reject(error):
-        try:
-            sock.sendall(b'{"error":"credential provider failed"}\n')
-        except OSError:
-            pass
-        return error
-
     buffer = bytearray()
     while True:
         chunk = sock.recv(65536)
@@ -597,56 +643,62 @@ def _serve_credential_requests(sock, provider, operation: str):
             return None
         buffer.extend(chunk)
         if len(buffer) > 1024 * 1024:
-            return reject(OperationError(
+            error = OperationError(
                 "credential worker request is too large.", operation=operation
-            ))
+            )
+            _reject_credential_request(sock)
+            return error
         while b"\n" in buffer:
             raw, _, remainder = buffer.partition(b"\n")
             buffer[:] = remainder
             try:
-                request_data = json.loads(raw)
-                registry = request_data["registry"]
-                repository = request_data["repository"]
-                actions = request_data["actions"]
-                if not all(isinstance(value, str) and value for value in (
-                    registry, repository, actions,
-                )):
-                    raise TypeError
-            except (KeyError, TypeError, ValueError, UnicodeDecodeError):
-                return reject(OperationError(
-                    "credential worker returned an invalid request.",
-                    operation=operation,
-                ))
-            try:
-                credentials = provider(CredentialRequest(
-                    registry, repository, operation
-                ))
-                if credentials is not None and not isinstance(
-                    credentials, RegistryCredentials
-                ):
-                    raise InvalidArgumentError(
-                        "credential_provider must return "
-                        "RegistryCredentials or None.", operation=operation,
-                    )
+                _handle_credential_request(raw, sock, provider, operation)
             except BaseException as exc:
-                return reject(exc)
-            response = {
-                "credentials": (
-                    None if credentials is None else {
-                        "username": credentials.username,
-                        "password": credentials.password,
-                    }
-                ),
-            }
-            sock.sendall(json.dumps(
-                response, ensure_ascii=True, separators=(",", ":")
-            ).encode("ascii") + b"\n")
+                return exc
 
 
-def _communicate_with_credential_provider(
-    proc, request: bytes, sock, provider, operation: str,
+def _operation_event(operation: str, raw: bytes) -> OperationEvent:
+    """Validate one framed worker event and construct its public model."""
+    try:
+        event = json.loads(raw)
+        kind = EventKind(event["kind"])
+        message = event["message"]
+        if not isinstance(message, str):
+            raise TypeError
+        current = event.get("current")
+        total = event.get("total")
+        unit = event.get("unit")
+        phase = event.get("phase")
+        resource = event.get("resource")
+        for value in (current, total):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise TypeError
+        for value in (unit, phase, resource):
+            if value is not None and not isinstance(value, str):
+                raise TypeError
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        raise OperationError(
+            f"{operation} worker returned an invalid event.",
+            operation=operation,
+        ) from None
+    return OperationEvent(
+        operation, kind, message, current, total, unit, phase, resource
+    )
+
+
+def _communicate_with_channels(
+    proc,
+    request: bytes,
+    event_fd: int,
+    event_handler,
+    operation: str,
+    credential_sock=None,
+    credential_provider=None,
+    build_output_fd=None,
 ):
-    """Drain process pipes in a thread while serving credentials here."""
+    """Drain process pipes while serving live channels in the caller thread."""
     result = {}
 
     def communicate():
@@ -657,20 +709,134 @@ def _communicate_with_credential_provider(
 
     thread = threading.Thread(target=communicate, daemon=True)
     thread.start()
+    event_buffer = bytearray()
+    credential_buffer = bytearray()
+    build_decoder = codecs.getincrementaldecoder("utf-8")(
+        "backslashreplace"
+    )
     provider_error = None
+    event_open = True
+    credential_open = credential_sock is not None
+    build_output_open = build_output_fd is not None
+
+    def close_channels() -> None:
+        nonlocal event_open, credential_open, build_output_open
+        if event_open:
+            os.close(event_fd)
+            event_open = False
+        if credential_open:
+            credential_sock.close()
+            credential_open = False
+        if build_output_open:
+            os.close(build_output_fd)
+            build_output_open = False
+
     try:
-        provider_error = _serve_credential_requests(
-            sock, provider, operation
-        )
-    except BaseException:
+        while event_open or credential_open or build_output_open:
+            readers = []
+            if event_open:
+                readers.append(event_fd)
+            if credential_open:
+                readers.append(credential_sock)
+            if build_output_open:
+                readers.append(build_output_fd)
+            readable, _, _ = select.select(readers, [], [])
+            if event_open and event_fd in readable:
+                chunk = os.read(event_fd, 65536)
+                if not chunk:
+                    if event_buffer:
+                        raise OperationError(
+                            f"{operation} worker returned a truncated event.",
+                            operation=operation,
+                        )
+                    os.close(event_fd)
+                    event_open = False
+                else:
+                    event_buffer.extend(chunk)
+                    while b"\n" in event_buffer:
+                        raw, _, remainder = event_buffer.partition(b"\n")
+                        event_buffer[:] = remainder
+                        if not raw or len(raw) > _MAX_WORKER_EVENT_BYTES:
+                            raise OperationError(
+                                f"{operation} worker returned an invalid event.",
+                                operation=operation,
+                            )
+                        event = _operation_event(operation, bytes(raw))
+                        if event_handler is not None:
+                            event_handler(event)
+                    if len(event_buffer) > _MAX_WORKER_EVENT_BYTES:
+                        raise OperationError(
+                            f"{operation} worker returned an oversized event.",
+                            operation=operation,
+                        )
+            if build_output_open and build_output_fd in readable:
+                chunk = os.read(build_output_fd, 65536)
+                if not chunk:
+                    message = build_decoder.decode(b"", final=True)
+                    if message and event_handler is not None:
+                        event_handler(OperationEvent(
+                            operation, EventKind.INFO, message,
+                            phase="build-output",
+                        ))
+                    os.close(build_output_fd)
+                    build_output_open = False
+                elif event_handler is not None:
+                    message = build_decoder.decode(chunk)
+                    if message:
+                        event_handler(OperationEvent(
+                            operation, EventKind.INFO, message,
+                            phase="build-output",
+                        ))
+                else:
+                    build_decoder.decode(chunk)
+            if credential_open and credential_sock in readable:
+                chunk = credential_sock.recv(65536)
+                if not chunk:
+                    if credential_buffer and provider_error is None:
+                        provider_error = OperationError(
+                            "credential worker returned a truncated request.",
+                            operation=operation,
+                        )
+                    credential_sock.close()
+                    credential_open = False
+                else:
+                    credential_buffer.extend(chunk)
+                    if len(credential_buffer) > 1024 * 1024:
+                        _reject_credential_request(credential_sock)
+                        provider_error = OperationError(
+                            "credential worker request is too large.",
+                            operation=operation,
+                        )
+                        credential_sock.close()
+                        credential_open = False
+                    while credential_open and b"\n" in credential_buffer:
+                        raw, _, remainder = credential_buffer.partition(b"\n")
+                        credential_buffer[:] = remainder
+                        try:
+                            _handle_credential_request(
+                                raw, credential_sock, credential_provider,
+                                operation,
+                            )
+                        except BaseException as exc:
+                            provider_error = exc
+                            credential_sock.close()
+                            credential_open = False
+    except KeyboardInterrupt:
         try:
-            proc.kill()
+            os.killpg(proc.pid, signal.SIGINT)
         except OSError:
             pass
+        close_channels()
+        thread.join()
+        raise
+    except BaseException:
+        _kill_worker(proc)
+        close_channels()
+        thread.join()
         raise
     finally:
-        sock.close()
-        thread.join()
+        close_channels()
+    thread.join()
     if "error" in result:
         raise result["error"]
     if provider_error is not None:
@@ -780,6 +946,8 @@ def _run_worker(operation: str, options: dict,
     parent_inputs = []
     parent_outputs = []
     child_pipe_fds = []
+    event_read = event_write = None
+    build_output_read = build_output_write = None
     try:
         for name, stream in (input_streams or {}).items():
             child_fd, parent_fd = os.pipe()
@@ -791,6 +959,11 @@ def _run_worker(operation: str, options: dict,
             child_stream_fds[name] = child_fd
             child_pipe_fds.append(child_fd)
             parent_outputs.append((name, parent_fd, stream))
+        event_read, event_write = os.pipe()
+        child_pipe_fds.append(event_write)
+        if operation == "build":
+            build_output_read, build_output_write = os.pipe()
+            child_pipe_fds.append(build_output_write)
     except OSError as exc:
         for fd in child_pipe_fds:
             os.close(fd)
@@ -798,6 +971,9 @@ def _run_worker(operation: str, options: dict,
             os.close(fd)
         for _name, fd, _stream in parent_outputs:
             os.close(fd)
+        for fd in (event_read, build_output_read):
+            if fd is not None:
+                os.close(fd)
         raise OperationError(
             f"cannot create the {operation} stream channel: {exc}",
             operation=operation,
@@ -812,6 +988,9 @@ def _run_worker(operation: str, options: dict,
     parent_credentials = child_credentials = None
     pass_fds = tuple(child_pipe_fds)
     env = _worker_environment(config)
+    env["_PROOT_DISTRO_EVENT_FD"] = str(event_write)
+    if build_output_write is not None:
+        env["_PROOT_DISTRO_BUILD_OUTPUT_FD"] = str(build_output_write)
     if credential_provider is not None:
         try:
             parent_credentials, child_credentials = socket.socketpair()
@@ -822,6 +1001,9 @@ def _run_worker(operation: str, options: dict,
                 os.close(fd)
             for _name, fd, _stream in parent_outputs:
                 os.close(fd)
+            os.close(event_read)
+            if build_output_read is not None:
+                os.close(build_output_read)
             raise OperationError(
                 f"cannot create credential provider channel: {exc}",
                 operation=operation,
@@ -848,6 +1030,9 @@ def _run_worker(operation: str, options: dict,
             os.close(fd)
         for _name, fd, _stream in parent_outputs:
             os.close(fd)
+        os.close(event_read)
+        if build_output_read is not None:
+            os.close(build_output_read)
         raise OperationError(
             f"cannot start the {operation} worker: {exc}", operation=operation,
         ) from exc
@@ -860,22 +1045,17 @@ def _run_worker(operation: str, options: dict,
         proc, parent_inputs, parent_outputs, operation
     )
     try:
-        if parent_credentials is None:
-            stdout, stderr = proc.communicate(request)
-        else:
-            stdout, stderr = _communicate_with_credential_provider(
-                proc, request, parent_credentials, credential_provider,
-                operation,
-            )
+        stdout, stderr = _communicate_with_channels(
+            proc,
+            request,
+            event_read,
+            event_handler,
+            operation,
+            credential_sock=parent_credentials,
+            credential_provider=credential_provider,
+            build_output_fd=build_output_read,
+        )
     except KeyboardInterrupt:
-        # Give the command handler the same interrupt the CLI would receive.
-        # Rename defers it while rewriting l2s links, so communicate waits
-        # until that consistency-critical section is complete.
-        try:
-            os.killpg(proc.pid, signal.SIGINT)
-        except OSError:
-            pass
-        proc.communicate()
         raise
     except BaseException:
         _kill_worker(proc)
@@ -906,42 +1086,11 @@ def _run_worker(operation: str, options: dict,
             operation=operation,
         )
     raw_events = result.pop("_events", [])
-    if not isinstance(raw_events, list):
+    if not isinstance(raw_events, list) or raw_events:
         raise OperationError(
             f"{operation} worker returned invalid events.",
             operation=operation,
         )
-    events = []
-    for raw_event in raw_events:
-        try:
-            kind = EventKind(raw_event["kind"])
-            message = raw_event["message"]
-            if not isinstance(message, str):
-                raise TypeError
-            current = raw_event.get("current")
-            total = raw_event.get("total")
-            unit = raw_event.get("unit")
-            if current is not None and (
-                isinstance(current, bool) or not isinstance(current, int)
-            ):
-                raise TypeError
-            if total is not None and (
-                isinstance(total, bool) or not isinstance(total, int)
-            ):
-                raise TypeError
-            if unit is not None and not isinstance(unit, str):
-                raise TypeError
-        except (KeyError, TypeError, ValueError):
-            raise OperationError(
-                f"{operation} worker returned an invalid event.",
-                operation=operation,
-            ) from None
-        events.append(OperationEvent(
-            operation, kind, message, current, total, unit
-        ))
-    if event_handler is not None:
-        for event in events:
-            event_handler(event)
     if stream_counts:
         result["_stream_bytes"] = stream_counts
     return result

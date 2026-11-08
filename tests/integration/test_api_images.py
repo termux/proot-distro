@@ -16,6 +16,7 @@ from proot_distro.api import (
     InvalidArgumentError,
     NotFoundError,
     ProotDistro,
+    RuntimeConfig,
 )
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.helpers.docker.cache import layer_cache_path
@@ -100,6 +101,33 @@ def test_build_supports_mixed_path_and_stream_outputs(tmp_path):
     assert result.outputs == (str(path_output), None)
     assert path_output.is_file()
     assert stream_output.getvalue().startswith(b"oci-layout")
+
+
+def test_build_run_output_streams_as_live_events(tmp_path):
+    context = tmp_path / "run-output-context"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        "FROM scratch\nRUN echo output-from-step\n"
+    )
+    fake_proot = tmp_path / "fake-build-proot"
+    fake_proot.write_text(
+        "#!/bin/sh\nprintf 'streamed RUN output\\n'\n"
+    )
+    fake_proot.chmod(0o755)
+    default = RuntimeConfig.default()
+    events = []
+    pd = ProotDistro(RuntimeConfig(
+        default.runtime_dir, default.cache_dir, fake_proot
+    ), event_handler=events.append)
+
+    pd.build(context, tags=["event-output:1"])
+
+    assert any(
+        event.operation == "build"
+        and event.phase == "build-output"
+        and "streamed RUN output" in event.message
+        for event in events
+    )
 
 
 def test_remove_image_returns_removed_variants(tmp_path):

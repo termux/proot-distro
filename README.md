@@ -224,8 +224,8 @@ pd.remove_container("test-alpine")  # permanent; returns former metadata
 
 The returned records are immutable. API operations do not print messages or
 terminate the application with `SystemExit`. Failures inherit from
-`ProotDistroError`. An optional event handler can receive network retry
-notices:
+`ProotDistroError`. An optional event handler receives live information,
+warning, progress, output, and network-retry events:
 
 ```python
 pd = ProotDistro(event_handler=lambda event: print(event.message))
@@ -521,7 +521,10 @@ Pass `event_handler` to receive immutable `OperationEvent` records. Event kinds
 are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are intended for
 display; applications should use exception types and result models for control
 flow. Progress events also provide `current`, `total`, and `unit` when those
-values are known.
+values are known. `phase` identifies a progress phase or special stream such
+as `build-output`; `resource` identifies an affected object when the producer
+has one.
+
 Foreground session setup events are streamed through the close-on-exec startup
 handshake, so warnings arrive before the guest process starts.
 
@@ -534,6 +537,18 @@ def show_event(event):
 
 pd = ProotDistro(event_handler=show_event)
 ```
+
+Worker-backed operations deliver events live over a private bounded channel;
+they are no longer collected until completion. Dockerfile `RUN` output arrives
+as `INFO` events with `phase="build-output"`, and registry upload progress
+arrives as `PROGRESS` events. Callbacks run synchronously in the thread that
+called the API method and apply backpressure, so they should return promptly.
+
+If an event callback raises, its original exception propagates and the worker
+is stopped. The operation may already have changed state or written part of a
+caller-owned stream. Applications that cannot tolerate this should catch
+exceptions inside the callback. Existing atomic path-output guarantees still
+apply.
 
 ### API errors
 

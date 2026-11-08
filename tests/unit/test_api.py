@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import socket
 import subprocess
@@ -492,6 +493,30 @@ def test_credential_service_rejects_malformed_request_without_deadlock():
 
     assert isinstance(error, OperationError)
     assert b"credential provider failed" in response
+
+
+def test_worker_event_frame_preserves_progress_context():
+    event = program._operation_event("push", json.dumps({
+        "kind": "progress",
+        "message": "uploading",
+        "current": 10,
+        "total": 20,
+        "unit": "bytes",
+        "phase": "upload",
+        "resource": "sha256:abc",
+    }).encode())
+
+    assert event == OperationEvent(
+        "push", EventKind.PROGRESS, "uploading", 10, 20, "bytes",
+        "upload", "sha256:abc",
+    )
+
+
+def test_worker_event_frame_rejects_invalid_context():
+    with pytest.raises(OperationError) as exc:
+        program._operation_event("copy", b'{"kind":"info","message":1}')
+
+    assert exc.value.operation == "copy"
 
 
 def test_session_process_falls_back_when_registry_has_no_record():

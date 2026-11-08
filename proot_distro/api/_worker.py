@@ -26,8 +26,9 @@ use process-oriented control flow (terminal output, signal handlers, and
 ``SystemExit``), which must not leak into an embedding application. State
 paths are also bound into modules when their interpreter imports them. This
 module runs one requested stateful operation in a fresh process, applies that
-instance's paths before import, and reports a small JSON result to its parent.
-It is an implementation detail, not a daemon or client-server protocol.
+instance's paths before import, streams bounded event frames through a private
+descriptor, and reports a small JSON result to its parent. It is an
+implementation detail, not a daemon or client-server protocol.
 """
 
 import json
@@ -42,6 +43,7 @@ from proot_distro.progress import capture_progress_events
 
 
 _MAX_INPUT_BYTES = 1024 * 1024
+_MAX_EVENT_BYTES = 64 * 1024
 
 
 class _WorkerFailure(Exception):
@@ -123,6 +125,32 @@ def _open_stream(options: dict, name: str, mode: str):
         return None
     os.set_inheritable(fd, False)
     return os.fdopen(fd, mode)
+
+
+def _channel_fd_from_env(name: str):
+    """Take an inherited API channel descriptor from the environment."""
+    raw = os.environ.pop(name, "")
+    if not raw:
+        return None
+    if not raw.isascii() or not raw.isdigit():
+        raise ValueError(f"{name} is not a valid descriptor")
+    fd = int(raw)
+    if fd <= 2:
+        raise ValueError(f"{name} is not a valid descriptor")
+    os.set_inheritable(fd, False)
+    return fd
+
+
+def _write_event(fd: int, event: dict) -> None:
+    """Write one bounded newline-delimited event frame."""
+    data = json.dumps(
+        event, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii") + b"\n"
+    if len(data) > _MAX_EVENT_BYTES:
+        raise RuntimeError("operation event is too large")
+    while data:
+        written = os.write(fd, data)
+        data = data[written:]
 
 
 def _enable_structured_locks() -> None:
@@ -420,6 +448,9 @@ def _build(options: dict) -> dict:
     from proot_distro.helpers.docker.refs import with_explicit_tag
 
     _apply_registry_credentials(options)
+    build_output_fd = _channel_fd_from_env(
+        "_PROOT_DISTRO_BUILD_OUTPUT_FD"
+    )
     build_path = options["path"]
     dockerfile = options.get("dockerfile")
     dockerfile_stream = _open_stream(
@@ -462,6 +493,7 @@ def _build(options: dict) -> dict:
             if output is not None
         ],
         _api_output_files=output_files,
+        _api_build_output_fd=build_output_fd,
         install_as=options.get("install_as"),
         no_cache=options.get("no_cache", False),
         verbose=False,
@@ -481,6 +513,8 @@ def _build(options: dict) -> dict:
             dockerfile_stream.close()
         for output_file in output_files:
             output_file.close()
+        if build_output_fd is not None:
+            os.close(build_output_fd)
         if credential_channel is not None:
             credential_channel.close()
 
@@ -721,10 +755,21 @@ def main() -> int:
     os.umask(0o022)
     set_quiet(True)
     events = []
+    errors = []
     operation = ""
+    event_fd = _channel_fd_from_env("_PROOT_DISTRO_EVENT_FD")
 
     def record(kind, text):
-        events.append({"kind": kind, "message": text})
+        event = {
+            "kind": "warning" if kind == "error" else kind,
+            "message": text,
+        }
+        if event_fd is None:
+            events.append(event)
+        else:
+            _write_event(event_fd, event)
+        if kind == "error":
+            errors.append(text)
 
     def record_progress(message, current, total, unit):
         event = {
@@ -733,16 +778,19 @@ def main() -> int:
             "current": current,
             "total": total,
             "unit": unit,
+            "phase": message,
         }
-        # Progress producers can update once per chunk. Preserve ordering
-        # across phases but coalesce adjacent updates of the same phase so a
-        # large image cannot make the worker result grow with every chunk.
-        if (events and events[-1].get("kind") == "progress"
-                and events[-1].get("message") == message
-                and events[-1].get("unit") == unit):
-            events[-1] = event
+        if event_fd is None:
+            # A directly-invoked worker has no live event consumer. Coalesce
+            # adjacent updates so its fallback result remains bounded.
+            if (events and events[-1].get("kind") == "progress"
+                    and events[-1].get("message") == message
+                    and events[-1].get("unit") == unit):
+                events[-1] = event
+            else:
+                events.append(event)
         else:
-            events.append(event)
+            _write_event(event_fd, event)
 
     try:
         operation, options = _read_request()
@@ -754,14 +802,10 @@ def main() -> int:
         _write_error(exc.kind, str(exc))
         return 1
     except SystemExit as exc:
-        for event in events:
-            if event["kind"] == "error":
-                sys.stderr.write(f"Error: {event['message']}\n")
+        for message in errors:
+            sys.stderr.write(f"Error: {message}\n")
         sys.stderr.flush()
-        messages = [
-            event["message"] for event in events if event["kind"] == "error"
-        ]
-        message = messages[-1] if messages else f"operation exited: {exc.code}"
+        message = errors[-1] if errors else f"operation exited: {exc.code}"
         _write_error("operation", message)
         code = exc.code if isinstance(exc.code, int) else 1
         return code if code != 0 else 1

@@ -273,6 +273,9 @@ def command_build(args):
                 no_cache=no_cache,
                 emulator=emulator,
             )
+            engine.api_output_fd = getattr(
+                args, "_api_build_output_fd", None
+            )
             try:
                 final_stage = engine.run(instructions)
             except BuildError as exc:

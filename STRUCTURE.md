@@ -49,12 +49,12 @@ Only names re-exported by `proot_distro.api` are public.
 
 | Module | Role |
 | --- | --- |
-| `api/program.py` | `ProotDistro` facade: inventories, lifecycle, transfers, archives, images, cache cleanup, and caller-owned binary stream channels. |
+| `api/program.py` | `ProotDistro` facade plus caller-thread multiplexing of live events, credentials, and binary streams. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
 | `api/credentials.py` | Redacted credentials and provider requests; builds resolve multiple registries over a private bidirectional worker channel. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
-| `api/events.py` | Optional info, warning, progress, and retry events. |
+| `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context. |
 | `api/_worker.py` | One-shot child executor that applies per-instance paths and isolates CLI-oriented process control. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |

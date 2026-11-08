@@ -36,17 +36,16 @@
 
 import hashlib
 import os
-import sys
 import urllib.error
 import urllib.parse
 
 from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.message import (
-    C, is_quiet, log_info,
+    log_info,
 )
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.progress import (
-    clear_bar, fmt_size,
+    clear_bar, draw_bytes_bar, fmt_size, progress_active,
 )
 from proot_distro.helpers.docker.cache import (
     blob_present, load_manifest_cache, manifest_layers, open_required_layer,
@@ -157,31 +156,18 @@ class _ProgressReader:
         self.total = total
         self.sent = 0
         self._label = label
-        self._tty = sys.stderr.isatty() and not is_quiet()
+        self._progress = progress_active()
         self._last_shown = 0
 
     def read(self, size=-1):
         data = self._fh.read(size)
         self.sent += len(data)
-        if self._tty and (self.sent - self._last_shown >= 262144
-                          or len(data) == 0):
+        if self._progress and (self.sent - self._last_shown >= 262144
+                               or len(data) == 0):
             self._last_shown = self.sent
-            pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            if self.total:
-                pct = min(self.sent * 100 // self.total, 100)
-                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-                line = (
-                    f"\r{pfx}{self._label}: [{bar}] {pct:3d}%  "
-                    f"{fmt_size(self.sent)} / "
-                    f"{fmt_size(self.total)}\033[K{C['RST']}"
-                )
-            else:
-                line = (
-                    f"\r{pfx}{self._label}: "
-                    f"{fmt_size(self.sent)} uploaded...\033[K{C['RST']}"
-                )
-            sys.stderr.write(line)
-            sys.stderr.flush()
+            draw_bytes_bar(
+                self.sent, self.total, label=self._label, noun="uploaded"
+            )
         return data
 
 

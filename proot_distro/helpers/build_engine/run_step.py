@@ -332,6 +332,12 @@ def _exec_proot(engine, stage, command, stdin_input):
             proot_args,
             env=child_env,
             stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
+            stdout=getattr(engine, "api_output_fd", None),
+            stderr=(
+                subprocess.STDOUT
+                if getattr(engine, "api_output_fd", None) is not None
+                else None
+            ),
             start_new_session=True,
             preexec_fn=_chdir_to(stage.rootfs_fd),
         )

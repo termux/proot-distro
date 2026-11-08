@@ -33,7 +33,8 @@ from _builders import pull_image_into
 from _registry import CA_FILE, FakeRegistry, basic
 from proot_distro import constants
 from proot_distro.api import (
-    AuthenticationError, ProotDistro, PushResult, RegistryCredentials,
+    AuthenticationError, EventKind, ProotDistro, PushResult,
+    RegistryCredentials,
 )
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
@@ -310,6 +311,7 @@ def test_api_build_provider_authenticates_multiple_registries(
             "COPY --from=first /etc/motd /first-motd\n"
         )
         requests = []
+        events = []
         caller_thread = threading.get_ident()
 
         def credentials_for(request):
@@ -320,8 +322,12 @@ def test_api_build_provider_authenticates_multiple_registries(
                 return RegistryCredentials("bob", "other-secret")
             return None
 
+        def record_event(event):
+            events.append((event, threading.get_ident()))
+
         result = ProotDistro(
-            credential_provider=credentials_for
+            credential_provider=credentials_for,
+            event_handler=record_event,
         ).build(context, tags=["multi-registry-api:1"])
 
         assert [image.reference for image in result.images] == [
@@ -332,6 +338,8 @@ def test_api_build_provider_authenticates_multiple_registries(
             (second.host(), "team/second"),
         }
         assert all(thread_id == caller_thread for _, thread_id in requests)
+        assert events
+        assert all(thread_id == caller_thread for _, thread_id in events)
         _assert_credentials_in_place(registry)
         _assert_credentials_in_place(second, basic("bob", "other-secret"))
     finally:
@@ -570,15 +578,23 @@ def test_api_push_uses_explicit_credentials(registry, builders, monkeypatch):
     _built(builders, ref, arch, "team/api-push")
     monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:wrong")
 
-    result = ProotDistro(credentials=RegistryCredentials(
-        "alice", "s3cret"
-    )).push(ref)
+    events = []
+    result = ProotDistro(
+        credentials=RegistryCredentials("alice", "s3cret"),
+        event_handler=events.append,
+    ).push(ref)
 
     assert isinstance(result, PushResult)
     assert result.repository == "team/api-push"
     assert result.tag == "1"
     assert result.bytes_uploaded > 0
     assert ("team/api-push", "1") in registry.manifests
+    assert any(
+        event.kind == EventKind.PROGRESS
+        and event.operation == "push"
+        and event.unit == "bytes"
+        for event in events
+    )
     _assert_credentials_in_place(registry)
 
 

@@ -1,5 +1,6 @@
 import io
 import os
+import threading
 
 import pytest
 
@@ -47,7 +48,38 @@ def test_recursive_copy_emits_progress(tmp_path, builders):
     )
 
     assert any(event.kind == EventKind.PROGRESS for event in events)
+    assert any(
+        event.kind == EventKind.PROGRESS and event.phase == event.message
+        for event in events
+    )
     assert open(os.path.join(container_rootfs("box"), "tree", "a")).read() == "a"
+
+
+def test_live_event_handler_exception_stops_worker(
+        tmp_path, builders):
+    builders.make_container("event-box")
+    source = tmp_path / "event-tree"
+    source.mkdir()
+    for index in range(100):
+        (source / f"item-{index}").write_bytes(b"payload")
+    expected = LookupError("event receiver unavailable")
+    callback_threads = []
+    caller_thread = threading.get_ident()
+
+    def fail(event):
+        callback_threads.append(threading.get_ident())
+        if event.kind == EventKind.PROGRESS:
+            raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro(event_handler=fail).copy(
+            source, "event-box:/tree", recursive=True
+        )
+
+    assert exc.value is expected
+    assert callback_threads and set(callback_threads) == {caller_thread}
+    destination = os.path.join(container_rootfs("event-box"), "tree")
+    assert len(os.listdir(destination)) < 100
 
 
 def test_move_removes_source(tmp_path, builders):
