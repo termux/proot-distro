@@ -145,7 +145,8 @@ def test_remove_image_returns_removed_variants(tmp_path):
 
 def test_clear_cache_reports_actual_regular_file_usage(tmp_path):
     context = _context(tmp_path)
-    pd = ProotDistro()
+    events = []
+    pd = ProotDistro(event_handler=events.append)
     pd.build(context, tags=["clear-api:1"])
 
     result = pd.clear_cache()
@@ -156,6 +157,12 @@ def test_clear_cache_reports_actual_regular_file_usage(tmp_path):
     assert result.bytes_after == 0
     assert result.bytes_reclaimed == result.bytes_before
     assert pd.list_images() == ()
+    assert any(
+        event.operation == "clear_cache"
+        and event.phase == "clear-cache"
+        and event.resource == "all"
+        for event in events
+    )
 
 
 def test_clear_orphan_removes_unreferenced_layer(builders):

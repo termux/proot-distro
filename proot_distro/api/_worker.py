@@ -304,44 +304,20 @@ def _install(options: dict) -> dict:
 
 
 def _remove(options: dict) -> dict:
-    from proot_distro.commands.remove import command_remove
-    from proot_distro.paths import container_entry_lstat
+    from proot_distro.operations import remove_container
 
     name = options["name"]
-    if container_entry_lstat(name) is None:
-        raise _WorkerFailure(
-            "not_found", f"container '{name}' is not installed"
-        )
-    command_remove(SimpleNamespace(
-        target=name,
-        image=False,
-        override_arch=None,
-        verbose=False,
-        quiet=True,
-    ))
-    return {"container_name": name}
+    result = remove_container(name)
+    return {"container_name": result.name}
 
 
 def _rename(options: dict) -> dict:
-    from proot_distro.commands.rename import command_rename
-    from proot_distro.paths import container_entry_lstat, container_is_installed
+    from proot_distro.operations import rename_container
 
     old_name = options["old_name"]
     new_name = options["new_name"]
-    if not container_is_installed(old_name):
-        raise _WorkerFailure(
-            "not_found", f"container '{old_name}' is not installed"
-        )
-    if container_entry_lstat(new_name) is not None:
-        raise _WorkerFailure(
-            "already_exists", f"container '{new_name}' already exists"
-        )
-    command_rename(SimpleNamespace(
-        orig_name=old_name,
-        new_name=new_name,
-        quiet=True,
-    ))
-    return {"container_name": new_name}
+    result = rename_container(old_name, new_name)
+    return {"container_name": result.new_name}
 
 
 def _reset(options: dict) -> dict:
@@ -649,32 +625,17 @@ def _remove_image(options: dict) -> dict:
     }
 
 
-def _cache_size() -> int:
-    from proot_distro.commands.clear_cache import _open_cache_root, _tree_size
-
-    try:
-        root_fd = _open_cache_root()
-    except FileNotFoundError:
-        return 0
-    try:
-        return _tree_size(root_fd)
-    finally:
-        os.close(root_fd)
-
-
 def _clear_cache(options: dict) -> dict:
-    from proot_distro.commands.clear_cache import command_clear_cache
+    from proot_distro.operations import clear_cache
 
-    before = _cache_size()
-    command_clear_cache(SimpleNamespace(
+    result = clear_cache(
         orphan=options.get("orphan", False),
         build_cache=options.get("build_cache", False),
-        verbose=False,
-        quiet=True,
-        _api_raise_errors=True,
-    ))
-    after = _cache_size()
-    return {"bytes_before": before, "bytes_after": after}
+    )
+    return {
+        "bytes_before": result.bytes_before,
+        "bytes_after": result.bytes_after,
+    }
 
 
 def _kill_session(options: dict) -> dict:
@@ -874,6 +835,7 @@ def main() -> int:
             RegistryAuthenticationError,
         )
         from proot_distro.operation_errors import (
+            AlreadyExistsFailure,
             BusyFailure,
             IntegrityFailure,
             NetworkFailure,
@@ -882,6 +844,9 @@ def main() -> int:
         )
         if isinstance(exc, RegistryAuthenticationError):
             _write_error("authentication", quote_error(exc))
+            return 1
+        if isinstance(exc, AlreadyExistsFailure):
+            _write_error("already_exists", quote_error(exc))
             return 1
         for failure_type, kind in (
             (BusyFailure, "busy"),

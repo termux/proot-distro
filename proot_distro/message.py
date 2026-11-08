@@ -239,9 +239,9 @@ def msg(*args):
     print(*args, file=sys.stderr)
 
 
-def log_info(text: str):
+def log_info(text: str, *, phase=None, resource=None):
     """Emit a `[*] text` info line. No-op under --quiet."""
-    if _emit_event("info", text):
+    if _emit_event("info", text, phase=phase, resource=resource):
         return
     if _quiet:
         return
@@ -257,16 +257,16 @@ def log_retry(text: str, *, resource=None):
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
 
 
-def log_error(text: str):
+def log_error(text: str, *, phase=None, resource=None):
     """Emit a `[!] text` error line. Always shown — even under --quiet."""
-    if _emit_event("error", text):
+    if _emit_event("error", text, phase=phase, resource=resource):
         return
     msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
 
 
-def warn(text: str):
+def warn(text: str, *, phase=None, resource=None):
     """Emit a 'Warning: text' line in yellow."""
-    if _emit_event("warning", text):
+    if _emit_event("warning", text, phase=phase, resource=resource):
         return
     msg(f"{C['BYELLOW']}Warning: {C['YELLOW']}{text}{C['RST']}")
 

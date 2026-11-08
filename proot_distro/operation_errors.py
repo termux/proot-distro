@@ -37,6 +37,14 @@ class NotFoundFailure(RuntimeError):
     """Required state or cached content was absent."""
 
 
+class AlreadyExistsFailure(RuntimeError):
+    """An operation refused to replace an existing state entry."""
+
+
+class OperationFailure(RuntimeError):
+    """A shared operation failed after accepting its arguments."""
+
+
 class BusyFailure(RuntimeError):
     """An operation could not acquire or safely infer lock state."""
 
@@ -46,9 +54,11 @@ class UnsupportedFailure(RuntimeError):
 
 
 __all__ = (
+    "AlreadyExistsFailure",
     "BusyFailure",
     "IntegrityFailure",
     "NetworkFailure",
     "NotFoundFailure",
+    "OperationFailure",
     "UnsupportedFailure",
 )

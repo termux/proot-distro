@@ -17,9 +17,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
-# Architecture: Two deletion targets behind one command.
+# Architecture: CLI adapter for two deletion targets.
 #
-#   default   — an entire container directory (rootfs + manifest),
+#   default   — delegates to operations.remove_container, which removes
+#               an entire container directory (rootfs + manifest),
 #               removed recursively with permissions fixed on the fly so
 #               subtrees that were chmod-000'd inside the container can
 #               still be cleared.
@@ -36,23 +37,26 @@
 # unless --architecture narrows the selection.
 
 import os
-import stat
 import sys
 from contextlib import ExitStack
 
-from proot_distro import dirfd, statedir
+from proot_distro import dirfd
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import (
-    C, msg, log_info, log_error, crit_error, quote_error, quote_path, warn,
+    C, msg, log_info, log_error, crit_error, quote_error, quote_path,
 )
-from proot_distro.locking import BuildLock, ContainerLock
+from proot_distro.locking import BuildLock
 from proot_distro.names import require_valid_name
 from proot_distro.paths import (
-    container_dir, container_entry_lstat, installed_container_names,
-    container_image_origin,
+    installed_container_names, container_image_origin,
 )
 from proot_distro.progress import fmt_size
+from proot_distro.operation_errors import (
+    BusyFailure, NotFoundFailure, OperationFailure,
+)
+from proot_distro.operations import OperationContext, remove_container
+from proot_distro.operations.containers import remove_path as _remove_path
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER,
     canonical_ref,
@@ -70,39 +74,6 @@ from proot_distro.helpers.docker import (
 # enough to stay convenient, long enough that a typo is unlikely to name
 # an unrelated image by accident.
 _MIN_ID_PREFIX = 4
-
-
-def _remove_path(path: str, on_remove=None) -> bool:
-    """Remove path recursively, fixing permissions on the fly.
-
-    Returns True on full success. Any failure returns False and the partial
-    state is left on disk. The optional on_remove callback is called with the
-    path of each successfully removed entry.
-
-    The walk carries its open directories on an explicit stack rather than
-    recursing — how deep a rootfs goes is the container's choice, and a
-    tree a little past the interpreter's limit ended `remove` and `reset`
-    in a RecursionError, which is not an OSError and so went uncaught. It
-    also names every entry as (directory fd, name), which keeps the chmod
-    that opens a sealed subtree off a path where os.chmod() would follow a
-    symlink standing in for the directory.
-
-    remove_state_tree() reaches the *parent* the same way, walking down
-    from the trust root instead of opening `containers` (or
-    `containers/<name>`, for the rootfs `reset` discards) by name. Those
-    are guest-writable on Termux, so naming them let a planted link aim
-    the removal at a host directory. An entry that is itself a link is
-    unlinked rather than traversed, which is how the user gets rid of one
-    a container left behind.
-    """
-    return statedir.remove_state_tree(
-        path,
-        on_remove=(
-            None if on_remove is None
-            else lambda rel: on_remove(os.path.join(path, rel) if rel
-                                       else path)
-        ),
-    )
 
 
 def command_remove(args) -> None:
@@ -129,42 +100,16 @@ def _remove_container(args) -> None:
     verbose = getattr(args, "verbose", False)
 
     require_valid_name(container_name)
-
-    # lstat'ed off the containers directory's own descriptor, and asked
-    # about `containers/<name>` rather than about the rootfs inside it.
-    # os.path.isdir(container_rootfs(name)) followed the name, so an
-    # entry a session left behind -- a symlink to a directory with no
-    # rootfs in it, or a plain file under the name -- came back "not
-    # installed" from the one command whose job is to get rid of it,
-    # while every other command refused to touch it and told the user to
-    # remove it. A half-installed directory with no rootfs was equally
-    # stuck. What is under the name is what goes; what a link points at
-    # is not followed and not touched (see dirfd.rmtree_at).
-    entry_st = container_entry_lstat(container_name)
-    if entry_st is None:
-        crit_error(f"container '{container_name}' is not installed.")
+    try:
+        remove_container(
+            container_name, context=OperationContext(verbose=verbose)
+        )
+    except (BusyFailure, NotFoundFailure) as exc:
+        crit_error(str(exc))
         sys.exit(1)
-
-    with ContainerLock(container_name, exclusive=True, command="remove"):
-        if not stat.S_ISDIR(entry_st.st_mode):
-            warn(f"'{quote_path(container_dir(container_name))}' is not a "
-                 f"container directory; removing that entry itself. "
-                 f"Whatever it names is left where it is.")
-        log_info(f"Removing container '{container_name}'...")
-
-        on_remove = None
-        if verbose:
-            # Every component below the container directory is a name the
-            # guest chose, and an ESC in one repaints the terminal.
-            def on_remove(path):
-                log_info(f"Removed: '{quote_path(path)}'")
-
-        if not _remove_path(container_dir(container_name), on_remove):
-            log_error("Finished with errors. Some files probably were not "
-                      "deleted.")
-            sys.exit(1)
-
-    log_info("Finished removing the container.")
+    except OperationFailure as exc:
+        log_error(str(exc))
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

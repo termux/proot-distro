@@ -23,6 +23,7 @@ tests/                   unit/, integration/, security/, live/ (see Tests)
 ```
 proot_distro/
   api/                    Stable in-process Python interface
+  operations/             Shared structured operation/service layer
   cli.py  parser.py        Entry point, argparse construction
   commands/                One module (or subpackage) per subcommand
   helpers/                 Registry client, Dockerfile build engine, tar/layer I/O
@@ -58,6 +59,23 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/_worker.py` | One-shot child executor that applies per-instance paths, adds safe default event resources, and isolates CLI-oriented process control. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
+
+### Shared operations
+
+Core operations are being extracted into `operations/`. These services own
+locking, secure state access, mutations, structured events, and immutable
+internal results. They do not parse CLI namespaces, print failures, or call
+`sys.exit()`. Command modules are presentation adapters; API workers call the
+same services. Container removal, rename, and cache cleanup are the first
+migrated slice.
+
+| Module | Role |
+| --- | --- |
+| `operations/context.py` | Explicit event emitter and verbose preference supplied to services. |
+| `operations/models.py` | Frozen internal results, separate from stable public API models. |
+| `operations/locks.py` | Typed, process-control-free adapter around non-blocking state locks. |
+| `operations/containers.py` | Shared secure container removal and rename implementations. |
+| `operations/cache.py` | Shared full/orphan/build cache cleanup and reclaimed-byte accounting. |
 
 ### Commands
 

@@ -117,6 +117,28 @@ def test_remove_returns_former_metadata(builders, capsys):
     assert capsys.readouterr() == ("", "")
 
 
+def test_lifecycle_services_emit_contextual_api_events(builders):
+    builders.make_container("event-old")
+    events = []
+    pd = ProotDistro(event_handler=events.append)
+
+    pd.rename_container("event-old", "event-new")
+    pd.remove_container("event-new")
+
+    assert any(
+        event.operation == "rename_container"
+        and event.phase == "rename"
+        and event.resource == "event-new"
+        for event in events
+    )
+    assert any(
+        event.operation == "remove_container"
+        and event.phase == "remove"
+        and event.resource == "event-new"
+        for event in events
+    )
+
+
 def test_remove_missing_container_is_operation_error(capsys):
     with pytest.raises(NotFoundError) as exc:
         ProotDistro().remove_container("ghost")

@@ -88,6 +88,7 @@ from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.message import crit_error, quote_path
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
+from proot_distro.operation_errors import OperationFailure
 
 
 def container_dir(name: str) -> str:
@@ -105,8 +106,10 @@ def container_manifest(name: str) -> str:
     return os.path.join(container_dir(name), "manifest.json")
 
 
-def _open_container_path(path: str, name: str, create: bool) -> int:
-    """Open a directory of container *name* by descriptor. Or exit.
+def _open_container_path(
+    path: str, name: str, create: bool, raise_errors: bool = False,
+) -> int:
+    """Open a container directory, optionally raising instead of exiting.
 
     FileNotFoundError is left to the caller: "there is no such container"
     and "there is no such container yet" are both ordinary answers, and
@@ -125,23 +128,34 @@ def _open_container_path(path: str, name: str, create: bool) -> int:
     except FileNotFoundError:
         raise
     except OSError as exc:
-        crit_error(
+        message = (
             f"the storage of container '{name}' is not usable: "
             f"'{quote_path(path)}' is not a directory this program "
             f"created ({exc.strerror}). Refusing to follow it; remove or "
             f"move that entry and try again."
         )
+        if raise_errors:
+            raise OperationFailure(message) from exc
+        crit_error(message)
         sys.exit(1)
 
 
-def open_container_dir(name: str, *, create: bool = False) -> int:
+def open_container_dir(
+    name: str, *, create: bool = False, raise_errors: bool = False,
+) -> int:
     """Open containers/<name> as a descriptor. The caller closes it."""
-    return _open_container_path(container_dir(name), name, create)
+    return _open_container_path(
+        container_dir(name), name, create, raise_errors
+    )
 
 
-def open_container_rootfs(name: str, *, create: bool = False) -> int:
+def open_container_rootfs(
+    name: str, *, create: bool = False, raise_errors: bool = False,
+) -> int:
     """Open containers/<name>/rootfs as a descriptor. The caller closes it."""
-    return _open_container_path(container_rootfs(name), name, create)
+    return _open_container_path(
+        container_rootfs(name), name, create, raise_errors
+    )
 
 
 def open_container_pair(name: str, *, create: bool = False):
@@ -189,7 +203,7 @@ def open_container_pair(name: str, *, create: bool = False):
         raise
 
 
-def container_is_installed(name: str) -> bool:
+def container_is_installed(name: str, *, raise_errors: bool = False) -> bool:
     """True when containers/<name>/rootfs is a directory reachable as one.
 
     os.path.isdir() on the composed path was the old spelling and it
@@ -199,7 +213,7 @@ def container_is_installed(name: str) -> bool:
     installed.
     """
     try:
-        fd = open_container_rootfs(name)
+        fd = open_container_rootfs(name, raise_errors=raise_errors)
     except FileNotFoundError:
         return False
     os.close(fd)
