@@ -100,6 +100,16 @@ def _expected_package_files():
     return expected
 
 
+def _expected_sample_files():
+    samples = PROJECT_ROOT / "samples"
+    expected = {
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in samples.glob("*.py")
+    }
+    expected.add("samples/README.md")
+    return expected
+
+
 def test_wheel_contains_typed_package_and_entry_points(distributions):
     with zipfile.ZipFile(distributions["wheel"]) as archive:
         names = set(archive.namelist())
@@ -138,6 +148,8 @@ def test_source_distribution_contains_typed_package(distributions):
         names = set(archive.getnames())
 
     for expected in _expected_package_files():
+        assert any(name.endswith("/" + expected) for name in names)
+    for expected in _expected_sample_files():
         assert any(name.endswith("/" + expected) for name in names)
     assert any(name.endswith("/pyproject.toml") for name in names)
     assert any(name.endswith("/README.md") for name in names)

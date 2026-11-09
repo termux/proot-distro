@@ -189,6 +189,10 @@ backups, builds and sessions through the standardized `proot_distro.api`
 interface. They can also search Docker Hub. The API uses the same local
 containers, image cache and session registry as the command-line utility.
 
+Ready-to-run examples are available in [`samples/`](samples/README.md). They
+cover basic inventory calls, container sessions, streamed archives, builds,
+events, cancellation, credentials and separate application storage.
+
 `ProotDistro` is an in-process programmatic interface. It is not a client for
 a server and does not start a persistent service.
 

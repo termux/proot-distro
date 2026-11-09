@@ -10,8 +10,10 @@ the code.
 ```
 proot-distro.py          Checkout launcher -> cli.main()
 pyproject.toml           Packaging, console scripts, pytest config
+MANIFEST.in              Extra source-distribution files
 README.md                User reference (not technical docs)
 SECURITY.md              Points to Termux's vulnerability policy
+samples/                 Documented Python API example scripts
 proot_distro/            The package (see below)
   completions/           bash / zsh / fish completion scripts
 tests/                   unit/, integration/, security/, compatibility/,
