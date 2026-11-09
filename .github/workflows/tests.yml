@@ -122,6 +122,9 @@ jobs:
       - name: Unit tests
         run: python -m pytest tests/unit
 
+      - name: Compatibility and packaging tests
+        run: python -m pytest tests/compatibility tests/packaging
+
       - name: Integration tests
         run: python -m pytest tests/integration
 

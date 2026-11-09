@@ -32,6 +32,9 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
    authentication end to end against `_registry.py` (below).
 - `compatibility/` — the versioned public Python API snapshot. It pins exports,
   signatures, dataclass fields, enums, protocols, and exception inheritance.
+- `packaging/` — offline source/wheel builds and installed-artifact checks for
+  package contents, typing metadata, API compatibility, dependencies, and both
+  console scripts.
 - `live/` — opt-in smoke tests behind `@pytest.mark.live`, skipped unless
   `RUN_LIVE_TESTS=1` (real Docker Hub pull, real proot run).
 

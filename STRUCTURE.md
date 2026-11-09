@@ -14,7 +14,8 @@ README.md                User reference (not technical docs)
 SECURITY.md              Points to Termux's vulnerability policy
 proot_distro/            The package (see below)
   completions/           bash / zsh / fish completion scripts
-tests/                   unit/, integration/, security/, compatibility/, live/
+tests/                   unit/, integration/, security/, compatibility/,
+                         packaging/, live/ (see Tests)
 .github/workflows/       tests.yml (CI), publish.yml (PyPI on `v*` tags)
 ```
 
@@ -23,6 +24,7 @@ tests/                   unit/, integration/, security/, compatibility/, live/
 ```
 proot_distro/
   api/                    Stable in-process Python interface
+  py.typed                PEP 561 marker for installed type information
   operations/             Shared structured operation/service layer
   cli.py  parser.py        Entry point, argparse construction
   commands/                One module (or subpackage) per subcommand
@@ -282,6 +284,7 @@ The suite (about 2000 tests) is offline and deterministic by default. See
 | `tests/security/` | Exploit attempts for each closed hole: traversal, symlink and hardlink escapes, TOCTOU swaps, cache poisoning, forged records. |
 | `tests/live/` | Opt-in (`RUN_LIVE_TESTS=1`): real registry pulls and real proot. |
 | `tests/compatibility/` | Versioned snapshots of public API exports, signatures, models, enums, protocols, and exceptions. |
+| `tests/packaging/` | Offline source/wheel build, content, installation, API-contract, dependency, and console-entry-point checks. |
 
 `conftest.py` redirects XDG and `HOME` into a sandbox before importing the
 package and refuses to run outside it. `_builders.py` holds shared fixtures
@@ -291,10 +294,11 @@ Basic auth, TLS from the test-only CA in `tests/tls/`), against which
 `integration/test_registry_auth.py` runs pull and push end to end.
 
 CI (`tests.yml`) first builds proot from a pinned termux/proot commit (the
-distro package is never installed) and checks that it confines. It then
-runs unit, integration, security and live tests on Python 3.9 (Ubuntu
-24.04), 3.12 and 3.15 (latest Ubuntu), plus an end-to-end shell script on
-pushes that installs Alpine, Debian and Ubuntu and exercises each command.
+distro package is never installed) and checks that it confines. It then runs
+unit, compatibility, packaging, integration, security and live tests on Python
+3.9 (Ubuntu 24.04), 3.12 and 3.15 (latest Ubuntu), plus an end-to-end shell
+script on pushes that installs Alpine, Debian and Ubuntu and exercises each
+command.
 
 ## Adding things
 

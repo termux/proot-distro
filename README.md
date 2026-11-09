@@ -211,7 +211,8 @@ their major version.
 
 Only names listed by `proot_distro.api.__all__` are covered by this policy.
 Modules below `proot_distro.api` and all other package modules are
-implementation details.
+implementation details. Source and wheel distributions include the PEP 561
+`py.typed` marker so type checkers use these public annotations.
 
 ```python
 from proot_distro.api import ProotDistro, ProotDistroError
