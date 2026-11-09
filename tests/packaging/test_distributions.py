@@ -188,6 +188,7 @@ import runpy
 import sys
 
 purelib = Path({str(purelib)!r}).resolve()
+workspace = Path({str(workspace)!r}).resolve()
 sys.path.insert(0, str(purelib))
 import proot_distro.api as api
 
@@ -215,6 +216,11 @@ module = runpy.run_path({str(COMPATIBILITY_TEST)!r})
 with open(module["_SNAPSHOT"], encoding="utf-8") as stream:
     expected = json.load(stream)
 assert module["_public_api_snapshot"]() == expected
+config = api.RuntimeConfig(
+    workspace / "api-state",
+    workspace / "api-cache",
+)
+assert api.ProotDistro(config).list_containers() == ()
 print("installed contract matches")
 """
     _run(

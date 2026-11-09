@@ -474,10 +474,11 @@ pd.kill_session(session.pid)
 pd.kill_all_sessions(signal_name="KILL")
 ```
 
-`start_detached` and `run_detached` use a short-lived launcher and never call
-`fork()` in the embedding application. The method returns only after the
-launcher confirms that Proot started. The detached session retains its pinned
-rootfs and shared container lock after the launcher exits.
+`start_detached` and `run_detached` use a short-lived launcher. No
+PRoot-Distro Python code runs after a fork in the embedding application. The
+method returns only after the launcher confirms that Proot started. The
+detached session retains its pinned rootfs and shared container lock after the
+launcher exits.
 
 Detached output paths are opened in append mode before daemonization.
 `subprocess.DEVNULL` and `None` select `/dev/null`; `subprocess.STDOUT` is

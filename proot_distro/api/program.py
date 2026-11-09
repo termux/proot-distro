@@ -34,7 +34,6 @@ import select
 import signal
 import socket
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -49,6 +48,7 @@ from typing import (
     Union,
 )
 
+from proot_distro._bootstrap import private_module_command
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import (
     IS_TERMUX,
@@ -490,18 +490,6 @@ def _worker_environment(config: RuntimeConfig) -> dict:
         env.pop("PD_PROOT_BIN", None)
     else:
         env["PD_PROOT_BIN"] = config.proot_path
-    # The application may have imported this package from a path it added
-    # to sys.path at runtime. Child interpreters do not inherit sys.path, so
-    # explicitly put this package's parent first and guarantee that the
-    # worker executes the same code as the facade that launched it.
-    package_parent = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)
-    )))
-    inherited_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        package_parent +
-        (os.pathsep + inherited_pythonpath if inherited_pythonpath else "")
-    )
     if IS_TERMUX:
         env["TERMUX__PREFIX"] = TERMUX_PREFIX
         env["TERMUX__HOME"] = TERMUX_HOME
@@ -1062,7 +1050,7 @@ def _run_worker(operation: str, options: dict,
         pass_fds += (child_credentials.fileno(),)
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "proot_distro.api._worker"],
+            private_module_command("proot_distro.api._worker"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2213,7 +2201,7 @@ class ProotDistro:
         env["_PROOT_DISTRO_SESSION_STATUS_FD"] = str(status_write)
         try:
             process = subprocess.Popen(
-                [sys.executable, "-m", "proot_distro.api._session_worker"],
+                private_module_command("proot_distro.api._session_worker"),
                 stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,

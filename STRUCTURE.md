@@ -63,6 +63,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
+| `_bootstrap.py` | Isolated, site-disabled command bootstrap that loads private workers from the exact imported package. |
 
 ### Shared operations
 
@@ -132,7 +133,7 @@ Session implementation is split by concern:
 | `session_env.py` | Image `Env`, identity variables, `/etc/profile.d` injection. |
 | `session_bindings.py` | Android storage and system `--bind` lists. |
 | `session_runtime.py` | Foreground registration/exec and detached-launch protocol; potentially multithreaded callers first exec a fresh helper. |
-| `_detach_worker.py` | Single-threaded helper that performs detached double-fork daemonisation with explicit descriptor transfer. |
+| `_detach_worker.py` | Isolated single-threaded helper that performs detached double-fork daemonisation with explicit descriptor transfer and a minimal ambient environment. |
 | `session_migrate.py` | One-shot move from the legacy `installed-rootfs/` layout. |
 | `commands/login/*.py` | Compatibility imports for internal helper locations used before shared preparation. |
 | `session_quoting.py` | POSIX double-quoting for `--get-proot-cmd`. |

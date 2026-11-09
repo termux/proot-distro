@@ -27,7 +27,9 @@
 # another thread held at the instant of the fork, and recent CPython versions
 # warn about it. subprocess performs only its controlled exec setup in that
 # vulnerable child. All project Python code after fork runs in the fresh,
-# known-single-threaded _detach_worker interpreter instead:
+# known-single-threaded _detach_worker interpreter instead. The shared private
+# bootstrap disables site and environment-controlled Python startup before it
+# imports the exact package this process is already running:
 #
 #   caller ─subprocess→ fresh launcher ─fork→ child ─setsid→ ─fork→ daemon
 #      │                        │          │ _exit(0)              │ detach I/O
@@ -56,8 +58,9 @@
 import json
 import os
 import subprocess
-import sys
 
+from proot_distro._bootstrap import private_module_command
+from proot_distro.constants import BASE_CACHE_DIR, RUNTIME_DIR
 from proot_distro.message import quote_error
 from proot_distro.session import register_session
 from proot_distro.session_errors import SessionExecutionFailure
@@ -65,6 +68,39 @@ from proot_distro.session_errors import SessionExecutionFailure
 
 _MAX_DETACH_REQUEST_BYTES = 16 * 1024 * 1024
 _MAX_DETACH_RESPONSE_BYTES = 64 * 1024
+_LAUNCHER_ENV_KEYS = (
+    "ANDROID_DATA",
+    "ANDROID_ROOT",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LD_LIBRARY_PATH",
+    "TERMUX_APP__APP_VERSION_NAME",
+    "TERMUX_APP__PACKAGE_NAME",
+    "TERMUX_VERSION",
+    "TERMUX__HOME",
+    "TERMUX__PREFIX",
+)
+
+
+def _launcher_environment():
+    """Return only what the Python launcher and platform runtime require.
+
+    The eventual Proot environment is carried in the bounded request and is
+    intentionally independent. Forwarding the embedding application's whole
+    environment both leaked unrelated values into an internal process and made
+    this extra exec fail with E2BIG where the former direct-fork path worked.
+    Private path overrides make the fresh interpreter use exactly the state
+    roots already selected by this process.
+    """
+    env = {
+        key: os.environ[key] for key in _LAUNCHER_ENV_KEYS
+        if key in os.environ
+    }
+    env["_PROOT_DISTRO_API_RUNTIME_DIR"] = os.path.abspath(RUNTIME_DIR)
+    env["_PROOT_DISTRO_API_CACHE_DIR"] = os.path.abspath(BASE_CACHE_DIR)
+    env["PD_FORCE_NO_COLORS"] = "1"
+    return env
 
 
 def execute_session(prepared) -> None:
@@ -143,16 +179,10 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
         fd for fd in (rootfs_fd, lock_fd, stdout_fd, stderr_fd)
         if isinstance(fd, int) and not isinstance(fd, bool) and fd > 2
     }))
-    env = os.environ.copy()
-    package_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    inherited_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        package_parent
-        + (os.pathsep + inherited_pythonpath if inherited_pythonpath else "")
-    )
+    env = _launcher_environment()
     try:
         launcher = subprocess.Popen(
-            [sys.executable, "-m", "proot_distro._detach_worker"],
+            private_module_command("proot_distro._detach_worker"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -164,7 +194,18 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
             f"cannot start detached-session launcher: {quote_error(exc)}"
         ) from exc
 
-    stdout, _stderr = launcher.communicate(raw_request)
+    try:
+        stdout, _stderr = launcher.communicate(raw_request)
+    except (OSError, ValueError) as exc:
+        try:
+            launcher.kill()
+            launcher.wait()
+        except (AttributeError, OSError):
+            pass
+        raise SessionExecutionFailure(
+            f"detached-session launcher communication failed: "
+            f"{quote_error(exc)}"
+        ) from exc
     if len(stdout) > _MAX_DETACH_RESPONSE_BYTES:
         raise SessionExecutionFailure(
             "detached-session launcher returned an oversized response."

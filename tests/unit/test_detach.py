@@ -169,6 +169,107 @@ def test_spawn_detached_finds_launcher_outside_project_directory(
             pass
 
 
+def test_spawn_detached_ignores_python_startup_hooks(tmp_path, monkeypatch):
+    marker = tmp_path / "sitecustomize-ran"
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('loaded')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(hooks))
+    monkeypatch.setenv("PYTHONINSPECT", "1")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+
+    pid = spawn_detached(
+        "sleep", ["sleep", "30"], env,
+        register_kwargs=dict(
+            container="ubuntu", kind="run",
+            command_argv=["sleep", "30"], user="root", detach=True,
+        ),
+    )
+    try:
+        assert not marker.exists()
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def test_spawn_detached_ignores_package_shadow_in_working_directory(
+        tmp_path, monkeypatch):
+    marker = tmp_path / "shadow-package-loaded"
+    shadow = tmp_path / "proot_distro"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('loaded')\n"
+    )
+    (shadow / "_detach_worker.py").write_text(
+        "raise RuntimeError('shadow launcher executed')\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+
+    pid = spawn_detached(
+        "sleep", ["sleep", "30"], env,
+        register_kwargs=dict(
+            container="ubuntu", kind="run",
+            command_argv=["sleep", "30"], user="root", detach=True,
+        ),
+    )
+    try:
+        assert not marker.exists()
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def test_spawn_detached_does_not_forward_unrelated_ambient_environment(
+        monkeypatch):
+    for index in range(32):
+        monkeypatch.setenv(f"UNRELATED_LARGE_VALUE_{index}", "x" * 100_000)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+
+    pid = spawn_detached(
+        "sleep", ["sleep", "30"], env,
+        register_kwargs=dict(
+            container="ubuntu", kind="run",
+            command_argv=["sleep", "30"], user="root", detach=True,
+        ),
+    )
+    try:
+        os.kill(pid, 0)
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def test_detach_launcher_environment_excludes_application_secrets(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "user:secret")
+    monkeypatch.setenv("APPLICATION_SECRET", "secret")
+    monkeypatch.setattr(session_runtime, "RUNTIME_DIR", "relative-state")
+    monkeypatch.setattr(session_runtime, "BASE_CACHE_DIR", "relative-cache")
+    monkeypatch.chdir(tmp_path)
+
+    env = session_runtime._launcher_environment()
+
+    assert "PD_DOCKER_AUTH" not in env
+    assert "APPLICATION_SECRET" not in env
+    assert env["_PROOT_DISTRO_API_RUNTIME_DIR"] == str(
+        tmp_path / "relative-state"
+    )
+    assert env["_PROOT_DISTRO_API_CACHE_DIR"] == str(
+        tmp_path / "relative-cache"
+    )
+
+
 def test_spawn_detached_bounds_launcher_request(monkeypatch):
     monkeypatch.setattr(session_runtime, "_MAX_DETACH_REQUEST_BYTES", 128)
 
@@ -208,3 +309,38 @@ def test_spawn_detached_rejects_invalid_launcher_response(
                 user="root", detach=True,
             ),
         )
+
+
+def test_spawn_detached_normalizes_launcher_channel_failure(monkeypatch):
+    class Process:
+        def __init__(self):
+            self.killed = False
+            self.waited = False
+
+        def communicate(self, _request):
+            raise OSError("channel unavailable")
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self):
+            self.waited = True
+
+    process = Process()
+    monkeypatch.setattr(
+        session_runtime.subprocess, "Popen", lambda *_a, **_k: process
+    )
+
+    with pytest.raises(
+        SessionExecutionFailure, match="launcher communication failed"
+    ):
+        spawn_detached(
+            "sleep", ["sleep", "30"], {},
+            register_kwargs=dict(
+                container="ubuntu", kind="run", command_argv=["sleep"],
+                user="root", detach=True,
+            ),
+        )
+
+    assert process.killed
+    assert process.waited

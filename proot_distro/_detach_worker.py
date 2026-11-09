@@ -21,10 +21,11 @@
 """Single-threaded exec boundary for detached-session daemonization.
 
 An embedding application can have arbitrary threads, so it must not call
-``os.fork()`` and continue through Python code in the child. The public
-launcher execs this module first. This fresh interpreter has one thread and may
-safely perform the traditional double-fork while preserving explicitly passed
-rootfs, container-lock, and output descriptors.
+``os.fork()`` and continue through Python code in the child. The parent execs
+this module through the isolated private bootstrap first. This fresh
+interpreter has one thread and may safely perform the traditional double-fork
+while preserving explicitly passed rootfs, container-lock, and output
+descriptors.
 """
 
 import json

@@ -245,6 +245,32 @@ def test_worker_environment_does_not_inherit_cli_credentials(tmp_path,
     assert "PD_DOCKER_AUTH" not in program._worker_environment(config)
 
 
+def test_operation_worker_ignores_startup_hooks_and_cwd_package_shadow(
+        tmp_path, monkeypatch):
+    site_marker = tmp_path / "worker-sitecustomize-ran"
+    shadow_marker = tmp_path / "worker-shadow-package-loaded"
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(site_marker)!r}).write_text('loaded')\n"
+    )
+    working = tmp_path / "working"
+    shadow = working / "proot_distro"
+    shadow.mkdir(parents=True)
+    (shadow / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(shadow_marker)!r}).write_text('loaded')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(hooks))
+    monkeypatch.setenv("PYTHONINSPECT", "1")
+    monkeypatch.chdir(working)
+
+    assert ProotDistro().list_containers() == ()
+    assert not site_marker.exists()
+    assert not shadow_marker.exists()
+
+
 def test_empty_inventories_return_tuples(capsys):
     pd = ProotDistro()
 

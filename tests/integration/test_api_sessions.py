@@ -69,6 +69,39 @@ def test_start_returns_process_handle_with_piped_output(builders, fake_proot):
     assert stderr == b""
 
 
+def test_session_worker_ignores_startup_hooks_and_cwd_package_shadow(
+        tmp_path, builders, fake_proot, monkeypatch):
+    builders.make_container("safe-worker")
+    site_marker = tmp_path / "session-sitecustomize-ran"
+    shadow_marker = tmp_path / "session-shadow-package-loaded"
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(site_marker)!r}).write_text('loaded')\n"
+    )
+    working = tmp_path / "working"
+    shadow = working / "proot_distro"
+    shadow.mkdir(parents=True)
+    (shadow / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(shadow_marker)!r}).write_text('loaded')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(hooks))
+    monkeypatch.setenv("PYTHONINSPECT", "1")
+    monkeypatch.chdir(working)
+
+    process = _program(fake_proot).start(
+        "safe-worker", ["true"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    process.communicate(timeout=10)
+
+    assert process.returncode == 0
+    assert not site_marker.exists()
+    assert not shadow_marker.exists()
+
+
 def test_run_uses_image_entrypoint_and_arguments(builders, fake_proot):
     builders.make_container("runbox", manifest={
         "image_config": {"config": {
@@ -342,6 +375,30 @@ def test_detached_session_inherits_container_lock(builders, fake_proot):
 
     removed = pd.remove_container("detached-lock")
     assert removed.name == "detached-lock"
+
+
+def test_detached_session_uses_configured_state_roots(
+        tmp_path, builders, fake_proot):
+    archive = tmp_path / "configured-rootfs.tar"
+    builders.make_tar(str(archive), builders.rootfs_members())
+    pd = ProotDistro(RuntimeConfig(
+        tmp_path / "state", tmp_path / "cache", fake_proot
+    ))
+    pd.install(archive, name="configured-detached")
+
+    session = pd.start_detached(
+        "configured-detached", environment={"FAKE_PROOT_SLEEP": "1"}
+    )
+    try:
+        assert any(item.pid == session.pid for item in pd.list_sessions())
+        assert ProotDistro().list_sessions() == ()
+        with pytest.raises(BusyError):
+            pd.remove_container("configured-detached")
+    finally:
+        pd.kill_session(session.pid, signal_name="KILL")
+
+    assert pd.list_sessions() == ()
+    pd.remove_container("configured-detached")
 
 
 def test_detached_session_appends_stdout_and_stderr(
