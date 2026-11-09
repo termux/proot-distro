@@ -22,7 +22,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 
 class EventKind(str, Enum):
@@ -56,4 +56,13 @@ class OperationEvent:
     resource: Optional[str] = None
 
 
-__all__ = ("EventKind", "OperationEvent")
+@runtime_checkable
+class EventHandler(Protocol):
+    """Callable that synchronously receives one operation event."""
+
+    def __call__(self, event: OperationEvent) -> None:
+        """Handle *event* in the thread that invoked the API operation."""
+        ...
+
+
+__all__ = ("EventHandler", "EventKind", "OperationEvent")

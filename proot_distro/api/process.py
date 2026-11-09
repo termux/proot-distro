@@ -21,6 +21,9 @@
 """Process handle returned by programmatic container sessions."""
 
 import subprocess
+from typing import Any, BinaryIO, Optional, Tuple
+
+from proot_distro.api.models import SessionSignalResult
 
 
 class SessionProcess:
@@ -31,7 +34,13 @@ class SessionProcess:
     conventions when the caller requested pipes.
     """
 
-    def __init__(self, owner, process, *, container: str, kind: str) -> None:
+    container: str
+    kind: str
+
+    def __init__(
+        self, owner: Any, process: subprocess.Popen, *,
+        container: str, kind: str,
+    ) -> None:
         self._owner = owner
         self._process = process
         self.container = container
@@ -42,43 +51,48 @@ class SessionProcess:
         return self._process.pid
 
     @property
-    def returncode(self):
+    def returncode(self) -> Optional[int]:
         return self._process.returncode
 
     @property
-    def stdin(self):
+    def stdin(self) -> Optional[BinaryIO]:
         return self._process.stdin
 
     @property
-    def stdout(self):
+    def stdout(self) -> Optional[BinaryIO]:
         return self._process.stdout
 
     @property
-    def stderr(self):
+    def stderr(self) -> Optional[BinaryIO]:
         return self._process.stderr
 
-    def poll(self):
+    def poll(self) -> Optional[int]:
         """Return the exit status, or None while the session is running."""
         return self._process.poll()
 
-    def wait(self, timeout=None):
+    def wait(self, timeout: Optional[float] = None) -> int:
         """Wait for the session and return its exit status."""
         return self._process.wait(timeout=timeout)
 
-    def communicate(self, input=None, timeout=None):
+    def communicate(
+        self, input: Optional[bytes] = None,
+        timeout: Optional[float] = None,
+    ) -> Tuple[Optional[bytes], Optional[bytes]]:
         """Exchange data through requested pipes and wait for completion."""
         return self._process.communicate(input=input, timeout=timeout)
 
-    def __enter__(self):
+    def __enter__(self) -> "SessionProcess":
         """Return this running session for use in a ``with`` block."""
         return self
 
-    def __exit__(self, _exc_type, _exc_value, _traceback):
+    def __exit__(
+        self, _exc_type: Any, _exc_value: Any, _traceback: Any,
+    ) -> bool:
         """Terminate, reap, and close pipe handles when leaving the block."""
         self.close()
         return False
 
-    def close(self, timeout=10.0):
+    def close(self, timeout: float = 10.0) -> Optional[int]:
         """Stop a live session, escalating after *timeout*, and close pipes."""
         try:
             if self.poll() is None:
@@ -96,7 +110,7 @@ class SessionProcess:
                     closed.add(id(stream))
                     stream.close()
 
-    def terminate(self):
+    def terminate(self) -> SessionSignalResult:
         """Request graceful teardown of the complete tracked session tree."""
         result = self._owner.kill_session(self.pid, signal_name="TERM")
         if not result.pids and self.poll() is None:
@@ -105,7 +119,7 @@ class SessionProcess:
             self._process.terminate()
         return result
 
-    def kill(self):
+    def kill(self) -> SessionSignalResult:
         """Immediately kill the complete tracked session tree."""
         result = self._owner.kill_session(self.pid, signal_name="KILL")
         if not result.pids and self.poll() is None:

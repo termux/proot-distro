@@ -25,6 +25,7 @@ re-exported from this module are covered by the public API compatibility
 policy; modules elsewhere in the package remain implementation details.
 """
 
+from proot_distro.api.cancellation import CancellationToken
 from proot_distro.api.errors import (
     AlreadyExistsError,
     AuthenticationError,
@@ -46,7 +47,7 @@ from proot_distro.api.credentials import (
     CredentialRequest,
     RegistryCredentials,
 )
-from proot_distro.api.events import EventKind, OperationEvent
+from proot_distro.api.events import EventHandler, EventKind, OperationEvent
 from proot_distro.api.models import (
     BackupResult,
     BuildResult,
@@ -68,17 +69,26 @@ from proot_distro.api.program import ProotDistro
 from proot_distro.api.process import SessionProcess
 
 
+# This version is independent of the package release. The major component
+# changes for incompatible public-API changes; the minor component changes for
+# backward-compatible additions.
+API_VERSION: str = "1.0"
+
+
 __all__ = (
+    "API_VERSION",
     "AlreadyExistsError",
     "AuthenticationError",
     "BackupResult",
     "BuildResult",
     "BusyError",
     "CacheCleanupResult",
+    "CancellationToken",
     "ContainerInfo",
     "CredentialProvider",
     "CredentialRequest",
     "DetachedSession",
+    "EventHandler",
     "EventKind",
     "ImageInfo",
     "ImageRemovalResult",
@@ -86,23 +96,23 @@ __all__ = (
     "InvalidArgumentError",
     "NetworkError",
     "NotFoundError",
-    "OperationError",
     "OperationCancelledError",
+    "OperationError",
     "OperationEvent",
     "PartialOperationError",
     "ProotDistro",
     "ProotDistroError",
     "PushResult",
-    "RuntimeConfig",
     "RegistryCredentials",
     "RestoreResult",
+    "RuntimeConfig",
     "SearchHit",
     "SearchResult",
-    "SessionInfo",
     "SessionCommand",
+    "SessionInfo",
     "SessionProcess",
-    "SessionStartupTimeoutError",
     "SessionSignalResult",
+    "SessionStartupTimeoutError",
     "TransferResult",
     "UnsupportedOperationError",
 )

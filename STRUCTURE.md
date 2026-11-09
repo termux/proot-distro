@@ -14,7 +14,7 @@ README.md                User reference (not technical docs)
 SECURITY.md              Points to Termux's vulnerability policy
 proot_distro/            The package (see below)
   completions/           bash / zsh / fish completion scripts
-tests/                   unit/, integration/, security/, live/ (see Tests)
+tests/                   unit/, integration/, security/, compatibility/, live/
 .github/workflows/       tests.yml (CI), publish.yml (PyPI on `v*` tags)
 ```
 
@@ -53,10 +53,11 @@ Only names re-exported by `proot_distro.api` are public.
 | --- | --- |
 | `api/program.py` | `ProotDistro` facade plus caller-thread multiplexing of live events, credentials, binary streams, and cooperative worker cancellation. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
-| `api/credentials.py` | Redacted credentials and provider requests; builds resolve multiple registries over a private bidirectional worker channel. |
+| `api/credentials.py` | Redacted credentials, provider requests, and the public structural provider protocol; builds resolve multiple registries over a private bidirectional worker channel. |
+| `api/cancellation.py` | Public structural protocol for cooperative cancellation tokens. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
-| `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context. |
+| `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context, plus the public handler protocol. |
 | `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and isolates detached process control. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
@@ -280,6 +281,7 @@ The suite (about 2000 tests) is offline and deterministic by default. See
 | `tests/integration/` | Whole `command_*` pipelines driven with `SimpleNamespace` args in a sandboxed runtime tree. |
 | `tests/security/` | Exploit attempts for each closed hole: traversal, symlink and hardlink escapes, TOCTOU swaps, cache poisoning, forged records. |
 | `tests/live/` | Opt-in (`RUN_LIVE_TESTS=1`): real registry pulls and real proot. |
+| `tests/compatibility/` | Versioned snapshots of public API exports, signatures, models, enums, protocols, and exceptions. |
 
 `conftest.py` redirects XDG and `HOME` into a sandbox before importing the
 package and refuses to run outside it. `_builders.py` holds shared fixtures

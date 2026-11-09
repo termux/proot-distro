@@ -69,6 +69,9 @@ class SessionInfo:
     minimal: bool
     detached: bool
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "command", tuple(self.command))
+
 
 @dataclass(frozen=True)
 class SearchHit:
@@ -89,6 +92,9 @@ class SearchResult:
     query: str
     total: int
     hits: Tuple[SearchHit, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "hits", tuple(self.hits))
 
 
 @dataclass(frozen=True)
@@ -126,6 +132,10 @@ class BuildResult:
     outputs: Tuple[Optional[str], ...]
     installed_container: Optional[ContainerInfo]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "images", tuple(self.images))
+        object.__setattr__(self, "outputs", tuple(self.outputs))
+
 
 @dataclass(frozen=True)
 class PushResult:
@@ -143,6 +153,9 @@ class ImageRemovalResult:
     """Cached image variants removed by one operation."""
 
     removed: Tuple[ImageInfo, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "removed", tuple(self.removed))
 
 
 @dataclass(frozen=True)
@@ -162,6 +175,9 @@ class SessionSignalResult:
     target: str
     signal: str
     pids: Tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "pids", tuple(self.pids))
 
 
 @dataclass(frozen=True)
@@ -193,6 +209,14 @@ class SessionCommand:
     work_dir: str
     user: str
     shell_command: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(
+            self, "environment",
+            tuple((key, value) for key, value in self.environment),
+        )
+        object.__setattr__(self, "inner_command", tuple(self.inner_command))
 
     @property
     def environment_dict(self) -> dict:

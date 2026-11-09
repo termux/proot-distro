@@ -22,9 +22,12 @@
 
 from dataclasses import dataclass
 import os
-from typing import Optional
+from typing import Optional, Union
 
 from proot_distro.api.errors import InvalidArgumentError
+
+
+_PathArgument = Union[str, os.PathLike[str]]
 
 
 def _directory(value, name: str) -> str:
@@ -111,9 +114,9 @@ class RuntimeConfig:
     filesystem root.
     """
 
-    runtime_dir: str
-    cache_dir: str
-    proot_path: Optional[str] = None
+    runtime_dir: _PathArgument
+    cache_dir: _PathArgument
+    proot_path: Optional[_PathArgument] = None
 
     def __post_init__(self) -> None:
         runtime_dir = _directory(self.runtime_dir, "runtime_dir")

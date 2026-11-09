@@ -191,6 +191,28 @@ containers, image cache and session registry as the command-line utility.
 `ProotDistro` is an in-process programmatic interface. It is not a client for
 a server and does not start a persistent service.
 
+### API compatibility
+
+`API_VERSION` is the public interface version as a `"MAJOR.MINOR"` string. It
+is independent of the PRoot-Distro package version:
+
+```python
+from proot_distro.api import API_VERSION
+
+major, minor = (int(part) for part in API_VERSION.split("."))
+```
+
+The current API version is `1.0`. Backward-compatible additions increment the
+minor version. Removing or incompatibly changing an exported name, method
+signature, model field, enum value, or exception relationship increments the
+major version. Bug and security fixes that preserve the public contract do not
+change `API_VERSION`. Deprecated interfaces remain available for the rest of
+their major version.
+
+Only names listed by `proot_distro.api.__all__` are covered by this policy.
+Modules below `proot_distro.api` and all other package modules are
+implementation details.
+
 ```python
 from proot_distro.api import ProotDistro, ProotDistroError
 
@@ -222,10 +244,11 @@ pd.reset_container("test-alpine")  # OCI installs only; loses local changes
 pd.remove_container("test-alpine")  # permanent; returns former metadata
 ```
 
-The returned records are immutable. API operations do not print messages or
-terminate the application with `SystemExit`. Failures inherit from
-`ProotDistroError`. An optional event handler receives live information,
-warning, progress, output, and network-retry events:
+The returned records are immutable and copy iterable fields into tuples. API
+operations do not print messages or terminate the application with
+`SystemExit`. Failures inherit from `ProotDistroError`. An optional event
+handler receives live information, warning, progress, output, and network-retry
+events:
 
 ```python
 pd = ProotDistro(event_handler=lambda event: print(event.message))
@@ -328,7 +351,8 @@ to the caller.
 ### Cancelling operations
 
 Worker-backed methods accept `cancel_event`. It can be a `threading.Event` or
-any object with an `is_set()` method:
+any object implementing the public `CancellationToken` protocol: its
+`is_set()` method must return a boolean.
 
 ```python
 import threading
@@ -483,9 +507,6 @@ Mutating operations run in a short-lived child process so their signal and
 cleanup behavior cannot alter the embedding application. This worker exits
 when the method finishes; it is not a persistent service.
 
-Only names imported from `proot_distro.api` are part of the stable public API.
-Other package modules are implementation details.
-
 ### Separate API storage
 
 By default, the API uses the same storage as the command-line utility. Pass a
@@ -540,8 +561,9 @@ def credentials_for(request):
 pd = ProotDistro(credential_provider=credentials_for)
 ```
 
-The provider receives a `CredentialRequest` containing `registry`,
-`repository`, and `operation`. It must return `RegistryCredentials` or `None`.
+The provider implements the public `CredentialProvider` callable protocol. It
+receives a `CredentialRequest` containing `registry`, `repository`, and
+`operation`, and must return `RegistryCredentials` or `None`.
 `credentials` and `credential_provider` cannot be used together. Public Docker
 Hub search never requests or sends registry credentials. A registry refusal
 raises `AuthenticationError` without including the password or token.
@@ -554,11 +576,12 @@ close-on-exec so Dockerfile `RUN` children cannot inherit it.
 
 ### API events
 
-Pass `event_handler` to receive immutable `OperationEvent` records. Event kinds
-are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are intended for
-display; applications should use exception types and result models for control
-flow. Progress events also provide `current`, `total`, and `unit` when those
-values are known. `phase` is a machine-readable stage name. Current values are
+Pass an `EventHandler` callable to receive immutable `OperationEvent` records.
+Event kinds are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are
+intended for display; applications should use exception types and result models
+for control flow. Progress events also provide `current`, `total`, and `unit`
+when those values are known. `phase` is a machine-readable stage name. Current
+values are
 `network`, `verify`, `download`, `layer-download`, `extract`, `copy`, `sync`,
 `archive`, `layer-pack`, `upload`, `remove`, `remove-image`, `rename`,
 `clear-cache`, `build-output`, and `session-setup`.

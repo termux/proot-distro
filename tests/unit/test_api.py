@@ -10,16 +10,19 @@ import threading
 import pytest
 
 from proot_distro.api import (
+    API_VERSION,
     AlreadyExistsError,
     AuthenticationError,
     BackupResult,
     BuildResult,
     BusyError,
     CacheCleanupResult,
+    CancellationToken,
     ContainerInfo,
     CredentialProvider,
     CredentialRequest,
     DetachedSession,
+    EventHandler,
     EventKind,
     ImageInfo,
     ImageRemovalResult,
@@ -57,10 +60,11 @@ def test_public_exports_are_explicit():
     import proot_distro.api as api
 
     assert set(api.__all__) == {
-        "AlreadyExistsError", "AuthenticationError", "BackupResult",
+        "API_VERSION", "AlreadyExistsError", "AuthenticationError", "BackupResult",
         "BuildResult", "BusyError", "CacheCleanupResult", "ContainerInfo",
-        "CredentialProvider",
-        "CredentialRequest", "DetachedSession", "EventKind", "ImageInfo",
+        "CancellationToken", "CredentialProvider",
+        "CredentialRequest", "DetachedSession", "EventHandler", "EventKind",
+        "ImageInfo",
         "ImageRemovalResult",
         "IntegrityError", "InvalidArgumentError", "NetworkError",
         "NotFoundError", "OperationError", "OperationEvent",
@@ -71,6 +75,63 @@ def test_public_exports_are_explicit():
         "SessionSignalResult", "SessionStartupTimeoutError", "TransferResult",
         "UnsupportedOperationError",
     }
+
+
+def test_api_version_is_independent_string_metadata():
+    assert API_VERSION == "1.0"
+
+
+def test_public_protocols_accept_documented_structures():
+    assert isinstance(lambda _event: None, EventHandler)
+    assert isinstance(lambda _request: None, CredentialProvider)
+    assert isinstance(threading.Event(), CancellationToken)
+
+
+def test_public_models_copy_mutable_collections():
+    command = ["/bin/sh"]
+    hits = [SearchHit("alpine", "small", 1, 2, True, False)]
+    image = ImageInfo(
+        "alpine:latest", "alpine:latest", "library/alpine", "x86_64",
+        None, 1, 1, 0, None, 1.0,
+    )
+    images = [image]
+    outputs = [None]
+    removed = [image]
+    pids = [123]
+    argv = ["/usr/bin/proot"]
+    environment = [["HOME", "/root"]]
+    inner_command = ["/bin/sh"]
+    session = SessionInfo(
+        123, "box", "login", command, "root", 1.0, False, False, False
+    )
+    result = SearchResult("alpine", 1, hits)
+    build = BuildResult(images, outputs, None)
+    removal = ImageRemovalResult(removed)
+    signal_result = SessionSignalResult("123", "SIGTERM", pids)
+    inspected = SessionCommand(
+        "login", "box", "/usr/bin/proot", argv, environment,
+        inner_command, "/rootfs", "/root", "root", '"/usr/bin/proot"',
+    )
+
+    command.append("changed")
+    hits.clear()
+    images.clear()
+    outputs.clear()
+    removed.clear()
+    pids.clear()
+    argv.append("changed")
+    environment[0][1] = "changed"
+    inner_command.append("changed")
+
+    assert session.command == ("/bin/sh",)
+    assert result.hits == (SearchHit("alpine", "small", 1, 2, True, False),)
+    assert build.images == (image,)
+    assert build.outputs == (None,)
+    assert removal.removed == (image,)
+    assert signal_result.pids == (123,)
+    assert inspected.argv == ("/usr/bin/proot",)
+    assert inspected.environment == (("HOME", "/root"),)
+    assert inspected.inner_command == ("/bin/sh",)
 
 
 def test_import_does_not_change_process_umask():
@@ -582,6 +643,22 @@ def test_pre_cancelled_worker_does_not_start(monkeypatch):
 
     with pytest.raises(OperationCancelledError) as exc:
         program._run_worker("list_images", {}, cancel_event=cancelled)
+
+    assert exc.value.operation == "list_images"
+
+
+def test_cancellation_token_must_return_boolean(monkeypatch):
+    class InvalidCancellation:
+        def is_set(self):
+            return 1
+
+    monkeypatch.setattr(
+        program.subprocess, "Popen",
+        lambda *_args, **_kwargs: pytest.fail("worker must not start"),
+    )
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().list_images(cancel_event=InvalidCancellation())
 
     assert exc.value.operation == "list_images"
 

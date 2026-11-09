@@ -38,7 +38,16 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import BinaryIO, Callable, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    BinaryIO,
+    Iterable,
+    IO,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from proot_distro.arch import normalize_arch
 from proot_distro.constants import (
@@ -76,13 +85,14 @@ from proot_distro.api.errors import (
     SessionStartupTimeoutError,
     UnsupportedOperationError,
 )
+from proot_distro.api.cancellation import CancellationToken
 from proot_distro.api.config import RuntimeConfig
 from proot_distro.api.credentials import (
     CredentialProvider,
     CredentialRequest,
     RegistryCredentials,
 )
-from proot_distro.api.events import EventKind, OperationEvent
+from proot_distro.api.events import EventHandler, EventKind, OperationEvent
 from proot_distro.api.models import (
     BackupResult,
     BuildResult,
@@ -103,7 +113,17 @@ from proot_distro.api.models import (
 from proot_distro.api.process import SessionProcess
 
 
-EventHandler = Callable[[OperationEvent], None]
+_PathArgument = Union[str, os.PathLike[str]]
+_PathOrBinaryStream = Union[str, os.PathLike[str], BinaryIO]
+_BuildOutputs = Union[
+    str,
+    os.PathLike[str],
+    BinaryIO,
+    Iterable[Union[str, os.PathLike[str], BinaryIO]],
+]
+_SessionStdio = Optional[Union[int, IO[Any]]]
+_DetachedOutput = Optional[Union[str, os.PathLike[str], int]]
+_SignalArgument = Union[int, str, signal.Signals]
 
 _MAX_WORKER_ERROR_BYTES = 64 * 1024
 _MAX_WORKER_EVENT_BYTES = 64 * 1024
@@ -287,8 +307,9 @@ def _signal_argument(value, *, operation: str) -> signal.Signals:
 
 
 def _cancel_control(
-    cancel_event, *, operation: str, subject: str = "operation",
-):
+    cancel_event: Optional[CancellationToken], *, operation: str,
+    subject: str = "operation",
+) -> Optional[CancellationToken]:
     """Validate a cooperative cancellation token and reject a pre-set one."""
     if (cancel_event is not None
             and not callable(getattr(cancel_event, "is_set", None))):
@@ -296,11 +317,26 @@ def _cancel_control(
             "cancel_event must provide an is_set() method or be None.",
             operation=operation,
         )
-    if cancel_event is not None and cancel_event.is_set():
+    if _cancellation_requested(cancel_event, operation):
         raise OperationCancelledError(
             f"{subject} was cancelled.", operation=operation
         )
     return cancel_event
+
+
+def _cancellation_requested(
+    cancel_event: Optional[CancellationToken], operation: str,
+) -> bool:
+    """Read and validate one cancellation state from a public token."""
+    if cancel_event is None:
+        return False
+    cancelled = cancel_event.is_set()
+    if not isinstance(cancelled, bool):
+        raise InvalidArgumentError(
+            "cancel_event.is_set() must return a boolean.",
+            operation=operation,
+        )
+    return cancelled
 
 
 def _startup_controls(timeout, cancel_event, *, operation: str):
@@ -380,7 +416,7 @@ def _read_session_startup(
             ))
 
     while True:
-        if cancel_event is not None and cancel_event.is_set():
+        if _cancellation_requested(cancel_event, operation):
             raise OperationCancelledError(
                 "session setup was cancelled.", operation=operation
             )
@@ -674,8 +710,8 @@ def _communicate_with_channels(
 
     try:
         while event_open or credential_open or build_output_open:
-            if (not cancelled and cancel_event is not None
-                    and cancel_event.is_set()):
+            if (not cancelled
+                    and _cancellation_requested(cancel_event, operation)):
                 cancelled = True
                 try:
                     os.killpg(proc.pid, signal.SIGINT)
@@ -1230,11 +1266,15 @@ class ProotDistro:
                 operation=operation,
             ) from None
 
-    def list_containers(self, *, cancel_event=None) -> Tuple[ContainerInfo, ...]:
+    def list_containers(
+        self, *, cancel_event: Optional[CancellationToken] = None,
+    ) -> Tuple[ContainerInfo, ...]:
         """Return installed containers sorted by name."""
         return self._containers(cancel_event, "list_containers")
 
-    def list_images(self, *, cancel_event=None) -> Tuple[ImageInfo, ...]:
+    def list_images(
+        self, *, cancel_event: Optional[CancellationToken] = None,
+    ) -> Tuple[ImageInfo, ...]:
         """Return locally cached OCI images in deterministic order."""
         result = self._context.worker(
             "list_images", {}, cancel_event=cancel_event
@@ -1253,7 +1293,9 @@ class ProotDistro:
                 operation="list_images",
             ) from None
 
-    def list_sessions(self, *, cancel_event=None) -> Tuple[SessionInfo, ...]:
+    def list_sessions(
+        self, *, cancel_event: Optional[CancellationToken] = None,
+    ) -> Tuple[SessionInfo, ...]:
         """Return validated records for every live PRoot-Distro session."""
         result = self._context.worker(
             "list_sessions", {}, cancel_event=cancel_event
@@ -1296,12 +1338,12 @@ class ProotDistro:
 
     def install(
         self,
-        source,
+        source: _PathArgument,
         *,
         name: Optional[str] = None,
         architecture: Optional[str] = None,
         allow_insecure: bool = False,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
         """Install a container from an image reference, URL, or archive."""
         cancel_event = _cancel_control(cancel_event, operation="install")
@@ -1383,7 +1425,8 @@ class ProotDistro:
         )
 
     def remove_container(
-        self, name: str, *, cancel_event=None,
+        self, name: str, *,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
         """Permanently remove a container and return its former metadata."""
         cancel_event = _cancel_control(
@@ -1401,7 +1444,8 @@ class ProotDistro:
         return previous or ContainerInfo(name, None, None, None)
 
     def rename_container(
-        self, old_name: str, new_name: str, *, cancel_event=None,
+        self, old_name: str, new_name: str, *,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
         """Rename a container and return its metadata under the new name."""
         cancel_event = _cancel_control(
@@ -1427,7 +1471,8 @@ class ProotDistro:
         )
 
     def reset_container(
-        self, name: str, *, cancel_event=None,
+        self, name: str, *,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
         """Reinstall a container from its recorded OCI image."""
         cancel_event = _cancel_control(
@@ -1515,8 +1560,9 @@ class ProotDistro:
         return TransferResult(operation, source, destination)
 
     def copy(
-        self, source, destination, *, recursive: bool = False,
-        cancel_event=None,
+        self, source: _PathArgument, destination: _PathArgument, *,
+        recursive: bool = False,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> TransferResult:
         """Copy a file or directory between host and container paths."""
         if not isinstance(recursive, bool):
@@ -1528,7 +1574,10 @@ class ProotDistro:
             move=False, recursive=recursive,
         )
 
-    def move(self, source, destination, *, cancel_event=None) -> TransferResult:
+    def move(
+        self, source: _PathArgument, destination: _PathArgument, *,
+        cancel_event: Optional[CancellationToken] = None,
+    ) -> TransferResult:
         """Move a file or directory between host and container paths."""
         return self._transfer(
             "move", source, destination, cancel_event=cancel_event,
@@ -1537,12 +1586,12 @@ class ProotDistro:
 
     def sync(
         self,
-        source,
-        destination,
+        source: _PathArgument,
+        destination: _PathArgument,
         *,
         checksum: bool = False,
         delete: bool = False,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> TransferResult:
         """Synchronize a file or directory to another path."""
         if not isinstance(checksum, bool):
@@ -1561,10 +1610,10 @@ class ProotDistro:
     def backup(
         self,
         name: str,
-        output,
+        output: _PathOrBinaryStream,
         *,
         compression: Optional[str] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> BackupResult:
         """Write a container backup to a host path or binary stream."""
         cancel_event = _cancel_control(cancel_event, operation="backup")
@@ -1609,7 +1658,10 @@ class ProotDistro:
             name, output_path, result_compression, size_bytes
         )
 
-    def restore(self, archive, *, cancel_event=None) -> RestoreResult:
+    def restore(
+        self, archive: _PathOrBinaryStream, *,
+        cancel_event: Optional[CancellationToken] = None,
+    ) -> RestoreResult:
         """Restore one container from a host path or binary stream."""
         cancel_event = _cancel_control(cancel_event, operation="restore")
         archive_path, archive_stream = _path_or_stream(
@@ -1641,19 +1693,19 @@ class ProotDistro:
 
     def build(
         self,
-        path,
+        path: _PathArgument,
         *,
-        dockerfile=None,
-        tags=(),
+        dockerfile: Optional[_PathOrBinaryStream] = None,
+        tags: Iterable[str] = (),
         build_args: Optional[Mapping[str, str]] = None,
         architecture: Optional[str] = None,
         target: Optional[str] = None,
-        emulator=None,
-        outputs=(),
+        emulator: Optional[_PathArgument] = None,
+        outputs: _BuildOutputs = (),
         install_as: Optional[str] = None,
         no_cache: bool = False,
         credentials: Optional[RegistryCredentials] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> BuildResult:
         """Build an OCI image from a Dockerfile and context directory."""
         cancel_event = _cancel_control(cancel_event, operation="build")
@@ -1819,7 +1871,7 @@ class ProotDistro:
         *,
         architecture: Optional[str] = None,
         allow_insecure: bool = False,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> PushResult:
         """Push one cached image tag to its registry."""
         cancel_event = _cancel_control(cancel_event, operation="push")
@@ -1881,7 +1933,7 @@ class ProotDistro:
 
     def remove_image(
         self, identifier: str, *, architecture: Optional[str] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> ImageRemovalResult:
         """Remove cached image variants addressed by reference or image ID."""
         cancel_event = _cancel_control(
@@ -1926,7 +1978,7 @@ class ProotDistro:
 
     def clear_cache(
         self, *, orphan: bool = False, build_cache: bool = False,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> CacheCleanupResult:
         """Clear all cache data or selected orphan/build-cache data."""
         cancel_event = _cancel_control(cancel_event, operation="clear_cache")
@@ -2169,11 +2221,11 @@ class ProotDistro:
     def start(
         self,
         container: str,
-        arguments=(),
+        arguments: Iterable[str] = (),
         *,
         user: str = "root",
         environment: Optional[Mapping[str, str]] = None,
-        binds=(),
+        binds: Iterable[str] = (),
         work_dir: Optional[str] = None,
         redirect_ports: bool = False,
         shared_home: bool = False,
@@ -2184,14 +2236,14 @@ class ProotDistro:
         no_link2symlink: bool = False,
         no_sysvipc: bool = False,
         no_kill_on_exit: bool = False,
-        emulator=None,
+        emulator: Optional[_PathArgument] = None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
-        stdin=None,
-        stdout=None,
-        stderr=None,
+        stdin: _SessionStdio = None,
+        stdout: _SessionStdio = None,
+        stderr: _SessionStdio = None,
         startup_timeout: Optional[float] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> SessionProcess:
         """Start a login shell or shell-wrapped command inside a container."""
         options = self._session_options(
@@ -2212,11 +2264,11 @@ class ProotDistro:
     def run(
         self,
         container: str,
-        arguments=(),
+        arguments: Iterable[str] = (),
         *,
         user: str = "root",
         environment: Optional[Mapping[str, str]] = None,
-        binds=(),
+        binds: Iterable[str] = (),
         work_dir: Optional[str] = None,
         redirect_ports: bool = False,
         shared_home: bool = False,
@@ -2227,14 +2279,14 @@ class ProotDistro:
         no_link2symlink: bool = False,
         no_sysvipc: bool = False,
         no_kill_on_exit: bool = False,
-        emulator=None,
+        emulator: Optional[_PathArgument] = None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
-        stdin=None,
-        stdout=None,
-        stderr=None,
+        stdin: _SessionStdio = None,
+        stdout: _SessionStdio = None,
+        stderr: _SessionStdio = None,
         startup_timeout: Optional[float] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> SessionProcess:
         """Start the image Entrypoint/Cmd, optionally replacing Cmd arguments."""
         options = self._session_options(
@@ -2290,11 +2342,11 @@ class ProotDistro:
     def start_detached(
         self,
         container: str,
-        arguments=(),
+        arguments: Iterable[str] = (),
         *,
         user: str = "root",
         environment: Optional[Mapping[str, str]] = None,
-        binds=(),
+        binds: Iterable[str] = (),
         work_dir: Optional[str] = None,
         redirect_ports: bool = False,
         shared_home: bool = False,
@@ -2305,12 +2357,12 @@ class ProotDistro:
         no_link2symlink: bool = False,
         no_sysvipc: bool = False,
         no_kill_on_exit: bool = False,
-        emulator=None,
+        emulator: Optional[_PathArgument] = None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
-        stdout=None,
-        stderr=None,
-        cancel_event=None,
+        stdout: _DetachedOutput = None,
+        stderr: _DetachedOutput = None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> DetachedSession:
         """Start a detached login command with optional append-only logs."""
         stdout = _detached_output(
@@ -2339,11 +2391,11 @@ class ProotDistro:
     def run_detached(
         self,
         container: str,
-        arguments=(),
+        arguments: Iterable[str] = (),
         *,
         user: str = "root",
         environment: Optional[Mapping[str, str]] = None,
-        binds=(),
+        binds: Iterable[str] = (),
         work_dir: Optional[str] = None,
         redirect_ports: bool = False,
         shared_home: bool = False,
@@ -2354,12 +2406,12 @@ class ProotDistro:
         no_link2symlink: bool = False,
         no_sysvipc: bool = False,
         no_kill_on_exit: bool = False,
-        emulator=None,
+        emulator: Optional[_PathArgument] = None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
-        stdout=None,
-        stderr=None,
-        cancel_event=None,
+        stdout: _DetachedOutput = None,
+        stderr: _DetachedOutput = None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> DetachedSession:
         """Start the image Entrypoint/Cmd with optional append-only logs."""
         stdout = _detached_output(
@@ -2457,11 +2509,11 @@ class ProotDistro:
     def inspect_start(
         self,
         container: str,
-        arguments=(),
+        arguments: Iterable[str] = (),
         *,
         user: str = "root",
         environment: Optional[Mapping[str, str]] = None,
-        binds=(),
+        binds: Iterable[str] = (),
         work_dir: Optional[str] = None,
         redirect_ports: bool = False,
         shared_home: bool = False,
@@ -2472,10 +2524,10 @@ class ProotDistro:
         no_link2symlink: bool = False,
         no_sysvipc: bool = False,
         no_kill_on_exit: bool = False,
-        emulator=None,
+        emulator: Optional[_PathArgument] = None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> SessionCommand:
         """Inspect the path-based command corresponding to :meth:`start`."""
         options = self._session_options(
@@ -2495,11 +2547,11 @@ class ProotDistro:
     def inspect_run(
         self,
         container: str,
-        arguments=(),
+        arguments: Iterable[str] = (),
         *,
         user: str = "root",
         environment: Optional[Mapping[str, str]] = None,
-        binds=(),
+        binds: Iterable[str] = (),
         work_dir: Optional[str] = None,
         redirect_ports: bool = False,
         shared_home: bool = False,
@@ -2510,10 +2562,10 @@ class ProotDistro:
         no_link2symlink: bool = False,
         no_sysvipc: bool = False,
         no_kill_on_exit: bool = False,
-        emulator=None,
+        emulator: Optional[_PathArgument] = None,
         kernel: Optional[str] = None,
         hostname: Optional[str] = None,
-        cancel_event=None,
+        cancel_event: Optional[CancellationToken] = None,
     ) -> SessionCommand:
         """Inspect the path-based command corresponding to :meth:`run`."""
         options = self._session_options(
@@ -2531,7 +2583,9 @@ class ProotDistro:
         )
 
     def kill_session(
-        self, target, *, signal_name="TERM", cancel_event=None,
+        self, target: Union[int, str], *,
+        signal_name: _SignalArgument = "TERM",
+        cancel_event: Optional[CancellationToken] = None,
     ) -> SessionSignalResult:
         """Signal a tracked session PID or every session of a container."""
         cancel_event = _cancel_control(
@@ -2570,7 +2624,8 @@ class ProotDistro:
         )
 
     def kill_all_sessions(
-        self, *, signal_name="TERM", cancel_event=None,
+        self, *, signal_name: _SignalArgument = "TERM",
+        cancel_event: Optional[CancellationToken] = None,
     ) -> SessionSignalResult:
         """Signal every active tracked session in this runtime."""
         cancel_event = _cancel_control(

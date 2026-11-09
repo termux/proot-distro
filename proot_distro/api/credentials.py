@@ -22,7 +22,7 @@
 
 from dataclasses import dataclass, field
 import os
-from typing import Callable, Optional
+from typing import Optional, Protocol, runtime_checkable
 
 from proot_distro.api.errors import InvalidArgumentError
 
@@ -87,9 +87,15 @@ class CredentialRequest:
     operation: str
 
 
-CredentialProvider = Callable[
-    [CredentialRequest], Optional[RegistryCredentials]
-]
+@runtime_checkable
+class CredentialProvider(Protocol):
+    """Callable that resolves credentials for one registry request."""
+
+    def __call__(
+        self, request: CredentialRequest,
+    ) -> Optional[RegistryCredentials]:
+        """Return credentials for *request*, or ``None`` for anonymous use."""
+        ...
 
 
 __all__ = (
