@@ -184,8 +184,9 @@ proot-distro remove ubuntu
 
 ## Python API
 
-Python applications can inspect PRoot-Distro state and search Docker Hub
-through the standardized `proot_distro.api` interface. It uses the same local
+Python applications can manage PRoot-Distro containers, images, files,
+backups, builds and sessions through the standardized `proot_distro.api`
+interface. They can also search Docker Hub. The API uses the same local
 containers, image cache and session registry as the command-line utility.
 
 `ProotDistro` is an in-process programmatic interface. It is not a client for
@@ -473,12 +474,16 @@ pd.kill_session(session.pid)
 pd.kill_all_sessions(signal_name="KILL")
 ```
 
-`start_detached` and `run_detached` daemonize only inside the one-shot worker;
-they never call `fork()` in the embedding application. Detached output paths
-are opened in append mode before daemonization. `subprocess.DEVNULL` and
-`None` select `/dev/null`; `subprocess.STDOUT` is accepted for `stderr`.
-Persistent detached output does not accept `subprocess.PIPE` or in-memory
-streams because no parent-side pump remains after startup.
+`start_detached` and `run_detached` use a short-lived launcher and never call
+`fork()` in the embedding application. The method returns only after the
+launcher confirms that Proot started. The detached session retains its pinned
+rootfs and shared container lock after the launcher exits.
+
+Detached output paths are opened in append mode before daemonization.
+`subprocess.DEVNULL` and `None` select `/dev/null`; `subprocess.STDOUT` is
+accepted for `stderr`. Persistent detached output does not accept
+`subprocess.PIPE` or in-memory streams because no parent-side pump remains
+after startup.
 
 ### Inspecting session commands
 

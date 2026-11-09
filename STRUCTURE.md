@@ -60,7 +60,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
 | `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context, plus the public handler protocol. |
-| `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and isolates detached process control. Not a daemon or public protocol. |
+| `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
 
@@ -215,10 +215,12 @@ the `sysdata` stubs. A failed install removes what it made.
 **login / run.** Shared lock, then pin the rootfs as a descriptor. `passwd`
 reads the user through `guestfile`. `env`, `bindings`, `sysdata` and `shm`
 prepare binds and environment. `proot_cmd.build_proot_args` builds the argv.
-The session is recorded in `session.py`, and the process either `execvpe`s
-into proot (the lock fd is inherited, so the lock lives as long as the
-session) or is daemonised by `detach`. `run` reads Entrypoint/Cmd from
-`manifest.json`, validates their shape, and calls `command_login`.
+The process either `execvpe`s into proot or, for a detached session, execs the
+single-threaded `_detach_worker` before double-fork daemonisation. The final
+process enters the pinned rootfs, records itself in `session.py`, and inherits
+the container-lock and session-record descriptors, so its pins and locks live
+as long as the session. `run` reads Entrypoint/Cmd from `manifest.json`,
+validates their shape, and calls `command_login`.
 
 **build.** Parse the Dockerfile (`dockerfile.py`) and decide if proot is
 needed (only RUN-family instructions). `BuildEngine` creates a scratch root
