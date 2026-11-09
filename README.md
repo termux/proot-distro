@@ -619,7 +619,9 @@ If an event callback raises, its original exception propagates and the worker
 is stopped. The operation may already have changed state or written part of a
 caller-owned stream. Applications that cannot tolerate this should catch
 exceptions inside the callback. Existing atomic path-output guarantees still
-apply.
+apply. `KeyboardInterrupt` is handled separately: the API forwards `SIGINT`,
+drains the worker's cleanup events, waits for cleanup to finish, and then
+re-raises the interruption in the calling thread.
 
 ### API errors
 

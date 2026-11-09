@@ -695,6 +695,7 @@ def _communicate_with_channels(
     credential_open = credential_sock is not None
     build_output_open = build_output_fd is not None
     cancelled = False
+    caller_interrupt = None
 
     def close_channels() -> None:
         nonlocal event_open, credential_open, build_output_open
@@ -710,121 +711,134 @@ def _communicate_with_channels(
 
     try:
         while event_open or credential_open or build_output_open:
-            if (not cancelled
-                    and _cancellation_requested(cancel_event, operation)):
-                cancelled = True
-                try:
-                    os.killpg(proc.pid, signal.SIGINT)
-                except OSError:
-                    pass
-            readers = []
-            if event_open:
-                readers.append(event_fd)
-            if credential_open:
-                readers.append(credential_sock)
-            if build_output_open:
-                readers.append(build_output_fd)
-            readable, _, _ = select.select(
-                readers, [], [], 0.1 if cancel_event is not None else None
-            )
-            if event_open and event_fd in readable:
-                chunk = os.read(event_fd, 65536)
-                if not chunk:
-                    if event_buffer:
-                        raise OperationError(
-                            f"{operation} worker returned a truncated event.",
-                            operation=operation,
-                        )
-                    os.close(event_fd)
-                    event_open = False
-                else:
-                    event_buffer.extend(chunk)
-                    while b"\n" in event_buffer:
-                        raw, _, remainder = event_buffer.partition(b"\n")
-                        event_buffer[:] = remainder
-                        if not raw or len(raw) > _MAX_WORKER_EVENT_BYTES:
+            try:
+                if (caller_interrupt is None and not cancelled
+                        and _cancellation_requested(cancel_event, operation)):
+                    cancelled = True
+                    try:
+                        os.killpg(proc.pid, signal.SIGINT)
+                    except OSError:
+                        pass
+                readers = []
+                if event_open:
+                    readers.append(event_fd)
+                if credential_open:
+                    readers.append(credential_sock)
+                if build_output_open:
+                    readers.append(build_output_fd)
+                readable, _, _ = select.select(
+                    readers, [], [], 0.1 if cancel_event is not None else None
+                )
+                if event_open and event_fd in readable:
+                    chunk = os.read(event_fd, 65536)
+                    if not chunk:
+                        if event_buffer:
                             raise OperationError(
-                                f"{operation} worker returned an invalid event.",
+                                f"{operation} worker returned a truncated "
+                                "event.",
                                 operation=operation,
                             )
-                        event = _operation_event(operation, bytes(raw))
-                        if event_handler is not None:
-                            event_handler(event)
-                    if len(event_buffer) > _MAX_WORKER_EVENT_BYTES:
-                        raise OperationError(
-                            f"{operation} worker returned an oversized event.",
-                            operation=operation,
-                        )
-            if build_output_open and build_output_fd in readable:
-                chunk = os.read(build_output_fd, 65536)
-                if not chunk:
-                    message = build_decoder.decode(b"", final=True)
-                    if message and event_handler is not None:
-                        event_handler(OperationEvent(
-                            operation, EventKind.INFO, message,
-                            phase="build-output",
-                            resource=build_output_resource,
-                        ))
-                    os.close(build_output_fd)
-                    build_output_open = False
-                elif event_handler is not None:
-                    message = build_decoder.decode(chunk)
-                    if message:
-                        event_handler(OperationEvent(
-                            operation, EventKind.INFO, message,
-                            phase="build-output",
-                            resource=build_output_resource,
-                        ))
-                else:
-                    build_decoder.decode(chunk)
-            if credential_open and credential_sock in readable:
-                try:
-                    chunk = credential_sock.recv(65536)
-                except OSError as exc:
-                    chunk = b""
-                    if not cancelled and provider_error is None:
-                        provider_error = OperationError(
-                            f"credential worker channel failed: {exc}",
-                            operation=operation,
-                        )
-                if not chunk:
-                    if credential_buffer and provider_error is None:
-                        provider_error = OperationError(
-                            "credential worker returned a truncated request.",
-                            operation=operation,
-                        )
-                    credential_sock.close()
-                    credential_open = False
-                else:
-                    credential_buffer.extend(chunk)
-                    if len(credential_buffer) > 1024 * 1024:
-                        _reject_credential_request(credential_sock)
-                        provider_error = OperationError(
-                            "credential worker request is too large.",
-                            operation=operation,
-                        )
+                        os.close(event_fd)
+                        event_open = False
+                    else:
+                        event_buffer.extend(chunk)
+                        while b"\n" in event_buffer:
+                            raw, _, remainder = event_buffer.partition(b"\n")
+                            event_buffer[:] = remainder
+                            if not raw or len(raw) > _MAX_WORKER_EVENT_BYTES:
+                                raise OperationError(
+                                    f"{operation} worker returned an invalid "
+                                    "event.",
+                                    operation=operation,
+                                )
+                            event = _operation_event(operation, bytes(raw))
+                            if event_handler is not None:
+                                event_handler(event)
+                        if len(event_buffer) > _MAX_WORKER_EVENT_BYTES:
+                            raise OperationError(
+                                f"{operation} worker returned an oversized "
+                                "event.",
+                                operation=operation,
+                            )
+                if build_output_open and build_output_fd in readable:
+                    chunk = os.read(build_output_fd, 65536)
+                    if not chunk:
+                        message = build_decoder.decode(b"", final=True)
+                        if message and event_handler is not None:
+                            event_handler(OperationEvent(
+                                operation, EventKind.INFO, message,
+                                phase="build-output",
+                                resource=build_output_resource,
+                            ))
+                        os.close(build_output_fd)
+                        build_output_open = False
+                    elif event_handler is not None:
+                        message = build_decoder.decode(chunk)
+                        if message:
+                            event_handler(OperationEvent(
+                                operation, EventKind.INFO, message,
+                                phase="build-output",
+                                resource=build_output_resource,
+                            ))
+                    else:
+                        build_decoder.decode(chunk)
+                if credential_open and credential_sock in readable:
+                    try:
+                        chunk = credential_sock.recv(65536)
+                    except OSError as exc:
+                        chunk = b""
+                        if not cancelled and provider_error is None:
+                            provider_error = OperationError(
+                                f"credential worker channel failed: {exc}",
+                                operation=operation,
+                            )
+                    if not chunk:
+                        if credential_buffer and provider_error is None:
+                            provider_error = OperationError(
+                                "credential worker returned a truncated "
+                                "request.",
+                                operation=operation,
+                            )
                         credential_sock.close()
                         credential_open = False
-                    while credential_open and b"\n" in credential_buffer:
-                        raw, _, remainder = credential_buffer.partition(b"\n")
-                        credential_buffer[:] = remainder
-                        try:
-                            _handle_credential_request(
-                                raw, credential_sock, credential_provider,
-                                operation,
+                    else:
+                        credential_buffer.extend(chunk)
+                        if len(credential_buffer) > 1024 * 1024:
+                            _reject_credential_request(credential_sock)
+                            provider_error = OperationError(
+                                "credential worker request is too large.",
+                                operation=operation,
                             )
-                        except BaseException as exc:
-                            provider_error = exc
                             credential_sock.close()
                             credential_open = False
-    except KeyboardInterrupt:
-        try:
-            os.killpg(proc.pid, signal.SIGINT)
-        except OSError:
-            pass
-        close_channels()
-        thread.join()
-        raise
+                        while credential_open and b"\n" in credential_buffer:
+                            raw, _, remainder = credential_buffer.partition(
+                                b"\n"
+                            )
+                            credential_buffer[:] = remainder
+                            try:
+                                _handle_credential_request(
+                                    raw, credential_sock, credential_provider,
+                                    operation,
+                                )
+                            except BaseException as exc:
+                                provider_error = exc
+                                credential_sock.close()
+                                credential_open = False
+            except KeyboardInterrupt as exc:
+                # Keep the channels open after forwarding SIGINT. The worker's
+                # own interruption handlers report their final event before
+                # cleaning staged state. Closing the event pipe here turned
+                # that report into BrokenPipeError and skipped the cleanup.
+                if caller_interrupt is None:
+                    caller_interrupt = exc
+                    try:
+                        os.killpg(proc.pid, signal.SIGINT)
+                    except OSError:
+                        pass
+                # The handler may itself have raised KeyboardInterrupt. Do
+                # not invoke it again while draining the worker's cleanup.
+                event_handler = None
     except BaseException:
         _kill_worker(proc)
         close_channels()
@@ -833,6 +847,8 @@ def _communicate_with_channels(
     finally:
         close_channels()
     thread.join()
+    if caller_interrupt is not None:
+        raise caller_interrupt
     if provider_error is not None:
         raise provider_error
     if cancelled:

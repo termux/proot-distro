@@ -53,7 +53,7 @@ Only names re-exported by `proot_distro.api` are public.
 
 | Module | Role |
 | --- | --- |
-| `api/program.py` | `ProotDistro` facade plus caller-thread multiplexing of live events, credentials, binary streams, and cooperative worker cancellation. |
+| `api/program.py` | `ProotDistro` facade plus caller-thread multiplexing of live events, credentials, binary streams, cooperative worker cancellation, and interruption-safe worker cleanup. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
 | `api/credentials.py` | Redacted credentials, provider requests, and the public structural provider protocol; builds resolve multiple registries over a private bidirectional worker channel. |
 | `api/cancellation.py` | Public structural protocol for cooperative cancellation tokens. |
@@ -280,7 +280,7 @@ The suite (about 2000 tests) is offline and deterministic by default. See
 | Directory | Covers |
 | --- | --- |
 | `tests/unit/` | Pure functions: parsing, naming, digests, caches, quoting, locking, session registry. |
-| `tests/integration/` | Whole `command_*` pipelines driven with `SimpleNamespace` args in a sandboxed runtime tree. |
+| `tests/integration/` | Whole `command_*` pipelines and public-API concurrency, cancellation, and interruption flows in sandboxed runtime trees. |
 | `tests/security/` | Exploit attempts for each closed hole: traversal, symlink and hardlink escapes, TOCTOU swaps, cache poisoning, forged records. |
 | `tests/live/` | Opt-in (`RUN_LIVE_TESTS=1`): real registry pulls and real proot. |
 | `tests/compatibility/` | Versioned snapshots of public API exports, signatures, models, enums, protocols, and exceptions. |
