@@ -10,6 +10,7 @@ from proot_distro.api import (
     OperationCancelledError,
     ProotDistro,
 )
+from proot_distro.arch import get_device_cpu_arch
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
 from proot_distro.paths import container_dir, container_rootfs
@@ -156,7 +157,7 @@ def test_cancellation_after_restore_commit_is_recoverable(
 
 
 def _cached_reset_image(builders):
-    architecture = "x86_64"
+    architecture = get_device_cpu_arch()
     entries = [{
         "name": f"var/lib/reset-data/item-{index:04d}",
         "type": "file",

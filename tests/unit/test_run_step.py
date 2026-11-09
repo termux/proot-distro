@@ -42,6 +42,9 @@ def subreaper():
     """The flag that puts a step's orphans back within reach."""
     if not run_step._become_subreaper():
         pytest.skip("kernel refuses PR_SET_CHILD_SUBREAPER")
+    children = f"/proc/{os.getpid()}/task/{os.getpid()}/children"
+    if not os.path.exists(children):
+        pytest.skip("procfs does not expose child process lists")
     return True
 
 

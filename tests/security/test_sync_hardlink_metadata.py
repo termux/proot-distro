@@ -15,8 +15,9 @@
 
 import os
 import stat
-
 from types import SimpleNamespace
+
+import pytest
 
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs
@@ -53,6 +54,9 @@ def _plant(rootfs, victim, mode, content=None, times=None):
     os.link(victim, os.path.join(dst, "x"))
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_sync_does_not_chmod_through_a_hardlink(tmp_path, builders):
     """The guest's chosen mode must not reach the host's inode."""
     builders.make_container("box")
@@ -68,6 +72,9 @@ def test_sync_does_not_chmod_through_a_hardlink(tmp_path, builders):
     assert victim.read_text() == "PRIVATE-KEY-DATA\n"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_sync_does_not_utime_through_a_hardlink(tmp_path, builders):
     """Nor its chosen timestamps, which the same call now also applies.
 
@@ -94,6 +101,9 @@ def test_sync_does_not_utime_through_a_hardlink(tmp_path, builders):
     assert int(os.stat(landed).st_mtime) == 1_000_000_000
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_sync_breaks_the_link_instead_of_leaving_the_mode_wrong(tmp_path,
                                                                builders):
     """Refusing the chmod must not mean giving up on the destination.

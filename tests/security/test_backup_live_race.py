@@ -100,6 +100,9 @@ def test_relax_permissions_still_opens_a_sealed_entry(env):
     assert stat.S_IMODE(f.stat().st_mode) & stat.S_IRUSR
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_does_not_chmod_a_hardlinked_host_file(env):
     root, secret = env
     # A hardlink is the file itself under a second name: O_NOFOLLOW says
@@ -119,6 +122,9 @@ def test_relax_permissions_does_not_chmod_a_hardlinked_host_file(env):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o000
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_does_not_chmod_a_link_made_after_the_lstat(env):
     root, secret = env
     # The walk's lstat says one link; the link appears before the chmod.
@@ -141,6 +147,9 @@ def test_relax_permissions_does_not_chmod_a_link_made_after_the_lstat(env):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o000
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_leaves_a_readable_hardlink_alone(env):
     # Nothing to relax: an ordinary hardlinked binary (busybox and
     # friends) is already owner-readable, so no warning and no chmod.
@@ -160,6 +169,9 @@ def test_relax_permissions_leaves_a_readable_hardlink_alone(env):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o644
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_names_the_entry_it_skipped(env, capsys):
     root, secret = env
     secret.chmod(0o000)

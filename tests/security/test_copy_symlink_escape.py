@@ -591,6 +591,9 @@ def test_sync_delete_refuses_a_destination_link_to_the_sources_parent(
     assert (src / "f.txt").read_text() == "x"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_copy_cannot_be_made_to_write_through_a_planted_hardlink(
     tmp_path, builders
 ):
@@ -614,6 +617,9 @@ def test_copy_cannot_be_made_to_write_through_a_planted_hardlink(
     assert open(os.path.join(rootfs, "dest")).read() == "payload"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_sync_cannot_be_made_to_write_through_a_planted_hardlink(
     tmp_path, builders
 ):
@@ -633,6 +639,9 @@ def test_sync_cannot_be_made_to_write_through_a_planted_hardlink(
     assert not os.path.exists(os.path.join(rootfs, "dest.~pd_sync"))
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_move_across_devices_cannot_write_through_a_planted_hardlink(
     tmp_path, builders, monkeypatch
 ):

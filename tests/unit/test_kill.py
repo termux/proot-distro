@@ -306,6 +306,11 @@ def test_root_is_proot_accepts_renamed_binary(monkeypatch, tmp_path):
     proc = subprocess.Popen([str(alt), "-c", "sleep 30"])
     try:
         time.sleep(0.3)
+        with open(f"/proc/{proc.pid}/comm") as stream:
+            if stream.read().strip() != alt.name[:15]:
+                pytest.skip(
+                    "proc comm does not use the executed file name"
+                )
         monkeypatch.delenv("PD_PROOT_BIN", raising=False)
         assert _root_is_proot(proc.pid) is False
         monkeypatch.setenv("PD_PROOT_BIN", str(alt))

@@ -226,6 +226,9 @@ def test_overlap_rejects_the_same_path(tmp_path, capsys):
     assert target.read_text() == "keep me"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_overlap_rejects_two_names_for_one_inode(tmp_path, capsys):
     src = tmp_path / "f"
     src.write_text("x")
@@ -355,6 +358,9 @@ def test_overlap_follows_the_leaf_only_when_the_operation_does(tmp_path,
                                   deref_leaf=False)
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_overlap_refuses_a_hardlinked_pair_in_either_mode(tmp_path, capsys):
     src = tmp_path / "f"
     src.write_text("x")
