@@ -8,8 +8,10 @@ import pytest
 
 import _builders
 from proot_distro.arch import get_device_cpu_arch
-from proot_distro.commands.login import command_login, _detect_dist_type
-from proot_distro.commands.login import proot_cmd
+import proot_distro.operations.session_prepare as login_mod
+import proot_distro.session_command as proot_cmd
+from proot_distro.commands.login import command_login
+from proot_distro.operations.session_prepare import _detect_dist_type
 from proot_distro.commands.run import command_run
 from proot_distro.constants import TERMUX_PREFIX
 from proot_distro.paths import container_rootfs
@@ -226,8 +228,6 @@ def test_snippet_follows_a_rename(builders, capsys):
 
 def test_a_refused_exec_is_a_message(builders, capsys, monkeypatch):
     import errno
-    from proot_distro.commands import login as login_mod
-
     _identity_container(builders)
     cwd = os.getcwd()
 

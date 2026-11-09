@@ -514,10 +514,9 @@ def _kill_session(options: dict) -> dict:
 
 
 def _start_detached(options: dict) -> dict:
-    from proot_distro.api._session_worker import _args
+    from proot_distro.operations.session_prepare import prepare_session
+    from proot_distro.session_runtime import detach_session
 
-    args = _args(options)
-    args.detach = True
     stdout_fd = stderr_fd = None
     session_options = options.get("options") or {}
     stdout_path = session_options.get("detach_stdout")
@@ -535,18 +534,17 @@ def _start_detached(options: dict) -> dict:
         if stdout_fd is not None:
             os.close(stdout_fd)
         raise
-    args._detach_stdout_fd = stdout_fd
-    args._detach_stderr_fd = stderr_fd
     kind = options.get("kind")
     try:
-        if kind == "login":
-            from proot_distro.commands.login import command_login
-            pid = command_login(args)
-        elif kind == "run":
-            from proot_distro.commands.run import command_run
-            pid = command_run(args)
-        else:
-            raise ValueError("session kind is not valid")
+        with prepare_session(
+            kind,
+            options.get("container"),
+            options.get("arguments") or (),
+            options=session_options,
+        ) as prepared:
+            pid = detach_session(
+                prepared, stdout_fd=stdout_fd, stderr_fd=stderr_fd
+            )
     finally:
         for fd in {stdout_fd, stderr_fd} - {None}:
             os.close(fd)
@@ -556,22 +554,29 @@ def _start_detached(options: dict) -> dict:
 
 
 def _inspect_session(options: dict) -> dict:
-    from proot_distro.api._session_worker import _args
+    from proot_distro.operations.session_prepare import prepare_session
 
-    args = _args(options)
-    args._api_inspect = True
     kind = options.get("kind")
-    if kind == "login":
-        from proot_distro.commands.login import command_login
-        result = command_login(args)
-    elif kind == "run":
-        from proot_distro.commands.run import command_run
-        result = command_run(args)
-    else:
-        raise ValueError("session kind is not valid")
-    if not isinstance(result, dict):
-        raise RuntimeError("session inspection did not return a description")
-    return {**result, "container": options["container"], "kind": kind}
+    with prepare_session(
+        kind,
+        options.get("container"),
+        options.get("arguments") or (),
+        options=options.get("options") or {},
+        inspect=True,
+    ) as prepared:
+        launch = prepared.launch
+        return {
+            "container": launch.container,
+            "kind": launch.kind,
+            "executable": launch.executable,
+            "argv": list(launch.argv),
+            "environment": [list(item) for item in launch.environment],
+            "inner_command": list(launch.inner_command),
+            "rootfs": launch.rootfs,
+            "work_dir": launch.work_dir,
+            "user": launch.user,
+            "shell_command": launch.shell_command,
+        }
 
 
 _OPERATIONS = {

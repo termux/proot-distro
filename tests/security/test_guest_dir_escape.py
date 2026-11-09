@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro import dirfd
-from proot_distro.commands.login import proot_cmd
+from proot_distro import session_command as proot_cmd
 from proot_distro.helpers.build_engine import run_step
 
 HOST_ARCH = os.uname().machine

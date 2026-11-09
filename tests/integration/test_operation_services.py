@@ -1,5 +1,6 @@
 import io
 import os
+from dataclasses import FrozenInstanceError
 
 import pytest
 
@@ -7,6 +8,7 @@ import proot_distro.operations.inventory as inventory
 import proot_distro.operations.backup as backup_service
 import proot_distro.operations.push as push_service
 import proot_distro.operations.session_signals as signal_service
+import proot_distro.operations.session_prepare as session_prepare_service
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
     NotFoundFailure,
@@ -27,6 +29,7 @@ from proot_distro.operations import (
     InstalledContainer,
     OperationContext,
     SessionSignal,
+    SessionLaunch,
     Transfer,
     backup_container,
     build_image,
@@ -44,6 +47,7 @@ from proot_distro.operations import (
     restore_container,
     reset_container,
     signal_sessions,
+    prepare_session,
     sync_path,
 )
 from proot_distro.constants import BASE_CACHE_DIR
@@ -51,7 +55,10 @@ from proot_distro.helpers.docker.cache import (
     iter_cached_images, save_manifest_cache,
 )
 from proot_distro.helpers.docker.media import OCI_LAYER_MEDIA
-from proot_distro.operations.errors import ImageNotFoundFailure
+from proot_distro.operations.errors import (
+    ImageNotFoundFailure,
+    SessionValidationFailure,
+)
 from proot_distro.paths import container_dir, container_rootfs
 
 
@@ -91,6 +98,123 @@ def test_session_inventory_service_copies_registry_command(monkeypatch):
             "root", 10.5, True, False, True,
         ),
     )
+
+
+def test_session_preparation_returns_frozen_launch_and_closes_descriptors(
+    builders, monkeypatch,
+):
+    builders.make_container("service-run", manifest={
+        "image_config": {"config": {
+            "Entrypoint": ["/bin/server"],
+            "Cmd": ["default"],
+            "WorkingDir": "/srv",
+        }},
+    })
+    monkeypatch.setattr(
+        session_prepare_service,
+        "resolve_proot_bin",
+        lambda: "/usr/bin/proot-test",
+    )
+
+    with prepare_session(
+        "run",
+        "service-run",
+        ["replacement"],
+        options={"env": ["SERVICE_VALUE=visible"]},
+        inspect=True,
+    ) as prepared:
+        launch = prepared.launch
+        assert isinstance(launch, SessionLaunch)
+        assert launch.inner_command == ("/bin/server", "replacement")
+        assert launch.work_dir == "/srv"
+        assert launch.argv[0] == "/usr/bin/proot-test"
+        assert f"--rootfs={launch.rootfs}" in launch.argv
+        assert dict(launch.environment)["SERVICE_VALUE"] == "visible"
+        container_fd = prepared.container_fd
+        rootfs_fd = prepared.rootfs_fd
+        os.fstat(container_fd)
+        os.fstat(rootfs_fd)
+        with pytest.raises(FrozenInstanceError):
+            launch.work_dir = "/changed"
+
+    with pytest.raises(OSError):
+        os.fstat(container_fd)
+    with pytest.raises(OSError):
+        os.fstat(rootfs_fd)
+
+
+def test_session_preparation_reports_contextual_bind_warning(
+    tmp_path, builders, monkeypatch,
+):
+    builders.make_container("service-login")
+    monkeypatch.setattr(
+        session_prepare_service,
+        "resolve_proot_bin",
+        lambda: "/usr/bin/proot-test",
+    )
+    first = tmp_path / "first-bind"
+    second = tmp_path / "second-bind"
+    first.mkdir()
+    second.mkdir()
+    events = []
+    context = OperationContext(
+        emit=lambda kind, message, phase, resource: events.append(
+            (kind, message, phase, resource)
+        )
+    )
+
+    with prepare_session(
+        "login",
+        "service-login",
+        options={"bind": [f"{first}:/mnt", f"{second}:/mnt"]},
+        inspect=True,
+        context=context,
+    ):
+        pass
+
+    assert any(
+        kind == "warning"
+        and "overlaps" in message
+        and phase == "session-setup"
+        and resource == "service-login"
+        for kind, message, phase, resource in events
+    )
+
+
+def test_session_preparation_rejects_malformed_image_command(
+    builders, monkeypatch,
+):
+    builders.make_container("service-malformed-run", manifest={
+        "image_config": {"config": {"Entrypoint": "not-an-array"}},
+    })
+    monkeypatch.setattr(
+        session_prepare_service,
+        "resolve_proot_bin",
+        lambda: "/usr/bin/proot-test",
+    )
+    opened = []
+    real_open = session_prepare_service.open_container_pair
+
+    def record_open(name, **kwargs):
+        pair = real_open(name, **kwargs)
+        opened.extend(pair)
+        return pair
+
+    monkeypatch.setattr(
+        session_prepare_service, "open_container_pair", record_open
+    )
+
+    with pytest.raises(SessionValidationFailure) as exc:
+        with prepare_session(
+            "run", "service-malformed-run", inspect=True
+        ):
+            pass
+
+    assert "Entrypoint that is not a list of strings" in str(exc.value)
+    assert len(opened) == 2
+    for fd in opened:
+        with pytest.raises(OSError):
+            os.fstat(fd)
 
 
 def test_transfer_services_return_results_and_contextual_events(

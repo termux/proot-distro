@@ -174,6 +174,42 @@ class SessionSignal:
     survivors: Tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class SessionLaunch:
+    """Immutable metadata produced by shared login/run preparation."""
+
+    kind: str
+    container: str
+    executable: str
+    argv: Tuple[str, ...]
+    environment: Tuple[Tuple[str, str], ...]
+    inner_command: Tuple[str, ...]
+    rootfs: str
+    work_dir: str
+    user: str
+    uid: Optional[str]
+    gid: Optional[str]
+    home: Optional[str]
+    shell: Optional[str]
+    distro_type: str
+    architecture: str
+    isolated: bool
+    minimal: bool
+    shell_command: str
+
+    def registration(self, detached: bool) -> dict:
+        """Return the session-registry payload for this launch."""
+        return {
+            "container": self.container,
+            "kind": self.kind,
+            "command_argv": list(self.inner_command),
+            "user": self.user,
+            "isolated": self.isolated,
+            "minimal": self.minimal,
+            "detach": detached,
+        }
+
+
 __all__ = (
     "ActiveSession",
     "ArchiveBackup",
@@ -188,5 +224,6 @@ __all__ = (
     "ImagePush",
     "InstalledContainer",
     "SessionSignal",
+    "SessionLaunch",
     "Transfer",
 )

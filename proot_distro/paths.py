@@ -353,7 +353,18 @@ def read_container_manifest(name: str) -> dict:
     OSError, which is what every caller here already answers "no usable
     manifest" to.
     """
-    fd, _st = open_container_manifest(name)
+    dir_fd = statedir.open_state_dir(container_dir(name))
+    try:
+        return read_container_manifest_at(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def read_container_manifest_at(container_fd: int) -> dict:
+    """Read ``manifest.json`` relative to a pinned container descriptor."""
+    fd, _st = dirfd.open_regular_at(
+        container_fd, "manifest.json", os.O_RDONLY
+    )
     try:
         raw = statedir.read_state_file(fd)
     finally:

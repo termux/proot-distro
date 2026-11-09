@@ -23,7 +23,6 @@
 import json
 import os
 import sys
-from types import SimpleNamespace
 
 from proot_distro.message import capture_log_events, quote_error, set_quiet
 
@@ -65,33 +64,19 @@ def _write_frame(fd: int, payload: dict) -> None:
         data = data[written:]
 
 
-def _args(request: dict) -> SimpleNamespace:
+def _request_parts(request: dict):
+    """Validate and normalize the private foreground-worker request."""
     options = request.get("options")
     if not isinstance(options, dict):
         raise ValueError("session options are not valid")
-    return SimpleNamespace(
-        container_name=request["container"],
-        user=options.get("user", "root"),
-        redirect_ports=options.get("redirect_ports", False),
-        isolated=options.get("isolated", False),
-        minimal=options.get("minimal", False),
-        shared_home=options.get("shared_home", False),
-        shared_tmp=options.get("shared_tmp", False),
-        shared_x11=options.get("shared_x11", False),
-        no_link2symlink=options.get("no_link2symlink", False),
-        no_sysvipc=options.get("no_sysvipc", False),
-        no_kill_on_exit=options.get("no_kill_on_exit", False),
-        emulator=options.get("emulator"),
-        kernel=options.get("kernel"),
-        hostname=options.get("hostname"),
-        work_dir=options.get("work_dir"),
-        env=list(options.get("env") or []),
-        bind=list(options.get("bind") or []),
-        detach=False,
-        get_proot_cmd=False,
-        login_cmd=list(request.get("arguments") or []),
-        run_args=list(request.get("arguments") or []),
-    )
+    kind = request.get("kind")
+    container = request.get("container")
+    arguments = request.get("arguments")
+    if kind not in ("login", "run") or not isinstance(container, str):
+        raise ValueError("session request is not valid")
+    if not isinstance(arguments, list):
+        raise ValueError("session arguments are not valid")
+    return kind, container, arguments, options
 
 
 def main() -> int:
@@ -101,7 +86,7 @@ def main() -> int:
         request_fd = _fd_from_env("_PROOT_DISTRO_SESSION_REQUEST_FD")
         status_fd = _fd_from_env("_PROOT_DISTRO_SESSION_STATUS_FD")
         # Success is status-fd EOF: the descriptor closes automatically when
-        # command_login execs proot. Setup events and a possible final error
+        # the prepared-session executor execs proot. Setup events and an error
         # are newline-delimited JSON frames written before that handshake.
         os.set_inheritable(status_fd, False)
         request = _read_request(request_fd)
@@ -123,16 +108,14 @@ def main() -> int:
                 })
 
         with capture_log_events(record):
-            args = _args(request)
-            kind = request.get("kind")
-            if kind == "login":
-                from proot_distro.commands.login import command_login
-                command_login(args)
-            elif kind == "run":
-                from proot_distro.commands.run import command_run
-                command_run(args)
-            else:
-                raise ValueError("session kind is not valid")
+            from proot_distro.operations.session_prepare import prepare_session
+            from proot_distro.session_runtime import execute_session
+
+            kind, container, arguments, options = _request_parts(request)
+            with prepare_session(
+                kind, container, arguments, options=options
+            ) as prepared:
+                execute_session(prepared)
         raise RuntimeError("session command returned without executing proot")
     except SystemExit as exc:
         messages = [text for kind, text in logs if kind == "error"]

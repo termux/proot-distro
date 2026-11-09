@@ -14,6 +14,7 @@ import time
 import pytest
 
 from proot_distro import session
+from proot_distro.operations.errors import SessionExecutionFailure
 from proot_distro.commands.login.detach import spawn_detached
 
 pytestmark = pytest.mark.skipif(
@@ -66,7 +67,7 @@ def test_spawn_detached_registers_then_prunes_on_kill():
     assert _wait_for(lambda: _find(pid) is None) is True
 
 
-def test_spawn_detached_reports_a_refused_exec(capsys):
+def test_spawn_detached_reports_a_refused_exec():
     """A daemon whose exec is refused is not a session.
 
     The PID used to be written before the exec and the pipe closed, so
@@ -76,29 +77,29 @@ def test_spawn_detached_reports_a_refused_exec(capsys):
     """
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
            "X": "a\x00b"}                       # ValueError before execve
-    pid = spawn_detached(
-        "sleep", ["sleep", "30"], env,
-        register_kwargs=dict(
-            container="ubuntu", kind="run",
-            command_argv=["sleep", "30"], user="root", detach=True,
-        ),
-    )
-    assert pid is None
-    assert "cannot execute proot" in capsys.readouterr().err
+    with pytest.raises(SessionExecutionFailure) as exc:
+        spawn_detached(
+            "sleep", ["sleep", "30"], env,
+            register_kwargs=dict(
+                container="ubuntu", kind="run",
+                command_argv=["sleep", "30"], user="root", detach=True,
+            ),
+        )
+    assert "cannot execute proot" in str(exc.value)
 
 
-def test_spawn_detached_reports_e2big(capsys):
+def test_spawn_detached_reports_e2big():
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
     # Each string is within execve's per-string limit; together they are
     # past ARG_MAX, which is the case a per-entry cap cannot cover.
     for i in range(64):
         env[f"V{i}"] = "x" * 100_000
-    pid = spawn_detached(
-        "sleep", ["sleep", "30"], env,
-        register_kwargs=dict(
-            container="ubuntu", kind="run",
-            command_argv=["sleep", "30"], user="root", detach=True,
-        ),
-    )
-    assert pid is None
-    assert "Argument list too long" in capsys.readouterr().err
+    with pytest.raises(SessionExecutionFailure) as exc:
+        spawn_detached(
+            "sleep", ["sleep", "30"], env,
+            register_kwargs=dict(
+                container="ubuntu", kind="run",
+                command_argv=["sleep", "30"], user="root", detach=True,
+            ),
+        )
+    assert "Argument list too long" in str(exc.value)

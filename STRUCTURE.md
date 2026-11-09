@@ -30,6 +30,7 @@ proot_distro/
   constants.py  message.py  names.py  progress.py  execenv.py   Small shared pieces
   dirfd.py  statedir.py  atomic.py  locking.py  paths.py        Safe filesystem layer
   guestfile.py  l2s.py  shm.py  sysdata.py  session.py         Container runtime state
+  session_*.py                                               Session setup/runtime helpers
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -56,7 +57,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
 | `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context. |
-| `api/_worker.py` | One-shot child executor that applies per-instance paths, adds safe default event resources, and isolates CLI-oriented process control. Not a daemon or public protocol. |
+| `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and isolates detached process control. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
 
@@ -68,8 +69,8 @@ internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the
 same services. Container, image, and session inventories plus container and
 cached-image removal, rename, cache cleanup, copy, move, synchronization,
-backup, restore, install, reset, build orchestration, registry push, and
-session signalling are migrated.
+backup, restore, install, reset, build orchestration, registry push, session
+signalling, and descriptor-pinned login/run preparation are migrated.
 
 | Module | Role |
 | --- | --- |
@@ -87,6 +88,7 @@ session signalling are migrated.
 | `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, and optional installation. |
 | `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
 | `operations/session_signals.py` | Tracked-session selection, PID-reuse-safe process discovery, signal delivery, escalation, and survivor reporting. |
+| `operations/session_prepare.py` | Shared login/run validation, pinned state access, identity and environment resolution, immutable launch metadata, and scoped descriptor ownership. |
 | `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
@@ -103,8 +105,8 @@ what the command takes (see `locking.py`).
 | `remove` (`rm`) | `remove.py` | Delete a container, or with `--image` a cached image. | container, exclusive; `--image`: build lock |
 | `rename` | `rename.py` | Rename a container and rewrite its l2s symlinks. | exclusive |
 | `reset` | `reset.py` | Reinstall from the image recorded in `manifest.json`. | exclusive |
-| `login` (`sh`) | `login/` | Start a shell or command inside a container. | container, shared |
-| `run` | `run.py` | Run the image's Entrypoint/Cmd; delegates to `command_login`. | shared |
+| `login` (`sh`) | `login/` | Adapt CLI arguments to shared preparation, then start a shell or command. | container, shared |
+| `run` | `run.py` | Adapt CLI arguments to shared OCI Entrypoint/Cmd preparation. | shared |
 | `list` (`li`, `ls`) | `list.py` | Installed containers, or `--image` for cached images. | none |
 | `search` (`s`, `se`) | `search.py` | Docker Hub repository search (presentation only). | none |
 | `backup` (`bak`, `bkp`) | `backup.py` | Tar a container, optionally compressed. | shared |
@@ -117,18 +119,19 @@ what the command takes (see `locking.py`).
 | `kill` | `kill.py` | Tear down a session's whole process tree. | none |
 | `clear-cache` (`clear`, `cl`) | `clear_cache.py` | Delete the download cache, or only orphan blobs / the build index. The orphan and build-index sweeps refuse while another command holds an exclusive lock. | none taken; sweeps probe for held locks |
 
-`login/` is split by concern:
+Session implementation is split by concern:
 
 | Module | Role |
 | --- | --- |
-| `__init__.py` | `command_login`: resolve rootfs, user, env, binds, then exec proot. |
-| `proot_cmd.py` | `build_proot_args()`: assembles the proot argv in a fixed order. |
-| `passwd.py` | uid/gid/home/shell lookup, read through `guestfile`. |
-| `env.py` | Image `Env`, identity variables, `/etc/profile.d` injection. |
-| `bindings.py` | Android storage and system `--bind` lists. |
-| `detach.py` | `--detach`: double-fork daemonisation. |
-| `migrate.py` | One-shot move from the legacy `installed-rootfs/` layout. |
-| `quoting.py` | POSIX double-quoting for `--get-proot-cmd`. |
+| `commands/session.py` | CLI presentation and execution adapter shared by the `login` and `run` handlers. |
+| `session_command.py` | `build_proot_args()`: assembles the Proot argv in a fixed order. |
+| `session_identity.py` | uid/gid/home/shell lookup, read through `guestfile`. |
+| `session_env.py` | Image `Env`, identity variables, `/etc/profile.d` injection. |
+| `session_bindings.py` | Android storage and system `--bind` lists. |
+| `session_runtime.py` | Foreground registration/exec and detached double-fork daemonisation. |
+| `session_migrate.py` | One-shot move from the legacy `installed-rootfs/` layout. |
+| `commands/login/*.py` | Compatibility imports for internal helper locations used before shared preparation. |
+| `session_quoting.py` | POSIX double-quoting for `--get-proot-cmd`. |
 
 ### Helpers
 

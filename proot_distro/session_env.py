@@ -1,0 +1,335 @@
+#
+# Proot-Distro - manage proot containers.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+
+# Architecture: Shared guest environment assembly and persistence.
+#
+#   - read_manifest_env: harvest Env entries from containers/<name>/manifest.json
+#   - IMAGE_ENV_BLOCKED: vars an image Env may NOT override.
+#   - image_env_pairs: the (key, value) pairs those entries may become,
+#     once IMAGE_ENV_BLOCKED, the LD_*/PROOT_* namespaces and anything
+#     execve(2) could not take are refused.
+#   - identity_env_pairs: the variables that tell a guest which container
+#     it is in and which image that container came from.
+#   - inject_termux_profile: drop a profile.d snippet that re-exports
+#     proot-distro-set vars when a login shell re-sources /etc/profile.
+
+import os
+import re
+
+from proot_distro import dirfd
+from proot_distro.execenv import (
+    CONTAINER_MARKER, IDENTITY_ENV_KEYS, is_exportable, is_host_exec_var,
+)
+from proot_distro.constants import TERMUX_PREFIX
+from proot_distro.helpers.docker.cache import manifest_config_digest
+from proot_distro.paths import (
+    container_image_config, manifest_image_config, read_container_manifest,
+)
+
+
+_UNSET = object()
+
+
+# Conservative identifier syntax for env var names: a leading letter or
+# underscore followed by letters, digits, or underscores. Image Env
+# entries and user-supplied --env flags are filtered against this before
+# they reach the profile.d snippet — otherwise a name carrying spaces,
+# quotes, or `;` would break the sourced script.
+_VALID_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# The snippet /etc/profile sources to re-export the proot-distro vars.
+_PROFILE_SNIPPET = "termux-profile.sh"
+
+
+# Android system environment variables harvested from the launching
+# Termux process so the guest's ART/dalvik tooling can locate the
+# runtime. Inherited from the host only in the default mode (neither
+# isolated nor minimal); isolated and minimal sessions keep just the
+# image manifest's own values. Shared by both the normal-type and
+# termux-type env builders.
+ANDROID_HOST_ENV_VARS = (
+    "ANDROID_ART_ROOT", "ANDROID_DATA", "ANDROID_I18N_ROOT",
+    "ANDROID_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT",
+    "BOOTCLASSPATH", "DEX2OATBOOTCLASSPATH", "EXTERNAL_STORAGE",
+)
+
+
+# Vars the image Env must not override. Some are proot-distro-defined
+# values; others are host-inherited terminal vars that must remain
+# under the launcher's control regardless of image configuration. The
+# identity keys (proot_distro.execenv) are among the first kind: an
+# image does not get to say which container it is running in, and the
+# `container=oci` some images ship (Fedora, UBI) is less true here than
+# the marker this sets.
+#
+# The LD_* and PROOT_* namespaces are refused as well, by prefix rather
+# than by name -- see proot_distro.execenv, which owns that rule because
+# the build engine applies it too. Those two are not "must not
+# override": they are read by the host-side proot exec before anything
+# is confined, so an image setting one runs its own code as the
+# invoking user.
+IMAGE_ENV_BLOCKED = frozenset({
+    *ANDROID_HOST_ENV_VARS,
+    *IDENTITY_ENV_KEYS,
+    "MOZ_FAKE_NO_SANDBOX", "MOZ_SHM_NO_SEALS", "PULSE_SERVER",
+    "TERM", "COLORTERM",
+})
+
+
+# Per-session vars (HOME, USER, TERM, COLORTERM) belong to the spawning
+# shell, not the container — baking them in would override the values
+# set by `su - <other-user>`. PATH is handled specially with a
+# case-guarded append. Proot-internal vars are host-side and have no
+# meaning inside the guest.
+_PROFILE_INJECT_SKIP = frozenset({
+    "HOME", "USER", "TERM", "COLORTERM",
+    "PATH",
+    "PROOT_NO_SECCOMP", "PROOT_VERBOSE", "PROOT_L2S_DIR",
+    "LD_PRELOAD", "LD_LIBRARY_PATH",
+})
+
+
+def read_manifest_env(container_name: str, *, manifest=_UNSET) -> list:
+    """Return image Env entries from manifest.json, or [] if absent/invalid.
+
+    Named by container rather than by path, because the read goes
+    through the container directory's own descriptor: these values are
+    exported into the session, so a symlink left under manifest.json
+    would decide them and a FIFO would hang the login (see
+    paths.open_container_manifest).
+    """
+    config = (
+        container_image_config(container_name)
+        if manifest is _UNSET
+        else manifest_image_config(manifest or {})
+    )
+    env = config.get("Env") or []
+    if not isinstance(env, list):
+        return []
+    return [e for e in env if isinstance(e, str) and "=" in e]
+
+
+def image_env_pairs(container_name: str, *, manifest=_UNSET):
+    """The (key, value) pairs an image's Env may contribute to a session.
+
+    The one place the image's own Env is turned into variables, so the
+    refusals are made once instead of at each builder. Two kinds:
+    IMAGE_ENV_BLOCKED, values that are proot-distro's or the launching
+    terminal's to decide; and the LD_*/PROOT_* namespaces, which the
+    host-side proot exec acts on before it confines anything --
+    `Env: ["LD_LIBRARY_PATH=/evil/lib"]` plus a libtalloc.so.2 the image
+    ships at a path it chose is code execution as the invoking user,
+    outside any container, with no race and in every mode.
+
+    Only the *image's* values are filtered. The invoking user's own
+    environment still reaches proot through the preparation service's explicit
+    passthrough (`PROOT_NO_SECCOMP=1 proot-distro login debian`
+    keeps working), and so do their own --env flags.
+    """
+    for entry in read_manifest_env(container_name, manifest=manifest):
+        key, _, val = entry.partition("=")
+        if not key or key in IMAGE_ENV_BLOCKED or is_host_exec_var(key):
+            continue
+        # A NUL, an unencodable code point or a string past what
+        # execve(2) takes: each used to end the exec in a traceback, and
+        # the file it comes out of is a guest's to write (execenv).
+        if not is_exportable(key, val):
+            continue
+        yield key, val
+
+
+def identity_env_pairs(container_name: str, *, manifest=_UNSET):
+    """The (key, value) pairs that tell a guest where it is running.
+
+    PD_CONTAINER and `container` are always answered: the name has
+    passed require_valid_name by the time a session is being built, and
+    the marker is a constant. PD_IMAGE and PD_IMAGE_ID come out of
+    manifest.json and are simply absent when there is none (a
+    plain-tarball container writes no manifest) or when the field is
+    not what install writes -- a guest can put anything under the name,
+    and a value of another type, or one that is not an environment
+    string, is left out rather than coerced. The digest is held to the
+    grammar every other consumer holds one to (manifest_config_digest),
+    since that is what makes it an image ID rather than a string.
+
+    One read of the file, rather than container_image_origin() for the
+    reference and a second accessor for the digest.
+    """
+    yield "PD_CONTAINER", container_name
+    yield "container", CONTAINER_MARKER
+    if manifest is _UNSET:
+        try:
+            data = read_container_manifest(container_name)
+        except (OSError, ValueError):
+            return
+    else:
+        data = manifest
+        if not isinstance(data, dict):
+            return
+    ref = data.get("image_ref")
+    if isinstance(ref, str) and ref and is_exportable("PD_IMAGE", ref):
+        yield "PD_IMAGE", ref
+    image_id = manifest_config_digest(data.get("manifest"))
+    if image_id:
+        yield "PD_IMAGE_ID", image_id
+
+
+def inject_termux_profile(rootfs: str, env: dict, *,
+                          rootfs_fd=None, termux_path: bool = True) -> None:
+    """Write a profile.d snippet that re-applies the login-time environment.
+
+    Login shells source /etc/profile, which reinitialises the environment
+    and discards whatever proot inherited. Without a snippet every
+    proot-distro-defined var — Termux baseline (MOZ_FAKE_NO_SANDBOX,
+    MOZ_SHM_NO_SEALS, PULSE_SERVER), Android system vars, image Env
+    entries, identity variables, and user --env flags — disappears the
+    moment the user runs `su - someone` inside the container.
+
+    Written by **every** session of a normal-type container, whatever
+    its mode and host, so the snippet always says what the session
+    that wrote it was handed. It used to be written only by a
+    default-mode Termux login, and the file outlived that: an
+    `--isolated` session after a `rename` had `su -` re-export the
+    previous container's name, and every other value a session in
+    another mode had been given. What *is* mode-bound is the PATH
+    append, since the Termux prefix it names is bound into the guest
+    only in the default mode on Termux; *termux_path* says whether it
+    is, and the block is left out otherwise -- exporting a PATH entry
+    that names a directory the guest cannot see would be the same kind
+    of stale.
+
+    PATH gets a case-guarded append so the system PATH from /etc/profile
+    keeps priority. Other vars are exported unconditionally so the
+    proot-distro value wins. Per-session vars and proot-internal vars
+    are excluded via _PROFILE_INJECT_SKIP.
+    """
+    # The snippet is written on the host side of proot, into a directory
+    # the guest owns, so neither the path nor the name may be trusted:
+    # os.path.isdir() follows a link at `etc` or `profile.d`, and
+    # open(..., "w") followed by os.chmod() follows one at the file. A
+    # guest leaving `termux-profile.sh -> <a host file>` behind had that
+    # file truncated and rewritten with export lines on the next login,
+    # and chmod'ed 0644 after. Everything below is named against a
+    # descriptor instead (see _open_profile_d and dirfd).
+    profile_fd = _open_profile_d(rootfs, rootfs_fd)
+    if profile_fd is None:
+        return
+    try:
+        _write_profile_snippet(profile_fd, env, termux_path)
+    finally:
+        os.close(profile_fd)
+
+
+def _open_profile_d(rootfs: str, rootfs_fd=None):
+    """Open <rootfs>/etc/profile.d as a descriptor, refusing symlinks.
+
+    None when there is no such directory, which is the same condition the
+    os.path.isdir() check used to express — the snippet is only dropped
+    into a profile.d a distribution already ships, never into one this
+    would have to create.
+
+    *rootfs_fd* is the rootfs when the caller has pinned it, and the
+    descent starts there instead. This is the one thing `login` *writes*
+    into the rootfs on the host side, so starting the walk at a name --
+    `containers/<name>/rootfs`, guest-writable on Termux and resolved
+    afresh here -- was the half of it a descriptor per level below could
+    not make up for.
+    """
+    fd = None
+    try:
+        fd = (dirfd.reopen(rootfs_fd) if rootfs_fd is not None
+              else dirfd.opendir(rootfs))
+        for part in ("etc", "profile.d"):
+            nxt = dirfd.opendir_at(fd, part)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except OSError:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return None
+
+
+def _write_profile_snippet(profile_fd: int, env: dict,
+                           termux_path: bool) -> None:
+    """Compose and write termux-profile.sh under the open profile.d fd."""
+    # Remove the legacy filename (PATH-only era) so a previously-used
+    # container doesn't keep sourcing stale content.
+    dirfd.unlink_quietly(profile_fd, "termux-prefix.sh")
+    termux_bin = f"{TERMUX_PREFIX}/bin"
+
+    lines = []
+    if termux_path:
+        lines += [
+            'case ":${PATH}:" in',
+            f'  *":{termux_bin}:"*) ;;',
+            f'  *) export PATH="${{PATH}}:{termux_bin}" ;;',
+            'esac',
+        ]
+
+    for key in sorted(env):
+        if key in _PROFILE_INJECT_SKIP:
+            continue
+        if not _VALID_ENV_KEY_RE.match(key):
+            # A malformed name (spaces, ';', quotes …) would corrupt the
+            # snippet when /etc/profile sources it. Drop the entry rather
+            # than write a line that breaks every subsequent shell.
+            continue
+        val = str(env[key])
+        # Every source of the dict has been held to is_exportable, or
+        # came in through this process's own argv, which execve(2) held
+        # to the same limits -- so this is the rule restated where the
+        # values are written out again, not a filter anything relies on.
+        if not is_exportable(key, val):
+            continue
+        # Single-quote the value; embedded single quotes use the
+        # standard '\'' idiom (close-quote, escaped quote, reopen-quote).
+        escaped = val.replace("'", "'\\''")
+        lines.append(f"export {key}='{escaped}'")
+
+    content = "\n".join(lines) + "\n"
+    # Unlink then create O_EXCL rather than opening for write: that
+    # removes a *name*, so a link is dropped instead of written through
+    # and a hard link to a host file keeps its content, and the fresh
+    # inode is one nothing else can already have a claim on. The mode
+    # goes on the descriptor, since os.chmod() on the name would follow
+    # whatever reappeared under it.
+    dirfd.unlink_quietly(profile_fd, _PROFILE_SNIPPET)
+    try:
+        fd, _st = dirfd.open_new_at(profile_fd, _PROFILE_SNIPPET, 0o644)
+    except OSError:
+        return
+    try:
+        # The bytes the exec's own environment carries, the encoding every
+        # value above was judged by (is_exportable): a byte that is not
+        # UTF-8 -- a lone surrogate out of an image's Env, a --build-arg
+        # baked into one by ENV, an --env on this command line -- passes
+        # that test and reaches the session intact, and strict UTF-8 here
+        # raised UnicodeEncodeError instead, taking every login and run of
+        # the container down with it.
+        os.write(fd, os.fsencode(content))
+        os.fchmod(fd, 0o644)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

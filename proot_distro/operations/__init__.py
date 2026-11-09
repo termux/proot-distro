@@ -45,6 +45,12 @@ from proot_distro.operations.sync import sync_path
 from proot_distro.operations.restore import restore_container
 from proot_distro.operations.reset import reset_container
 from proot_distro.operations.session_signals import signal_sessions
+from proot_distro.operations.session_prepare import (
+    PreparedSession,
+    SessionOptions,
+    prepare_session,
+    session_options,
+)
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import (
     ActiveSession,
@@ -59,6 +65,7 @@ from proot_distro.operations.models import (
     ImageBuild,
     ImagePush,
     SessionSignal,
+    SessionLaunch,
     InstalledContainer,
     Transfer,
 )
@@ -78,6 +85,9 @@ __all__ = (
     "ImagePush",
     "InstalledContainer",
     "OperationContext",
+    "PreparedSession",
+    "SessionLaunch",
+    "SessionOptions",
     "SessionSignal",
     "Transfer",
     "backup_container",
@@ -95,6 +105,8 @@ __all__ = (
     "restore_container",
     "reset_container",
     "signal_sessions",
+    "prepare_session",
+    "session_options",
     "rename_container",
     "sync_path",
 )

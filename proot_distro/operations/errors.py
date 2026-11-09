@@ -21,6 +21,11 @@
 """Typed internal failures carrying structured service diagnostics."""
 
 from proot_distro.operation_errors import NotFoundFailure, OperationFailure
+from proot_distro.session_errors import (
+    SessionExecutionFailure,
+    SessionNotFoundFailure,
+    SessionValidationFailure,
+)
 
 
 class ImageNotFoundFailure(NotFoundFailure):
@@ -99,6 +104,9 @@ __all__ = (
     "PushValidationFailure",
     "SessionSignalFailure",
     "SessionSignalValidationFailure",
+    "SessionExecutionFailure",
+    "SessionNotFoundFailure",
+    "SessionValidationFailure",
     "TransferPartialFailure",
     "TransferValidationFailure",
 )
