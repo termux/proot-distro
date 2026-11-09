@@ -119,8 +119,12 @@ class PreparedSession:
         self._closed = False
 
     def disown_lock(self) -> None:
-        """Transfer lock ownership to a forked detached descendant."""
+        """Transfer lock ownership to a detached descendant."""
         self._lock.disown()
+
+    def inherited_lock_fd(self):
+        """Return the lock descriptor an exec-based launcher must preserve."""
+        return self._lock.inheritable_fd()
 
     def close(self) -> None:
         """Close pinned descriptors; safe to call more than once."""

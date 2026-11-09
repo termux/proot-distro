@@ -20,17 +20,20 @@
 
 # Architecture: process execution for prepared login/run sessions. Preparation
 # remains in operations/session_prepare.py; foreground workers exec here and
-# detached workers invoke the double-fork launcher below.
+# detached workers exec a fresh launcher before invoking the double-fork below.
 #
-# Daemonization is a textbook double-fork:
+# The extra exec matters when a CLI is embedded in a process with application
+# threads. Calling os.fork() there can deadlock on a Python or libc lock that
+# another thread held at the instant of the fork, and recent CPython versions
+# warn about it. subprocess performs only its controlled exec setup in that
+# vulnerable child. All project Python code after fork runs in the fresh,
+# known-single-threaded _detach_worker interpreter instead:
 #
-#   foreground ─fork→ child ─setsid→ ─fork→ grandchild (the daemon)
-#       │              │ _exit(0)              │ detach stdin; redirect output
-#       │ waitpid      ▼ (reaped; grandchild   │ register_session()
-#       │ read pid ◀────  reparented to init)  │ write pid to pipe
-#       ▼ return pid                           └ execvpe(proot)
-#                                                 │ (refused: write the
-#                                                 ▼  reason, _exit)
+#   caller ─subprocess→ fresh launcher ─fork→ child ─setsid→ ─fork→ daemon
+#      │                        │          │ _exit(0)              │ detach I/O
+#      │ bounded JSON request   │ waitpid  ▼ (reparent daemon)     │ register
+#      │ bounded JSON reply  ◀──┤ read pid/exec handshake         │ exec proot
+#      ▼ return pid             ▼ exit                            ▼
 #
 # The control pipe is the daemon's only setup reply -- its standard streams
 # are detached or routed to caller-selected log files by then -- and the write
@@ -50,11 +53,18 @@
 # disown() that lock so its own release() does not LOCK_UN it out from
 # under the daemon.
 
+import json
 import os
+import subprocess
+import sys
 
 from proot_distro.message import quote_error
 from proot_distro.session import register_session
 from proot_distro.session_errors import SessionExecutionFailure
+
+
+_MAX_DETACH_REQUEST_BYTES = 16 * 1024 * 1024
+_MAX_DETACH_RESPONSE_BYTES = 64 * 1024
 
 
 def execute_session(prepared) -> None:
@@ -83,6 +93,7 @@ def detach_session(prepared, *, stdout_fd=None, stderr_fd=None) -> int:
         dict(launch.environment),
         register_kwargs=launch.registration(True),
         rootfs_fd=prepared.rootfs_fd,
+        lock_fd=prepared.inherited_lock_fd(),
         stdout_fd=stdout_fd,
         stderr_fd=stderr_fd,
     )
@@ -91,13 +102,110 @@ def detach_session(prepared, *, stdout_fd=None, stderr_fd=None) -> int:
 
 
 def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
-                   rootfs_fd=None, stdout_fd=None, stderr_fd=None):
-    """Launch proot as a detached daemon and return its PID.
+                   rootfs_fd=None, lock_fd=None, stdout_fd=None,
+                   stderr_fd=None):
+    """Launch proot through a fresh daemonization worker and return its PID.
 
-    Called from the foreground process in place of the usual
-    register_session()+os.execvpe() tail. Returns the daemon's PID to the
-    foreground. Startup failures raise ``SessionExecutionFailure``. The forked
-    children never return into their caller.
+    The caller may have arbitrary application threads. It must not execute
+    project Python code after fork, so a subprocess first execs
+    :mod:`proot_distro._detach_worker`. That known-single-threaded interpreter
+    performs the traditional double-fork in :func:`_spawn_detached_local`.
+
+    Descriptor numbers are meaningful because ``pass_fds`` preserves them
+    across the launcher exec. The rootfs pin and optional output descriptors
+    are close-on-exec again inside the launcher; *lock_fd* deliberately remains
+    inheritable so proot holds the container's shared lock for its lifetime.
+    """
+    request = {
+        "proot_bin": proot_bin,
+        "proot_args": proot_args,
+        "child_env": child_env,
+        "register_kwargs": register_kwargs,
+        "rootfs_fd": rootfs_fd,
+        "lock_fd": lock_fd,
+        "stdout_fd": stdout_fd,
+        "stderr_fd": stderr_fd,
+    }
+    try:
+        raw_request = json.dumps(
+            request, ensure_ascii=True, separators=(",", ":")
+        ).encode("ascii")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise SessionExecutionFailure(
+            f"cannot encode detached-session request: {quote_error(exc)}"
+        ) from exc
+    if len(raw_request) > _MAX_DETACH_REQUEST_BYTES:
+        raise SessionExecutionFailure(
+            "detached-session request exceeds its size limit."
+        )
+
+    pass_fds = tuple(sorted({
+        fd for fd in (rootfs_fd, lock_fd, stdout_fd, stderr_fd)
+        if isinstance(fd, int) and not isinstance(fd, bool) and fd > 2
+    }))
+    env = os.environ.copy()
+    package_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    inherited_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        package_parent
+        + (os.pathsep + inherited_pythonpath if inherited_pythonpath else "")
+    )
+    try:
+        launcher = subprocess.Popen(
+            [sys.executable, "-m", "proot_distro._detach_worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            pass_fds=pass_fds,
+        )
+    except (OSError, ValueError) as exc:
+        raise SessionExecutionFailure(
+            f"cannot start detached-session launcher: {quote_error(exc)}"
+        ) from exc
+
+    stdout, _stderr = launcher.communicate(raw_request)
+    if len(stdout) > _MAX_DETACH_RESPONSE_BYTES:
+        raise SessionExecutionFailure(
+            "detached-session launcher returned an oversized response."
+        )
+    try:
+        response = json.loads(stdout)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        response = None
+    if not isinstance(response, dict):
+        raise SessionExecutionFailure(
+            "detached-session launcher returned an invalid response."
+        )
+    if set(response) not in ({"pid"}, {"error"}):
+        raise SessionExecutionFailure(
+            "detached-session launcher returned an invalid response."
+        )
+    error = response.get("error")
+    if error is not None:
+        if not isinstance(error, str) or not error:
+            raise SessionExecutionFailure(
+                "detached-session launcher returned an invalid error."
+            )
+        raise SessionExecutionFailure(error)
+    pid = response.get("pid")
+    if (launcher.returncode != 0 or isinstance(pid, bool)
+            or not isinstance(pid, int) or pid <= 0):
+        raise SessionExecutionFailure(
+            "detached-session launcher did not report a valid PID."
+        )
+    return pid
+
+
+def _spawn_detached_local(proot_bin, proot_args, child_env, *,
+                          register_kwargs, rootfs_fd=None, stdout_fd=None,
+                          stderr_fd=None):
+    """Double-fork from the single-threaded launcher and return the daemon PID.
+
+    Startup failures raise ``SessionExecutionFailure``. Forked children never
+    return into their caller. This function is private because calling it from
+    an arbitrary application process would restore the multithreaded-fork bug
+    that :func:`spawn_detached` exists to avoid.
 
     *rootfs_fd* is the descriptor the container's rootfs was pinned as.
     The daemon chdirs into it before the exec, for the same reason the

@@ -131,7 +131,8 @@ Session implementation is split by concern:
 | `session_identity.py` | uid/gid/home/shell lookup, read through `guestfile`. |
 | `session_env.py` | Image `Env`, identity variables, `/etc/profile.d` injection. |
 | `session_bindings.py` | Android storage and system `--bind` lists. |
-| `session_runtime.py` | Foreground registration/exec and detached double-fork daemonisation. |
+| `session_runtime.py` | Foreground registration/exec and detached-launch protocol; potentially multithreaded callers first exec a fresh helper. |
+| `_detach_worker.py` | Single-threaded helper that performs detached double-fork daemonisation with explicit descriptor transfer. |
 | `session_migrate.py` | One-shot move from the legacy `installed-rootfs/` layout. |
 | `commands/login/*.py` | Compatibility imports for internal helper locations used before shared preparation. |
 | `session_quoting.py` | POSIX double-quoting for `--get-proot-cmd`. |

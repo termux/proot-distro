@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -526,5 +527,64 @@ def test_session_uses_pinned_rootfs_after_atomic_container_replacement(
     assert swapped
     assert stdout == b"real\n"
     assert stderr == b""
+    assert pd.list_sessions() == ()
+    _assert_silent(capsys)
+
+
+def test_detached_launcher_preserves_pinned_rootfs_after_replacement(
+    tmp_path, builders, capsys,
+):
+    builders.make_container(
+        "detached-box", arch=get_device_cpu_arch(),
+        files={"I_AM_REAL": b"real\n"},
+    )
+    builders.make_container(
+        "detached-standin", arch=get_device_cpu_arch(),
+        files={"I_AM_REAL": b"decoy\n"},
+    )
+    first = tmp_path / "first-detached-bind"
+    second = tmp_path / "second-detached-bind"
+    first.mkdir()
+    second.mkdir()
+    output = tmp_path / "detached.log"
+    moved = container_dir("detached-box") + ".moved"
+    swapped = False
+
+    def swap_on_setup_warning(event):
+        nonlocal swapped
+        if swapped or event.operation != "start_detached":
+            return
+        if event.phase == "session-setup" and "overlaps" in event.message:
+            os.rename(container_dir("detached-box"), moved)
+            os.symlink(
+                container_dir("detached-standin"), container_dir("detached-box")
+            )
+            swapped = True
+
+    default = RuntimeConfig.default()
+    pd = ProotDistro(RuntimeConfig(
+        default.runtime_dir, default.cache_dir, _fake_proot(tmp_path)
+    ), event_handler=swap_on_setup_warning)
+    try:
+        session = pd.start_detached(
+            "detached-box",
+            binds=[f"{first}:/mnt", f"{second}:/mnt"],
+            stdout=output,
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and output.read_bytes() != b"real\n":
+            time.sleep(0.01)
+    finally:
+        if os.path.islink(container_dir("detached-box")):
+            os.unlink(container_dir("detached-box"))
+        if os.path.isdir(moved):
+            os.rename(moved, container_dir("detached-box"))
+
+    assert swapped
+    assert session.pid > 0
+    assert output.read_bytes() == b"real\n"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and pd.list_sessions():
+        time.sleep(0.01)
     assert pd.list_sessions() == ()
     _assert_silent(capsys)

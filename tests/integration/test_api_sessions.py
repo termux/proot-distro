@@ -6,6 +6,7 @@ import time
 import pytest
 
 from proot_distro.api import (
+    BusyError,
     DetachedSession,
     EventKind,
     InvalidArgumentError,
@@ -18,6 +19,7 @@ from proot_distro.api import (
     SessionCommand,
     SessionSignalResult,
 )
+from proot_distro.paths import container_rootfs
 
 
 def _program(fake_proot):
@@ -323,6 +325,25 @@ def test_detached_session_is_registered_and_can_be_stopped(
         pd.kill_session(session.pid, signal_name="KILL")
 
 
+def test_detached_session_inherits_container_lock(builders, fake_proot):
+    builders.make_container("detached-lock")
+    pd = _program(fake_proot)
+
+    session = pd.start_detached(
+        "detached-lock", environment={"FAKE_PROOT_SLEEP": "1"}
+    )
+    try:
+        with pytest.raises(BusyError) as exc:
+            pd.remove_container("detached-lock")
+        assert exc.value.operation == "remove_container"
+        assert os.path.isdir(container_rootfs("detached-lock"))
+    finally:
+        pd.kill_session(session.pid, signal_name="KILL")
+
+    removed = pd.remove_container("detached-lock")
+    assert removed.name == "detached-lock"
+
+
 def test_detached_session_appends_stdout_and_stderr(
         builders, fake_proot, tmp_path):
     builders.make_container("detached-output")
@@ -348,6 +369,33 @@ def test_detached_session_appends_stdout_and_stderr(
             time.sleep(0.01)
         assert stdout_path.read_text() == "existing stdout\ndetached stdout\n"
         assert stderr_path.read_text() == "existing stderr\ndetached stderr\n"
+    finally:
+        pd.kill_session(session.pid, signal_name="KILL")
+
+
+def test_detached_session_can_merge_stderr_into_stdout(
+        builders, fake_proot, tmp_path):
+    builders.make_container("detached-merged-output")
+    output_path = tmp_path / "combined.log"
+    pd = _program(fake_proot)
+
+    session = pd.start_detached(
+        "detached-merged-output",
+        environment={
+            "FAKE_PROOT_SLEEP": "1",
+            "FAKE_PROOT_OUTPUT": "1",
+        },
+        stdout=output_path,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while (time.monotonic() < deadline
+               and "detached stderr" not in output_path.read_text()):
+            time.sleep(0.01)
+        assert output_path.read_text() == (
+            "detached stdout\ndetached stderr\n"
+        )
     finally:
         pd.kill_session(session.pid, signal_name="KILL")
 
