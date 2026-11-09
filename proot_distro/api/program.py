@@ -127,6 +127,9 @@ _SignalArgument = Union[int, str, signal.Signals]
 
 _MAX_WORKER_ERROR_BYTES = 64 * 1024
 _MAX_WORKER_EVENT_BYTES = 64 * 1024
+_MAX_WORKER_RESULT_BYTES = 16 * 1024 * 1024
+_MAX_SESSION_STATUS_BYTES = 64 * 1024
+_MAX_CREDENTIAL_FRAME_BYTES = 1024 * 1024
 
 
 def _require_name(name, *, operation: str, argument: str = "name") -> str:
@@ -405,7 +408,9 @@ def _read_session_startup(
                 raise TypeError
             if resource is not None and not isinstance(resource, str):
                 raise TypeError
-        except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        except (
+            KeyError, TypeError, ValueError, UnicodeDecodeError, RecursionError,
+        ):
             raise OperationError(
                 "session worker returned an invalid setup status.",
                 operation=operation,
@@ -454,7 +459,8 @@ def _read_session_startup(
                 )
             return setup_error
         buffer.extend(chunk)
-        if len(buffer) > 65536 and b"\n" not in buffer:
+        if (len(buffer) > _MAX_SESSION_STATUS_BYTES
+                and b"\n" not in buffer):
             raise OperationError(
                 "session worker returned an oversized setup status.",
                 operation=operation,
@@ -462,7 +468,7 @@ def _read_session_startup(
         while b"\n" in buffer:
             raw, _, remainder = buffer.partition(b"\n")
             buffer[:] = remainder
-            if not raw or len(raw) > 65536:
+            if not raw or len(raw) > _MAX_SESSION_STATUS_BYTES:
                 raise OperationError(
                     "session worker returned an invalid setup status.",
                     operation=operation,
@@ -552,7 +558,9 @@ def _structured_worker_error(operation: str, stdout: bytes):
         exception_type = _WORKER_ERROR_TYPES[kind]
         if not isinstance(message, str) or not message:
             raise TypeError
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+    except (
+        KeyError, TypeError, ValueError, UnicodeDecodeError, RecursionError,
+    ):
         return None
     return exception_type(message, operation=operation)
 
@@ -575,7 +583,9 @@ def _handle_credential_request(raw, sock, provider, operation: str) -> None:
             registry, repository, actions,
         )):
             raise TypeError
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+    except (
+        KeyError, TypeError, ValueError, UnicodeDecodeError, RecursionError,
+    ):
         _reject_credential_request(sock)
         raise OperationError(
             "credential worker returned an invalid request.",
@@ -614,9 +624,14 @@ def _serve_credential_requests(sock, provider, operation: str):
     while True:
         chunk = sock.recv(65536)
         if not chunk:
+            if buffer:
+                return OperationError(
+                    "credential worker returned a truncated request.",
+                    operation=operation,
+                )
             return None
         buffer.extend(chunk)
-        if len(buffer) > 1024 * 1024:
+        if len(buffer) > _MAX_CREDENTIAL_FRAME_BYTES:
             error = OperationError(
                 "credential worker request is too large.", operation=operation
             )
@@ -652,7 +667,9 @@ def _operation_event(operation: str, raw: bytes) -> OperationEvent:
         for value in (unit, phase, resource):
             if value is not None and not isinstance(value, str):
                 raise TypeError
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+    except (
+        KeyError, TypeError, ValueError, UnicodeDecodeError, RecursionError,
+    ):
         raise OperationError(
             f"{operation} worker returned an invalid event.",
             operation=operation,
@@ -803,7 +820,7 @@ def _communicate_with_channels(
                         credential_open = False
                     else:
                         credential_buffer.extend(chunk)
-                        if len(credential_buffer) > 1024 * 1024:
+                        if len(credential_buffer) > _MAX_CREDENTIAL_FRAME_BYTES:
                             _reject_credential_request(credential_sock)
                             provider_error = OperationError(
                                 "credential worker request is too large.",
@@ -1099,6 +1116,11 @@ def _run_worker(operation: str, options: dict,
     if stream_errors:
         raise stream_errors[0]
 
+    if len(stdout) > _MAX_WORKER_RESULT_BYTES:
+        raise OperationError(
+            f"{api_operation} worker returned an oversized result.",
+            operation=api_operation,
+        )
     if proc.returncode != 0:
         structured = _structured_worker_error(api_operation, stdout)
         if structured is not None:
@@ -1106,7 +1128,7 @@ def _run_worker(operation: str, options: dict,
         raise _worker_error(api_operation, stderr)
     try:
         result = json.loads(stdout)
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
         raise OperationError(
             f"{api_operation} worker returned an invalid result.",
             operation=api_operation,

@@ -28,6 +28,8 @@ from proot_distro.message import capture_log_events, quote_error, set_quiet
 
 
 _MAX_REQUEST_BYTES = 1024 * 1024
+_MAX_STATUS_BYTES = 64 * 1024
+_OVERSIZED_STATUS_ERROR = "session setup failed: status message is too large"
 
 
 def _fd_from_env(name: str) -> int:
@@ -59,6 +61,8 @@ def _write_frame(fd: int, payload: dict) -> None:
     data = json.dumps(
         payload, ensure_ascii=True, separators=(",", ":")
     ).encode("ascii") + b"\n"
+    if len(data) > _MAX_STATUS_BYTES:
+        raise ValueError("session startup status is too large")
     while data:
         written = os.write(fd, data)
         data = data[written:]
@@ -132,6 +136,11 @@ def main() -> int:
     if status_fd is not None:
         try:
             _write_frame(status_fd, {"error": message})
+        except ValueError:
+            try:
+                _write_frame(status_fd, {"error": _OVERSIZED_STATUS_ERROR})
+            except OSError:
+                pass
         except OSError:
             pass
         try:

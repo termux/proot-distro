@@ -44,6 +44,7 @@ from proot_distro.progress import capture_progress_events
 
 _MAX_INPUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 64 * 1024
+_MAX_CREDENTIAL_RESPONSE_BYTES = 1024 * 1024
 
 
 class _WorkerFailure(Exception):
@@ -72,7 +73,7 @@ class _CredentialChannel:
             if not chunk:
                 raise RuntimeError("credential provider channel closed")
             self._buffer.extend(chunk)
-            if len(self._buffer) > 1024 * 1024:
+            if len(self._buffer) > _MAX_CREDENTIAL_RESPONSE_BYTES:
                 raise RuntimeError("credential provider response is too large")
         line, _, remainder = self._buffer.partition(b"\n")
         self._buffer[:] = remainder
@@ -88,7 +89,12 @@ class _CredentialChannel:
             "actions": actions,
         }, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
         self._socket.sendall(request)
-        response = json.loads(self._readline())
+        try:
+            response = json.loads(self._readline())
+        except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+            raise RuntimeError(
+                "credential provider response is invalid"
+            ) from None
         if not isinstance(response, dict) or response.get("error"):
             raise RuntimeError("credential provider failed")
         credentials = response.get("credentials")

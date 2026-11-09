@@ -1,4 +1,5 @@
 import hashlib
+import io
 import inspect
 import json
 import os
@@ -51,9 +52,12 @@ from proot_distro.api import (
     UnsupportedOperationError,
 )
 from proot_distro.api import program
-from proot_distro.api import _worker
+from proot_distro.api import _session_worker, _worker
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import canonical_json
+
+
+_DEEPLY_NESTED_JSON = b"[" * 2000 + b"]" * 2000
 
 
 def test_public_exports_are_explicit():
@@ -538,6 +542,118 @@ def test_structured_worker_error_mapping(kind, exception_type):
     assert error.operation == "test"
 
 
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"{}",
+    b'{"_error":null}',
+    b'{"_error":{"kind":"unknown","message":"detail"}}',
+    b'{"_error":{"kind":"operation","message":""}}',
+    b'{"_error":{"kind":"operation","message":1}}',
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_structured_worker_error_rejects_malformed_envelopes(payload):
+    assert program._structured_worker_error("test", payload) is None
+
+
+def _mock_worker_result(monkeypatch, stdout, *, returncode=0, stderr=b""):
+    class Process:
+        pid = 321
+
+        def __init__(self):
+            self.returncode = returncode
+
+        def wait(self):
+            return self.returncode
+
+    def communicate(
+        _process, _request, event_fd, _handler, _operation, **_kwargs
+    ):
+        os.close(event_fd)
+        return stdout, stderr
+
+    monkeypatch.setattr(program.subprocess, "Popen", lambda *_a, **_k: Process())
+    monkeypatch.setattr(program, "_communicate_with_channels", communicate)
+    return program._run_worker("list_images", {})
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"not json",
+    b'{"_events":null}',
+    b'{"_events":[{"kind":"info","message":"late"}]}',
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_worker_result_rejects_malformed_documents(monkeypatch, payload):
+    with pytest.raises(OperationError) as exc:
+        _mock_worker_result(monkeypatch, payload)
+
+    assert exc.value.operation == "list_images"
+    assert "Traceback" not in str(exc.value)
+
+
+def test_worker_result_accepts_document_at_size_limit(monkeypatch):
+    prefix = b'{"value":1}'
+    payload = prefix + b" " * (program._MAX_WORKER_RESULT_BYTES - len(prefix))
+
+    result = _mock_worker_result(monkeypatch, payload)
+
+    assert result == {"value": 1}
+
+
+def test_worker_result_rejects_document_over_size_limit(monkeypatch):
+    prefix = b'{"value":1}'
+    payload = prefix + b" " * (
+        program._MAX_WORKER_RESULT_BYTES + 1 - len(prefix)
+    )
+
+    with pytest.raises(OperationError) as exc:
+        _mock_worker_result(monkeypatch, payload)
+
+    assert exc.value.operation == "list_images"
+    assert "oversized result" in str(exc.value)
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"not json",
+    b"\xff",
+    b"{}",
+    b'{"operation":"list_images","options":[]}',
+    b'{"operation":"unknown","options":{}}',
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_worker_rejects_malformed_request_document(monkeypatch, payload):
+    class Input:
+        buffer = io.BytesIO(payload)
+
+    monkeypatch.setattr(_worker.sys, "stdin", Input())
+
+    with pytest.raises((ValueError, UnicodeDecodeError, RecursionError)):
+        _worker._read_request()
+
+
+def test_worker_rejects_oversized_request_document(monkeypatch):
+    payload = b"x" * (_worker._MAX_INPUT_BYTES + 1)
+
+    class Input:
+        buffer = io.BytesIO(payload)
+
+    monkeypatch.setattr(_worker.sys, "stdin", Input())
+
+    with pytest.raises(ValueError) as exc:
+        _worker._read_request()
+
+    assert "too large" in str(exc.value)
+
+
 def test_worker_rejects_unknown_operation_without_traceback():
     with pytest.raises(OperationError) as exc:
         program._run_worker("unknown", {})
@@ -562,6 +678,141 @@ def test_credential_service_rejects_malformed_request_without_deadlock():
     assert b"credential provider failed" in response
 
 
+@pytest.mark.parametrize("raw_request", [
+    b"",
+    b"[]",
+    b"{}",
+    b'{"registry":null,"repository":"team/app","actions":"pull"}',
+    b'{"registry":"example.test","repository":"","actions":"pull"}',
+    b'{"registry":"example.test","repository":"team/app","actions":[]}',
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_credential_request_rejects_malformed_fields(raw_request):
+    parent, worker = socket.socketpair()
+    called = []
+    try:
+        with pytest.raises(OperationError) as exc:
+            program._handle_credential_request(
+                raw_request, parent, called.append, "push"
+            )
+        response = worker.recv(4096)
+    finally:
+        parent.close()
+        worker.close()
+
+    assert exc.value.operation == "push"
+    assert called == []
+    assert b"credential provider failed" in response
+
+
+def test_credential_request_service_rejects_truncated_frame():
+    parent, worker = socket.socketpair()
+    try:
+        worker.sendall(b'{"registry":"example.test"}')
+        worker.shutdown(socket.SHUT_WR)
+        error = program._serve_credential_requests(
+            parent, lambda _request: None, "build"
+        )
+    finally:
+        parent.close()
+        worker.close()
+
+    assert isinstance(error, OperationError)
+    assert error.operation == "build"
+    assert "truncated request" in str(error)
+
+
+def test_credential_request_service_rejects_oversized_frame():
+    parent, worker = socket.socketpair()
+    response = []
+
+    def send_request():
+        try:
+            worker.sendall(b"x" * (program._MAX_CREDENTIAL_FRAME_BYTES + 1))
+            response.append(worker.recv(4096))
+        finally:
+            worker.close()
+
+    sender = threading.Thread(target=send_request)
+    sender.start()
+    try:
+        error = program._serve_credential_requests(
+            parent, lambda _request: None, "install"
+        )
+    finally:
+        parent.close()
+        sender.join(5)
+
+    assert not sender.is_alive()
+    assert isinstance(error, OperationError)
+    assert error.operation == "install"
+    assert "too large" in str(error)
+    assert response and b"credential provider failed" in response[0]
+
+
+def _credential_response(response):
+    parent, worker = socket.socketpair()
+
+    def serve():
+        try:
+            request = bytearray()
+            while b"\n" not in request:
+                chunk = worker.recv(4096)
+                if not chunk:
+                    return
+                request.extend(chunk)
+            if response:
+                worker.sendall(response)
+        finally:
+            worker.close()
+
+    server = threading.Thread(target=serve)
+    server.start()
+    channel = _worker._CredentialChannel(parent.detach())
+    try:
+        return channel("example.test", "team/app", "pull")
+    finally:
+        channel.close()
+        server.join(5)
+        assert not server.is_alive()
+
+
+@pytest.mark.parametrize("response,detail", [
+    (b"not json\n", "invalid"),
+    (b"[]\n", "failed"),
+    (b'{"error":"no"}\n', "failed"),
+    (b'{"credentials":[]}\n', "invalid"),
+    (b'{"credentials":{"username":1,"password":"secret"}}\n', "invalid"),
+    (b'{"credentials":{"username":"alice","password":null}}\n', "invalid"),
+    (b"\xff\n", "invalid"),
+    pytest.param(
+        _DEEPLY_NESTED_JSON + b"\n", "failed", id="deeply-nested"
+    ),
+])
+def test_worker_rejects_malformed_credential_response(response, detail):
+    with pytest.raises(RuntimeError) as exc:
+        _credential_response(response)
+
+    assert detail in str(exc.value)
+
+
+def test_worker_rejects_truncated_credential_response():
+    with pytest.raises(RuntimeError) as exc:
+        _credential_response(b'{"credentials":null}')
+
+    assert "closed" in str(exc.value)
+
+
+def test_worker_rejects_oversized_credential_response():
+    response = b"x" * (_worker._MAX_CREDENTIAL_RESPONSE_BYTES + 1)
+
+    with pytest.raises(RuntimeError) as exc:
+        _credential_response(response)
+
+    assert "too large" in str(exc.value)
+
+
 def test_worker_event_frame_preserves_progress_context():
     event = program._operation_event("push", json.dumps({
         "kind": "progress",
@@ -584,6 +835,98 @@ def test_worker_event_frame_rejects_invalid_context():
         program._operation_event("copy", b'{"kind":"info","message":1}')
 
     assert exc.value.operation == "copy"
+
+
+def _read_worker_event_channel(monkeypatch, payload):
+    event_read, event_write = os.pipe()
+    finished = threading.Event()
+
+    def write_events():
+        try:
+            program._write_all(event_write, payload)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(event_write)
+            finished.set()
+
+    writer = threading.Thread(target=write_events)
+    writer.start()
+
+    class Process:
+        pid = 321
+
+        def communicate(self, _request):
+            assert finished.wait(5)
+            return b"{}", b""
+
+    monkeypatch.setattr(program.os, "killpg", lambda *_args: None)
+    try:
+        return program._communicate_with_channels(
+            Process(), b"{}", event_read, None, "copy"
+        )
+    finally:
+        writer.join(5)
+        assert not writer.is_alive()
+
+
+@pytest.mark.parametrize("payload", [
+    b"\n",
+    b"not json\n",
+    b"[]\n",
+    b"{}\n",
+    b'{"kind":"unknown","message":"text"}\n',
+    b'{"kind":"info","message":null}\n',
+    b'{"kind":"progress","message":"x","current":true}\n',
+    b'{"kind":"progress","message":"x","total":1.5}\n',
+    b'{"kind":"info","message":"x","phase":1}\n',
+    b'{"kind":"info","message":"x","resource":[]}\n',
+    b"\xff\n",
+    pytest.param(
+        _DEEPLY_NESTED_JSON + b"\n", id="deeply-nested"
+    ),
+])
+def test_worker_event_channel_rejects_malformed_frames(monkeypatch, payload):
+    with pytest.raises(OperationError) as exc:
+        _read_worker_event_channel(monkeypatch, payload)
+
+    assert exc.value.operation == "copy"
+    assert "invalid event" in str(exc.value)
+
+
+def test_worker_event_channel_rejects_truncated_frame(monkeypatch):
+    with pytest.raises(OperationError) as exc:
+        _read_worker_event_channel(
+            monkeypatch, b'{"kind":"info","message":"partial"}'
+        )
+
+    assert exc.value.operation == "copy"
+    assert "truncated event" in str(exc.value)
+
+
+def test_worker_event_channel_rejects_oversized_frame(monkeypatch):
+    payload = b"x" * (program._MAX_WORKER_EVENT_BYTES + 1)
+
+    with pytest.raises(OperationError) as exc:
+        _read_worker_event_channel(monkeypatch, payload)
+
+    assert exc.value.operation == "copy"
+    assert "oversized event" in str(exc.value)
+
+
+def test_worker_event_writer_enforces_frame_limit():
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            _worker._write_event(write_fd, {
+                "kind": "info",
+                "message": "x" * _worker._MAX_EVENT_BYTES,
+            })
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert "too large" in str(exc.value)
 
 
 def test_worker_event_resource_strips_url_secrets():
@@ -647,10 +990,11 @@ def test_pre_cancelled_worker_does_not_start(monkeypatch):
     assert exc.value.operation == "list_images"
 
 
-def test_cancellation_token_must_return_boolean(monkeypatch):
+@pytest.mark.parametrize("value", [None, 0, 1, "false", (), object()])
+def test_cancellation_token_must_return_boolean(monkeypatch, value):
     class InvalidCancellation:
         def is_set(self):
-            return 1
+            return value
 
     monkeypatch.setattr(
         program.subprocess, "Popen",
@@ -661,6 +1005,102 @@ def test_cancellation_token_must_return_boolean(monkeypatch):
         ProotDistro().list_images(cancel_event=InvalidCancellation())
 
     assert exc.value.operation == "list_images"
+
+
+@pytest.mark.parametrize("result", [None, True, False, 0, -1, 4, 1.5])
+def test_output_stream_rejects_invalid_write_result(result):
+    class Output:
+        def write(self, _data):
+            return result
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        program._write_stream_chunk(Output(), b"abc", "backup")
+
+    assert exc.value.operation == "backup"
+    assert "positive byte count" in str(exc.value)
+
+
+def test_output_stream_accepts_short_writes_until_chunk_is_complete():
+    class Output:
+        def __init__(self):
+            self.data = bytearray()
+
+        def write(self, data):
+            size = min(2, len(data))
+            self.data.extend(data[:size])
+            return size
+
+    output = Output()
+
+    program._write_stream_chunk(output, b"abcdef", "backup")
+
+    assert output.data == b"abcdef"
+
+
+@pytest.mark.parametrize("result", [None, "text", 1, object()])
+def test_input_stream_rejects_non_bytes_read_result(
+    monkeypatch, result,
+):
+    class Process:
+        pid = 321
+
+    class Input:
+        def read(self, _size):
+            return result
+
+    signals = []
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    try:
+        threads, errors, _counts = program._start_stream_pumps(
+            Process(), [(write_fd, Input())], [], "restore"
+        )
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()
+    finally:
+        os.close(read_fd)
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], InvalidArgumentError)
+    assert errors[0].operation == "restore"
+    assert signals == [(321, program.signal.SIGKILL)]
+
+
+@pytest.mark.parametrize("result", [None, True, 0, -1, 4, 1.5])
+def test_output_stream_invalid_result_stops_worker(
+    monkeypatch, result,
+):
+    class Process:
+        pid = 321
+
+    class Output:
+        def write(self, _data):
+            return result
+
+    signals = []
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    threads, errors, counts = program._start_stream_pumps(
+        Process(), [], [("backup_output", read_fd, Output())], "backup"
+    )
+    try:
+        os.write(write_fd, b"abc")
+    finally:
+        os.close(write_fd)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], InvalidArgumentError)
+    assert errors[0].operation == "backup"
+    assert counts == {}
+    assert signals == [(321, program.signal.SIGKILL)]
 
 
 def test_worker_backed_public_methods_accept_cancellation():
@@ -719,6 +1159,185 @@ def test_session_process_falls_back_when_registry_has_no_record():
 
     assert result.pids == ()
     assert raw.terminated is True
+
+
+def _read_startup_payload(payload, event_handler=None):
+    read_fd, write_fd = os.pipe()
+
+    def write_status():
+        try:
+            program._write_all(write_fd, payload)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(write_fd)
+
+    writer = threading.Thread(target=write_status)
+    writer.start()
+    try:
+        return program._read_session_startup(
+            read_fd, "start", event_handler, 5, None
+        )
+    finally:
+        os.close(read_fd)
+        writer.join(5)
+        assert not writer.is_alive()
+
+
+@pytest.mark.parametrize("payload", [
+    b"\n",
+    b"not json\n",
+    b"[]\n",
+    b"{}\n",
+    b'{"error":""}\n',
+    b'{"error":1}\n',
+    b'{"event":null}\n',
+    b'{"event":{"kind":"progress","message":"x"}}\n',
+    b'{"event":{"kind":"info","message":1}}\n',
+    b'{"event":{"kind":"info","message":"x","phase":1}}\n',
+    b'{"event":{"kind":"warning","message":"x","resource":[]}}\n',
+    b"\xff\n",
+    pytest.param(
+        _DEEPLY_NESTED_JSON + b"\n", id="deeply-nested"
+    ),
+])
+def test_session_startup_rejects_malformed_status_frames(payload):
+    with pytest.raises(OperationError) as exc:
+        _read_startup_payload(payload)
+
+    assert exc.value.operation == "start"
+    assert "invalid setup status" in str(exc.value)
+
+
+def test_session_startup_rejects_truncated_status_frame():
+    with pytest.raises(OperationError) as exc:
+        _read_startup_payload(b'{"event":')
+
+    assert exc.value.operation == "start"
+    assert "truncated setup status" in str(exc.value)
+
+
+def test_session_startup_rejects_oversized_status_frame():
+    payload = b"x" * (program._MAX_SESSION_STATUS_BYTES + 1)
+
+    with pytest.raises(OperationError) as exc:
+        _read_startup_payload(payload)
+
+    assert exc.value.operation == "start"
+    assert "oversized setup status" in str(exc.value)
+
+
+def test_session_startup_delivers_valid_event_and_error():
+    events = []
+    payload = (
+        b'{"event":{"kind":"warning","message":"careful",'
+        b'"phase":"setup","resource":"box"}}\n'
+        b'{"error":"cannot execute guest"}\n'
+    )
+
+    error = _read_startup_payload(payload, events.append)
+
+    assert error == "cannot execute guest"
+    assert events == [OperationEvent(
+        "start", EventKind.WARNING, "careful",
+        phase="setup", resource="box",
+    )]
+
+
+def _read_session_request(payload):
+    read_fd, write_fd = os.pipe()
+
+    def write_request():
+        try:
+            program._write_all(write_fd, payload)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(write_fd)
+
+    writer = threading.Thread(target=write_request)
+    writer.start()
+    try:
+        return _session_worker._read_request(read_fd)
+    finally:
+        os.close(read_fd)
+        writer.join(5)
+        assert not writer.is_alive()
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"not json",
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_session_worker_rejects_malformed_request_document(payload):
+    with pytest.raises((ValueError, UnicodeDecodeError, RecursionError)):
+        _read_session_request(payload)
+
+
+def test_session_worker_rejects_oversized_request_document():
+    payload = b"x" * (_session_worker._MAX_REQUEST_BYTES + 1)
+
+    with pytest.raises(ValueError) as exc:
+        _read_session_request(payload)
+
+    assert "too large" in str(exc.value)
+
+
+@pytest.mark.parametrize("session_request", [
+    {},
+    {"kind": "login", "container": "box", "arguments": [], "options": []},
+    {"kind": "invalid", "container": "box", "arguments": [], "options": {}},
+    {"kind": "login", "container": None, "arguments": [], "options": {}},
+    {"kind": "run", "container": "box", "arguments": (), "options": {}},
+])
+def test_session_worker_rejects_malformed_request_fields(session_request):
+    with pytest.raises(ValueError):
+        _session_worker._request_parts(session_request)
+
+
+def test_session_worker_status_writer_enforces_frame_limit():
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(ValueError) as exc:
+            _session_worker._write_frame(write_fd, {
+                "error": "x" * _session_worker._MAX_STATUS_BYTES,
+            })
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert "too large" in str(exc.value)
+
+
+def test_session_worker_replaces_oversized_error_with_bounded_status(
+    monkeypatch,
+):
+    request_read, request_write = os.pipe()
+    status_read, status_write = os.pipe()
+    descriptors = iter((request_read, status_write))
+    monkeypatch.setattr(
+        _session_worker, "_fd_from_env", lambda _name: next(descriptors)
+    )
+    monkeypatch.setattr(
+        _session_worker, "_read_request",
+        lambda _fd: (_ for _ in ()).throw(
+            ValueError("x" * _session_worker._MAX_STATUS_BYTES)
+        ),
+    )
+    try:
+        assert _session_worker.main() == 1
+        frame = os.read(status_read, _session_worker._MAX_STATUS_BYTES)
+    finally:
+        os.close(request_write)
+        os.close(status_read)
+
+    assert json.loads(frame) == {
+        "error": _session_worker._OVERSIZED_STATUS_ERROR,
+    }
 
 
 def test_session_startup_status_timeout_is_typed():
