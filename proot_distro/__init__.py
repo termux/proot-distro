@@ -20,6 +20,7 @@
 
 """proot-distro: manage rootless proot-based Linux containers.
 
-Public entry point is :func:`proot_distro.cli.main`, exposed as the
-`proot-distro` and `pd` console scripts via pyproject.toml.
+The command-line entry point is :func:`proot_distro.cli.main`, exposed as
+the ``proot-distro`` and ``pd`` console scripts. The standardized in-process
+interface is exported by :mod:`proot_distro.api`.
 """

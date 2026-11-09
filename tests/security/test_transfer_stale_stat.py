@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro import dirfd
-from proot_distro.commands import sync as sync_mod
+from proot_distro.operations import sync as sync_mod
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 

@@ -141,7 +141,9 @@ def test_is_retryable_http_error():
 def test_retry_http_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(download.time, "sleep", lambda *a, **k: None)
     logged = []
-    monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
+    monkeypatch.setattr(
+        download, "log_retry", lambda text, **_kwargs: logged.append(text)
+    )
     attempts = {"n": 0}
 
     def op():
@@ -306,7 +308,7 @@ def test_retry_after_on_other_statuses_decides_nothing():
 def _count_attempts(monkeypatch, exc):
     slept = []
     monkeypatch.setattr(download.time, "sleep", slept.append)
-    monkeypatch.setattr(download, "log_info", lambda text: None)
+    monkeypatch.setattr(download, "log_retry", lambda text, **_kwargs: None)
     attempts = {"n": 0}
 
     def op():
@@ -357,7 +359,9 @@ def test_retry_http_ignores_retry_after_on_a_500(monkeypatch):
 def test_retry_http_logs_the_wait_it_takes(monkeypatch):
     monkeypatch.setattr(download.time, "sleep", lambda *a: None)
     logged = []
-    monkeypatch.setattr(download, "log_info", logged.append)
+    monkeypatch.setattr(
+        download, "log_retry", lambda text, **_kwargs: logged.append(text)
+    )
 
     def op():
         raise _http_error(429, [("Retry-After", "17")])
@@ -365,6 +369,72 @@ def test_retry_http_logs_the_wait_it_takes(monkeypatch):
     with pytest.raises(urllib.error.HTTPError):
         download.retry_http(op, what="Job", max_retries=2)
     assert any("retrying in 17s" in line for line in logged)
+
+
+def test_retry_http_can_report_without_cli_output(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(
+        download, "log_retry",
+        lambda _line, **_kwargs: pytest.fail(
+            "the CLI retry logger should not be called"
+        ),
+    )
+    notices = []
+    attempts = [0]
+
+    def op():
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise urllib.error.URLError("offline")
+        return "ok"
+
+    assert download.retry_http(
+        op, what="Job", max_retries=2, on_retry=notices.append,
+    ) == "ok"
+    assert len(notices) == 1
+    assert "attempt 1/2" in notices[0]
+
+
+def test_retry_http_reports_machine_readable_resource(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *_args: None)
+    captured = []
+    monkeypatch.setattr(
+        download, "log_retry",
+        lambda text, **kwargs: captured.append((text, kwargs)),
+    )
+    attempts = [0]
+
+    def op():
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise urllib.error.URLError("offline")
+        return "ok"
+
+    assert download.retry_http(
+        op, what="Layer", max_retries=2, resource="sha256:abc",
+    ) == "ok"
+    assert captured[0][1] == {"resource": "sha256:abc"}
+
+
+def test_retry_http_can_suppress_notices(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(
+        download, "log_retry",
+        lambda _line, **_kwargs: pytest.fail(
+            "the CLI retry logger should not be called"
+        ),
+    )
+    attempts = [0]
+
+    def op():
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise urllib.error.URLError("offline")
+        return "ok"
+
+    assert download.retry_http(
+        op, what="Job", max_retries=2, on_retry=None,
+    ) == "ok"
 
 
 # ----- download_file plaintext detection ----------------------------------
@@ -475,7 +545,9 @@ def test_download_file_retry_is_logged(tmp_path, monkeypatch):
     # user sees the retry happening (attempt number and the underlying error),
     # and no retry line is logged for the final, fatal attempt.
     logged = []
-    monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
+    monkeypatch.setattr(
+        download, "log_retry", lambda text, **_kwargs: logged.append(text)
+    )
 
     def fake_open(req, *a, **k):
         raise urllib.error.URLError("connection reset")
@@ -496,7 +568,9 @@ def test_download_file_retry_is_logged(tmp_path, monkeypatch):
 def test_download_file_no_retry_log_on_fail_fast(tmp_path, monkeypatch):
     # A deterministic 404 fails immediately, so there must be no retry log.
     logged = []
-    monkeypatch.setattr(download, "log_info", lambda text: logged.append(text))
+    monkeypatch.setattr(
+        download, "log_retry", lambda text, **_kwargs: logged.append(text)
+    )
 
     def fake_open(req, *a, **k):
         raise urllib.error.HTTPError(

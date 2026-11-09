@@ -24,6 +24,7 @@
 import hashlib
 import os
 import urllib.error
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +32,10 @@ import pytest
 from _builders import pull_image_into
 from _registry import CA_FILE, FakeRegistry, basic
 from proot_distro import constants
+from proot_distro.api import (
+    AuthenticationError, EventKind, ProotDistro, PushResult,
+    OperationCancelledError, RegistryCredentials,
+)
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
 from proot_distro.commands.install import command_install
@@ -43,7 +48,7 @@ from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import (
     OCI_CONFIG_MEDIA, OCI_LAYER_MEDIA, OCI_MANIFEST_MEDIA, canonical_json,
 )
-from proot_distro.helpers.docker.push import push_image
+from proot_distro.operations.push import _push_registry_image
 from proot_distro.paths import container_dir, container_rootfs
 
 ALICE = basic("alice", "s3cret")
@@ -230,6 +235,200 @@ def test_a_private_image_is_pulled_with_credentials(
     assert registry.token_scopes() == ["", "repository:team/private:pull"]
     assert len(registry.seen("cdn")) == 2           # config and layer
     _assert_credentials_in_place(registry)
+
+
+def test_api_installs_private_image_with_explicit_credentials(
+        registry, monkeypatch):
+    registry.add_image("team/api-private", "1", FILES, CONFIG)
+    # API credentials are operation-scoped and must win over an ambient CLI
+    # variable that the embedding application happened to inherit.
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:wrong")
+
+    result = ProotDistro(credentials=RegistryCredentials(
+        "alice", "s3cret"
+    )).install(
+        f"{registry.host()}/team/api-private:1", name="api-private"
+    )
+
+    assert result.name == "api-private"
+    assert open(os.path.join(
+        constants.CONTAINERS_DIR, "api-private", "rootfs", "etc", "motd"
+    ), "rb").read() == b"private bits\n"
+    _assert_credentials_in_place(registry)
+
+
+def test_api_reports_rejected_credentials_without_revealing_secret(registry):
+    registry.add_image("team/api-refused", "1", FILES, CONFIG)
+    secret = "definitely-wrong-secret"
+
+    with pytest.raises(AuthenticationError) as exc:
+        ProotDistro(credentials=RegistryCredentials(
+            "alice", secret
+        )).install(
+            f"{registry.host()}/team/api-refused:1", name="api-refused"
+        )
+
+    assert exc.value.operation == "install"
+    assert "credentials" in str(exc.value).lower()
+    assert secret not in str(exc.value)
+
+
+def test_api_build_pulls_private_base_with_explicit_credentials(
+        registry, tmp_path):
+    registry.add_image("team/api-base", "1", FILES, CONFIG)
+    context = tmp_path / "api-private-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/api-base:1\n"
+        'CMD ["/bin/sh"]\n'
+    )
+
+    result = ProotDistro(credentials=RegistryCredentials(
+        "alice", "s3cret"
+    )).build(context, tags=["api-private-build:1"])
+
+    assert [image.reference for image in result.images] == [
+        "api-private-build:1"
+    ]
+    assert registry.token_scopes() == [
+        "", "repository:team/api-base:pull",
+    ]
+    _assert_credentials_in_place(registry)
+
+
+def test_api_build_provider_authenticates_multiple_registries(
+        registry, tmp_path):
+    second = FakeRegistry()
+    second.users = {"bob": "other-secret"}
+    try:
+        registry.add_image("team/first", "1", FILES, CONFIG)
+        second.add_image("team/second", "1", FILES, CONFIG)
+        context = tmp_path / "multi-registry-build"
+        context.mkdir()
+        (context / "Dockerfile").write_text(
+            f"FROM {registry.host()}/team/first:1 AS first\n"
+            f"FROM {second.host()}/team/second:1\n"
+            "COPY --from=first /etc/motd /first-motd\n"
+        )
+        requests = []
+        events = []
+        caller_thread = threading.get_ident()
+
+        def credentials_for(request):
+            requests.append((request, threading.get_ident()))
+            if request.registry == registry.host():
+                return RegistryCredentials("alice", "s3cret")
+            if request.registry == second.host():
+                return RegistryCredentials("bob", "other-secret")
+            return None
+
+        def record_event(event):
+            events.append((event, threading.get_ident()))
+
+        result = ProotDistro(
+            credential_provider=credentials_for,
+            event_handler=record_event,
+        ).build(context, tags=["multi-registry-api:1"])
+
+        assert [image.reference for image in result.images] == [
+            "multi-registry-api:1"
+        ]
+        assert {(request.registry, request.repository) for request, _ in requests} == {
+            (registry.host(), "team/first"),
+            (second.host(), "team/second"),
+        }
+        assert all(thread_id == caller_thread for _, thread_id in requests)
+        assert events
+        assert all(thread_id == caller_thread for _, thread_id in events)
+        _assert_credentials_in_place(registry)
+        _assert_credentials_in_place(second, basic("bob", "other-secret"))
+    finally:
+        second.close()
+
+
+def test_slow_credential_provider_delays_and_then_completes_build(
+        registry, tmp_path):
+    registry.add_image("team/slow-provider", "1", FILES, CONFIG)
+    context = tmp_path / "slow-provider-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/slow-provider:1\n"
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    state = {}
+
+    def credentials_for(_request):
+        entered.set()
+        assert release.wait(10)
+        return RegistryCredentials("alice", "s3cret")
+
+    def build():
+        try:
+            state["result"] = ProotDistro(
+                credential_provider=credentials_for
+            ).build(context, tags=["slow-provider-api:1"])
+        except BaseException as exc:
+            state["error"] = exc
+
+    caller = threading.Thread(target=build)
+    caller.start()
+    try:
+        assert entered.wait(5)
+        assert caller.is_alive()
+        assert "result" not in state
+    finally:
+        release.set()
+    caller.join(20)
+
+    assert not caller.is_alive()
+    assert "error" not in state
+    assert [image.reference for image in state["result"].images] == [
+        "slow-provider-api:1"
+    ]
+    _assert_credentials_in_place(registry)
+
+
+def test_build_cancellation_during_credential_request(registry, tmp_path):
+    registry.add_image("team/cancel-build", "1", FILES, CONFIG)
+    context = tmp_path / "cancel-provider-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/cancel-build:1\n"
+    )
+    cancelled = threading.Event()
+
+    def credentials_for(_request):
+        cancelled.set()
+        return RegistryCredentials("alice", "s3cret")
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(credential_provider=credentials_for).build(
+            context, tags=["cancel-provider:1"],
+            cancel_event=cancelled,
+        )
+
+    assert exc.value.operation == "build"
+
+
+def test_api_build_provider_exception_propagates_to_caller(registry, tmp_path):
+    registry.add_image("team/provider-error", "1", FILES, CONFIG)
+    context = tmp_path / "provider-error-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/provider-error:1\n"
+    )
+    expected = LookupError("credential store unavailable")
+
+    def fail(_request):
+        raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro(credential_provider=fail).build(
+            context, tags=["provider-error-api:1"]
+        )
+
+    assert exc.value is expected
 
 
 def test_a_private_image_without_credentials_is_refused(registry, capsys):
@@ -438,6 +637,49 @@ def test_a_pushed_image_is_installed_back_with_credentials(
     _assert_credentials_in_place(registry)
 
 
+def test_api_push_uses_explicit_credentials(registry, builders, monkeypatch):
+    arch = get_device_cpu_arch()
+    ref = f"{registry.host()}/team/api-push:1"
+    _built(builders, ref, arch, "team/api-push")
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:wrong")
+
+    events = []
+    result = ProotDistro(
+        credentials=RegistryCredentials("alice", "s3cret"),
+        event_handler=events.append,
+    ).push(ref)
+
+    assert isinstance(result, PushResult)
+    assert result.repository == "team/api-push"
+    assert result.tag == "1"
+    assert result.bytes_uploaded > 0
+    assert ("team/api-push", "1") in registry.manifests
+    assert any(
+        event.kind == EventKind.PROGRESS
+        and event.operation == "push"
+        and event.unit == "bytes"
+        and event.phase == "upload"
+        and event.resource.startswith("sha256:")
+        for event in events
+    )
+    _assert_credentials_in_place(registry)
+
+
+def test_api_push_reports_rejected_credentials(registry, builders):
+    arch = get_device_cpu_arch()
+    ref = f"{registry.host()}/team/api-push-refused:1"
+    _built(builders, ref, arch, "team/api-push-refused")
+    secret = "wrong-push-secret"
+
+    with pytest.raises(AuthenticationError) as exc:
+        ProotDistro(credentials=RegistryCredentials(
+            "alice", secret
+        )).push(ref)
+
+    assert exc.value.operation == "push"
+    assert secret not in str(exc.value)
+
+
 def test_a_push_without_credentials_is_refused(registry, builders, capsys):
     # Anonymous pull is allowed here, so the push gets as far as the
     # upload before the registry says no.
@@ -483,7 +725,7 @@ def test_an_upload_handed_to_another_origin_goes_without_the_token(
     ref = f"{registry.host()}/team/app:1"
     _built(builders, ref, arch, "team/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
-    push_image(ref, arch)
+    _push_registry_image(ref, arch)
     assert [s.method for s in registry.seen("cdn")] == ["PUT", "PUT"]
     assert ("team/app", "1") in registry.manifests
     _assert_credentials_in_place(registry)
@@ -495,7 +737,7 @@ def test_a_docker_hub_push_authenticates_at_the_hub_token_service(
     arch = get_device_cpu_arch()
     _built(builders, "alice/app:1", arch, "alice/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
-    result = push_image("alice/app:1", arch)
+    result = _push_registry_image("alice/app:1", arch)
     assert result["registry"] == "docker.io"
     assert registry.token_scopes() == ["", "repository:alice/app:pull,push"]
     assert all("service=registry.docker.io" in s.path
@@ -595,7 +837,7 @@ def test_a_basic_registry_upload_handed_elsewhere_goes_without_the_password(
     ref = f"{reg.host()}/team/app:1"
     _built(builders, ref, arch, "team/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
-    push_image(ref, arch)
+    _push_registry_image(ref, arch)
     assert [s.method for s in reg.seen("cdn")] == ["PUT", "PUT"]
     assert ("team/app", "1") in reg.manifests
     _assert_credentials_in_place(reg)
@@ -714,7 +956,7 @@ def test_a_docker_hub_push_with_a_wrong_password_uploads_nothing(
     _built(builders, "alice/app:1", arch, "alice/app")
     monkeypatch.setenv("PD_DOCKER_AUTH", "alice:wrong")
     with pytest.raises(RuntimeError) as exc:
-        push_image("alice/app:1", arch)
+        _push_registry_image("alice/app:1", arch)
     assert str(exc.value) == credentials_rejected_msg("", 401)
     assert registry.token_scopes() == [""]
     assert registry.seen("registry") == []

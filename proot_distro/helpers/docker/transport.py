@@ -79,6 +79,8 @@ import os
 import re
 import urllib.error
 import urllib.parse
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
 from proot_distro.message import quote_path
@@ -100,6 +102,25 @@ from proot_distro.helpers.download import (
 REGISTRY_URL = "https://registry-1.docker.io"
 AUTH_URL = "https://auth.docker.io/token"
 HUB_SERVICE = "registry.docker.io"
+
+# An API build can encounter several registries while interpreting one
+# Dockerfile. Its worker installs a callback that obtains credentials over a
+# private parent channel. CLI calls see None and continue reading only
+# PD_DOCKER_AUTH.
+_basic_auth_provider = ContextVar(
+    "proot_distro_registry_basic_auth_provider", default=None
+)
+
+
+@contextmanager
+def use_basic_auth_provider(provider):
+    """Temporarily resolve Basic credentials through *provider*."""
+    token = _basic_auth_provider.set(provider)
+    try:
+        yield
+    finally:
+        _basic_auth_provider.reset(token)
+
 
 # How large a metadata response may be before it is refused. Manifests,
 # manifest indexes, image configs, token grants and search pages are all
@@ -554,14 +575,27 @@ def _parse_bearer_challenge(header_value: str) -> dict:
     }
 
 
-def env_basic_auth() -> str:
+class RegistryAuthenticationError(RuntimeError):
+    """A registry refused credentials or their requested permission."""
+
+
+def env_basic_auth(registry: str = "", repo: str = "",
+                   actions: str = "pull") -> str:
     """Return a Basic auth header value from PD_DOCKER_AUTH, or ''.
 
     Accepts 'username:password' — the colon is the required separator.
     Returns '' when the variable is unset; raises RuntimeError when the
     variable is set but contains no colon (wrong format).
     """
-    raw = os.environ.get("PD_DOCKER_AUTH", "")
+    provider = _basic_auth_provider.get()
+    if provider is not None:
+        credentials = provider(registry or "docker.io", repo, actions)
+        if credentials is None:
+            return ""
+        username, password = credentials
+        raw = f"{username}:{password}"
+    else:
+        raw = os.environ.get("PD_DOCKER_AUTH", "")
     if not raw:
         return ""
     if ":" not in raw:
@@ -691,7 +725,7 @@ def _check_credentials(
     except urllib.error.HTTPError as exc:
         if exc.code in rejected:
             _release(exc)
-            raise RuntimeError(
+            raise RegistryAuthenticationError(
                 credentials_rejected_msg(registry, exc.code)
             ) from exc
         raise
@@ -749,7 +783,7 @@ def get_auth_token(
         origin that was probed, over the scheme the probe settled on -- so
         plain HTTP only under *insecure*, as for a realm.
     """
-    basic_auth = env_basic_auth()
+    basic_auth = env_basic_auth(registry, repo, actions)
 
     if not registry:
         # Through the auth-stripping opener, never urlopen(): the default
@@ -858,8 +892,10 @@ def get_auth_token(
 
 
 def auth_note(prefix_space: bool = True) -> str:
-    """Return ' (user credentials)' or ' (anonymous)' for log lines."""
+    """Return the configured authentication source for a log line."""
     head = " " if prefix_space else ""
+    if _basic_auth_provider.get() is not None:
+        return f"{head}(credential provider)"
     if os.environ.get("PD_DOCKER_AUTH"):
         return f"{head}(user credentials)"
     return f"{head}(anonymous)"

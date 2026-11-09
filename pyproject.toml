@@ -12,7 +12,12 @@ license = "GPL-3.0-only"
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = [
+    "build>=1",
+    "pytest>=7",
+    "setuptools>=77",
+    "wheel>=0.42",
+]
 
 [project.urls]
 'Homepage' = 'https://github.com/termux/proot-distro'
@@ -28,7 +33,7 @@ pd = "proot_distro.cli:main"
 include = ["proot_distro*"]
 
 [tool.setuptools.package-data]
-"proot_distro" = ["completions/*"]
+"proot_distro" = ["completions/*", "py.typed"]
 
 [tool.setuptools.data-files]
 "share/bash-completion/completions" = ["proot_distro/completions/proot-distro.bash"]

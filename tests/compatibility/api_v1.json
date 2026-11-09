@@ -1,0 +1,1020 @@
+{
+  "api_version": "1.0",
+  "classes": {
+    "ProotDistro": {
+      "constructor": "(config: Optional[RuntimeConfig] = None, *, event_handler: Optional[EventHandler] = None, credentials: Optional[RegistryCredentials] = None, credential_provider: Optional[CredentialProvider] = None) -> None",
+      "members": {
+        "backup": {
+          "kind": "method",
+          "signature": "(self, name: str, output: Union[str, os.PathLike[str], BinaryIO], *, compression: Optional[str] = None, cancel_event: Optional[CancellationToken] = None) -> BackupResult"
+        },
+        "build": {
+          "kind": "method",
+          "signature": "(self, path: Union[str, os.PathLike[str]], *, dockerfile: Union[str, os.PathLike[str], BinaryIO, None] = None, tags: Iterable[str] = (), build_args: Optional[Mapping[str, str]] = None, architecture: Optional[str] = None, target: Optional[str] = None, emulator: Union[str, os.PathLike[str], None] = None, outputs: Union[str, os.PathLike[str], BinaryIO, Iterable[Union[str, os.PathLike[str], BinaryIO]]] = (), install_as: Optional[str] = None, no_cache: bool = False, credentials: Optional[RegistryCredentials] = None, cancel_event: Optional[CancellationToken] = None) -> BuildResult"
+        },
+        "clear_cache": {
+          "kind": "method",
+          "signature": "(self, *, orphan: bool = False, build_cache: bool = False, cancel_event: Optional[CancellationToken] = None) -> CacheCleanupResult"
+        },
+        "config": {
+          "kind": "property",
+          "signature": "() -> RuntimeConfig"
+        },
+        "copy": {
+          "kind": "method",
+          "signature": "(self, source: Union[str, os.PathLike[str]], destination: Union[str, os.PathLike[str]], *, recursive: bool = False, cancel_event: Optional[CancellationToken] = None) -> TransferResult"
+        },
+        "inspect_run": {
+          "kind": "method",
+          "signature": "(self, container: str, arguments: Iterable[str] = (), *, user: str = 'root', environment: Optional[Mapping[str, str]] = None, binds: Iterable[str] = (), work_dir: Optional[str] = None, redirect_ports: bool = False, shared_home: bool = False, shared_tmp: bool = False, shared_x11: bool = False, isolated: bool = False, minimal: bool = False, no_link2symlink: bool = False, no_sysvipc: bool = False, no_kill_on_exit: bool = False, emulator: Union[str, os.PathLike[str], None] = None, kernel: Optional[str] = None, hostname: Optional[str] = None, cancel_event: Optional[CancellationToken] = None) -> SessionCommand"
+        },
+        "inspect_start": {
+          "kind": "method",
+          "signature": "(self, container: str, arguments: Iterable[str] = (), *, user: str = 'root', environment: Optional[Mapping[str, str]] = None, binds: Iterable[str] = (), work_dir: Optional[str] = None, redirect_ports: bool = False, shared_home: bool = False, shared_tmp: bool = False, shared_x11: bool = False, isolated: bool = False, minimal: bool = False, no_link2symlink: bool = False, no_sysvipc: bool = False, no_kill_on_exit: bool = False, emulator: Union[str, os.PathLike[str], None] = None, kernel: Optional[str] = None, hostname: Optional[str] = None, cancel_event: Optional[CancellationToken] = None) -> SessionCommand"
+        },
+        "install": {
+          "kind": "method",
+          "signature": "(self, source: Union[str, os.PathLike[str]], *, name: Optional[str] = None, architecture: Optional[str] = None, allow_insecure: bool = False, cancel_event: Optional[CancellationToken] = None) -> ContainerInfo"
+        },
+        "kill_all_sessions": {
+          "kind": "method",
+          "signature": "(self, *, signal_name: Union[int, str, signal.Signals] = 'TERM', cancel_event: Optional[CancellationToken] = None) -> SessionSignalResult"
+        },
+        "kill_session": {
+          "kind": "method",
+          "signature": "(self, target: Union[int, str], *, signal_name: Union[int, str, signal.Signals] = 'TERM', cancel_event: Optional[CancellationToken] = None) -> SessionSignalResult"
+        },
+        "list_containers": {
+          "kind": "method",
+          "signature": "(self, *, cancel_event: Optional[CancellationToken] = None) -> Tuple[ContainerInfo, ...]"
+        },
+        "list_images": {
+          "kind": "method",
+          "signature": "(self, *, cancel_event: Optional[CancellationToken] = None) -> Tuple[ImageInfo, ...]"
+        },
+        "list_sessions": {
+          "kind": "method",
+          "signature": "(self, *, cancel_event: Optional[CancellationToken] = None) -> Tuple[SessionInfo, ...]"
+        },
+        "move": {
+          "kind": "method",
+          "signature": "(self, source: Union[str, os.PathLike[str]], destination: Union[str, os.PathLike[str]], *, cancel_event: Optional[CancellationToken] = None) -> TransferResult"
+        },
+        "push": {
+          "kind": "method",
+          "signature": "(self, image_ref: str, *, architecture: Optional[str] = None, allow_insecure: bool = False, cancel_event: Optional[CancellationToken] = None) -> PushResult"
+        },
+        "remove_container": {
+          "kind": "method",
+          "signature": "(self, name: str, *, cancel_event: Optional[CancellationToken] = None) -> ContainerInfo"
+        },
+        "remove_image": {
+          "kind": "method",
+          "signature": "(self, identifier: str, *, architecture: Optional[str] = None, cancel_event: Optional[CancellationToken] = None) -> ImageRemovalResult"
+        },
+        "rename_container": {
+          "kind": "method",
+          "signature": "(self, old_name: str, new_name: str, *, cancel_event: Optional[CancellationToken] = None) -> ContainerInfo"
+        },
+        "reset_container": {
+          "kind": "method",
+          "signature": "(self, name: str, *, cancel_event: Optional[CancellationToken] = None) -> ContainerInfo"
+        },
+        "restore": {
+          "kind": "method",
+          "signature": "(self, archive: Union[str, os.PathLike[str], BinaryIO], *, cancel_event: Optional[CancellationToken] = None) -> RestoreResult"
+        },
+        "run": {
+          "kind": "method",
+          "signature": "(self, container: str, arguments: Iterable[str] = (), *, user: str = 'root', environment: Optional[Mapping[str, str]] = None, binds: Iterable[str] = (), work_dir: Optional[str] = None, redirect_ports: bool = False, shared_home: bool = False, shared_tmp: bool = False, shared_x11: bool = False, isolated: bool = False, minimal: bool = False, no_link2symlink: bool = False, no_sysvipc: bool = False, no_kill_on_exit: bool = False, emulator: Union[str, os.PathLike[str], None] = None, kernel: Optional[str] = None, hostname: Optional[str] = None, stdin: Union[int, IO[Any], None] = None, stdout: Union[int, IO[Any], None] = None, stderr: Union[int, IO[Any], None] = None, startup_timeout: Optional[float] = None, cancel_event: Optional[CancellationToken] = None) -> SessionProcess"
+        },
+        "run_detached": {
+          "kind": "method",
+          "signature": "(self, container: str, arguments: Iterable[str] = (), *, user: str = 'root', environment: Optional[Mapping[str, str]] = None, binds: Iterable[str] = (), work_dir: Optional[str] = None, redirect_ports: bool = False, shared_home: bool = False, shared_tmp: bool = False, shared_x11: bool = False, isolated: bool = False, minimal: bool = False, no_link2symlink: bool = False, no_sysvipc: bool = False, no_kill_on_exit: bool = False, emulator: Union[str, os.PathLike[str], None] = None, kernel: Optional[str] = None, hostname: Optional[str] = None, stdout: Union[str, os.PathLike[str], int, None] = None, stderr: Union[str, os.PathLike[str], int, None] = None, cancel_event: Optional[CancellationToken] = None) -> DetachedSession"
+        },
+        "search": {
+          "kind": "method",
+          "signature": "(self, query: str, *, limit: int = 25) -> SearchResult"
+        },
+        "start": {
+          "kind": "method",
+          "signature": "(self, container: str, arguments: Iterable[str] = (), *, user: str = 'root', environment: Optional[Mapping[str, str]] = None, binds: Iterable[str] = (), work_dir: Optional[str] = None, redirect_ports: bool = False, shared_home: bool = False, shared_tmp: bool = False, shared_x11: bool = False, isolated: bool = False, minimal: bool = False, no_link2symlink: bool = False, no_sysvipc: bool = False, no_kill_on_exit: bool = False, emulator: Union[str, os.PathLike[str], None] = None, kernel: Optional[str] = None, hostname: Optional[str] = None, stdin: Union[int, IO[Any], None] = None, stdout: Union[int, IO[Any], None] = None, stderr: Union[int, IO[Any], None] = None, startup_timeout: Optional[float] = None, cancel_event: Optional[CancellationToken] = None) -> SessionProcess"
+        },
+        "start_detached": {
+          "kind": "method",
+          "signature": "(self, container: str, arguments: Iterable[str] = (), *, user: str = 'root', environment: Optional[Mapping[str, str]] = None, binds: Iterable[str] = (), work_dir: Optional[str] = None, redirect_ports: bool = False, shared_home: bool = False, shared_tmp: bool = False, shared_x11: bool = False, isolated: bool = False, minimal: bool = False, no_link2symlink: bool = False, no_sysvipc: bool = False, no_kill_on_exit: bool = False, emulator: Union[str, os.PathLike[str], None] = None, kernel: Optional[str] = None, hostname: Optional[str] = None, stdout: Union[str, os.PathLike[str], int, None] = None, stderr: Union[str, os.PathLike[str], int, None] = None, cancel_event: Optional[CancellationToken] = None) -> DetachedSession"
+        },
+        "sync": {
+          "kind": "method",
+          "signature": "(self, source: Union[str, os.PathLike[str]], destination: Union[str, os.PathLike[str]], *, checksum: bool = False, delete: bool = False, cancel_event: Optional[CancellationToken] = None) -> TransferResult"
+        }
+      }
+    },
+    "SessionProcess": {
+      "attributes": {
+        "container": "str",
+        "kind": "str"
+      },
+      "members": {
+        "__enter__": {
+          "kind": "method",
+          "signature": "(self) -> SessionProcess"
+        },
+        "__exit__": {
+          "kind": "method",
+          "signature": "(self, _exc_type: Any, _exc_value: Any, _traceback: Any) -> bool"
+        },
+        "close": {
+          "kind": "method",
+          "signature": "(self, timeout: float = 10.0) -> Optional[int]"
+        },
+        "communicate": {
+          "kind": "method",
+          "signature": "(self, input: Optional[bytes] = None, timeout: Optional[float] = None) -> Tuple[Optional[bytes], Optional[bytes]]"
+        },
+        "kill": {
+          "kind": "method",
+          "signature": "(self) -> SessionSignalResult"
+        },
+        "pid": {
+          "kind": "property",
+          "signature": "() -> int"
+        },
+        "poll": {
+          "kind": "method",
+          "signature": "(self) -> Optional[int]"
+        },
+        "returncode": {
+          "kind": "property",
+          "signature": "() -> Optional[int]"
+        },
+        "stderr": {
+          "kind": "property",
+          "signature": "() -> Optional[BinaryIO]"
+        },
+        "stdin": {
+          "kind": "property",
+          "signature": "() -> Optional[BinaryIO]"
+        },
+        "stdout": {
+          "kind": "property",
+          "signature": "() -> Optional[BinaryIO]"
+        },
+        "terminate": {
+          "kind": "method",
+          "signature": "(self) -> SessionSignalResult"
+        },
+        "wait": {
+          "kind": "method",
+          "signature": "(self, timeout: Optional[float] = None) -> int"
+        }
+      }
+    }
+  },
+  "dataclasses": {
+    "BackupResult": {
+      "constructor": "(container: str, output: Optional[str], compression: str, size_bytes: int) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "container",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "output",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "compression",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "size_bytes",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "BuildResult": {
+      "constructor": "(images: Tuple[ImageInfo, ...], outputs: Tuple[Optional[str], ...], installed_container: Optional[ContainerInfo]) -> None",
+      "fields": [
+        {
+          "annotation": "Tuple[ImageInfo, ...]",
+          "default": "<required>",
+          "name": "images",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[Optional[str], ...]",
+          "default": "<required>",
+          "name": "outputs",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[ContainerInfo]",
+          "default": "<required>",
+          "name": "installed_container",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "CacheCleanupResult": {
+      "constructor": "(mode: str, bytes_before: int, bytes_after: int, bytes_reclaimed: int) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "mode",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "bytes_before",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "bytes_after",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "bytes_reclaimed",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "ContainerInfo": {
+      "constructor": "(name: str, image_reference: Optional[str], architecture: Optional[str], image_id: Optional[str]) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "name",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "image_reference",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "architecture",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "image_id",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "CredentialRequest": {
+      "constructor": "(registry: str, repository: str, operation: str) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "registry",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "repository",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "operation",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "DetachedSession": {
+      "constructor": "(pid: int, container: str, kind: str) -> None",
+      "fields": [
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "pid",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "container",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "kind",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "ImageInfo": {
+      "constructor": "(identifier: str, reference: Optional[str], repository: Optional[str], architecture: Optional[str], image_id: Optional[str], size_bytes: int, layer_count: int, missing_layers: int, created: Optional[str], cached_at: float) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "identifier",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "reference",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "repository",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "architecture",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "image_id",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "size_bytes",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "layer_count",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "missing_layers",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "created",
+          "repr": true
+        },
+        {
+          "annotation": "float",
+          "default": "<required>",
+          "name": "cached_at",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {
+        "complete": {
+          "kind": "property",
+          "signature": "() -> bool"
+        }
+      }
+    },
+    "ImageRemovalResult": {
+      "constructor": "(removed: Tuple[ImageInfo, ...]) -> None",
+      "fields": [
+        {
+          "annotation": "Tuple[ImageInfo, ...]",
+          "default": "<required>",
+          "name": "removed",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "OperationEvent": {
+      "constructor": "(operation: str, kind: EventKind, message: str, current: Optional[int] = None, total: Optional[int] = None, unit: Optional[str] = None, phase: Optional[str] = None, resource: Optional[str] = None) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "operation",
+          "repr": true
+        },
+        {
+          "annotation": "EventKind",
+          "default": "<required>",
+          "name": "kind",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "message",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[int]",
+          "default": "None",
+          "name": "current",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[int]",
+          "default": "None",
+          "name": "total",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "None",
+          "name": "unit",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "None",
+          "name": "phase",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "None",
+          "name": "resource",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "PushResult": {
+      "constructor": "(registry: str, repository: str, tag: str, manifest_digest: Optional[str], bytes_uploaded: int) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "registry",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "repository",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "tag",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "manifest_digest",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "bytes_uploaded",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "RegistryCredentials": {
+      "constructor": "(username: str, password: str) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "username",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "password",
+          "repr": false
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "RestoreResult": {
+      "constructor": "(container: ContainerInfo, archive: Optional[str]) -> None",
+      "fields": [
+        {
+          "annotation": "ContainerInfo",
+          "default": "<required>",
+          "name": "container",
+          "repr": true
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "<required>",
+          "name": "archive",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "RuntimeConfig": {
+      "constructor": "(runtime_dir: Union[str, os.PathLike[str]], cache_dir: Union[str, os.PathLike[str]], proot_path: Union[str, os.PathLike[str], None] = None) -> None",
+      "fields": [
+        {
+          "annotation": "Union[str, os.PathLike[str]]",
+          "default": "<required>",
+          "name": "runtime_dir",
+          "repr": true
+        },
+        {
+          "annotation": "Union[str, os.PathLike[str]]",
+          "default": "<required>",
+          "name": "cache_dir",
+          "repr": true
+        },
+        {
+          "annotation": "Union[str, os.PathLike[str], None]",
+          "default": "None",
+          "name": "proot_path",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {
+        "default": {
+          "kind": "method",
+          "signature": "() -> RuntimeConfig"
+        }
+      }
+    },
+    "SearchHit": {
+      "constructor": "(name: str, description: str, stars: int, pulls: int, official: bool, automated: bool) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "name",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "description",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "stars",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "pulls",
+          "repr": true
+        },
+        {
+          "annotation": "bool",
+          "default": "<required>",
+          "name": "official",
+          "repr": true
+        },
+        {
+          "annotation": "bool",
+          "default": "<required>",
+          "name": "automated",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "SearchResult": {
+      "constructor": "(query: str, total: int, hits: Tuple[SearchHit, ...]) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "query",
+          "repr": true
+        },
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "total",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[SearchHit, ...]",
+          "default": "<required>",
+          "name": "hits",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "SessionCommand": {
+      "constructor": "(kind: str, container: str, executable: str, argv: Tuple[str, ...], environment: Tuple[Tuple[str, str], ...], inner_command: Tuple[str, ...], rootfs: str, work_dir: str, user: str, shell_command: str) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "kind",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "container",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "executable",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[str, ...]",
+          "default": "<required>",
+          "name": "argv",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[Tuple[str, str], ...]",
+          "default": "<required>",
+          "name": "environment",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[str, ...]",
+          "default": "<required>",
+          "name": "inner_command",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "rootfs",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "work_dir",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "user",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "shell_command",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {
+        "environment_dict": {
+          "kind": "property",
+          "signature": "() -> dict"
+        }
+      }
+    },
+    "SessionInfo": {
+      "constructor": "(pid: int, container: str, kind: str, command: Tuple[str, ...], user: str, start_time: float, isolated: bool, minimal: bool, detached: bool) -> None",
+      "fields": [
+        {
+          "annotation": "int",
+          "default": "<required>",
+          "name": "pid",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "container",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "kind",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[str, ...]",
+          "default": "<required>",
+          "name": "command",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "user",
+          "repr": true
+        },
+        {
+          "annotation": "float",
+          "default": "<required>",
+          "name": "start_time",
+          "repr": true
+        },
+        {
+          "annotation": "bool",
+          "default": "<required>",
+          "name": "isolated",
+          "repr": true
+        },
+        {
+          "annotation": "bool",
+          "default": "<required>",
+          "name": "minimal",
+          "repr": true
+        },
+        {
+          "annotation": "bool",
+          "default": "<required>",
+          "name": "detached",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "SessionSignalResult": {
+      "constructor": "(target: str, signal: str, pids: Tuple[int, ...]) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "target",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "signal",
+          "repr": true
+        },
+        {
+          "annotation": "Tuple[int, ...]",
+          "default": "<required>",
+          "name": "pids",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    },
+    "TransferResult": {
+      "constructor": "(operation: str, source: str, destination: str) -> None",
+      "fields": [
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "operation",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "source",
+          "repr": true
+        },
+        {
+          "annotation": "str",
+          "default": "<required>",
+          "name": "destination",
+          "repr": true
+        }
+      ],
+      "frozen": true,
+      "init": true,
+      "members": {}
+    }
+  },
+  "enum": {
+    "EventKind": [
+      {
+        "name": "INFO",
+        "value": "info"
+      },
+      {
+        "name": "WARNING",
+        "value": "warning"
+      },
+      {
+        "name": "PROGRESS",
+        "value": "progress"
+      },
+      {
+        "name": "RETRY",
+        "value": "retry"
+      }
+    ]
+  },
+  "errors": {
+    "AlreadyExistsError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "AuthenticationError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "BusyError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "IntegrityError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "InvalidArgumentError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "NetworkError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "NotFoundError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "OperationCancelledError": {
+      "bases": [
+        "OperationError"
+      ],
+      "operation": "compatibility"
+    },
+    "OperationError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "PartialOperationError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    },
+    "ProotDistroError": {
+      "bases": [
+        "Exception"
+      ],
+      "operation": "compatibility"
+    },
+    "SessionStartupTimeoutError": {
+      "bases": [
+        "OperationError"
+      ],
+      "operation": "compatibility"
+    },
+    "UnsupportedOperationError": {
+      "bases": [
+        "ProotDistroError"
+      ],
+      "operation": "compatibility"
+    }
+  },
+  "exports": [
+    "API_VERSION",
+    "AlreadyExistsError",
+    "AuthenticationError",
+    "BackupResult",
+    "BuildResult",
+    "BusyError",
+    "CacheCleanupResult",
+    "CancellationToken",
+    "ContainerInfo",
+    "CredentialProvider",
+    "CredentialRequest",
+    "DetachedSession",
+    "EventHandler",
+    "EventKind",
+    "ImageInfo",
+    "ImageRemovalResult",
+    "IntegrityError",
+    "InvalidArgumentError",
+    "NetworkError",
+    "NotFoundError",
+    "OperationCancelledError",
+    "OperationError",
+    "OperationEvent",
+    "PartialOperationError",
+    "ProotDistro",
+    "ProotDistroError",
+    "PushResult",
+    "RegistryCredentials",
+    "RestoreResult",
+    "RuntimeConfig",
+    "SearchHit",
+    "SearchResult",
+    "SessionCommand",
+    "SessionInfo",
+    "SessionProcess",
+    "SessionSignalResult",
+    "SessionStartupTimeoutError",
+    "TransferResult",
+    "UnsupportedOperationError"
+  ],
+  "protocols": {
+    "CancellationToken": {
+      "members": {
+        "is_set": "() -> bool"
+      },
+      "runtime_checkable": true
+    },
+    "CredentialProvider": {
+      "members": {
+        "__call__": "(request: CredentialRequest) -> Optional[RegistryCredentials]"
+      },
+      "runtime_checkable": true
+    },
+    "EventHandler": {
+      "members": {
+        "__call__": "(event: OperationEvent) -> None"
+      },
+      "runtime_checkable": true
+    }
+  }
+}

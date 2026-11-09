@@ -165,6 +165,19 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
     OCI layout is present.
     """
     mode = _detect_tar_mode(out_path)
+    with atomic_write(os.path.abspath(out_path)) as tmp_fh:
+        _write_oci_archive(
+            tmp_fh, mode, manifest, image_config, image_ref
+        )
+
+
+def write_oci_archive_fileobj(fileobj, manifest, image_config, image_ref):
+    """Write an uncompressed OCI archive sequentially to a binary stream."""
+    _write_oci_archive(fileobj, "w|", manifest, image_config, image_ref)
+
+
+def _write_oci_archive(fileobj, mode, manifest, image_config, image_ref):
+    """Write one OCI archive to an already-open binary file object."""
     config_bytes = canonical_json(image_config)
     manifest_bytes = canonical_json(manifest)
     config_digest_hex = hashlib.sha256(config_bytes).hexdigest()
@@ -199,33 +212,32 @@ def write_oci_archive(out_path, manifest, image_config, image_ref):
         _build_docker_manifest(manifest, config_digest_hex, image_ref)
     )
 
-    with atomic_write(os.path.abspath(out_path)) as tmp_fh:
-        with tarfile.open(fileobj=tmp_fh, mode=mode) as tf:
-            # oci-layout first so our own install probe detects the
-            # OCI format on the first member it sees.
-            _add_bytes(tf, "oci-layout", oci_layout_bytes)
-            _add_bytes(tf, "index.json", index_bytes)
-            _add_bytes(tf, "manifest.json", docker_manifest_bytes)
-            _add_bytes(
-                tf, f"blobs/sha256/{manifest_digest_hex}", manifest_bytes,
+    with tarfile.open(fileobj=fileobj, mode=mode) as tf:
+        # oci-layout first so our own install probe detects the
+        # OCI format on the first member it sees.
+        _add_bytes(tf, "oci-layout", oci_layout_bytes)
+        _add_bytes(tf, "index.json", index_bytes)
+        _add_bytes(tf, "manifest.json", docker_manifest_bytes)
+        _add_bytes(
+            tf, f"blobs/sha256/{manifest_digest_hex}", manifest_bytes,
+        )
+        _add_bytes(
+            tf, f"blobs/sha256/{config_digest_hex}", config_bytes,
+        )
+        for layer in manifest["layers"]:
+            hex_digest = layer["digest"].split(":", 1)[1]
+            # The archive is content-addressed for whoever loads it,
+            # so a blob is packed only if it still hashes to the name
+            # the manifest gives it.
+            # The descriptor the check was made on, so the bytes
+            # packed are the bytes that were hashed.
+            src_fd = open_required_layer(
+                layer["digest"], what="Layer blob"
             )
-            _add_bytes(
-                tf, f"blobs/sha256/{config_digest_hex}", config_bytes,
-            )
-            for layer in manifest["layers"]:
-                hex_digest = layer["digest"].split(":", 1)[1]
-                # The archive is content-addressed for whoever loads it,
-                # so a blob is packed only if it still hashes to the name
-                # the manifest gives it.
-                # The descriptor the check was made on, so the bytes
-                # packed are the bytes that were hashed.
-                src_fd = open_required_layer(
-                    layer["digest"], what="Layer blob"
-                )
-                try:
-                    _add_fd(tf, src_fd, f"blobs/sha256/{hex_digest}")
-                finally:
-                    os.close(src_fd)
+            try:
+                _add_fd(tf, src_fd, f"blobs/sha256/{hex_digest}")
+            finally:
+                os.close(src_fd)
 
 
 def _build_docker_manifest(manifest, config_digest_hex, image_ref):

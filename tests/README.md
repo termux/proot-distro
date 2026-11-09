@@ -16,7 +16,7 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
 
 ## Layout
 
-- `unit/` — pure-function correctness (names, paths, arch/ELF detection,
+- `unit/` — pure-function correctness (public API contracts, names, paths, arch/ELF detection,
   Dockerfile parsing + `${VAR}` expansion, digest validation, cache keys,
   layer diff/whiteouts, OCI writer, quoting, env injection, argparse, ...).
 - `security/` — containment of malformed/malicious input. Proves a hostile
@@ -24,11 +24,18 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
   rootfs or the containers directory (path traversal via member names,
   hard-link / symlink linknames, crafted `index.json` digests, COPY/ADD
   sources, `--bind` specs).
-- `integration/` — the real `command_*` pipelines driven with
+- `integration/` — the public mutation API and real `command_*` pipelines
+  driven with
   `types.SimpleNamespace` args, against the sandboxed runtime tree
-  (install / backup→restore / build→install / copy / sync / rename / reset /
-  clear-cache / CLI dispatch / `login --get-proot-cmd`), and pull / push
-  authentication end to end against `_registry.py` (below).
+  (API + CLI install / backup→restore / build→install / sessions / image removal / cache cleanup / copy / sync / rename / reset /
+   clear-cache / CLI dispatch / `login --get-proot-cmd`), concurrent API
+   instances and processes, cancellation/interruption recovery, and pull / push
+   authentication end to end against `_registry.py` (below).
+- `compatibility/` — the versioned public Python API snapshot. It pins exports,
+  signatures, dataclass fields, enums, protocols, and exception inheritance.
+- `packaging/` — offline source/wheel builds and installed-artifact checks for
+  package contents, typing metadata, API compatibility, dependencies, and both
+  console scripts.
 - `live/` — opt-in smoke tests behind `@pytest.mark.live`, skipped unless
   `RUN_LIVE_TESTS=1` (real Docker Hub pull, real proot run).
 

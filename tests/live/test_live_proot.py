@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from proot_distro.api import ProotDistro
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.paths import container_rootfs
@@ -43,6 +44,17 @@ def test_live_proot_run_echo():
         )
         assert "PROOT_OK" in result.stdout, (
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+        # The programmatic API keeps the application process and returns a
+        # handle while using the same descriptor-pinned login pipeline.
+        process = ProotDistro().start(
+            name, ["echo", "API_PROOT_OK"], stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = process.communicate(timeout=120)
+        assert b"API_PROOT_OK" in stdout, (
+            f"stdout={stdout!r} stderr={stderr!r}"
         )
     finally:
         if os.path.isdir(container_rootfs(name)):

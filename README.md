@@ -34,7 +34,8 @@ bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
 1. [Introduction](#introduction)
 2. [Installation](#installation)
 3. [Quick start](#quick-start)
-4. [Commands](#commands-reference)
+4. [Python API](#python-api)
+5. [Commands](#commands-reference)
    * [`install`](#install--install-a-container)
    * [`search`](#search--search-docker-hub-for-images)
    * [`build`](#build--build-an-image-from-a-dockerfile)
@@ -52,12 +53,12 @@ bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
    * [`copy`](#copy--copy-files-to-or-from-a-container)
    * [`sync`](#sync--synchronize-files-to-or-from-a-container)
    * [`clear-cache`](#clear-cache--delete-the-download-cache)
-5. [How PRoot-Distro works](#how-proot-distro-works)
-6. [Storage layout](#storage-layout)
-7. [Environment variables](#environment-variables)
-8. [Shell completions](#shell-completions)
-9. [Limitations](#limitations)
-10. [Donate](#donate)
+6. [How PRoot-Distro works](#how-proot-distro-works)
+7. [Storage layout](#storage-layout)
+8. [Environment variables](#environment-variables)
+9. [Shell completions](#shell-completions)
+10. [Limitations](#limitations)
+11. [Donate](#donate)
 
 ---
 
@@ -178,6 +179,485 @@ proot-distro reset ubuntu
 # Permanently remove a container
 proot-distro remove ubuntu
 ```
+
+---
+
+## Python API
+
+Python applications can manage PRoot-Distro containers, images, files,
+backups, builds and sessions through the standardized `proot_distro.api`
+interface. They can also search Docker Hub. The API uses the same local
+containers, image cache and session registry as the command-line utility.
+
+Ready-to-run examples are available in [`samples/`](samples/README.md). They
+cover basic inventory calls, container sessions, streamed archives, builds,
+events, cancellation, credentials and separate application storage.
+
+`ProotDistro` is an in-process programmatic interface. It is not a client for
+a server and does not start a persistent service.
+
+### API compatibility
+
+`API_VERSION` is the public interface version as a `"MAJOR.MINOR"` string. It
+is independent of the PRoot-Distro package version:
+
+```python
+from proot_distro.api import API_VERSION
+
+major, minor = (int(part) for part in API_VERSION.split("."))
+```
+
+The current API version is `1.0`. Backward-compatible additions increment the
+minor version. Removing or incompatibly changing an exported name, method
+signature, model field, enum value, or exception relationship increments the
+major version. Bug and security fixes that preserve the public contract do not
+change `API_VERSION`. Deprecated interfaces remain available for the rest of
+their major version.
+
+Only names listed by `proot_distro.api.__all__` are covered by this policy.
+Modules below `proot_distro.api` and all other package modules are
+implementation details. Source and wheel distributions include the PEP 561
+`py.typed` marker so type checkers use these public annotations.
+
+```python
+from proot_distro.api import ProotDistro, ProotDistroError
+
+pd = ProotDistro()
+
+# Install from a registry, URL, or local archive.
+container = pd.install("alpine:3.21", name="my-alpine")
+
+for container in pd.list_containers():
+    print(container.name, container.image_reference)
+
+for image in pd.list_images():
+    print(image.identifier, image.architecture, image.complete)
+
+for session in pd.list_sessions():
+    print(session.pid, session.container, session.command)
+
+try:
+    result = pd.search("alpine", limit=5)
+except ProotDistroError as exc:
+    print(f"Search failed: {exc}")
+else:
+    for hit in result.hits:
+        print(hit.name)
+
+# Container management uses the same state and locks as the CLI.
+pd.rename_container("my-alpine", "test-alpine")
+pd.reset_container("test-alpine")  # OCI installs only; loses local changes
+pd.remove_container("test-alpine")  # permanent; returns former metadata
+```
+
+The returned records are immutable and copy iterable fields into tuples. API
+operations do not print messages or terminate the application with
+`SystemExit`. Failures inherit from `ProotDistroError`. An optional event
+handler receives live information, warning, progress, output, and network-retry
+events:
+
+```python
+pd = ProotDistro(event_handler=lambda event: print(event.message))
+```
+
+The API provides container, image and session inventories, Docker Hub search,
+and these container-management methods:
+
+| Method | Action |
+|---|---|
+| `install(SOURCE, name=..., architecture=..., allow_insecure=...)` | Install from an image reference, URL, or local archive. Returns `ContainerInfo`. |
+| `remove_container(NAME)` | Permanently remove a container. Returns its former `ContainerInfo`. |
+| `rename_container(OLD, NEW)` | Rename a container and update its link2symlink entries. |
+| `reset_container(NAME)` | Reinstall an OCI container from its recorded image. All changes in its rootfs are lost. |
+
+Files and backups use explicit paths or caller-owned binary streams instead of
+the embedding application's standard input and output:
+
+```python
+pd.copy("./settings.ini", "my-container:/etc/myapp/settings.ini")
+pd.copy("./assets", "my-container:/opt/assets", recursive=True)
+pd.move("my-container:/tmp/result", "./result")
+pd.sync("./site", "my-container:/srv/site", checksum=True, delete=True)
+
+backup = pd.backup("my-container", "./my-container.tar.gz")
+pd.remove_container("my-container")
+restored = pd.restore(backup.output)
+
+# Streams are useful for memory buffers, sockets, and application pipelines.
+import io
+archive = io.BytesIO()
+pd.backup("my-container", archive, compression="gzip")
+archive.seek(0)
+pd.restore(archive)
+```
+
+| Method | Action |
+|---|---|
+| `copy(SOURCE, DESTINATION, recursive=False)` | Copy a file, or a directory with `recursive=True`. |
+| `move(SOURCE, DESTINATION)` | Move a file or directory. |
+| `sync(SOURCE, DESTINATION, checksum=False, delete=False)` | Synchronize paths and optionally remove destination-only entries. |
+| `backup(NAME, OUTPUT, compression=None)` | Write a backup to a new host file or writable binary stream. Compression is inferred only for paths. |
+| `restore(ARCHIVE)` | Restore one container from a host backup path or readable binary stream. |
+
+`copy`, `move`, and `sync` accept the same `container:path` syntax as the
+CLI. A `pathlib.Path` always means a host path and is converted to an absolute
+path. Stream backups default to no compression; pass `compression="gzip"`,
+`"bzip2"`, `"xz"`, or `"zstd"` explicitly when needed.
+
+Images can be built, pushed, removed, and cleaned from the cache:
+
+```python
+build = pd.build(
+    "./context",
+    tags=["myuser/myapp:1"],
+    build_args={"VERSION": "1"},
+    outputs=["./myapp.oci.tar"],
+    install_as="myapp",
+)
+
+dockerfile = io.BytesIO(b"FROM scratch\nCOPY rootfs/ /\n")
+oci_archive = io.BytesIO()
+pd.build(
+    "./context",
+    dockerfile=dockerfile,
+    tags=["myuser/myapp:streamed"],
+    outputs=[oci_archive],
+)
+
+published = pd.push("myuser/myapp:1")
+pd.remove_image("myuser/myapp:1")
+pd.clear_cache(orphan=True)
+```
+
+| Method | Action |
+|---|---|
+| `build(PATH, ...)` | Build a Dockerfile, optionally export OCI archives and install a container. |
+| `push(IMAGE, architecture=None, allow_insecure=False)` | Push one cached image tag and return its digest and uploaded byte count. |
+| `remove_image(IDENTIFIER, architecture=None)` | Remove image variants by reference, ID prefix, or cache identifier. |
+| `clear_cache(orphan=False, build_cache=False)` | Clear all cache data, orphan layers, or the Dockerfile build cache. |
+
+`build_args` is a mapping of strings. `tags` and `outputs` accept iterables;
+a single output path or writable binary stream is also accepted. A Dockerfile
+may be a path or readable binary stream. Streamed OCI outputs are uncompressed
+tar archives; path suffixes continue to select output compression. A
+`credential_provider` can select credentials for
+`install`, `reset_container`, `push`, and each registry/repository encountered
+during a build. Static build credentials can still be supplied through
+`ProotDistro(credentials=...)` or directly to `build(credentials=...)`.
+
+Streams are consumed from their current position and need not be seekable.
+The API never closes, seeks, or flushes caller-owned streams. A successful
+method call means every output byte was passed to `write()`. `BackupResult`
+uses `output=None`, `RestoreResult` uses `archive=None`, and `BuildResult`
+uses `None` at each streamed output position. If an operation or stream method
+fails, output streams can contain a partial archive; path outputs retain their
+atomic-write behavior. Exceptions raised by `read()` or `write()` propagate
+to the caller. Exceptions from an event handler or credential provider also
+propagate. For worker-backed calls, these callback and stream failures first
+request cooperative cleanup; a worker that does not exit within five seconds
+is forcibly stopped.
+
+### Cancelling operations
+
+Worker-backed methods accept `cancel_event`. It can be a `threading.Event` or
+any object implementing the public `CancellationToken` protocol: its
+`is_set()` method must return a boolean.
+
+```python
+import threading
+
+from proot_distro.api import OperationCancelledError
+
+cancel = threading.Event()
+
+# Another thread can call cancel.set().
+try:
+    pd.build("./context", tags=["example:1"], cancel_event=cancel)
+except OperationCancelledError:
+    print("Build cancelled")
+```
+
+Cancellation applies to inventories, container and image management,
+transfers, archives, builds, pushes, cache cleanup, detached startup, command
+inspection, and session signalling. A token that is already set prevents the
+worker from starting and prevents registry credential providers from being
+called. Foreground `start` and `run` use the same token contract during setup.
+
+When cancellation is observed, the API sends `SIGINT` to the isolated worker
+process group. It then waits for command cleanup, atomic-file handling, event
+delivery, and stream pumps before raising `OperationCancelledError`. The token
+is polled every 0.1 seconds while waiting on worker channels. A callback,
+credential provider, or caller-owned stream method that is currently running
+must return before the calling thread can check it again.
+
+Cancellation is cooperative, not a transaction rollback. Container changes,
+copied entries, registry uploads, or detached startup may already have
+completed. Caller-owned output streams may contain partial data. Existing
+atomic path-output guarantees still apply. After cancellation, inspect the
+affected resource before retrying a destructive operation.
+
+### Container processes
+
+`start` opens a login session, while `run` executes the image's Entrypoint and
+Cmd. Both return a `SessionProcess`; they never replace the application
+process.
+
+```python
+import subprocess
+import threading
+
+process = pd.start(
+    "my-container",
+    ["uname", "-a"],
+    environment={"APP_MODE": "test"},
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+stdout, stderr = process.communicate(timeout=30)
+
+# Context management stops and reaps a session on every exit path.
+with pd.start("my-container", ["long-running-task"]) as process:
+    use_process(process)
+
+# Bound or cancel setup before proot has executed.
+cancel = threading.Event()
+process = pd.start(
+    "my-container",
+    startup_timeout=15,
+    cancel_event=cancel,
+)
+
+# Use the image's Entrypoint, replacing its Cmd arguments.
+server = pd.run("my-container", ["--port", "8080"])
+
+# Signals the complete tracked guest process tree, not only its proot parent.
+server.terminate()
+server.wait(timeout=10)
+```
+
+Without explicit `stdin`, `stdout`, or `stderr`, the session inherits the
+application's corresponding file descriptors. Values such as
+`subprocess.PIPE`, `subprocess.DEVNULL`, open files, and file descriptors use
+the normal `subprocess.Popen` conventions.
+
+Both methods support `user`, `environment`, `binds`, `work_dir`, port
+redirection, shared home/tmp/X11, isolated or minimal mode, emulator, kernel,
+hostname, and the Termux proot-extension switches. `start` shell-wraps its
+arguments like CLI `login`; `run` applies the image Entrypoint/Cmd rules.
+
+`startup_timeout` is a non-negative number of seconds, or `None` for the
+compatible unbounded default. Cancellation is observed during setup; after a
+method returns, use the `SessionProcess` methods. A timeout raises
+`SessionStartupTimeoutError`, while cancellation raises
+`OperationCancelledError`. Setup information and warnings are delivered to
+the configured event handler immediately, before `start` or `run` returns.
+
+`SessionProcess` is a context manager. Leaving its block terminates the whole
+tracked session tree, waits up to ten seconds, escalates to `SIGKILL` when
+needed, reaps the process, and closes pipe handles created by `subprocess.PIPE`.
+
+`kill_session(PID_OR_CONTAINER, signal_name="TERM")` can also signal a PID or
+every active session of a container. `SessionProcess.terminate()` and
+`.kill()` call this tracked-tree operation with `SIGTERM` and `SIGKILL`.
+
+For a session that must outlive its launching process, use the detached
+variants. Standard input always uses `/dev/null`. Standard output and error
+also default to `/dev/null`, but can be append-only host paths. The methods
+return an immutable `DetachedSession` containing its PID, container, and kind:
+
+```python
+session = pd.run_detached(
+    "my-container",
+    ["--port", "8080"],
+    stdout="./server.log",
+    stderr=subprocess.STDOUT,
+)
+pd.kill_session(session.pid)
+
+# Stop every tracked session in this RuntimeConfig.
+pd.kill_all_sessions(signal_name="KILL")
+```
+
+`start_detached` and `run_detached` use a short-lived launcher. No
+PRoot-Distro Python code runs after a fork in the embedding application. The
+method returns only after the launcher confirms that Proot started. The
+detached session retains its pinned rootfs and shared container lock after the
+launcher exits.
+
+Detached output paths are opened in append mode before daemonization.
+`subprocess.DEVNULL` and `None` select `/dev/null`; `subprocess.STDOUT` is
+accepted for `stderr`. Persistent detached output does not accept
+`subprocess.PIPE` or in-memory streams because no parent-side pump remains
+after startup.
+
+### Inspecting session commands
+
+Use `inspect_start` or `inspect_run` to inspect session setup without executing
+proot:
+
+```python
+command = pd.inspect_run("my-container", ["--port", "8080"])
+
+print(command.executable)
+print(command.argv)
+print(command.environment_dict)
+print(command.inner_command)
+print(command.shell_command)
+```
+
+The returned immutable `SessionCommand` also includes `container`, `kind`,
+`rootfs`, `work_dir`, and `user`. It accepts the same session options as
+`start` and `run` except stdio.
+
+The inspected argv is intentionally the printable, path-based form used by
+CLI `--get-proot-cmd`: it contains `--rootfs=<path>`. Actual API sessions pin
+the validated rootfs directory by descriptor, enter that directory, and pass
+`--rootfs=.`. Executing `SessionCommand.shell_command` yourself does not retain
+that descriptor-pinning security guarantee. Inspection performs the same
+host-side preparation as session startup, including legacy layout migration
+and profile/sysdata updates, but does not register or execute a session.
+
+Mutating operations run in a short-lived child process so their signal and
+cleanup behavior cannot alter the embedding application. This worker exits
+when the method finishes; it is not a persistent service.
+
+### Separate API storage
+
+By default, the API uses the same storage as the command-line utility. Pass a
+`RuntimeConfig` to keep an application's containers and cache separate:
+
+```python
+from proot_distro.api import ProotDistro, RuntimeConfig
+
+config = RuntimeConfig(
+    runtime_dir="./app-state",
+    cache_dir="./app-cache",
+    proot_path="/path/to/proot",  # optional
+)
+pd = ProotDistro(config)
+```
+
+Paths are converted to absolute paths when the configuration is created. The
+runtime and cache roots must be different and cannot be a filesystem root.
+The runtime root also cannot be placed inside the cache root.
+Each `ProotDistro` instance keeps its configuration, so multiple applications
+or test environments can use independent state in the same Python process.
+
+### Registry credentials
+
+API registry credentials are explicit. The API does not inherit
+`PD_DOCKER_AUTH`; that environment variable remains the CLI interface.
+
+```python
+from proot_distro.api import ProotDistro, RegistryCredentials
+
+pd = ProotDistro(credentials=RegistryCredentials(
+    username="myuser",
+    password="my-password-or-token",
+))
+pd.install("myuser/private-image:1", name="private-image")
+```
+
+The password is omitted from the credential object's `repr()`. It is sent to
+the short-lived worker through its private input pipe and is applied only to
+that registry operation.
+
+An application using several registries can provide credentials on demand:
+
+```python
+from proot_distro.api import RegistryCredentials
+
+def credentials_for(request):
+    if request.registry == "ghcr.io":
+        return RegistryCredentials("myuser", "my-token")
+    return None
+
+pd = ProotDistro(credential_provider=credentials_for)
+```
+
+The provider implements the public `CredentialProvider` callable protocol. It
+receives a `CredentialRequest` containing `registry`, `repository`, and
+`operation`, and must return `RegistryCredentials` or `None`.
+`credentials` and `credential_provider` cannot be used together. Public Docker
+Hub search never requests or sends registry credentials. A registry refusal
+raises `AuthenticationError` without including the password or token.
+
+During a multi-stage build, credential requests travel over a private
+bidirectional worker channel. The provider runs synchronously in the calling
+thread and may return different accounts for each registry. Secrets are not
+placed in argv or the worker environment, and the channel descriptor is
+close-on-exec so Dockerfile `RUN` children cannot inherit it.
+
+### API events
+
+Pass an `EventHandler` callable to receive immutable `OperationEvent` records.
+Event kinds are `INFO`, `WARNING`, `PROGRESS`, and `RETRY`. Messages are
+intended for display; applications should use exception types and result models
+for control flow. Progress events also provide `current`, `total`, and `unit`
+when those values are known. `phase` is a machine-readable stage name. Current
+values are
+`network`, `verify`, `download`, `layer-download`, `extract`, `copy`, `sync`,
+`archive`, `layer-pack`, `upload`, `remove`, `remove-image`, `rename`,
+`clear-cache`, `build-output`, and `session-setup`.
+Applications must allow additional phase names in future releases.
+
+`resource` identifies the primary container, image, layer digest, path, search
+query, or other object when one is known. A more specific producer resource,
+such as a layer digest, takes precedence over the operation's default subject.
+URL resources exclude user information, queries, and fragments so credentials
+and access tokens are not exposed through event metadata.
+
+Foreground session setup events are streamed through the close-on-exec startup
+handshake, so warnings arrive before the guest process starts.
+
+```python
+from proot_distro.api import EventKind, ProotDistro
+
+def show_event(event):
+    if event.kind in (EventKind.INFO, EventKind.PROGRESS):
+        print(event.message)
+
+pd = ProotDistro(event_handler=show_event)
+```
+
+Worker-backed operations deliver events live over a private bounded channel;
+they are no longer collected until completion. Dockerfile `RUN` output arrives
+as `INFO` events with `phase="build-output"`, and registry upload progress
+arrives as `PROGRESS` events. Retried network requests use `RETRY` with
+`phase="network"`; applications do not need to parse retry message text.
+Callbacks run synchronously in the thread that called the API method and apply
+backpressure, so they should return promptly.
+
+If an event callback raises, its original exception propagates and the worker
+is stopped. The operation may already have changed state or written part of a
+caller-owned stream. Applications that cannot tolerate this should catch
+exceptions inside the callback. Existing atomic path-output guarantees still
+apply. `KeyboardInterrupt` is handled separately: the API forwards `SIGINT`,
+drains the worker's cleanup events, waits for cleanup to finish, and then
+re-raises the interruption in the calling thread.
+
+### API errors
+
+All public failures inherit from `ProotDistroError`. Applications can catch
+more precise classes without parsing display messages:
+
+| Exception | Meaning |
+|---|---|
+| `InvalidArgumentError` | A public method argument is malformed. |
+| `NotFoundError` | A requested container, image, source, or archive is missing. |
+| `AlreadyExistsError` | An operation refused to overwrite an existing resource. |
+| `BusyError` | A container or image is locked by another operation or session. |
+| `AuthenticationError` | Registry credentials or permissions were refused. |
+| `NetworkError` | Communication with a remote service failed. |
+| `IntegrityError` | Content failed digest or structural validation. |
+| `UnsupportedOperationError` | The resource does not support the operation, such as resetting a plain rootfs archive. |
+| `PartialOperationError` | Some entries were processed but the whole operation did not complete. |
+| `OperationCancelledError` | An explicit cancellation token stopped an operation or session setup. |
+| `SessionStartupTimeoutError` | Foreground session setup exceeded its configured timeout. |
+| `OperationError` | Another operation failure without a more specific category. |
+
+Worker-backed methods exchange a structured internal error record. Exception
+selection does not depend on parsing colored CLI output.
 
 ---
 

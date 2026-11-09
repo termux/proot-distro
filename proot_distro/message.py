@@ -38,6 +38,8 @@
 
 import os
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 try:
     import termios
@@ -167,6 +169,36 @@ def terminal_width(default: int = 80) -> int:
 
 _quiet = False
 
+# A one-shot API worker installs a sink while it invokes a CLI-era operation.
+# ContextVar keeps this routing local to that execution context; normal CLI
+# calls see None and retain their exact terminal behavior.
+_event_sink = ContextVar("proot_distro_message_event_sink", default=None)
+
+
+@contextmanager
+def capture_log_events(sink):
+    """Route logs to *sink(kind, text, phase, resource)* temporarily.
+
+    This is internal plumbing for the programmatic API worker. Plain msg()
+    output is deliberately not captured: it contains CLI layout and command
+    hints rather than operation events.
+    """
+    token = _event_sink.set(sink)
+    try:
+        yield
+    finally:
+        _event_sink.reset(token)
+
+
+def _emit_event(
+    kind: str, text: str, *, phase=None, resource=None,
+) -> bool:
+    sink = _event_sink.get()
+    if sink is None:
+        return False
+    sink(kind, text, phase, resource)
+    return True
+
 
 def set_quiet(value: bool) -> None:
     """Enable or disable quiet mode for the rest of the process.
@@ -207,25 +239,42 @@ def msg(*args):
     print(*args, file=sys.stderr)
 
 
-def log_info(text: str):
+def log_info(text: str, *, phase=None, resource=None):
     """Emit a `[*] text` info line. No-op under --quiet."""
+    if _emit_event("info", text, phase=phase, resource=resource):
+        return
     if _quiet:
         return
     msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
 
 
-def log_error(text: str):
+def log_retry(text: str, *, resource=None):
+    """Emit a retry notice, retaining the CLI's ordinary info styling."""
+    if _emit_event("retry", text, phase="network", resource=resource):
+        return
+    if _quiet:
+        return
+    msg(f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
+
+
+def log_error(text: str, *, phase=None, resource=None):
     """Emit a `[!] text` error line. Always shown — even under --quiet."""
+    if _emit_event("error", text, phase=phase, resource=resource):
+        return
     msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
 
 
-def warn(text: str):
+def warn(text: str, *, phase=None, resource=None):
     """Emit a 'Warning: text' line in yellow."""
+    if _emit_event("warning", text, phase=phase, resource=resource):
+        return
     msg(f"{C['BYELLOW']}Warning: {C['YELLOW']}{text}{C['RST']}")
 
 
 def crit_error(text: str):
     """Emit an 'Error: text' line in red. Caller typically calls sys.exit(1)."""
+    if _emit_event("error", text):
+        return
     msg(f"{C['BRED']}Error: {C['RED']}{text}{C['RST']}")
 
 

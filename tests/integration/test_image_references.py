@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro.arch import get_device_cpu_arch
-from proot_distro.commands import install as install_mod
+from proot_distro.operations import install as install_mod
 from proot_distro.commands.build import command_build
 from proot_distro.commands.install import (
     _resolve_install_name, command_install,

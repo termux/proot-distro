@@ -1,0 +1,229 @@
+#
+# Proot-Distro - manage proot containers.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+
+"""Immutable internal results returned by shared operation services."""
+
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+
+@dataclass(frozen=True)
+class CacheCleanup:
+    """Cache cleanup mode and measured byte counts."""
+
+    mode: str
+    bytes_before: int
+    bytes_after: int
+
+
+@dataclass(frozen=True)
+class ContainerRemoval:
+    """Description of a removed container-state entry."""
+
+    name: str
+    was_directory: bool
+
+
+@dataclass(frozen=True)
+class ContainerRename:
+    """Description of a completed container rename."""
+
+    old_name: str
+    new_name: str
+
+
+@dataclass(frozen=True)
+class InstalledContainer:
+    """An installed container and its recorded image origin."""
+
+    name: str
+    image_reference: Optional[str]
+    architecture: Optional[str]
+    image_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class CachedImage:
+    """Validated cached-image metadata used by operation services."""
+
+    identifier: str
+    reference: str
+    repository: str
+    architecture: str
+    image_id: str
+    size_bytes: int
+    layer_count: int
+    missing_layers: int
+    created: str
+    cached_at: float
+    cache_key: str
+    cache_image_id: str
+
+
+@dataclass(frozen=True)
+class ImageRemoval:
+    """Images removed together with cleanup accounting and dependents."""
+
+    removed: tuple
+    reclaimed_bytes: int
+    dependent_containers: tuple
+
+
+@dataclass(frozen=True)
+class ActiveSession:
+    """One validated live session registry record."""
+
+    pid: int
+    container: str
+    kind: str
+    command: Tuple[str, ...]
+    user: str
+    start_time: float
+    isolated: bool
+    minimal: bool
+    detached: bool
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """A completed or partially completed filesystem transfer."""
+
+    operation: str
+    source: str
+    destination: str
+    failures: int = 0
+
+
+@dataclass(frozen=True)
+class ArchiveBackup:
+    """A container archive written to a path or caller-owned stream."""
+
+    container_name: str
+    output: Optional[str]
+    compression: str
+    size_bytes: Optional[int]
+
+
+@dataclass(frozen=True)
+class ArchiveRestore:
+    """A container restored from a path or caller-owned stream."""
+
+    container_name: str
+    archive: Optional[str]
+
+
+@dataclass(frozen=True)
+class ContainerInstallation:
+    """A container installed from an archive, URL, or OCI reference."""
+
+    name: str
+    source: str
+    architecture: str
+    has_entrypoint: bool
+
+
+@dataclass(frozen=True)
+class ImageBuild:
+    """Images and optional artifacts produced by one Dockerfile build."""
+
+    images: Tuple[CachedImage, ...]
+    outputs: Tuple[Optional[str], ...]
+    installed_container: Optional[ContainerInstallation]
+    layer_count: int
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class ImagePush:
+    """A cached image tag published to an OCI registry."""
+
+    image: CachedImage
+    registry: str
+    repository: str
+    tag: str
+    manifest_digest: Optional[str]
+    bytes_uploaded: int
+
+
+@dataclass(frozen=True)
+class SessionSignal:
+    """Tracked session roots selected for one signal operation."""
+
+    target: str
+    signal: str
+    pids: Tuple[int, ...]
+    session_count: int
+    signals_delivered: int
+    survivors: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class SessionLaunch:
+    """Immutable metadata produced by shared login/run preparation."""
+
+    kind: str
+    container: str
+    executable: str
+    argv: Tuple[str, ...]
+    environment: Tuple[Tuple[str, str], ...]
+    inner_command: Tuple[str, ...]
+    rootfs: str
+    work_dir: str
+    user: str
+    uid: Optional[str]
+    gid: Optional[str]
+    home: Optional[str]
+    shell: Optional[str]
+    distro_type: str
+    architecture: str
+    isolated: bool
+    minimal: bool
+    shell_command: str
+
+    def registration(self, detached: bool) -> dict:
+        """Return the session-registry payload for this launch."""
+        return {
+            "container": self.container,
+            "kind": self.kind,
+            "command_argv": list(self.inner_command),
+            "user": self.user,
+            "isolated": self.isolated,
+            "minimal": self.minimal,
+            "detach": detached,
+        }
+
+
+__all__ = (
+    "ActiveSession",
+    "ArchiveBackup",
+    "ArchiveRestore",
+    "CacheCleanup",
+    "CachedImage",
+    "ContainerRemoval",
+    "ContainerInstallation",
+    "ContainerRename",
+    "ImageRemoval",
+    "ImageBuild",
+    "ImagePush",
+    "InstalledContainer",
+    "SessionSignal",
+    "SessionLaunch",
+    "Transfer",
+)

@@ -11,8 +11,8 @@ import os
 
 import pytest
 
-from proot_distro.commands import login
-from proot_distro.commands.login import env as login_env
+import proot_distro.operations.session_prepare as login
+import proot_distro.session_env as login_env
 from proot_distro.paths import container_rootfs
 
 

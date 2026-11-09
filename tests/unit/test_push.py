@@ -1,4 +1,4 @@
-# Tests for proot_distro.helpers.docker.push — that registry uploads handle
+# Tests for proot_distro.operations.push — that registry uploads handle
 # HTTP errors the same way as the install/pull path: transient failures (5xx)
 # are retried via the shared retry_http policy, while deterministic ones (4xx)
 # fail fast. The opener is mocked; no network.
@@ -14,7 +14,7 @@ import urllib.request
 import pytest
 
 from proot_distro.helpers import download
-from proot_distro.helpers.docker import push
+from proot_distro.operations import push
 
 
 @pytest.fixture(autouse=True)
@@ -299,7 +299,7 @@ def test_push_refuses_a_malformed_cached_manifest(monkeypatch, manifest):
     monkeypatch.setattr(push, "load_manifest_cache",
                         lambda ref, arch: (manifest, "me/app", {}))
     with pytest.raises(RuntimeError):
-        push.push_image("reg.example/me/app:latest", "x86_64")
+        push._push_registry_image("reg.example/me/app:latest", "x86_64")
 
 
 def test_push_image_threads_base_and_insecure(monkeypatch):
@@ -343,7 +343,7 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
 
     monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
 
-    result = push.push_image(
+    result = push._push_registry_image(
         "reg.example/me/app:latest", "x86_64", insecure=True
     )
 
@@ -367,7 +367,7 @@ def test_push_asks_for_a_credential_that_can_push(monkeypatch, tmp_path):
         return "Bearer TKN", _BASE
 
     monkeypatch.setattr(push, "get_auth_token", fake_auth)
-    push.push_image("reg.example/me/app:1", "x86_64")
+    push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert seen == {"repo": "me/app", "registry": "reg.example",
                     "actions": "pull,push"}
 
@@ -397,7 +397,7 @@ def test_every_push_request_carries_the_resolved_authorization(
         return _FakeResp(201)
 
     _patch_opener(monkeypatch, fake)
-    push.push_image("reg.example/me/app:1", "x86_64")
+    push._push_registry_image("reg.example/me/app:1", "x86_64")
     # Layer and config: probe, upload session, upload. Then the manifest.
     assert [m for m, _a in sent] == ["HEAD", "POST", "PUT"] * 2 + ["PUT"]
     assert all(a == auth for _m, a in sent)
@@ -479,7 +479,7 @@ def test_push_image_keeps_docker_hub_verified(monkeypatch, ref, registry,
     monkeypatch.setattr(push, "get_auth_token", fake_auth)
     monkeypatch.setattr(push, "_blob_exists", fake_exists)
     monkeypatch.setattr(push, "_put_manifest", fake_put)
-    push.push_image(ref, "x86_64", insecure=True)
+    push._push_registry_image(ref, "x86_64", insecure=True)
     assert seen and all(flag is expected for flag in seen)
 
 
@@ -521,7 +521,7 @@ def test_push_image_uploads_to_the_references_repository(monkeypatch):
     monkeypatch.setattr(push, "_blob_exists", fake_blob_exists)
     monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
 
-    result = push.push_image("reg.example/me/app:1", "x86_64")
+    result = push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert {entry[1] for entry in repos} == {"me/app"}
     assert ("manifest", "me/app", "1") in repos
     assert result["repo"] == "me/app"
@@ -533,7 +533,7 @@ def test_push_image_refuses_a_digest_before_reading_the_cache(monkeypatch):
 
     monkeypatch.setattr(push, "load_manifest_cache", no_cache)
     with pytest.raises(RuntimeError, match="use a tag"):
-        push.push_image("reg.example/me/app@sha256:" + "a" * 64, "x86_64")
+        push._push_registry_image("reg.example/me/app@sha256:" + "a" * 64, "x86_64")
 
 
 # ----- 429 Too Many Requests ----------------------------------------------
@@ -587,7 +587,7 @@ def test_a_rate_limited_push_says_so_at_every_stage(monkeypatch, tmp_path,
     _pushable(monkeypatch, tmp_path)
     monkeypatch.setattr(push, stage, _refuse)
     with pytest.raises(RuntimeError) as exc:
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
     text = str(exc.value)
     assert "Registry 'reg.example' refused to accept" in text
     assert "HTTP 429" in text
@@ -607,7 +607,7 @@ def test_a_spent_quota_on_a_push_is_not_retried(monkeypatch, tmp_path):
 
     _patch_opener(monkeypatch, refuse)
     with pytest.raises(RuntimeError) as exc:
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert "HTTP 429" in str(exc.value)
     assert len(calls) == 1
 
@@ -620,7 +620,7 @@ def test_other_http_errors_still_reach_the_command(monkeypatch, tmp_path):
 
     monkeypatch.setattr(push, "_put_manifest", bad_request)
     with pytest.raises(urllib.error.HTTPError):
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
 
 
 def test_auth_refusals_keep_their_own_message(monkeypatch, tmp_path):
@@ -631,7 +631,7 @@ def test_auth_refusals_keep_their_own_message(monkeypatch, tmp_path):
 
     monkeypatch.setattr(push, "_put_manifest", denied)
     with pytest.raises(RuntimeError) as exc:
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert "Push denied" in str(exc.value)
 
 

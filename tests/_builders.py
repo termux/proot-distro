@@ -174,7 +174,7 @@ def pull_image_into(image_ref, rootfs_dir, arch, **kw):
 
 def install_local_into(archive_path, rootfs_dir, arch):
     """install_from_local_file() for a rootfs given as a path."""
-    from proot_distro.commands.install_local import install_from_local_file
+    from proot_distro.operations.install_local import install_from_local_file
     with dir_fd(rootfs_dir) as rfd:
         return install_from_local_file(str(archive_path), rfd, arch)
 

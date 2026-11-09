@@ -12,10 +12,12 @@ import pytest
 
 from _builders import extract_tar_into, install_local_into, pull_image_into
 from proot_distro import compress
-from proot_distro.commands import backup as backup_mod
-from proot_distro.commands import restore as restore_mod
+from proot_distro.commands import backup as backup_cmd
+from proot_distro.commands import restore as restore_cmd
 from proot_distro.commands.backup import command_backup
 from proot_distro.commands.restore import command_restore
+from proot_distro.operations import backup as backup_mod
+from proot_distro.operations import restore as restore_mod
 from proot_distro.helpers.docker import pull as pull_mod
 from proot_distro.paths import container_dir, container_rootfs
 
@@ -82,7 +84,7 @@ def test_backup_to_stdout_is_zstd_and_restores(tmp_path, builders,
         def isatty(self):
             return False
 
-    monkeypatch.setattr(backup_mod.sys, "stdout", _Pipe())
+    monkeypatch.setattr(backup_cmd.sys, "stdout", _Pipe())
     _backup("pbox", None, compression="zstd")
     piped = captured.getvalue()
     assert piped[:4] == compress.ZSTD_MAGIC
@@ -112,7 +114,7 @@ def test_restore_from_zstd_stdin(tmp_path, builders, monkeypatch):
         def isatty(self):
             return False
 
-    monkeypatch.setattr(restore_mod.sys, "stdin", _Stdin())
+    monkeypatch.setattr(restore_cmd.sys, "stdin", _Stdin())
     command_restore(SimpleNamespace(archive=None, verbose=False))
     assert builders.tree_snapshot(container_rootfs("sbox")) == expected
 
@@ -193,7 +195,7 @@ def test_restore_stdin_names_zstd_instead_of_corruption(monkeypatch, capsys):
         def isatty(self):
             return False
 
-    monkeypatch.setattr(restore_mod.sys, "stdin", _Stdin())
+    monkeypatch.setattr(restore_cmd.sys, "stdin", _Stdin())
     with pytest.raises(SystemExit) as exc:
         command_restore(SimpleNamespace(archive=None, verbose=False))
     assert exc.value.code == 1

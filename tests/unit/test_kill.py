@@ -1,4 +1,4 @@
-# Tests for proot_distro.commands.kill — the pure process-tree walk and
+# Tests for proot_distro.operations.session_signals — process-tree walking and
 # signal parsing, plus an end-to-end teardown of a real process tree.
 #
 # The tree-walk helpers are pure given a {pid: ppid} map, so most cases
@@ -17,9 +17,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.commands import kill
+import proot_distro.operations.session_signals as kill
 from proot_distro.session import register_session
-from proot_distro.commands.kill import (
+from proot_distro.commands.kill import command_kill
+from proot_distro.operations.errors import (
+    SessionSignalFailure,
+    SessionSignalValidationFailure,
+)
+from proot_distro.operations.session_signals import (
     _collect_tree,
     _forest_roots,
     _is_alive,
@@ -29,7 +34,7 @@ from proot_distro.commands.kill import (
     _read_pid_ppid,
     _root_is_proot,
     _signal_label,
-    command_kill,
+    signal_sessions,
 )
 
 _HAVE_SH = shutil.which("sh") is not None and shutil.which("sleep") is not None
@@ -116,13 +121,13 @@ def test_parse_signal_numbers():
     assert int(_parse_signal("15")) == 15
 
 
-def test_parse_signal_invalid_name_exits():
-    with pytest.raises(SystemExit):
+def test_parse_signal_invalid_name_is_typed():
+    with pytest.raises(SessionSignalValidationFailure):
         _parse_signal("bogus")
 
 
-def test_parse_signal_invalid_number_exits():
-    with pytest.raises(SystemExit):
+def test_parse_signal_invalid_number_is_typed():
+    with pytest.raises(SessionSignalValidationFailure):
         _parse_signal("99999")
 
 
@@ -301,6 +306,11 @@ def test_root_is_proot_accepts_renamed_binary(monkeypatch, tmp_path):
     proc = subprocess.Popen([str(alt), "-c", "sleep 30"])
     try:
         time.sleep(0.3)
+        with open(f"/proc/{proc.pid}/comm") as stream:
+            if stream.read().strip() != alt.name[:15]:
+                pytest.skip(
+                    "proc comm does not use the executed file name"
+                )
         monkeypatch.delenv("PD_PROOT_BIN", raising=False)
         assert _root_is_proot(proc.pid) is False
         monkeypatch.setenv("PD_PROOT_BIN", str(alt))
@@ -325,10 +335,14 @@ def test_teardown_escalates_when_the_session_outlives_the_signal(monkeypatch):
     monkeypatch.setattr(kill, "_live_roots", lambda t, p=None: [42])
     monkeypatch.setattr(kill, "_drained", lambda t, p=None: False)
     sent, escalated = [], []
-    monkeypatch.setattr(kill, "_signal_pass",
-                        lambda roots, sig: sent.append(sig) or 1)
-    monkeypatch.setattr(kill, "_escalate",
-                        lambda roots: escalated.append(roots) or 1)
+    monkeypatch.setattr(
+        kill, "_signal_pass",
+        lambda roots, sig, context=None: sent.append(sig) or 1,
+    )
+    monkeypatch.setattr(
+        kill, "_escalate",
+        lambda roots, context=None: escalated.append(roots) or 1,
+    )
 
     kill._teardown([{"pid": 42}], signal.SIGTERM)
 
@@ -341,10 +355,14 @@ def test_teardown_stops_at_the_requested_signal_once_drained(monkeypatch):
     monkeypatch.setattr(kill, "_live_roots", lambda t, p=None: [42])
     monkeypatch.setattr(kill, "_drained", lambda t, p=None: True)
     sent, escalated = [], []
-    monkeypatch.setattr(kill, "_signal_pass",
-                        lambda roots, sig: sent.append(sig) or 1)
-    monkeypatch.setattr(kill, "_escalate",
-                        lambda roots: escalated.append(roots) or 1)
+    monkeypatch.setattr(
+        kill, "_signal_pass",
+        lambda roots, sig, context=None: sent.append(sig) or 1,
+    )
+    monkeypatch.setattr(
+        kill, "_escalate",
+        lambda roots, context=None: escalated.append(roots) or 1,
+    )
 
     kill._teardown([{"pid": 42}], signal.SIGTERM)
 
@@ -360,10 +378,14 @@ def test_teardown_never_escalates_non_terminating(monkeypatch, signame):
     monkeypatch.setattr(kill, "_live_roots", lambda t, p=None: [42])
     monkeypatch.setattr(kill, "_drained", lambda t, p=None: False)
     sent, escalated = [], []
-    monkeypatch.setattr(kill, "_signal_pass",
-                        lambda roots, sig: sent.append(sig) or 1)
-    monkeypatch.setattr(kill, "_escalate",
-                        lambda roots: escalated.append(roots) or 1)
+    monkeypatch.setattr(
+        kill, "_signal_pass",
+        lambda roots, sig, context=None: sent.append(sig) or 1,
+    )
+    monkeypatch.setattr(
+        kill, "_escalate",
+        lambda roots, context=None: escalated.append(roots) or 1,
+    )
 
     kill._teardown([{"pid": 42}], getattr(signal, signame))
 
@@ -388,24 +410,53 @@ def test_escalate_sends_sigquit_only_to_proot_roots(monkeypatch):
 # Truthful reporting
 # ---------------------------------------------------------------------------
 
-def test_report_exits_nonzero_when_processes_survive(monkeypatch):
+def test_service_raises_typed_failure_when_processes_survive(monkeypatch):
+    session = {"pid": 111, "container": "box"}
+    monkeypatch.setattr(kill, "active_sessions", lambda: [session])
+    monkeypatch.setattr(
+        kill, "_tracked_sessions", lambda selected, context=None: selected
+    )
+    monkeypatch.setattr(
+        kill, "_teardown", lambda tracked, sig, context=None: 4
+    )
     monkeypatch.setattr(kill, "_survivors", lambda tracked: [111, 222])
-    with pytest.raises(SystemExit) as excinfo:
-        kill._report([{"pid": 111}], signal.SIGTERM, 4)
-    assert excinfo.value.code == 1
+    with pytest.raises(SessionSignalFailure) as excinfo:
+        signal_sessions("box")
+    assert excinfo.value.result.survivors == (111, 222)
+    assert excinfo.value.result.signals_delivered == 4
 
 
-def test_report_succeeds_when_nothing_survives(monkeypatch):
+def test_service_reports_success_when_nothing_survives(monkeypatch):
+    session = {"pid": 111, "container": "box"}
+    monkeypatch.setattr(kill, "active_sessions", lambda: [session])
+    monkeypatch.setattr(
+        kill, "_tracked_sessions", lambda selected, context=None: selected
+    )
+    monkeypatch.setattr(
+        kill, "_teardown", lambda tracked, sig, context=None: 4
+    )
     monkeypatch.setattr(kill, "_survivors", lambda tracked: [])
-    kill._report([{"pid": 111}], signal.SIGTERM, 4)  # must not raise
+    result = signal_sessions("box")
+    assert result.pids == (111,)
+    assert result.signals_delivered == 4
+    assert result.survivors == ()
 
 
-def test_report_skips_survivor_check_for_non_terminating_signals(monkeypatch):
+def test_service_skips_survivors_for_non_terminating_signals(monkeypatch):
+    session = {"pid": 111, "container": "box"}
+    monkeypatch.setattr(kill, "active_sessions", lambda: [session])
+    monkeypatch.setattr(
+        kill, "_tracked_sessions", lambda selected, context=None: selected
+    )
+    monkeypatch.setattr(
+        kill, "_teardown", lambda tracked, sig, context=None: 3
+    )
     checked = []
     monkeypatch.setattr(kill, "_survivors",
                         lambda tracked: checked.append(1) or [])
-    kill._report([{"pid": 111}], signal.SIGSTOP, 3)
+    result = signal_sessions("box", signal_name="STOP")
     assert checked == []
+    assert result.signals_delivered == 3
 
 
 # ---------------------------------------------------------------------------

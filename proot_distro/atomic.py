@@ -70,6 +70,7 @@
 import contextlib
 import errno
 import os
+import signal
 import tempfile
 
 from proot_distro import dirfd, statedir
@@ -184,6 +185,28 @@ def _close_quietly(fd: int) -> None:
         pass
 
 
+@contextlib.contextmanager
+def _defer_sigint():
+    """Defer SIGINT until a newly created resource has a cleanup scope.
+
+    Python may raise ``KeyboardInterrupt`` immediately after a creation syscall
+    returns but before its result is assigned. Blocking SIGINT only around that
+    syscall lets the surrounding ``try`` learn the descriptor and name first;
+    restoring the mask then delivers any pending interrupt inside the cleanup
+    scope. The project targets Linux/Android, where ``pthread_sigmask`` is
+    available, but the fallback retains ordinary behavior on other hosts.
+    """
+    pthread_sigmask = getattr(signal, "pthread_sigmask", None)
+    if pthread_sigmask is None:
+        yield
+        return
+    previous = pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        yield
+    finally:
+        pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 def _replace_at(dir_fd: int, name: str, suffix: str):
     """atomic_replace's body for a destination directory already validated."""
     tmp_name = dirfd.temp_name(
@@ -193,8 +216,12 @@ def _replace_at(dir_fd: int, name: str, suffix: str):
     # that must read its own bytes back (a layer blob handed to the
     # extractor) does it through this descriptor rather than by opening
     # the name a second time.
-    fd, _st = dirfd.open_new_at(dir_fd, tmp_name, 0o600, readable=True)
+    fd = None
     try:
+        with _defer_sigint():
+            fd, _st = dirfd.open_new_at(
+                dir_fd, tmp_name, 0o600, readable=True
+            )
         yield fd
         written = os.fstat(fd)
         os.close(fd)
@@ -244,12 +271,15 @@ def _replace_by_name(path: str, suffix: str):
     """atomic_replace's body for a path the user chose, not the program."""
     dest_dir = os.path.dirname(path) or "."
     os.makedirs(dest_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        prefix=os.path.basename(path) + ".",
-        suffix=suffix,
-        dir=dest_dir,
-    )
+    fd = None
+    tmp = None
     try:
+        with _defer_sigint():
+            fd, tmp = tempfile.mkstemp(
+                prefix=os.path.basename(path) + ".",
+                suffix=suffix,
+                dir=dest_dir,
+            )
         yield fd
         os.close(fd)
         fd = None
@@ -257,8 +287,9 @@ def _replace_by_name(path: str, suffix: str):
     except BaseException:
         if fd is not None:
             _close_quietly(fd)
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
         raise

@@ -421,6 +421,9 @@ def test_hardlink_does_not_follow_a_parent_swapped_after_the_resolve(
     _assert_no_escape(tmp_path, sentinel)
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_a_hardlinked_member_name_is_not_written_through(env):
     """A file member replaces the name; it never writes into a linked inode."""
     tmp_path, root, sentinel = env

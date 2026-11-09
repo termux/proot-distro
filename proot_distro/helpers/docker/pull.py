@@ -44,6 +44,7 @@ import os
 import urllib.error
 
 from proot_distro.compress import ZSTD_AVAILABLE, unsupported_msg
+from proot_distro.operation_errors import NetworkFailure
 from proot_distro.message import log_info, log_error, warn
 from proot_distro.progress import fmt_size
 from proot_distro.helpers.download import (
@@ -69,6 +70,7 @@ from proot_distro.helpers.docker.media import (
 )
 from proot_distro.helpers.docker.refs import ARCH_TO_DOCKER, parse_reference
 from proot_distro.helpers.docker.transport import (
+    RegistryAuthenticationError,
     auth_denied_msg,
     auth_note,
     MAX_METADATA_BYTES,
@@ -133,7 +135,9 @@ def _manifest_body(
         require_complete_body(len(body), declared, f"Manifest for '{repo}'")
         return body, ct
 
-    body, ct = retry_http(_attempt, what=f"Fetching manifest {ref}")
+    body, ct = retry_http(
+        _attempt, what=f"Fetching manifest {ref}", resource=ref,
+    )
     # A reference containing ':' is a digest, not a tag: the registry's
     # answer is content-addressed, so it has to hash to what we asked
     # for. This is the only check standing between a hostile mirror (or
@@ -346,7 +350,9 @@ def _download_config(
         require_complete_body(len(data), declared, "Image config blob")
         return data
 
-    body = retry_http(_attempt, what="Fetching image config")
+    body = retry_http(
+        _attempt, what="Fetching image config", resource=cfg_digest,
+    )
     return require_data_digest(body, cfg_digest, what="Image config blob")
 
 
@@ -567,7 +573,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
             except NETWORK_ERRORS as net_err:
                 if isinstance(net_err, urllib.error.HTTPError):
                     if net_err.code in (401, 403):
-                        raise RuntimeError(
+                        raise RegistryAuthenticationError(
                             auth_denied_msg(image_ref, net_err.code)
                         ) from net_err
                     if net_err.code == 429:
@@ -582,7 +588,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 log_error(f"{missing} of {len(layers)} layer(s) for "
                           f"'{image_ref}' ({arch}) are not in the local "
                           f"cache.")
-                raise RuntimeError(f"Network error: {net_err}") from net_err
+                raise NetworkFailure(f"Network error: {net_err}") from net_err
     else:
         try:
             manifest, auth, base, documents = _resolve_single_manifest(
@@ -605,7 +611,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
         except NETWORK_ERRORS as net_err:
             if isinstance(net_err, urllib.error.HTTPError):
                 if net_err.code in (401, 403):
-                    raise RuntimeError(
+                    raise RegistryAuthenticationError(
                         auth_denied_msg(image_ref, net_err.code)
                     ) from net_err
                 if net_err.code == 429:
@@ -618,7 +624,7 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                         f"on the registry."
                     ) from net_err
             log_error(f"No cached manifest found for '{image_ref}' ({arch}).")
-            raise RuntimeError(f"Network error: {net_err}") from net_err
+            raise NetworkFailure(f"Network error: {net_err}") from net_err
         if not ref.digest:
             image_config = _fetch_config_blob(
                 repo, cfg_digest, auth, base, insecure
@@ -686,14 +692,14 @@ def _pull_layers(image_ref, rootfs_fd, arch, insecure,
                 # and passes through untouched.
                 if isinstance(dl_err, urllib.error.HTTPError):
                     if dl_err.code in (401, 403):
-                        raise RuntimeError(
+                        raise RegistryAuthenticationError(
                             auth_denied_msg(image_ref, dl_err.code)
                         ) from dl_err
                     if dl_err.code == 429:
                         raise RuntimeError(
                             rate_limited_msg(image_ref, ref, dl_err)
                         ) from dl_err
-                raise RuntimeError(f"Network error: {dl_err}") from dl_err
+                raise NetworkFailure(f"Network error: {dl_err}") from dl_err
 
         log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
         try:

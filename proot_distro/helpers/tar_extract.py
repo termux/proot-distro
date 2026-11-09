@@ -96,6 +96,7 @@ import stat
 import tarfile
 
 from proot_distro import dirfd
+from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.compress import (
     require_read_support, require_read_support_fd,
 )
@@ -222,7 +223,7 @@ def extract_tar_fd_to_rootfs(
             hashing.drain()
             actual = hashing.hasher.hexdigest()
             if actual != expected_sha256:
-                raise RuntimeError(
+                raise IntegrityFailure(
                     f"{subject} does not match its digest "
                     f"(expected sha256:{expected_sha256}, read "
                     f"sha256:{actual}). The blob changed while it was "
@@ -289,7 +290,9 @@ def _extract_stream(raw_fh, total_size, rootfs_fd, *, strip,
                     deferred_links=deferred_links,
                     deferred_dirs=deferred_dirs,
                 )
-                draw_bytes_bar(counter.count, total_size)
+                draw_bytes_bar(
+                    counter.count, total_size, phase="extract",
+                )
 
         # All regular files written; now copy hard links. Both endpoints
         # are re-resolved here (not at defer time) so a symlink planted

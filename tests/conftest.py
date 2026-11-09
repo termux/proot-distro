@@ -33,13 +33,19 @@ for _v in (
     "TERMUX_VERSION",
     "TERMUX_APP__APP_VERSION_NAME",
     "TERMUX_APP__PACKAGE_NAME",
-    "TERMUX__HOME",
-    "TERMUX__PREFIX",
     "PD_DOCKER_AUTH",
     "PROOT_NO_SECCOMP",
     "PROOT_VERBOSE",
 ):
     os.environ.pop(_v, None)
+
+# Do not let Android detection fall back to the real Termux paths. Android is
+# itself one detection indicator, and a readable default Termux prefix would
+# be a second one even after the identifying environment variables above were
+# removed. Nonexistent paths below the sandbox keep this test process in its
+# intended non-Termux mode without weakening the sandbox guard.
+os.environ["TERMUX__HOME"] = os.path.join(_SANDBOX, "not-termux-home")
+os.environ["TERMUX__PREFIX"] = os.path.join(_SANDBOX, "not-termux-prefix")
 
 # Make tests/_builders.py importable as a top-level module from any test
 # (pytest's default "prepend" import mode only puts each test's own dir on

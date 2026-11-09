@@ -19,7 +19,7 @@ import pytest
 
 from proot_distro import dirfd, statedir
 from proot_distro.atomic import publish_file
-from proot_distro.commands.build import _make_build_tmp
+from proot_distro.operations.build import _make_build_tmp
 from proot_distro.constants import LAYER_CACHE_DIR, RUNTIME_DIR
 
 

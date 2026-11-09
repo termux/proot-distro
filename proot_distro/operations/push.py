@@ -18,7 +18,7 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: The push pipeline.
+# Architecture: Shared cached-image registry publication service.
 #
 #   1. Load the cached manifest + image_config produced by `build`.
 #      Re-canonicalize the config and verify its digest matches
@@ -36,19 +36,22 @@
 
 import hashlib
 import os
-import sys
 import urllib.error
 import urllib.parse
 
+from proot_distro.arch import get_device_cpu_arch, normalize_arch
+from proot_distro.locking import BuildLock
+from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.message import (
-    C, is_quiet, log_info,
+    log_info, quote_error, quote_path,
 )
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.progress import (
-    clear_bar, fmt_size,
+    clear_bar, draw_bytes_bar, fmt_size, progress_active,
 )
 from proot_distro.helpers.docker.cache import (
-    blob_present, load_manifest_cache, manifest_layers, open_required_layer,
+    blob_present, image_cache_entry, load_manifest_cache, manifest_layers,
+    open_required_layer,
 )
 from proot_distro.helpers.docker.media import (
     OCI_MANIFEST_MEDIA, canonical_json,
@@ -56,8 +59,11 @@ from proot_distro.helpers.docker.media import (
 from proot_distro.helpers.download import (
     NETWORK_TIMEOUT, new_request, retry_http,
 )
-from proot_distro.helpers.docker.refs import parse_tag_reference
+from proot_distro.helpers.docker.refs import (
+    InvalidReference, parse_tag_reference, with_explicit_tag,
+)
 from proot_distro.helpers.docker.transport import (
+    RegistryAuthenticationError,
     auth_note,
     get_auth_token,
     insecure_for,
@@ -67,6 +73,13 @@ from proot_distro.helpers.docker.transport import (
     same_auth_origin,
     _ua,
 )
+from proot_distro.operations.context import OperationContext
+from proot_distro.operations.errors import (
+    ImageNotFoundFailure, PushValidationFailure,
+)
+from proot_distro.operations.inventory import cached_image_from_record
+from proot_distro.operations.locks import operation_lock
+from proot_distro.operations.models import ImagePush
 
 
 # The slowest rate at which a registry is assumed to commit a blob it has
@@ -78,6 +91,87 @@ from proot_distro.helpers.docker.transport import (
 # minutes. 1 MiB/s is far below any real storage, so this only ever
 # errs long.
 _COMMIT_RATE = 1024 * 1024
+
+
+def push_image(
+    image_ref,
+    *,
+    architecture=None,
+    allow_insecure=False,
+    context=None,
+) -> ImagePush:
+    """Publish one exactly-tagged cached image to its OCI registry."""
+    context = context if context is not None else OperationContext()
+    if not isinstance(image_ref, str) or not image_ref:
+        raise PushValidationFailure(
+            "image reference is not specified (e.g. 'myrepo/myapp:1.0')."
+        )
+    try:
+        parsed = parse_tag_reference(image_ref)
+    except InvalidReference as exc:
+        raise PushValidationFailure(
+            f"cannot push '{quote_path(image_ref)}': {quote_error(exc)}."
+        ) from exc
+    image_ref = with_explicit_tag(image_ref)
+
+    if architecture not in (None, ""):
+        if not isinstance(architecture, str):
+            raise PushValidationFailure(
+                "architecture must be a string or None."
+            )
+        target_arch = normalize_arch(architecture)
+        if target_arch is None:
+            raise PushValidationFailure(
+                f"unknown architecture '{quote_path(architecture)}'."
+            )
+    else:
+        target_arch = get_device_cpu_arch()
+    if not isinstance(allow_insecure, bool):
+        raise PushValidationFailure("allow_insecure must be a boolean.")
+
+    lock = BuildLock(image_ref, target_arch, command="push")
+    with operation_lock(lock):
+        record = image_cache_entry(image_ref, target_arch)
+        if record is None:
+            raise ImageNotFoundFailure(image_ref, target_arch)
+        image = cached_image_from_record(record)
+        registry = parsed.registry or "docker.io"
+        context.info(
+            f"Pushing '{quote_path(image_ref)}' ({target_arch}) to "
+            f"'{quote_path(registry)}'...",
+            phase="push", resource=image_ref,
+        )
+        raw = _push_registry_image(
+            image_ref, target_arch, insecure=allow_insecure
+        )
+
+    try:
+        result_registry = raw["registry"]
+        repository = raw["repo"]
+        tag = raw["tag"]
+        digest = raw.get("manifest_digest") or None
+        uploaded = raw["bytes_uploaded"]
+        if (not all(isinstance(value, str) and value for value in (
+                result_registry, repository, tag))
+                or (digest is not None and not isinstance(digest, str))
+                or isinstance(uploaded, bool)
+                or not isinstance(uploaded, int)
+                or uploaded < 0):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise RuntimeError("registry push returned an invalid result") from None
+
+    context.info(
+        "Push complete.", phase="push", resource=image_ref,
+    )
+    return ImagePush(
+        image=image,
+        registry=result_registry,
+        repository=repository,
+        tag=tag,
+        manifest_digest=digest,
+        bytes_uploaded=uploaded,
+    )
 
 
 def _upload_timeout(size: int) -> float:
@@ -140,7 +234,9 @@ def _blob_exists(
             return 200 <= resp.status < 300
 
     try:
-        return retry_http(_attempt, what=f"Checking {digest[:19]}")
+        return retry_http(
+            _attempt, what=f"Checking {digest[:19]}", resource=digest,
+        )
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False
@@ -150,36 +246,25 @@ def _blob_exists(
 class _ProgressReader:
     """File wrapper that draws an upload progress bar as read() runs."""
 
-    def __init__(self, fh, total: int, label: str):
+    def __init__(self, fh, total: int, label: str, resource: str):
         self._fh = fh
         self.total = total
         self.sent = 0
         self._label = label
-        self._tty = sys.stderr.isatty() and not is_quiet()
+        self._resource = resource
+        self._progress = progress_active()
         self._last_shown = 0
 
     def read(self, size=-1):
         data = self._fh.read(size)
         self.sent += len(data)
-        if self._tty and (self.sent - self._last_shown >= 262144
-                          or len(data) == 0):
+        if self._progress and (self.sent - self._last_shown >= 262144
+                               or len(data) == 0):
             self._last_shown = self.sent
-            pfx = f"{C['BLUE']}[{C['GREEN']}*{C['BLUE']}] {C['CYAN']}"
-            if self.total:
-                pct = min(self.sent * 100 // self.total, 100)
-                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-                line = (
-                    f"\r{pfx}{self._label}: [{bar}] {pct:3d}%  "
-                    f"{fmt_size(self.sent)} / "
-                    f"{fmt_size(self.total)}\033[K{C['RST']}"
-                )
-            else:
-                line = (
-                    f"\r{pfx}{self._label}: "
-                    f"{fmt_size(self.sent)} uploaded...\033[K{C['RST']}"
-                )
-            sys.stderr.write(line)
-            sys.stderr.flush()
+            draw_bytes_bar(
+                self.sent, self.total, label=self._label, noun="uploaded",
+                phase="upload", resource=self._resource,
+            )
         return data
 
 
@@ -229,7 +314,9 @@ def _upload_blob_bytes(
                     f"Blob upload failed for {digest}: HTTP {resp.status}"
                 )
 
-    retry_http(_attempt, what=f"Uploading {digest[:19]}")
+    retry_http(
+        _attempt, what=f"Uploading {digest[:19]}", resource=digest,
+    )
 
 
 def _upload_blob_fd(
@@ -264,7 +351,9 @@ def _upload_blob_fd(
         try:
             os.lseek(src_fd, 0, os.SEEK_SET)
             with open(src_fd, "rb", closefd=False) as fh:
-                reader = _ProgressReader(fh, size, label or digest[:19])
+                reader = _ProgressReader(
+                    fh, size, label or digest[:19], digest,
+                )
                 put_req = new_request(
                     put_url,
                     data=reader,
@@ -285,7 +374,9 @@ def _upload_blob_fd(
         finally:
             clear_bar()
 
-    retry_http(_attempt, what=f"Uploading {label or digest[:19]}")
+    retry_http(
+        _attempt, what=f"Uploading {label or digest[:19]}", resource=digest,
+    )
 
 
 def _put_manifest(
@@ -312,7 +403,9 @@ def _put_manifest(
                 )
             return resp.headers.get("Docker-Content-Digest", "")
 
-    return retry_http(_attempt, what=f"Uploading manifest {reference}")
+    return retry_http(
+        _attempt, what=f"Uploading manifest {reference}", resource=reference,
+    )
 
 
 def _refusal_msg(image_ref: str, ref, exc: urllib.error.HTTPError) -> str:
@@ -340,7 +433,9 @@ def _strip_private_keys(d: dict) -> dict:
     return {k: v for k, v in d.items() if not k.startswith("_")}
 
 
-def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
+def _push_registry_image(
+    image_ref: str, arch: str, insecure: bool = False,
+) -> dict:
     """Push a built image (resolved from the manifest cache) to its registry.
 
     The image must have been produced by `proot-distro build` under
@@ -415,14 +510,17 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         expected_cfg_digest = ""
     actual_cfg_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
     if expected_cfg_digest != actual_cfg_digest:
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"Image config digest mismatch (cached manifest expects "
             f"{expected_cfg_digest}, regenerated bytes hash to "
             f"{actual_cfg_digest}). The local cache appears corrupted; "
             f"rebuild the image."
         )
 
-    log_info(f"Authenticating with registry{auth_note()}...")
+    log_info(
+        f"Authenticating with registry{auth_note()}...",
+        phase="authentication", resource=registry or "docker.io",
+    )
     try:
         # Resolve the scheme/base for this registry. Under --allow-insecure a
         # bad certificate is tolerated and an HTTP-only registry falls back to
@@ -434,7 +532,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)
         if refusal:
-            raise RuntimeError(refusal) from exc
+            error = (RegistryAuthenticationError
+                     if exc.code in (401, 403) else RuntimeError)
+            raise error(refusal) from exc
         raise
 
     n_layers = len(layers)
@@ -446,8 +546,11 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
 
         try:
             if _blob_exists(repo, digest, auth, base, insecure):
-                log_info(f"{short_id}: Layer {i + 1}/{n_layers} already "
-                         f"exists on registry, skipping upload.")
+                log_info(
+                    f"{short_id}: Layer {i + 1}/{n_layers} already exists "
+                    f"on registry, skipping upload.",
+                    phase="upload", resource=digest,
+                )
                 continue
 
             # The registry hashes what we PUT and rejects a mismatch with
@@ -459,8 +562,11 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
             src_fd = open_required_layer(digest)
             try:
                 size = os.fstat(src_fd).st_size
-                log_info(f"{short_id}: Uploading layer {i + 1}/{n_layers} "
-                         f"({fmt_size(size)})...")
+                log_info(
+                    f"{short_id}: Uploading layer {i + 1}/{n_layers} "
+                    f"({fmt_size(size)})...",
+                    phase="upload", resource=digest,
+                )
                 _upload_blob_fd(
                     repo, digest, src_fd, auth, base, insecure,
                     label=short_id,
@@ -471,17 +577,25 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         except urllib.error.HTTPError as exc:
             refusal = _refusal_msg(image_ref, parsed, exc)
             if refusal:
-                raise RuntimeError(refusal) from exc
+                error = (RegistryAuthenticationError
+                         if exc.code in (401, 403) else RuntimeError)
+                raise error(refusal) from exc
             raise
 
     cfg_short = expected_cfg_digest.split(":")[-1][:12]
     try:
         if _blob_exists(repo, expected_cfg_digest, auth, base, insecure):
-            log_info(f"{cfg_short}: Image config already exists on "
-                     f"registry, skipping upload.")
+            log_info(
+                f"{cfg_short}: Image config already exists on registry, "
+                f"skipping upload.",
+                phase="upload", resource=expected_cfg_digest,
+            )
         else:
-            log_info(f"{cfg_short}: Uploading image config "
-                     f"({fmt_size(len(config_bytes))})...")
+            log_info(
+                f"{cfg_short}: Uploading image config "
+                f"({fmt_size(len(config_bytes))})...",
+                phase="upload", resource=expected_cfg_digest,
+            )
             _upload_blob_bytes(
                 repo, expected_cfg_digest, config_bytes, auth, base, insecure,
             )
@@ -489,13 +603,18 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)
         if refusal:
-            raise RuntimeError(refusal) from exc
+            error = (RegistryAuthenticationError
+                     if exc.code in (401, 403) else RuntimeError)
+            raise error(refusal) from exc
         raise
 
     manifest_media = manifest.get("mediaType") or OCI_MANIFEST_MEDIA
     manifest_bytes = canonical_json(_strip_private_keys(manifest))
-    log_info(f"Uploading manifest for tag '{tag}' "
-             f"({fmt_size(len(manifest_bytes))})...")
+    log_info(
+        f"Uploading manifest for tag '{tag}' "
+        f"({fmt_size(len(manifest_bytes))})...",
+        phase="upload", resource=tag,
+    )
     try:
         registry_digest = _put_manifest(
             repo, tag, manifest_bytes, manifest_media, auth, base, insecure,
@@ -503,7 +622,9 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         refusal = _refusal_msg(image_ref, parsed, exc)
         if refusal:
-            raise RuntimeError(refusal) from exc
+            error = (RegistryAuthenticationError
+                     if exc.code in (401, 403) else RuntimeError)
+            raise error(refusal) from exc
         raise
     bytes_uploaded += len(manifest_bytes)
 
@@ -514,3 +635,6 @@ def push_image(image_ref: str, arch: str, insecure: bool = False) -> dict:
         "repo": repo,
         "tag": tag,
     }
+
+
+__all__ = ("push_image",)

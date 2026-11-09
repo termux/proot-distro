@@ -49,7 +49,8 @@ import urllib.request
 
 from proot_distro.atomic import atomic_write
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
-from proot_distro.message import msg, log_info, log_error, quote_path
+from proot_distro.message import msg, log_info, log_error, log_retry, quote_path
+from proot_distro.operation_errors import NetworkFailure
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
 
 
@@ -592,8 +593,12 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     return True
 
 
+_DEFAULT_RETRY_REPORTER = object()
+
+
 def retry_http(operation, *, what: str, max_retries: int = 5,
-               retry_delay: int = 5):
+               retry_delay: int = 5,
+               on_retry=_DEFAULT_RETRY_REPORTER, resource=None):
     """Run *operation* (a zero-arg callable performing one HTTP request),
     retrying transient failures with a delay and a logged notice.
 
@@ -607,6 +612,9 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
     The wait between attempts is *retry_delay*, or the Retry-After of a
     429 or 503 when that is longer -- is_retryable_http_error has already
     refused one past MAX_RETRY_AFTER, and the wait is held to it anyway.
+    By default retry notices use the CLI logger. Pass ``None`` to suppress
+    them or a callable to receive each notice programmatically. *resource* is
+    attached only to structured default-logger events.
     """
     for attempt in range(max_retries):
         try:
@@ -624,10 +632,14 @@ def retry_http(operation, *, what: str, max_retries: int = 5,
             if wait is not None:
                 delay = max(retry_delay,
                             math.ceil(min(wait, MAX_RETRY_AFTER)))
-            log_info(
+            notice = (
                 f"{what}: attempt {attempt + 1}/{max_retries} failed "
                 f"({exc}); retrying in {delay}s..."
             )
+            if on_retry is _DEFAULT_RETRY_REPORTER:
+                log_retry(notice, resource=resource)
+            elif on_retry is not None:
+                on_retry(notice)
             time.sleep(delay)
 
 
@@ -640,7 +652,9 @@ def sha256_file(path: str) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
             processed += len(chunk)
-            draw_bytes_bar(processed, total, noun="processed")
+            draw_bytes_bar(
+                processed, total, noun="processed", phase="verify",
+            )
     clear_bar()
     return h.hexdigest()
 
@@ -659,10 +673,19 @@ def download_file(
     """
     opener = http_opener(insecure=insecure)
     try:
-        host = urllib.parse.urlsplit(url).netloc or url
+        parsed_url = urllib.parse.urlsplit(url)
+        host = parsed_url.netloc or url
+        event_resource = urllib.parse.urlunsplit((
+            parsed_url.scheme,
+            parsed_url.netloc.rsplit("@", 1)[-1],
+            parsed_url.path,
+            "",
+            "",
+        ))
     except ValueError:
         # Not a URL at all; the request below says so, inside the net.
         host = url
+        event_resource = None
 
     def _attempt():
         req = new_request(
@@ -678,7 +701,10 @@ def download_file(
                         break
                     fh.write(chunk)
                     downloaded += len(chunk)
-                    draw_bytes_bar(downloaded, total, noun="downloaded")
+                    draw_bytes_bar(
+                        downloaded, total, noun="downloaded",
+                        phase="download",
+                    )
                 # Inside atomic_write, so a short answer takes the
                 # temporary with it instead of publishing part of an
                 # archive as the whole of one.
@@ -688,7 +714,8 @@ def download_file(
 
     try:
         retry_http(_attempt, what=f"Downloading {url}",
-                   max_retries=max_retries, retry_delay=retry_delay)
+                   max_retries=max_retries, retry_delay=retry_delay,
+                   resource=event_resource)
     except KeyboardInterrupt:
         clear_bar()
         raise
@@ -698,7 +725,7 @@ def download_file(
         # one once retries are spent); translate them into a meaningful error
         # instead of leaking a raw SSL/HTTP error to the user.
         if isinstance(exc, RedirectRefused) and exc.plaintext:
-            raise RuntimeError(
+            raise NetworkFailure(
                 f"Cannot download {url}: {exc} If you trust this source "
                 f"and the network path to it, re-run with "
                 f"'--allow-insecure' to follow the redirect."
@@ -706,10 +733,10 @@ def download_file(
         if isinstance(exc, urllib.error.URLError):
             # An untrusted/expired/self-signed certificate.
             if not insecure and is_cert_verification_error(exc):
-                raise RuntimeError(certificate_error_msg(host)) from exc
+                raise NetworkFailure(certificate_error_msg(host)) from exc
             # A plaintext-HTTP reply to an https:// URL.
             if is_plaintext_http_tls_error(exc):
-                raise RuntimeError(
+                raise NetworkFailure(
                     f"The URL '{url}' uses HTTPS, but the server at "
                     f"'{host}' responded over plain HTTP (no TLS). If you "
                     f"trust this source, retry with the same URL using the "
@@ -719,7 +746,7 @@ def download_file(
             if (isinstance(exc, urllib.error.HTTPError)
                     and 400 <= exc.code < 500
                     and exc.code not in (408, 429)):
-                raise RuntimeError(
+                raise NetworkFailure(
                     f"Cannot download {url}: HTTP {exc.code} {exc.reason}"
                 ) from exc
-        raise RuntimeError(f"Cannot download {url}: {exc}") from exc
+        raise NetworkFailure(f"Cannot download {url}: {exc}") from exc
