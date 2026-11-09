@@ -806,14 +806,14 @@ def _credential_response(response):
 
 @pytest.mark.parametrize("response,detail", [
     (b"not json\n", "invalid"),
-    (b"[]\n", "failed"),
+    (b"[]\n", "invalid"),
     (b'{"error":"no"}\n', "failed"),
     (b'{"credentials":[]}\n', "invalid"),
     (b'{"credentials":{"username":1,"password":"secret"}}\n', "invalid"),
     (b'{"credentials":{"username":"alice","password":null}}\n', "invalid"),
     (b"\xff\n", "invalid"),
     pytest.param(
-        _DEEPLY_NESTED_JSON + b"\n", "failed", id="deeply-nested"
+        _DEEPLY_NESTED_JSON + b"\n", "invalid", id="deeply-nested"
     ),
 ])
 def test_worker_rejects_malformed_credential_response(response, detail):

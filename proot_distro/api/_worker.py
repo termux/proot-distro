@@ -95,7 +95,9 @@ class _CredentialChannel:
             raise RuntimeError(
                 "credential provider response is invalid"
             ) from None
-        if not isinstance(response, dict) or response.get("error"):
+        if not isinstance(response, dict):
+            raise RuntimeError("credential provider response is invalid")
+        if response.get("error"):
             raise RuntimeError("credential provider failed")
         credentials = response.get("credentials")
         if credentials is None:
