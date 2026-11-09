@@ -346,6 +346,49 @@ def test_api_build_provider_authenticates_multiple_registries(
         second.close()
 
 
+def test_slow_credential_provider_delays_and_then_completes_build(
+        registry, tmp_path):
+    registry.add_image("team/slow-provider", "1", FILES, CONFIG)
+    context = tmp_path / "slow-provider-build"
+    context.mkdir()
+    (context / "Dockerfile").write_text(
+        f"FROM {registry.host()}/team/slow-provider:1\n"
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    state = {}
+
+    def credentials_for(_request):
+        entered.set()
+        assert release.wait(10)
+        return RegistryCredentials("alice", "s3cret")
+
+    def build():
+        try:
+            state["result"] = ProotDistro(
+                credential_provider=credentials_for
+            ).build(context, tags=["slow-provider-api:1"])
+        except BaseException as exc:
+            state["error"] = exc
+
+    caller = threading.Thread(target=build)
+    caller.start()
+    try:
+        assert entered.wait(5)
+        assert caller.is_alive()
+        assert "result" not in state
+    finally:
+        release.set()
+    caller.join(20)
+
+    assert not caller.is_alive()
+    assert "error" not in state
+    assert [image.reference for image in state["result"].images] == [
+        "slow-provider-api:1"
+    ]
+    _assert_credentials_in_place(registry)
+
+
 def test_build_cancellation_during_credential_request(registry, tmp_path):
     registry.add_image("team/cancel-build", "1", FILES, CONFIG)
     context = tmp_path / "cancel-provider-build"

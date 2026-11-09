@@ -160,6 +160,51 @@ def test_setup_event_handler_exception_stops_startup(
     assert pd.list_sessions() == ()
 
 
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/fd"), reason="needs procfs descriptor data"
+)
+def test_repeated_setup_callback_failures_release_resources(
+    builders, fake_proot, tmp_path,
+):
+    builders.make_container("warning-resource")
+    first = tmp_path / "first-resource"
+    second = tmp_path / "second-resource"
+    first.mkdir()
+    second.mkdir()
+    before_fds = len(os.listdir("/proc/self/fd"))
+    before_threads = set(threading.enumerate())
+    default = RuntimeConfig.default()
+    config = RuntimeConfig(
+        default.runtime_dir, default.cache_dir, fake_proot
+    )
+
+    for index in range(10):
+        expected = LookupError(f"setup callback failure {index}")
+
+        def fail(_event, expected=expected):
+            raise expected
+
+        pd = ProotDistro(config, event_handler=fail)
+        with pytest.raises(LookupError) as exc:
+            pd.start(
+                "warning-resource",
+                binds=[f"{first}:/mnt", f"{second}:/mnt"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        assert exc.value is expected
+        assert pd.list_sessions() == ()
+
+    process = ProotDistro(config).start(
+        "warning-resource", ["true"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    process.wait(timeout=10)
+
+    assert len(os.listdir("/proc/self/fd")) <= before_fds
+    assert set(threading.enumerate()) <= before_threads
+    assert ProotDistro(config).list_sessions() == ()
+
+
 def test_cancelled_session_setup_does_not_start_worker(builders, fake_proot):
     builders.make_container("cancelled-box")
     cancelled = threading.Event()

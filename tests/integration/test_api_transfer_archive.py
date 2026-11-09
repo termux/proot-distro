@@ -21,6 +21,20 @@ from proot_distro.api import (
 from proot_distro.paths import container_rootfs
 
 
+def _background_call(function):
+    state = {}
+
+    def run():
+        try:
+            state["result"] = function()
+        except BaseException as exc:
+            state["error"] = exc
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, state
+
+
 def test_copy_host_file_to_container(tmp_path, builders, capsys):
     builders.make_container("box")
     source = tmp_path / "source.txt"
@@ -83,6 +97,45 @@ def test_live_event_handler_exception_stops_worker(
     assert callback_threads and set(callback_threads) == {caller_thread}
     destination = os.path.join(container_rootfs("event-box"), "tree")
     assert len(os.listdir(destination)) < 100
+
+
+def test_slow_event_handler_delays_and_then_completes_copy(
+    tmp_path, builders,
+):
+    builders.make_container("slow-event-box")
+    source = tmp_path / "slow-event-tree"
+    source.mkdir()
+    for index in range(1000):
+        (source / f"item-{index:04d}").write_bytes(b"payload")
+    entered = threading.Event()
+    release = threading.Event()
+    event_count = 0
+
+    def slow(event):
+        nonlocal event_count
+        event_count += 1
+        if event.kind == EventKind.PROGRESS and not entered.is_set():
+            entered.set()
+            assert release.wait(10)
+
+    pd = ProotDistro(event_handler=slow)
+    caller, state = _background_call(lambda: pd.copy(
+        source, "slow-event-box:/tree", recursive=True
+    ))
+    try:
+        assert entered.wait(5)
+        assert caller.is_alive()
+        assert "result" not in state
+    finally:
+        release.set()
+    caller.join(20)
+
+    assert not caller.is_alive()
+    assert "error" not in state
+    assert state["result"].operation == "copy"
+    assert event_count >= 1000
+    destination = os.path.join(container_rootfs("slow-event-box"), "tree")
+    assert len(os.listdir(destination)) == 1000
 
 
 def test_cancellation_interrupts_recursive_copy(tmp_path, builders):
@@ -235,33 +288,333 @@ def test_archive_streams_are_sequential_and_support_short_writes(builders):
     ), "rb").read() == b"value"
 
 
+def test_slow_backup_output_applies_backpressure_and_completes(builders):
+    builders.make_container("slow-output", files={
+        "payload": b"x" * (2 * 1024 * 1024),
+    })
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowOutput:
+        def __init__(self):
+            self.data = bytearray()
+            self.closed = False
+
+        def writable(self):
+            return True
+
+        def write(self, data):
+            entered.set()
+            assert release.wait(10)
+            self.data.extend(data)
+            return len(data)
+
+        def close(self):
+            self.closed = True
+
+    output = SlowOutput()
+    pd = ProotDistro()
+    caller, state = _background_call(lambda: pd.backup(
+        "slow-output", output, compression="none"
+    ))
+    try:
+        assert entered.wait(5)
+        assert caller.is_alive()
+        assert "result" not in state
+    finally:
+        release.set()
+    caller.join(20)
+
+    assert not caller.is_alive()
+    assert "error" not in state
+    assert state["result"].size_bytes == len(output.data)
+    assert not output.closed
+
+    pd.remove_container("slow-output")
+    restored = pd.restore(io.BytesIO(output.data))
+    assert restored.container.name == "slow-output"
+    assert open(os.path.join(
+        container_rootfs("slow-output"), "payload"
+    ), "rb").read() == b"x" * (2 * 1024 * 1024)
+
+
+def test_slow_restore_input_applies_backpressure_and_completes(builders):
+    builders.make_container("slow-input", files={
+        "payload": b"y" * (2 * 1024 * 1024),
+    })
+    archive = io.BytesIO()
+    pd = ProotDistro()
+    pd.backup("slow-input", archive, compression="none")
+    pd.remove_container("slow-input")
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowInput:
+        def __init__(self, data):
+            self.data = data
+            self.offset = 0
+            self.closed = False
+
+        def readable(self):
+            return True
+
+        def read(self, size=-1):
+            entered.set()
+            assert release.wait(10)
+            if self.offset >= len(self.data):
+                return b""
+            end = min(len(self.data), self.offset + size)
+            chunk = self.data[self.offset:end]
+            self.offset = end
+            return chunk
+
+        def close(self):
+            self.closed = True
+
+    source = SlowInput(archive.getvalue())
+    caller, state = _background_call(lambda: pd.restore(source))
+    try:
+        assert entered.wait(5)
+        assert caller.is_alive()
+        assert "result" not in state
+    finally:
+        release.set()
+    caller.join(20)
+
+    assert not caller.is_alive()
+    assert "error" not in state
+    assert state["result"].container.name == "slow-input"
+    assert not source.closed
+    assert open(os.path.join(
+        container_rootfs("slow-input"), "payload"
+    ), "rb").read() == b"y" * (2 * 1024 * 1024)
+
+
+def test_cancellation_waits_for_slow_stream_method_to_return(builders):
+    builders.make_container("slow-cancel-output", files={
+        "payload": b"c" * (2 * 1024 * 1024),
+    })
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    class SlowOutput:
+        def __init__(self):
+            self.data = bytearray()
+            self.closed = False
+
+        def writable(self):
+            return True
+
+        def write(self, data):
+            entered.set()
+            assert release.wait(10)
+            self.data.extend(data)
+            return len(data)
+
+        def close(self):
+            self.closed = True
+
+    output = SlowOutput()
+    caller, state = _background_call(lambda: ProotDistro().backup(
+        "slow-cancel-output", output, compression="none",
+        cancel_event=cancelled,
+    ))
+    try:
+        assert entered.wait(5)
+        cancelled.set()
+        assert caller.is_alive()
+        assert "error" not in state
+    finally:
+        release.set()
+    caller.join(20)
+
+    assert not caller.is_alive()
+    assert isinstance(state.get("error"), OperationCancelledError)
+    assert state["error"].operation == "backup"
+    assert output.data
+    assert not output.closed
+
+
 def test_backup_stream_exception_propagates_from_caller(builders):
     builders.make_container("broken-output", files={"payload": b"value"})
     expected = LookupError("stream destination unavailable")
 
     class BrokenOutput:
+        def __init__(self):
+            self.closed = False
+
+        def writable(self):
+            return True
+
         def write(self, _data):
             raise expected
 
+        def close(self):
+            self.closed = True
+
+    output = BrokenOutput()
     with pytest.raises(LookupError) as exc:
         ProotDistro().backup(
-            "broken-output", BrokenOutput(), compression="none"
+            "broken-output", output, compression="none"
         )
 
     assert exc.value is expected
+    assert not output.closed
+
+
+def test_backup_stream_failure_preserves_documented_partial_output(builders):
+    builders.make_container("partial-output", files={
+        "payload": b"p" * (2 * 1024 * 1024),
+    })
+    expected = LookupError("stream failed after accepting data")
+
+    class PartialOutput:
+        def __init__(self):
+            self.data = bytearray()
+            self.writes = 0
+            self.closed = False
+
+        def writable(self):
+            return True
+
+        def write(self, data):
+            self.writes += 1
+            if self.writes > 1:
+                raise expected
+            self.data.extend(data)
+            return len(data)
+
+        def close(self):
+            self.closed = True
+
+    output = PartialOutput()
+    with pytest.raises(LookupError) as exc:
+        ProotDistro().backup(
+            "partial-output", output, compression="none"
+        )
+
+    assert exc.value is expected
+    assert output.data
+    assert output.writes == 2
+    assert not output.closed
+
+
+def test_backup_callback_exception_removes_path_temporary(
+    tmp_path, builders,
+):
+    builders.make_container("callback-output", files={
+        "payload": b"x" * (1024 * 1024),
+    })
+    output = tmp_path / "callback-output.tar"
+    expected = LookupError("event destination unavailable")
+
+    def fail(event):
+        if event.phase == "archive":
+            raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro(event_handler=fail).backup(
+            "callback-output", output, compression="none"
+        )
+
+    assert exc.value is expected
+    assert not output.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_restore_stream_exception_propagates_from_caller():
     expected = LookupError("stream source unavailable")
 
     class BrokenInput:
+        def __init__(self):
+            self.closed = False
+
+        def readable(self):
+            return True
+
         def read(self, _size=-1):
             raise expected
 
+        def close(self):
+            self.closed = True
+
+    source = BrokenInput()
     with pytest.raises(LookupError) as exc:
-        ProotDistro().restore(BrokenInput())
+        ProotDistro().restore(source)
 
     assert exc.value is expected
+    assert not source.closed
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/fd"), reason="needs procfs descriptor data"
+)
+def test_repeated_callback_and_stream_failures_release_resources(
+    tmp_path, builders,
+):
+    builders.make_container("resource-failures", files={
+        "payload": b"z" * (1024 * 1024),
+    })
+    before_fds = len(os.listdir("/proc/self/fd"))
+    before_threads = set(threading.enumerate())
+    children_path = (
+        f"/proc/{os.getpid()}/task/{os.getpid()}/children"
+    )
+    before_children = (
+        set(open(children_path).read().split())
+        if os.path.isfile(children_path) else None
+    )
+
+    for index in range(3):
+        expected = LookupError(f"callback failure {index}")
+
+        def fail(event, expected=expected):
+            if event.phase == "archive":
+                raise expected
+
+        output = tmp_path / f"callback-{index}.tar"
+        with pytest.raises(LookupError) as exc:
+            ProotDistro(event_handler=fail).backup(
+                "resource-failures", output, compression="none"
+            )
+        assert exc.value is expected
+        assert not output.exists()
+
+    class BrokenOutput:
+        def writable(self):
+            return True
+
+        def write(self, _data):
+            raise LookupError("output failure")
+
+    class BrokenInput:
+        def readable(self):
+            return True
+
+        def read(self, _size=-1):
+            raise LookupError("input failure")
+
+    for _index in range(3):
+        with pytest.raises(LookupError):
+            ProotDistro().backup(
+                "resource-failures", BrokenOutput(), compression="none"
+            )
+        with pytest.raises(LookupError):
+            ProotDistro().restore(BrokenInput())
+
+    successful = io.BytesIO()
+    result = ProotDistro().backup(
+        "resource-failures", successful, compression="none"
+    )
+
+    assert result.size_bytes == len(successful.getvalue())
+    assert len(os.listdir("/proc/self/fd")) <= before_fds
+    assert set(threading.enumerate()) <= before_threads
+    assert not list(tmp_path.glob("*.pd-backup"))
+    if before_children is not None:
+        after_children = set(open(children_path).read().split())
+        assert after_children == before_children
 
 
 def test_backup_refuses_existing_output(tmp_path, builders):

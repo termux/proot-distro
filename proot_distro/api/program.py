@@ -130,6 +130,7 @@ _MAX_WORKER_EVENT_BYTES = 64 * 1024
 _MAX_WORKER_RESULT_BYTES = 16 * 1024 * 1024
 _MAX_SESSION_STATUS_BYTES = 64 * 1024
 _MAX_CREDENTIAL_FRAME_BYTES = 1024 * 1024
+_WORKER_STOP_GRACE_SECONDS = 5.0
 
 
 def _require_name(name, *, operation: str, argument: str = "name") -> str:
@@ -857,7 +858,7 @@ def _communicate_with_channels(
                 # not invoke it again while draining the worker's cleanup.
                 event_handler = None
     except BaseException:
-        _kill_worker(proc)
+        _stop_worker(proc)
         close_channels()
         thread.join()
         raise
@@ -877,8 +878,21 @@ def _communicate_with_channels(
     return result["streams"]
 
 
-def _kill_worker(proc) -> None:
-    """Best-effort termination used when a caller-owned stream fails."""
+def _stop_worker(proc) -> None:
+    """Interrupt a failed worker for cleanup, then kill it if it stalls."""
+    try:
+        os.killpg(proc.pid, signal.SIGINT)
+    except OSError:
+        return
+    try:
+        proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
+        return
+    except (AttributeError, TypeError):
+        # Lightweight process stand-ins used by embedders may not expose the
+        # subprocess timeout contract. They still need deterministic teardown.
+        pass
+    except subprocess.TimeoutExpired:
+        pass
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except OSError:
@@ -915,7 +929,7 @@ def _start_stream_pumps(
         with error_lock:
             if not errors:
                 errors.append(exc)
-                _kill_worker(proc)
+                _stop_worker(proc)
 
     def pump_input(fd: int, stream) -> None:
         try:
@@ -1106,7 +1120,7 @@ def _run_worker(operation: str, options: dict,
     except KeyboardInterrupt:
         raise
     except BaseException:
-        _kill_worker(proc)
+        _stop_worker(proc)
         proc.wait()
         raise
     finally:

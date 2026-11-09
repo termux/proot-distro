@@ -21,7 +21,7 @@ from proot_distro.api import (
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.helpers.docker.cache import layer_cache_path
 from proot_distro.helpers.docker.cache import manifest_cache_path
-from proot_distro.constants import MANIFEST_CACHE_DIR
+from proot_distro.constants import MANIFEST_CACHE_DIR, RUNTIME_DIR
 from proot_distro.paths import container_rootfs
 
 
@@ -129,6 +129,27 @@ def test_build_run_output_streams_as_live_events(tmp_path):
         and "streamed RUN output" in event.message
         for event in events
     )
+
+
+def test_build_callback_exception_cleans_scratch_and_path_output(tmp_path):
+    context = _context(tmp_path)
+    output = tmp_path / "callback-output.oci.tar"
+    expected = LookupError("build event destination unavailable")
+
+    def fail(event):
+        if event.phase == "build-output":
+            raise expected
+
+    with pytest.raises(LookupError) as exc:
+        ProotDistro(event_handler=fail).build(
+            context, tags=["callback-output:1"], outputs=[output]
+        )
+
+    assert exc.value is expected
+    assert not output.exists()
+    assert not list(tmp_path.glob("*.tmp"))
+    build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
+    assert not os.path.isdir(build_tmp) or os.listdir(build_tmp) == []
 
 
 def test_remove_image_returns_removed_variants(tmp_path):

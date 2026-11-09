@@ -929,6 +929,70 @@ def test_worker_event_writer_enforces_frame_limit():
     assert "too large" in str(exc.value)
 
 
+def test_slow_event_handler_applies_backpressure_and_recovers():
+    event_read, event_write = os.pipe()
+    entered = threading.Event()
+    release = threading.Event()
+    writer_finished = threading.Event()
+    call_finished = threading.Event()
+    events = []
+    result = {}
+    frame = (
+        b'{"kind":"info","message":"event payload for backpressure"}\n'
+    )
+    frame_count = 20000
+
+    def write_events():
+        try:
+            program._write_all(event_write, frame * frame_count)
+        finally:
+            os.close(event_write)
+            writer_finished.set()
+
+    writer = threading.Thread(target=write_events)
+    writer.start()
+
+    class Process:
+        pid = 321
+
+        def communicate(self, _request):
+            assert writer_finished.wait(10)
+            return b"{}", b""
+
+    def handle(event):
+        events.append(event)
+        if len(events) == 1:
+            entered.set()
+            assert release.wait(10)
+
+    def call():
+        try:
+            result["streams"] = program._communicate_with_channels(
+                Process(), b"{}", event_read, handle, "copy"
+            )
+        except BaseException as exc:
+            result["error"] = exc
+        finally:
+            call_finished.set()
+
+    caller = threading.Thread(target=call)
+    caller.start()
+    try:
+        assert entered.wait(5)
+        assert not writer_finished.wait(0.1)
+        assert not call_finished.is_set()
+    finally:
+        release.set()
+    caller.join(15)
+    writer.join(15)
+
+    assert not caller.is_alive()
+    assert not writer.is_alive()
+    assert "error" not in result
+    assert result["streams"] == (b"{}", b"")
+    assert len(events) == frame_count
+
+
 def test_worker_event_resource_strips_url_secrets():
     resource = _worker._default_event_resource("install", {
         "source": "https://user:secret@example.test/rootfs.tar?token=hidden#x",
@@ -1044,6 +1108,9 @@ def test_input_stream_rejects_non_bytes_read_result(
     class Process:
         pid = 321
 
+        def wait(self, timeout=None):
+            return 0
+
     class Input:
         def read(self, _size):
             return result
@@ -1066,7 +1133,7 @@ def test_input_stream_rejects_non_bytes_read_result(
     assert len(errors) == 1
     assert isinstance(errors[0], InvalidArgumentError)
     assert errors[0].operation == "restore"
-    assert signals == [(321, program.signal.SIGKILL)]
+    assert signals == [(321, program.signal.SIGINT)]
 
 
 @pytest.mark.parametrize("result", [None, True, 0, -1, 4, 1.5])
@@ -1075,6 +1142,9 @@ def test_output_stream_invalid_result_stops_worker(
 ):
     class Process:
         pid = 321
+
+        def wait(self, timeout=None):
+            return 0
 
     class Output:
         def write(self, _data):
@@ -1100,7 +1170,50 @@ def test_output_stream_invalid_result_stops_worker(
     assert isinstance(errors[0], InvalidArgumentError)
     assert errors[0].operation == "backup"
     assert counts == {}
-    assert signals == [(321, program.signal.SIGKILL)]
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_worker_stop_allows_cooperative_cleanup(monkeypatch):
+    class Process:
+        pid = 321
+
+        def __init__(self):
+            self.timeouts = []
+
+        def wait(self, timeout=None):
+            self.timeouts.append(timeout)
+            return 130
+
+    process = Process()
+    signals = []
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+
+    program._stop_worker(process)
+
+    assert process.timeouts == [program._WORKER_STOP_GRACE_SECONDS]
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_worker_stop_escalates_after_cleanup_timeout(monkeypatch):
+    class Process:
+        pid = 321
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+    signals = []
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+
+    program._stop_worker(Process())
+
+    assert signals == [
+        (321, program.signal.SIGINT),
+        (321, program.signal.SIGKILL),
+    ]
 
 
 def test_worker_backed_public_methods_accept_cancellation():

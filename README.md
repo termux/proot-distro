@@ -347,7 +347,10 @@ uses `output=None`, `RestoreResult` uses `archive=None`, and `BuildResult`
 uses `None` at each streamed output position. If an operation or stream method
 fails, output streams can contain a partial archive; path outputs retain their
 atomic-write behavior. Exceptions raised by `read()` or `write()` propagate
-to the caller.
+to the caller. Exceptions from an event handler or credential provider also
+propagate. For worker-backed calls, these callback and stream failures first
+request cooperative cleanup; a worker that does not exit within five seconds
+is forcibly stopped.
 
 ### Cancelling operations
 
