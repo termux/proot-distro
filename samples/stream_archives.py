@@ -67,6 +67,8 @@ class HashingWriter:
         return True
 
     def write(self, data: bytes) -> int:
+        # Hash only bytes accepted by the wrapped stream. This remains correct
+        # if a custom stream performs a short write.
         written = self.stream.write(data)
         if written is None:
             # BinaryIO.write normally returns an int. Keep the adapter's
@@ -92,6 +94,8 @@ class HashingReader:
         return True
 
     def read(self, size: int = -1) -> bytes:
+        # Restore controls read sizes, so the adapter forwards every request
+        # and hashes exactly the bytes returned to the API.
         data = self.stream.read(size)
         self.digest.update(data)
         self.bytes_read += len(data)
@@ -102,6 +106,7 @@ class HashingReader:
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the backup/restore subcommand parser."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -126,6 +131,8 @@ def _parser() -> argparse.ArgumentParser:
 def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) -> int:
     created = False
     try:
+        # Exclusive creation (``x``) prevents the example from overwriting an
+        # existing archive. The caller, not the API, owns and closes ``raw``.
         with archive.open("xb") as raw:
             created = True
             stream = HashingWriter(raw)
@@ -134,6 +141,8 @@ def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) ->
                 stream,
                 compression=None if compression == "none" else compression,
             )
+            # The API does not flush caller-owned streams. Flush and fsync here
+            # before reporting that the archive was saved successfully.
             raw.flush()
             os.fsync(raw.fileno())
         print(
@@ -144,6 +153,8 @@ def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) ->
         return 0
     except (OSError, ProotDistroError) as exc:
         if created:
+            # Stream destinations cannot be published with the API's atomic
+            # path replacement. Remove this sample's partial file on failure.
             try:
                 archive.unlink()
             except OSError:
@@ -155,6 +166,8 @@ def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) ->
 
 def _restore(pd: ProotDistro, archive: Path) -> int:
     try:
+        # HashingReader remains owned by this function. restore() consumes it
+        # sequentially but does not close or seek the underlying file.
         with archive.open("rb") as raw:
             stream = HashingReader(raw)
             result = pd.restore(stream)
@@ -173,6 +186,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Dispatch one streamed archive operation."""
     args = _parser().parse_args(argv)
     try:
+        # No RuntimeConfig means backups operate on the CLI's container state.
         pd = ProotDistro()
     except ProotDistroError as exc:
         print(f"{exc.operation or 'initialize'} failed: {exc}")

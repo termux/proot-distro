@@ -53,7 +53,7 @@ import os
 from pathlib import Path
 import sys
 import threading
-from typing import Dict, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 # Make direct execution from a source checkout use that exact checkout. An
 # installed copy needs no adjustment because these samples are repository files.
@@ -74,6 +74,8 @@ from proot_distro.api import (
 
 def show_event(event: OperationEvent) -> None:
     """Render structured events without parsing their display messages."""
+    # operation and phase are stable structured fields. message is intended
+    # for display and should not be parsed to infer progress.
     context = "/".join(value for value in (event.operation, event.phase) if value)
     if event.kind is EventKind.PROGRESS and event.current is not None:
         progress = str(event.current)
@@ -86,7 +88,9 @@ def show_event(event: OperationEvent) -> None:
         print(f"[{context}] {event.kind.value}: {event.message}", flush=True)
 
 
-def credentials_from_environment():
+def credentials_from_environment() -> Optional[
+    Callable[[CredentialRequest], Optional[RegistryCredentials]]
+]:
     """Create a one-registry credential provider, or return ``None``."""
     registry = os.environ.get("PD_SAMPLE_REGISTRY")
     username = os.environ.get("PD_SAMPLE_REGISTRY_USERNAME")
@@ -100,9 +104,13 @@ def credentials_from_environment():
             "PD_SAMPLE_REGISTRY_TOKEN must be set together"
         )
 
+    # RegistryCredentials redacts its password/token representation, but the
+    # secret should still be sourced outside command-line arguments.
     credentials = RegistryCredentials(username, token)
 
     def provide(request: CredentialRequest) -> Optional[RegistryCredentials]:
+        # Never send one registry's credentials in response to a request for a
+        # different host. Returning None requests anonymous authentication.
         if request.registry == registry:
             return credentials
         return None
@@ -111,6 +119,7 @@ def credentials_from_environment():
 
 
 def _build_args(values: Sequence[str]) -> Dict[str, str]:
+    """Parse repeated NAME=VALUE options into the API's mapping form."""
     result = {}
     for value in values:
         key, separator, item = value.partition("=")
@@ -123,6 +132,7 @@ def _build_args(values: Sequence[str]) -> Dict[str, str]:
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the command-line interface for the advanced build sample."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -175,6 +185,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _config(args: argparse.Namespace) -> Optional[RuntimeConfig]:
+    """Create optional isolated storage without changing process globals."""
     if (args.runtime_dir is None) != (args.cache_dir is None):
         raise ValueError("--runtime-dir and --cache-dir must be supplied together")
     if args.runtime_dir is not None:
@@ -198,6 +209,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         build_args = _build_args(args.build_arg)
         config = _config(args)
         provider = credentials_from_environment()
+        # Event and credential callbacks run synchronously in this caller's
+        # thread. Stateful work itself is isolated by the API's worker process.
         pd = ProotDistro(
             config,
             event_handler=show_event,
@@ -207,6 +220,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"configuration failed: {exc}")
         return 2
 
+    # threading.Event satisfies the API's structural CancellationToken
+    # protocol because it supplies is_set(). The timer only requests
+    # cancellation; the build cooperatively stops at a safe point.
     cancel = threading.Event()
     timer = None
     if args.cancel_after is not None:
@@ -215,6 +231,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         timer.start()
 
     try:
+        # Path outputs are published atomically by the API. Repeated --output
+        # values become a list of requested OCI archives.
         result = pd.build(
             args.context,
             dockerfile=args.dockerfile,
@@ -233,12 +251,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 f"({image.size_bytes} bytes, {image.layer_count} layers)."
             )
         for output in result.outputs:
+            # A None entry denotes a caller-owned stream output. This sample
+            # supplies paths only, but handles the complete result contract.
             if output is not None:
                 print(f"Exported {output}.")
         if result.installed_container is not None:
             print(f"Installed {result.installed_container.name}.")
 
         if args.push:
+            # Pushing is intentionally separate from building. A successful
+            # local build is not published unless --push was requested.
             for tag in args.tag:
                 pushed = pd.push(
                     tag,

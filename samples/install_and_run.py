@@ -56,6 +56,7 @@ from proot_distro.api import ProotDistro, ProotDistroError
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the parser for installation and process-control options."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -87,7 +88,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _command(values: Sequence[str]) -> List[str]:
+    """Return the requested guest command, or the sample's default command."""
     command = list(values)
+    # ``--`` belongs to this script's syntax; it is not part of the command
+    # that will run in the container.
     if command and command[0] == "--":
         command.pop(0)
     if command:
@@ -102,6 +106,9 @@ def _command(values: Sequence[str]) -> List[str]:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the lifecycle while preventing raw API tracebacks."""
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    # argparse.REMAINDER would also consume this script's options when users
+    # place them after the container name. Split explicitly so sample options
+    # continue to work before the conventional ``--`` command separator.
     if "--" in raw_arguments:
         separator = raw_arguments.index("--")
         guest_command = raw_arguments[separator + 1:]
@@ -114,6 +121,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     status = 0
 
     try:
+        # The default facade shares state with the CLI. Set installed only
+        # after install() succeeds so cleanup never removes a pre-existing
+        # container that caused AlreadyExistsError.
         pd = ProotDistro()
         container = pd.install(
             args.source,
@@ -127,6 +137,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
 
         command = _command(guest_command)
+        # Inspection prepares the launch description but does not start proot.
+        # It is useful for displaying or auditing the resolved guest command.
         description = pd.inspect_start(
             container.name,
             command,
@@ -135,6 +147,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Prepared guest command: {' '.join(description.inner_command)}")
         print(f"Working directory: {description.work_dir}")
 
+        # PIPE asks SessionProcess to capture bytes instead of inheriting this
+        # script's terminal. The context manager guarantees process-tree
+        # cleanup if communicate() fails or times out.
         with pd.start(
             container.name,
             command,
@@ -166,6 +181,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         status = 1
     finally:
         if installed and args.remove and pd is not None:
+            # Cleanup is deliberately limited to a container installed by this
+            # invocation. A failed install never reaches this branch.
             try:
                 pd.remove_container(args.name)
                 print(f"Removed {args.name}.")

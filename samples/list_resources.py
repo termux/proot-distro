@@ -59,6 +59,7 @@ def _size(value: int) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build this sample's command-line parser."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -82,7 +83,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
 
     try:
+        # With no RuntimeConfig, this facade reads the same local state as the
+        # proot-distro command-line utility.
         pd = ProotDistro()
+
+        # Inventory methods return tuples of immutable records. Use their
+        # fields directly instead of parsing human-readable CLI output.
         containers = pd.list_containers()
         images = pd.list_images()
         sessions = pd.list_sessions()
@@ -118,6 +124,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("  (none)")
 
         if args.search is not None:
+            # Unlike the inventory calls above, search() makes a network
+            # request to the public Docker Hub search service.
             result = pd.search(args.search, limit=args.limit)
             print(f"\nDocker Hub results ({result.total} total):")
             for hit in result.hits:
@@ -126,6 +134,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if not result.hits:
                 print("  (none)")
     except ProotDistroError as exc:
+        # Specific subclasses can be caught when an application has a recovery
+        # strategy. This reporting-only sample handles the common base class.
         operation = exc.operation or "operation"
         print(f"{operation} failed: {exc}")
         return 1

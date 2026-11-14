@@ -16,6 +16,81 @@ def _load(name):
     return module
 
 
+def test_list_containers_is_a_small_read_only_example(monkeypatch, capsys):
+    module = _load("list_containers")
+
+    class FakeApi:
+        def list_containers(self):
+            return (SimpleNamespace(
+                name="demo",
+                image_reference="alpine:latest",
+                architecture="arm64",
+            ),)
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main() == 0
+    assert (
+        "- demo: alpine:latest (arm64)"
+        in capsys.readouterr().out
+    )
+
+
+def test_install_container_passes_image_and_name(monkeypatch, capsys):
+    module = _load("install_container")
+    calls = []
+
+    class FakeApi:
+        def install(self, image, *, name):
+            calls.append((image, name))
+            return SimpleNamespace(
+                name=name,
+                image_reference=image,
+                architecture="amd64",
+            )
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["alpine:latest", "demo"]) == 0
+    assert calls == [("alpine:latest", "demo")]
+    assert (
+        "Installed demo from alpine:latest (amd64)."
+        in capsys.readouterr().out
+    )
+
+
+def test_run_command_uses_a_managed_foreground_process(monkeypatch):
+    module = _load("run_command")
+    calls = []
+
+    class FakeProcess:
+        def __enter__(self):
+            calls.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            calls.append("exit")
+
+        def wait(self):
+            calls.append("wait")
+            return 0
+
+    class FakeApi:
+        def start(self, container, command):
+            calls.append((container, command))
+            return FakeProcess()
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["demo", "--", "uname", "-a"]) == 0
+    assert calls == [
+        ("demo", ["uname", "-a"]),
+        "enter",
+        "wait",
+        "exit",
+    ]
+
+
 def test_list_resources_displays_inventory_and_optional_search(monkeypatch, capsys):
     module = _load("list_resources")
 
