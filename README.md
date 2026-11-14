@@ -192,7 +192,8 @@ containers, image cache and session registry as the command-line utility.
 Ready-to-run examples are available in [`samples/`](samples/README.md). Start
 with the one-purpose scripts for listing, installing and running containers.
 More complete examples cover inventories, streamed archives, builds, events,
-cancellation, credentials and separate application storage.
+cancellation, credentials, separate application storage and an interactive
+terminal container manager.
 
 `ProotDistro` is an in-process programmatic interface. It is not a client for
 a server and does not start a persistent service.

@@ -58,6 +58,18 @@ inline comments before adapting them for an application.
 | `install_and_run.py` | Image installation, command inspection, foreground sessions, captured output, timeouts, and optional cleanup. |
 | `stream_archives.py` | Caller-owned binary streams, streamed backup and restore, checksums, and partial-output cleanup. |
 | `build_image.py` | Builds, structured events, cancellation, build arguments, isolated storage, credential providers, and optional pushes. |
+| `container_manager_tui.py` | A complete interactive terminal interface for listing, installing, removing, and opening shells in containers. |
+
+The TUI sample uses Python's standard-library `curses` module and has no extra
+package dependencies. Start it in a Linux or Termux terminal:
+
+```sh
+python samples/container_manager_tui.py
+```
+
+Press `?` inside the interface to see its controls. Removal always requires
+confirmation. The interface restores normal terminal settings while a guest
+shell is running and redraws itself when that shell exits.
 
 Every script that accepts arguments has built-in help. For example:
 

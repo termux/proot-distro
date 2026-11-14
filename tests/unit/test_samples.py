@@ -91,6 +91,131 @@ def test_run_command_uses_a_managed_foreground_process(monkeypatch):
     ]
 
 
+def test_container_manager_tui_installs_lists_and_removes(monkeypatch):
+    module = _load("container_manager_tui")
+    items = [SimpleNamespace(
+        name="first",
+        image_reference="alpine:latest",
+        architecture="arm64",
+    )]
+    calls = []
+
+    class FakeScreen:
+        def keypad(self, enabled):
+            calls.append(("keypad", enabled))
+
+        def timeout(self, value):
+            calls.append(("timeout", value))
+
+        def getmaxyx(self):
+            return 24, 80
+
+    class FakeApi:
+        def list_containers(self):
+            calls.append("list")
+            return tuple(items)
+
+        def install(self, source, *, name):
+            calls.append(("install", source, name))
+            container = SimpleNamespace(
+                name=name,
+                image_reference=source,
+                architecture="amd64",
+            )
+            items.append(container)
+            return container
+
+        def remove_container(self, name):
+            calls.append(("remove", name))
+            items[:] = [item for item in items if item.name != name]
+
+    monkeypatch.setattr(module.curses, "has_colors", lambda: False)
+    monkeypatch.setattr(module.curses, "curs_set", lambda value: None)
+    manager = module.ContainerManager(FakeScreen(), FakeApi())
+    monkeypatch.setattr(manager, "_draw", lambda: None)
+    manager._reload_containers()
+
+    answers = iter(("debian:stable", "second"))
+    monkeypatch.setattr(manager, "_prompt", lambda label: next(answers))
+    manager._install_container()
+    assert [item.name for item in manager.containers] == ["first", "second"]
+    assert manager.containers[manager.selected].name == "second"
+
+    monkeypatch.setattr(manager, "_confirm", lambda question: True)
+    manager._remove_container()
+    assert [item.name for item in manager.containers] == ["first"]
+    assert ("install", "debian:stable", "second") in calls
+    assert ("remove", "second") in calls
+
+
+def test_container_manager_tui_restores_terminal_after_shell(monkeypatch):
+    module = _load("container_manager_tui")
+    calls = []
+    container = SimpleNamespace(
+        name="demo",
+        image_reference="alpine:latest",
+        architecture="arm64",
+    )
+
+    class FakeScreen:
+        def keypad(self, enabled):
+            calls.append(("keypad", enabled))
+
+        def timeout(self, value):
+            calls.append(("timeout", value))
+
+        def getmaxyx(self):
+            return 24, 80
+
+        def clear(self):
+            calls.append("clear")
+
+        def refresh(self):
+            calls.append("refresh")
+
+    class FakeProcess:
+        def __enter__(self):
+            calls.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            calls.append("exit")
+
+        def wait(self):
+            calls.append("wait")
+            return 0
+
+    class FakeApi:
+        def list_containers(self):
+            return (container,)
+
+        def start(self, name):
+            calls.append(("start", name))
+            return FakeProcess()
+
+    monkeypatch.setattr(module.curses, "has_colors", lambda: False)
+    for name in (
+        "curs_set",
+        "def_prog_mode",
+        "endwin",
+        "reset_prog_mode",
+        "noecho",
+        "cbreak",
+    ):
+        monkeypatch.setattr(module.curses, name, lambda *args: None)
+
+    manager = module.ContainerManager(FakeScreen(), FakeApi())
+    manager._reload_containers()
+    monkeypatch.setattr(manager, "_draw", lambda: None)
+    manager._launch_shell()
+
+    assert ("start", "demo") in calls
+    assert calls.index("enter") < calls.index("wait") < calls.index("exit")
+    assert "clear" in calls
+    assert manager.status == "Shell in demo closed."
+    assert manager.terminal_suspended is False
+
+
 def test_list_resources_displays_inventory_and_optional_search(monkeypatch, capsys):
     module = _load("list_resources")
 
