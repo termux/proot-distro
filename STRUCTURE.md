@@ -71,14 +71,23 @@ Only names re-exported by `proot_distro.api` are public.
 
 Design notes for the worker channel:
 
-* Cancellation sends `SIGINT` to the worker's process group, then `SIGKILL`
-  after a grace period, so a worker stuck in an uninterruptible call cannot
-  block the caller. A worker that exited 0 wins over a late cancel request:
+* Cancellation and Ctrl-C send `SIGINT` to the worker's process group, then
+  `SIGKILL` after a grace period (at once on a repeated Ctrl-C), so a worker
+  stuck in an uninterruptible call cannot block the caller. The wait for the
+  worker uses an `Event` set by the communicate thread, not `Thread.join()`:
+  an interrupted `join()` makes CPython 3.12 report a running thread as
+  stopped, which let the call raise before the worker was reaped. A worker that exited 0 wins over a late cancel request:
   the work committed, so its result is reported.
 * A caller input stream blocked in `read()` cannot be interrupted. Input pump
   threads are daemons and are joined with a timeout once the worker is gone.
 * Worker error envelopes and the session-setup status frame both carry a
-  `kind` that selects the public exception class. Session validation
+  `kind` that selects the public exception class. Build failures keep the
+  kind of the registry or download error that caused them
+  (`operations/errors.py: build_failure`); the subclasses are also
+  `OperationFailure`, so the CLI adapter is unchanged.
+  `tests/integration/test_api_error_contract.py` proves, with real workers,
+  which typed errors each method raises, and checks that docstrings and
+  `API.md` list exactly those. Session validation
   failures stay generic because the parent already validated the arguments.
 * Event frames are bounded; an oversized message is truncated, never fatal.
 * Descriptor waits use `selectors`, because `select.select` rejects

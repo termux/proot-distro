@@ -281,6 +281,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"{exc.operation or 'operation'} failed: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
+        # No signal handler is needed: the API forwards Ctrl-C to its worker,
+        # waits for it to clean up, then re-raises. Pressing Ctrl-C again
+        # kills the worker at once, without cleanup. cancel_event (see
+        # --cancel-after) is the way to stop a build from another thread.
         print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
         return 130
     finally:

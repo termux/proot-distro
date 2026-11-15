@@ -364,6 +364,10 @@ except OperationCancelledError:
   seconds it is killed.
 * If the operation finished before the cancel was noticed, you get its normal
   result instead of `OperationCancelledError`.
+* Ctrl-C (`KeyboardInterrupt`) behaves the same way: the worker is asked to
+  stop and clean up, then the interrupt is raised again in your thread. Press
+  Ctrl-C a second time to kill the worker at once. A killed worker cannot
+  clean up, so check the state before retrying.
 * A running callback, credential provider or stream method must return
   before the token can be checked again.
 
@@ -445,6 +449,40 @@ several independent setups.
 Every exception has an `operation` attribute naming the API method.
 `OperationCancelledError` and `SessionStartupTimeoutError` are subclasses of
 `OperationError`. Choose handlers by class, never by message text.
+
+### Errors by method
+
+Beyond the common errors above, these methods can raise these specific ones. Every
+method can also raise `InvalidArgumentError`, `OperationCancelledError` (when
+given a `cancel_event`) and `OperationError`. `BusyError` is not rare: it means
+another program (or another call) holds a lock on that container or image.
+
+| Method | Specific errors |
+|---|---|
+| `backup` | AlreadyExistsError, BusyError, NotFoundError, UnsupportedOperationError |
+| `build` | AlreadyExistsError, AuthenticationError, BusyError, NetworkError, NotFoundError |
+| `clear_cache` | BusyError |
+| `copy` | BusyError, NotFoundError, PartialOperationError |
+| `inspect_run` | BusyError, NotFoundError |
+| `inspect_start` | BusyError, NotFoundError |
+| `install` | AlreadyExistsError, AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError |
+| `move` | BusyError, NotFoundError, PartialOperationError |
+| `push` | AuthenticationError, BusyError, NetworkError, NotFoundError |
+| `remove_container` | BusyError, NotFoundError |
+| `remove_image` | BusyError, NotFoundError |
+| `rename_container` | AlreadyExistsError, BusyError, NotFoundError |
+| `reset_container` | AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError, UnsupportedOperationError |
+| `restore` | BusyError, IntegrityError, NotFoundError, UnsupportedOperationError |
+| `run` | BusyError, NotFoundError |
+| `run_detached` | BusyError, NotFoundError |
+| `search` | NetworkError |
+| `start` | BusyError, NotFoundError |
+| `start_detached` | BusyError, NotFoundError |
+| `sync` | BusyError, NotFoundError, PartialOperationError |
+
+This table is checked against real workers by the test suite. Methods not
+listed (`list_containers`, `list_images`, `list_sessions`, `kill_session`,
+`kill_all_sessions`) raise only the common errors.
 
 ## Result types
 
