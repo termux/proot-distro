@@ -151,7 +151,7 @@ def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) ->
         )
         print(f"SHA-256: {stream.hexdigest()}")
         return 0
-    except (OSError, ProotDistroError) as exc:
+    except (OSError, ProotDistroError, KeyboardInterrupt) as exc:
         if created:
             # Stream destinations cannot be published with the API's atomic
             # path replacement. Remove this sample's partial file on failure.
@@ -159,8 +159,12 @@ def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) ->
                 archive.unlink()
             except OSError:
                 pass
+        if isinstance(exc, KeyboardInterrupt):
+            print("Interrupted; the partial archive was removed.",
+                  file=sys.stderr)
+            return 130
         operation = getattr(exc, "operation", "") or "backup"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         return 1
 
 
@@ -176,9 +180,12 @@ def _restore(pd: ProotDistro, archive: Path) -> int:
         )
         print(f"SHA-256: {stream.hexdigest()}")
         return 0
+    except KeyboardInterrupt:
+        print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
+        return 130
     except (OSError, ProotDistroError) as exc:
         operation = getattr(exc, "operation", "") or "restore"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         return 1
 
 
@@ -189,7 +196,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # No RuntimeConfig means backups operate on the CLI's container state.
         pd = ProotDistro()
     except ProotDistroError as exc:
-        print(f"{exc.operation or 'initialize'} failed: {exc}")
+        print(f"{exc.operation or 'initialize'} failed: {exc}", file=sys.stderr)
         return 1
     if args.command == "backup":
         return _backup(pd, args.container, args.archive, args.compression)

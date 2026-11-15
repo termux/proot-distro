@@ -390,3 +390,151 @@ def test_build_image_wires_events_credentials_config_and_push(
     output = capsys.readouterr().out
     assert "[build/layer-pack] 1/2 layers: packing" in output
     assert "Pushed registry.example/app:1 as sha256:abc" in output
+
+
+def _process_returning(code):
+    class FakeProcess:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def wait(self):
+            return code
+
+    return FakeProcess()
+
+
+def test_run_command_passes_guest_status_through_on_stderr(
+    monkeypatch, capsys,
+):
+    """Regression: the guest's exit status used to collapse to 1."""
+    module = _load("run_command")
+
+    class FakeApi:
+        def start(self, container, command):
+            return _process_returning(7)
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["demo", "false"]) == 7
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "status 7" in captured.err
+
+
+def test_run_command_maps_signal_death_to_shell_status(monkeypatch):
+    module = _load("run_command")
+
+    class FakeApi:
+        def start(self, container, command):
+            return _process_returning(-9)
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["demo", "sleep", "9"]) == 137
+
+
+def test_samples_report_keyboard_interrupt_without_traceback(
+    monkeypatch, capsys,
+):
+    """Regression: Ctrl-C used to print a raw traceback in these samples."""
+    for name, argv, method in (
+        ("install_container", ["alpine", "box"], "install"),
+        ("list_containers", [], "list_containers"),
+    ):
+        module = _load(name)
+
+        class FakeApi:
+            def __getattr__(self, _name):
+                def interrupted(*_args, **_kwargs):
+                    raise KeyboardInterrupt
+                return interrupted
+
+        monkeypatch.setattr(module, "ProotDistro", FakeApi)
+        call = module.main(argv) if argv else module.main()
+        assert call == 130, name
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_install_and_run_handles_interrupt_and_cleans_up(
+    monkeypatch, capsys,
+):
+    module = _load("install_and_run")
+    removed = []
+
+    class FakeApi:
+        def install(self, *_args, **_kwargs):
+            return SimpleNamespace(name="box", image_reference="img")
+
+        def inspect_start(self, *_args, **_kwargs):
+            raise KeyboardInterrupt
+
+        def remove_container(self, name):
+            removed.append(name)
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["alpine", "box", "--remove"]) == 130
+    assert removed == ["box"]
+    assert "Interrupted" in capsys.readouterr().err
+
+
+def test_stream_archives_interrupt_removes_partial_backup(
+    monkeypatch, tmp_path, capsys,
+):
+    module = _load("stream_archives")
+    archive = tmp_path / "partial.tar.gz"
+
+    class FakeApi:
+        def backup(self, container, stream, *, compression):
+            stream.write(b"partial")
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["backup", "demo", str(archive)]) == 130
+    assert not archive.exists()
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_list_resources_strips_terminal_escapes_from_search_hits(
+    monkeypatch, capsys,
+):
+    """A hostile Hub description must not reach the terminal raw."""
+    module = _load("list_resources")
+
+    class FakeApi:
+        def list_containers(self):
+            return ()
+
+        def list_images(self):
+            return ()
+
+        def list_sessions(self):
+            return ()
+
+        def search(self, query, *, limit):
+            hit = SimpleNamespace(
+                name="evil\x1b]0;pwned\x07", official=False,
+                description="hi\x1b[2Jthere",
+            )
+            return SimpleNamespace(total=1, hits=(hit,))
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main(["--search", "evil"]) == 0
+    output = capsys.readouterr().out
+    assert "\x1b" not in output and "\x07" not in output
+    assert "hi?[2Jthere" in output
+
+
+def test_tui_fit_uses_display_width():
+    module = _load("container_manager_tui")
+
+    assert module._fit("ab", 4) == "ab  "
+    assert module._fit("abcdef", 4) == "abcd"
+    # A wide character takes two columns and is never split.
+    assert module._fit("中文", 3) == "中 "
+    assert module._fit("éx", 2) == "éx"

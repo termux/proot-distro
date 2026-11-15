@@ -61,7 +61,8 @@ inline comments before adapting them for an application.
 | `container_manager_tui.py` | A complete interactive terminal interface for listing, installing, removing, and opening shells in containers. |
 
 The TUI sample uses Python's standard-library `curses` module and has no extra
-package dependencies. Start it in a Linux or Termux terminal:
+package dependencies. It needs a real interactive terminal (a TTY); it will
+not work with piped input or output. Start it in a Linux or Termux terminal:
 
 ```sh
 python samples/container_manager_tui.py
@@ -89,11 +90,20 @@ but its optional `--search` request accesses Docker Hub. The remaining scripts
 can create or change containers, cached images, or archive files.
 
 All documented API failures inherit from `ProotDistroError`. The examples catch
-that base class at their application boundary so users receive a short message
-instead of a traceback. Larger applications can catch specific subclasses such
+that base class at their application boundary, and handle Ctrl-C, so users
+receive a short message on standard error instead of a traceback. Exit
+statuses follow shell conventions: `130` after Ctrl-C, and `run_command.py`
+and `install_and_run.py` pass on the guest command's own status. Larger
+applications can catch specific subclasses such
 as `NotFoundError`, `AlreadyExistsError`, or `NetworkError` when recovery
 depends on the failure type.
 
 Registry secrets used by `build_image.py` are read from environment variables,
 not command-line arguments. This keeps them out of process listings and shell
 history. See that script's module docstring for the variable names.
+
+Do not pass secrets with `--build-arg`: build arguments are visible to `RUN`
+steps and may end up in image history. Text from Docker Hub is cleaned of
+control characters before `list_resources.py` prints it.
+
+See the full API guide in [`API.md`](../API.md).

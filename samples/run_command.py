@@ -85,15 +85,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             returncode = process.wait()
     except ProotDistroError as exc:
         operation = exc.operation or "start"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("Interrupted after PRoot-Distro cleanup.")
+        print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
         return 130
 
     if returncode != 0:
-        print(f"Guest command exited with status {returncode}.")
-        return 1
+        print(
+            f"Guest command exited with status {returncode}.",
+            file=sys.stderr,
+        )
+        # Pass the guest's own status on, like a normal wrapper. A negative
+        # value means it was killed by a signal; use the shell convention.
+        return 128 - returncode if returncode < 0 else returncode
     return 0
 
 

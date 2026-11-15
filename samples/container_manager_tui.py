@@ -57,6 +57,7 @@ import curses
 import os
 from pathlib import Path
 import sys
+import unicodedata
 from typing import List, Optional
 
 # Running a repository sample directly should import the package from this
@@ -79,6 +80,30 @@ _HEADER_PAIR = 1
 _SELECTED_PAIR = 2
 _STATUS_PAIR = 3
 _ERROR_PAIR = 4
+
+
+def _cell_width(char: str) -> int:
+    """Return how many terminal columns *char* occupies."""
+    if unicodedata.combining(char):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+def _fit(text: str, width: int) -> str:
+    """Truncate or pad *text* to exactly *width* terminal columns.
+
+    ``str.format`` counts code points, which misaligns columns for wide
+    (East Asian) and combining characters.
+    """
+    out = []
+    used = 0
+    for char in text:
+        step = _cell_width(char)
+        if used + step > width:
+            break
+        out.append(char)
+        used += step
+    return "".join(out) + " " * (width - used)
 
 
 class ContainerManager:
@@ -159,7 +184,12 @@ class ContainerManager:
         # Session startup can emit an event after endwin() has handed the
         # terminal to the guest. Never let curses overwrite that shell.
         if not self.terminal_suspended:
-            self._draw()
+            try:
+                self._draw()
+            except curses.error:
+                # A failed redraw (for instance mid-resize) must not abort
+                # the API operation that reported this event.
+                pass
 
     def _safe_addstr(
         self,
@@ -246,9 +276,9 @@ class ContainerManager:
             architecture = container.architecture or "unknown"
             source = container.image_reference or "local archive"
             row = (
-                f"{marker} {container.name:<{name_width}.{name_width}} "
-                f"{architecture:<{arch_width}.{arch_width}} "
-                f"{source:<{source_width}.{source_width}}"
+                f"{marker} {_fit(container.name, name_width)} "
+                f"{_fit(architecture, arch_width)} "
+                f"{_fit(source, source_width)}"
             )
             attribute = 0
             if index == self.selected:

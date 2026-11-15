@@ -71,8 +71,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         container = api.install(args.image, name=args.name)
     except ProotDistroError as exc:
         operation = exc.operation or "install"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        # The API has already cleaned up its worker before re-raising.
+        print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
+        return 130
 
     source = container.image_reference or args.image
     architecture = container.architecture or "unknown architecture"

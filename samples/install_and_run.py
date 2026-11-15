@@ -168,17 +168,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("stderr:")
             print(stderr.decode("utf-8", "replace"), end="")
         if returncode:
-            print(f"Guest command exited with status {returncode}.")
-            status = 1
+            print(
+                f"Guest command exited with status {returncode}.",
+                file=sys.stderr,
+            )
+            # Pass the guest's status on; a negative value is a signal.
+            status = 128 - returncode if returncode < 0 else returncode
     except subprocess.TimeoutExpired:
         # Leaving the SessionProcess context terminates and reaps the full
         # tracked guest process tree, even on this timeout path.
-        print(f"Guest command exceeded {args.command_timeout:g} seconds.")
+        print(
+            f"Guest command exceeded {args.command_timeout:g} seconds.",
+            file=sys.stderr,
+        )
         status = 1
     except ProotDistroError as exc:
         operation = exc.operation or "operation"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         status = 1
+    except KeyboardInterrupt:
+        # The SessionProcess context has already stopped the guest tree.
+        print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
+        status = 130
     finally:
         if installed and args.remove and pd is not None:
             # Cleanup is deliberately limited to a container installed by this
@@ -188,7 +199,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"Removed {args.name}.")
             except ProotDistroError as exc:
                 operation = exc.operation or "cleanup"
-                print(f"{operation} failed during cleanup: {exc}")
+                print(
+                    f"{operation} failed during cleanup: {exc}",
+                    file=sys.stderr,
+                )
                 status = 1
     return status
 

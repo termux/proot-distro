@@ -51,8 +51,11 @@ def main() -> int:
         # One base exception catches all documented API failures. The
         # operation field identifies which API call reported the error.
         operation = exc.operation or "list_containers"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
 
     if not containers:
         print("No containers are installed.")

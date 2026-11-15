@@ -48,6 +48,18 @@ if __package__ in (None, ""):
 from proot_distro.api import ProotDistro, ProotDistroError
 
 
+def _clean(text: str) -> str:
+    """Replace control characters in text that came from outside.
+
+    Docker Hub descriptions (and the command lines of other sessions) are
+    chosen by third parties. Printed raw, an escape sequence in them could
+    rewrite the terminal screen or title.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 def _size(value: int) -> str:
     """Format a byte count without requiring a third-party dependency."""
     amount = float(value)
@@ -114,7 +126,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         print(f"\nLive sessions ({len(sessions)}):")
         for session in sessions:
-            command = " ".join(session.command) or "(interactive)"
+            command = _clean(" ".join(session.command)) or "(interactive)"
             mode = "detached" if session.detached else "foreground"
             print(
                 f"  pid {session.pid}: {session.container} "
@@ -130,15 +142,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"\nDocker Hub results ({result.total} total):")
             for hit in result.hits:
                 marker = " [official]" if hit.official else ""
-                print(f"  {hit.name}{marker}: {hit.description}")
+                print(f"  {_clean(hit.name)}{marker}: {_clean(hit.description)}")
             if not result.hits:
                 print("  (none)")
     except ProotDistroError as exc:
         # Specific subclasses can be caught when an application has a recovery
         # strategy. This reporting-only sample handles the common base class.
         operation = exc.operation or "operation"
-        print(f"{operation} failed: {exc}")
+        print(f"{operation} failed: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
     return 0
 
 

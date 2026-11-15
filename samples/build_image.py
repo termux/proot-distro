@@ -150,7 +150,8 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="NAME=VALUE",
-        help="Dockerfile build argument; repeat as needed",
+        help="Dockerfile build argument; repeat as needed (never put "
+        "secrets here: they are visible to RUN steps and image history)",
     )
     parser.add_argument(
         "--output",
@@ -202,7 +203,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.cancel_after is not None and (
         not math.isfinite(args.cancel_after) or args.cancel_after < 0
     ):
-        print("--cancel-after must be finite and not negative")
+        print("--cancel-after must be finite and not negative", file=sys.stderr)
         return 2
 
     try:
@@ -217,7 +218,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             credential_provider=provider,
         )
     except (ProotDistroError, ValueError) as exc:
-        print(f"configuration failed: {exc}")
+        print(f"configuration failed: {exc}", file=sys.stderr)
         return 2
 
     # threading.Event satisfies the API's structural CancellationToken
@@ -274,13 +275,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     f"as {digest}; uploaded {pushed.bytes_uploaded} bytes."
                 )
     except OperationCancelledError as exc:
-        print(f"{exc.operation or 'operation'} cancelled: {exc}")
+        print(f"{exc.operation or 'operation'} cancelled: {exc}", file=sys.stderr)
         return 2
     except ProotDistroError as exc:
-        print(f"{exc.operation or 'operation'} failed: {exc}")
+        print(f"{exc.operation or 'operation'} failed: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("Interrupted after PRoot-Distro cleanup.")
+        print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
         return 130
     finally:
         if timer is not None:
