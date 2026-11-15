@@ -1,2 +1,3 @@
+include API.md
 include samples/README.md
 recursive-include samples *.py

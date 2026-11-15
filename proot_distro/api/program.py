@@ -1280,9 +1280,23 @@ class ProotDistro:
     instance can apply its own runtime configuration without changing the
     embedding process's environment or imported module constants.
 
-    ``event_handler`` is optional. When provided, it is called synchronously
-    for informational events such as network retries. Exceptions raised by
-    the handler propagate to the caller.
+    Args:
+        config: Runtime and cache locations. ``None`` uses the same storage
+            as the command-line utility.
+        event_handler: Optional callable receiving ``OperationEvent``
+            records (information, warnings, progress, build output and
+            network retries). It runs synchronously in the calling thread,
+            so it applies backpressure; exceptions it raises stop the
+            operation and propagate to the caller.
+        credentials: Static registry credentials for install, reset, build
+            and push. Mutually exclusive with ``credential_provider``.
+        credential_provider: Callable that chooses credentials per registry
+            request. It runs synchronously in the calling thread.
+
+    Every method that starts work accepts ``cancel_event`` (a token with an
+    ``is_set()`` method) except ``search``. All failures are subclasses of
+    ``ProotDistroError``; see ``proot_distro.api.errors``. User documentation
+    is in ``API.md``.
     """
 
     def __init__(

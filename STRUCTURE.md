@@ -12,6 +12,7 @@ proot-distro.py          Checkout launcher -> cli.main()
 pyproject.toml           Packaging, console scripts, pytest config
 MANIFEST.in              Extra source-distribution files
 README.md                User reference (not technical docs)
+API.md                   User guide for the Python API (proot_distro.api)
 SECURITY.md              Points to Termux's vulnerability policy
 samples/                 Documented Python API example scripts
 proot_distro/            The package (see below)
@@ -48,7 +49,8 @@ proot_distro/
 
 ### Programmatic API
 
-`proot_distro.api` is the stable, in-process Python interface. It does not
+`proot_distro.api` is the stable, in-process Python interface. How to use it
+is documented in `API.md`; this section records how it is built. It does not
 imply a client-server relationship. `ProotDistro` delegates to the same safe
 state readers used by the CLI and returns immutable models instead of printing.
 Only names re-exported by `proot_distro.api` are public.
@@ -67,9 +69,26 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
 | `_bootstrap.py` | Isolated, site-disabled command bootstrap that loads private workers from the exact imported package. |
 
+Design notes for the worker channel:
+
+* Cancellation sends `SIGINT` to the worker's process group, then `SIGKILL`
+  after a grace period, so a worker stuck in an uninterruptible call cannot
+  block the caller. A worker that exited 0 wins over a late cancel request:
+  the work committed, so its result is reported.
+* A caller input stream blocked in `read()` cannot be interrupted. Input pump
+  threads are daemons and are joined with a timeout once the worker is gone.
+* Worker error envelopes and the session-setup status frame both carry a
+  `kind` that selects the public exception class. Session validation
+  failures stay generic because the parent already validated the arguments.
+* Event frames are bounded; an oversized message is truncated, never fatal.
+* Descriptor waits use `selectors`, because `select.select` rejects
+  descriptors numbered 1024 and above.
+* Only the registry client uses the network in the parent process
+  (`search`); everything else runs in a one-shot worker.
+
 ### Shared operations
 
-Core operations are being extracted into `operations/`. These services own
+Core operations live in `operations/`. These services own
 locking, secure state access, mutations, structured events, and immutable
 internal results. They do not parse CLI namespaces, print failures, or call
 `sys.exit()`. Command modules are presentation adapters; API workers call the

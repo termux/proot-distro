@@ -21,7 +21,6 @@ def _copy_source(destination):
         ignored = {
             ".git",
             ".pytest_cache",
-            "API_TASKS_PLAN.md",
             "build",
             "dist",
         }
@@ -153,6 +152,7 @@ def test_source_distribution_contains_typed_package(distributions):
         assert any(name.endswith("/" + expected) for name in names)
     assert any(name.endswith("/pyproject.toml") for name in names)
     assert any(name.endswith("/README.md") for name in names)
+    assert any(name.endswith("/API.md") for name in names)
 
 
 def _installation_paths(prefix):
