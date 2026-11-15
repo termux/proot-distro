@@ -108,7 +108,12 @@ registry credentials. Docker Hub refusals (for example HTTP 429 or 5xx) raise
 ## Files and backups
 
 Paths use the same `container:path` syntax as the command line. A
-`pathlib.Path` always means a host path.
+`pathlib.Path` always means a host path. A plain string is a container path
+only when text before the first colon has no `/` (`box:/etc`); anything else
+is a host path. Host paths are made absolute and `~` is expanded, so a
+relative path means relative to your program's working directory. A trailing
+`/` is kept, because `copy` and `sync` treat `dir/` and `dir` differently. To
+name a host file called `a:b` in the current directory, write `./a:b`.
 
 | Method | Action |
 |---|---|
@@ -413,7 +418,8 @@ config = RuntimeConfig(
 pd = ProotDistro(config)
 ```
 
-Paths become absolute. The two folders must differ, neither may be a
+Paths may be strings or `pathlib.Path` objects. They are stored as absolute
+strings (read them back as `config.runtime_dir`). The two folders must differ, neither may be a
 filesystem root, and the runtime folder may not be inside the cache folder.
 Each `ProotDistro` keeps its own configuration, so one Python process can use
 several independent setups.

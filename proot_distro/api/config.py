@@ -104,19 +104,33 @@ def _executable(value) -> Optional[str]:
     return path
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RuntimeConfig:
     """Storage and executable settings for a :class:`ProotDistro` instance.
 
-    Paths are normalized when the configuration is created. They identify
-    trust roots: API operations may create, modify, and remove state below
-    them. The two roots must therefore be distinct and must not be a
-    filesystem root.
+    Paths may be given as ``str`` or ``os.PathLike`` objects. They are
+    normalized to absolute ``str`` paths when the configuration is created,
+    so the attributes always read back as text. They identify trust roots:
+    API operations may create, modify, and remove state below them. The two
+    roots must therefore be distinct and must not be a filesystem root.
     """
 
-    runtime_dir: _PathArgument
-    cache_dir: _PathArgument
-    proot_path: Optional[_PathArgument] = None
+    runtime_dir: str
+    cache_dir: str
+    proot_path: Optional[str] = None
+
+    def __init__(
+        self,
+        runtime_dir: _PathArgument,
+        cache_dir: _PathArgument,
+        proot_path: Optional[_PathArgument] = None,
+    ) -> None:
+        # Frozen dataclasses cannot assign normally. The constructor takes
+        # the permissive input type while the fields keep the stored type.
+        object.__setattr__(self, "runtime_dir", runtime_dir)
+        object.__setattr__(self, "cache_dir", cache_dir)
+        object.__setattr__(self, "proot_path", proot_path)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         runtime_dir = _directory(self.runtime_dir, "runtime_dir")

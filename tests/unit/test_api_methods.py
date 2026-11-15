@@ -258,3 +258,154 @@ def test_backup_rejects_unknown_compression(monkeypatch, tmp_path):
         )
 
     assert worker.calls == []
+
+
+def test_transfer_expands_tilde_and_relative_host_paths(
+    monkeypatch, tmp_path,
+):
+    """Regression: "~/x" passed the existence check but reached the worker
+    as a literal relative path."""
+    (tmp_path / "file").write_text("x")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    worker = _Worker(monkeypatch, {
+        "copy": lambda o: {"source": o["source"],
+                           "destination": o["destination"]},
+    })
+
+    result = ProotDistro().copy("~/file", "out/")
+
+    assert worker.calls[0][1]["source"] == str(tmp_path / "file")
+    # A trailing separator keeps its meaning for the destination.
+    assert worker.calls[0][1]["destination"] == str(tmp_path / "out") + "/"
+    assert result.source == str(tmp_path / "file")
+
+
+def test_transfer_leaves_container_specs_untouched(monkeypatch, tmp_path):
+    (tmp_path / "file").write_text("x")
+    worker = _Worker(monkeypatch, {
+        "list_containers": {"items": [_container("box")]},
+        "copy": lambda o: {"source": o["source"],
+                           "destination": o["destination"]},
+    })
+
+    ProotDistro().copy(tmp_path / "file", "box:~/dest/")
+
+    assert worker.calls[-1][1]["destination"] == "box:~/dest/"
+
+
+def test_communicate_bounds_worker_output_memory(monkeypatch):
+    """Regression: worker stdout/stderr used to be buffered without limit."""
+    import subprocess
+    import sys
+
+    monkeypatch.setattr(program, "_MAX_WORKER_RESULT_BYTES", 1000)
+    monkeypatch.setattr(program, "_MAX_WORKER_ERROR_BYTES", 100)
+    code = (
+        "import sys;"
+        "sys.stdin.buffer.read();"
+        "sys.stdout.buffer.write(b'o' * 500000);"
+        "sys.stderr.buffer.write(b'e' * 300000 + b'TAIL')"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+
+    stdout, stderr = program._communicate_bounded(proc, b"request")
+
+    assert len(stdout) == 1001  # one past the limit, so the check fires
+    assert len(stderr) == 100 and stderr.endswith(b"TAIL")
+    assert proc.returncode == 0
+
+
+def test_communicate_tolerates_worker_that_ignores_input():
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "print('done')"], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+
+    stdout, _stderr = program._communicate_bounded(proc, b"x" * 1_000_000)
+
+    assert stdout.strip() == b"done"
+
+
+def _detached_worker(monkeypatch, pid=4321, kind="login", name="box"):
+    return _Worker(monkeypatch, {
+        "list_containers": {"items": [_container("box")]},
+        "start_detached": {"pid": pid, "container": name, "kind": kind},
+        "run_detached": {"pid": pid, "container": name, "kind": "run"},
+    })
+
+
+def test_start_and_run_detached_return_session_records(monkeypatch):
+    worker = _detached_worker(monkeypatch)
+    pd = ProotDistro()
+
+    started = pd.start_detached("box", ["sleep", "9"])
+    ran = pd.run_detached("box", ["--flag"])
+
+    assert (started.pid, started.container, started.kind) == (
+        4321, "box", "login"
+    )
+    assert ran.kind == "run"
+    operations = [name for name, _ in worker.calls]
+    assert operations == [
+        "list_containers", "start_detached", "list_containers", "run_detached",
+    ]
+    assert worker.calls[1][1]["arguments"] == ("sleep", "9")
+
+
+def test_detached_start_requires_installed_container(monkeypatch):
+    from proot_distro.api import NotFoundError
+
+    worker = _detached_worker(monkeypatch)
+
+    with pytest.raises(NotFoundError) as exc:
+        ProotDistro().start_detached("ghost")
+
+    assert exc.value.operation == "start_detached"
+    assert [name for name, _ in worker.calls] == ["list_containers"]
+
+
+@pytest.mark.parametrize("pid,name,kind", [
+    (0, "box", "login"), (-4, "box", "login"), (True, "box", "login"),
+    ("9", "box", "login"), (5, "other", "login"), (5, "box", "run"),
+])
+def test_detached_start_rejects_invalid_worker_result(
+    monkeypatch, pid, name, kind,
+):
+    _detached_worker(monkeypatch, pid=pid, kind=kind, name=name)
+
+    with pytest.raises(OperationError) as exc:
+        ProotDistro().start_detached("box")
+
+    assert exc.value.operation == "start_detached"
+
+
+def test_detached_start_rejects_piped_output(monkeypatch):
+    import subprocess
+
+    _detached_worker(monkeypatch)
+
+    with pytest.raises(InvalidArgumentError):
+        ProotDistro().start_detached("box", stdout=subprocess.PIPE)
+
+
+def test_runtime_config_fields_are_text_and_accept_paths(tmp_path):
+    """Regression: PathLike inputs used to be typed as the stored value."""
+    import dataclasses
+    import typing
+
+    from proot_distro.api import RuntimeConfig
+
+    hints = typing.get_type_hints(RuntimeConfig)
+    assert hints["runtime_dir"] is str and hints["cache_dir"] is str
+
+    config = RuntimeConfig(tmp_path / "state", tmp_path / "cache")
+    assert isinstance(config.runtime_dir, str)
+    assert dataclasses.replace(config, proot_path=tmp_path / "proot"
+                               ).proot_path == str(tmp_path / "proot")

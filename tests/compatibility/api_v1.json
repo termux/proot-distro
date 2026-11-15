@@ -571,26 +571,26 @@
       "constructor": "(runtime_dir: Union[str, os.PathLike[str]], cache_dir: Union[str, os.PathLike[str]], proot_path: Union[str, os.PathLike[str], None] = None) -> None",
       "fields": [
         {
-          "annotation": "Union[str, os.PathLike[str]]",
+          "annotation": "str",
           "default": "<required>",
           "name": "runtime_dir",
           "repr": true
         },
         {
-          "annotation": "Union[str, os.PathLike[str]]",
+          "annotation": "str",
           "default": "<required>",
           "name": "cache_dir",
           "repr": true
         },
         {
-          "annotation": "Union[str, os.PathLike[str], None]",
+          "annotation": "Optional[str]",
           "default": "None",
           "name": "proot_path",
           "repr": true
         }
       ],
       "frozen": true,
-      "init": true,
+      "init": false,
       "members": {
         "default": {
           "kind": "method",

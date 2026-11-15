@@ -179,6 +179,19 @@ def _path_argument(value, *, operation: str, argument: str,
     return value
 
 
+def _host_path(value: str) -> str:
+    """Return *value* as an absolute, "~"-expanded host path.
+
+    A trailing separator is kept: copy and sync treat ``dir/`` and ``dir``
+    differently, so it is part of the caller's meaning.
+    """
+    expanded = os.path.expanduser(value)
+    absolute = os.path.abspath(expanded)
+    if expanded.endswith(os.sep) and not absolute.endswith(os.sep):
+        absolute += os.sep
+    return absolute
+
+
 def _binary_stream(value, *, operation: str, argument: str,
                    readable: bool = False, writable: bool = False) -> BinaryIO:
     """Validate a caller-owned sequential binary stream without consuming it."""
@@ -693,6 +706,69 @@ def _wait_readable(readers, timeout):
         return [key.fileobj for key, _ in selector.select(timeout)]
 
 
+def _communicate_bounded(proc, request: bytes):
+    """Like ``proc.communicate(request)`` but with bounded memory.
+
+    The worker's result is capped at ``_MAX_WORKER_RESULT_BYTES``: one byte
+    more than that is kept, so the caller's size check still fires, and the
+    rest is read and discarded so the worker never blocks on a full pipe.
+    Only the last ``_MAX_WORKER_ERROR_BYTES`` of standard error are kept,
+    matching how a failure message is built from it. Process stand-ins
+    without real pipes fall back to their own ``communicate``.
+    """
+    if (getattr(proc, "stdin", None) is None
+            or getattr(proc, "stdout", None) is None
+            or getattr(proc, "stderr", None) is None):
+        return proc.communicate(request)
+
+    out = bytearray()
+    err = bytearray()
+
+    def feed() -> None:
+        try:
+            proc.stdin.write(request)
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+
+    def drain_stdout() -> None:
+        while True:
+            chunk = proc.stdout.read(65536)
+            if not chunk:
+                return
+            room = _MAX_WORKER_RESULT_BYTES + 1 - len(out)
+            if room > 0:
+                out.extend(chunk[:room])
+
+    def drain_stderr() -> None:
+        while True:
+            chunk = proc.stderr.read(65536)
+            if not chunk:
+                return
+            err.extend(chunk)
+            if len(err) > _MAX_WORKER_ERROR_BYTES:
+                del err[:-_MAX_WORKER_ERROR_BYTES]
+
+    threads = [
+        threading.Thread(target=target, daemon=True)
+        for target in (feed, drain_stdout, drain_stderr)
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        for thread in threads:
+            thread.join()
+    finally:
+        proc.stdout.close()
+        proc.stderr.close()
+    proc.wait()
+    return bytes(out), bytes(err)
+
+
 def _communicate_with_channels(
     proc,
     request: bytes,
@@ -710,7 +786,7 @@ def _communicate_with_channels(
 
     def communicate():
         try:
-            result["streams"] = proc.communicate(request)
+            result["streams"] = _communicate_bounded(proc, request)
         except BaseException as exc:
             result["error"] = exc
 
@@ -1457,7 +1533,25 @@ class ProotDistro:
         allow_insecure: bool = False,
         cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
-        """Install a container from an image reference, URL, or archive."""
+        """Install a container from an image reference, URL, or archive.
+
+        Args:
+            source: Image reference, ``http(s)`` URL or local archive path.
+            name: Container name; derived from the source when omitted.
+            architecture: Target CPU architecture for registry images.
+            allow_insecure: Permit plain-HTTP registries.
+            cancel_event: Optional cancellation token.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            AlreadyExistsError: A container with that name exists.
+            NotFoundError: The image or archive does not exist.
+            AuthenticationError: The registry refused the credentials.
+            NetworkError: The registry or URL could not be reached.
+            IntegrityError: Downloaded content failed validation.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(cancel_event, operation="install")
         source_is_path = isinstance(source, os.PathLike)
         try:
@@ -1540,7 +1634,15 @@ class ProotDistro:
         self, name: str, *,
         cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
-        """Permanently remove a container and return its former metadata."""
+        """Permanently remove a container and return its former metadata.
+
+        Raises:
+            InvalidArgumentError: *name* is malformed.
+            NotFoundError: The container does not exist.
+            BusyError: A session is using the container.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(
             cancel_event, operation="remove_container"
         )
@@ -1559,7 +1661,16 @@ class ProotDistro:
         self, old_name: str, new_name: str, *,
         cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
-        """Rename a container and return its metadata under the new name."""
+        """Rename a container and return its metadata under the new name.
+
+        Raises:
+            InvalidArgumentError: A name is malformed or both are equal.
+            NotFoundError: The container does not exist.
+            AlreadyExistsError: The new name is taken.
+            BusyError: A session is using the container.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(
             cancel_event, operation="rename_container"
         )
@@ -1586,7 +1697,19 @@ class ProotDistro:
         self, name: str, *,
         cancel_event: Optional[CancellationToken] = None,
     ) -> ContainerInfo:
-        """Reinstall a container from its recorded OCI image."""
+        """Reinstall a container from its recorded OCI image.
+
+        All changes made inside the container are lost.
+
+        Raises:
+            NotFoundError: The container does not exist.
+            UnsupportedOperationError: It was not installed from an OCI image.
+            BusyError: A session is using the container.
+            AuthenticationError: The registry refused the credentials.
+            NetworkError: The registry could not be reached.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(
             cancel_event, operation="reset_container"
         )
@@ -1649,10 +1772,17 @@ class ProotDistro:
                         f"{role} container '{container}' is not installed.",
                         operation=operation,
                     )
+        # A host path is made absolute and "~"-expanded here, whatever its
+        # spelling. The worker and the existence check below must see the
+        # same path: expanding only for the check let "~/file" pass it and
+        # then be handed to the worker as a literal relative "~" directory.
         if source_container is None:
-            source_path = os.path.expanduser(source)
-            exists = (os.path.lexists(source_path) if operation == "move"
-                      else os.path.exists(source_path))
+            source = _host_path(source)
+        if destination_container is None:
+            destination = _host_path(destination)
+        if source_container is None:
+            exists = (os.path.lexists(source) if operation == "move"
+                      else os.path.exists(source))
             if not exists:
                 raise NotFoundError(
                     f"source path '{source}' does not exist.",
@@ -1676,7 +1806,19 @@ class ProotDistro:
         recursive: bool = False,
         cancel_event: Optional[CancellationToken] = None,
     ) -> TransferResult:
-        """Copy a file or directory between host and container paths."""
+        """Copy a file or directory between host and container paths.
+
+        Paths use ``container:path`` syntax. A ``str`` host path is made
+        absolute (``~`` is expanded) and a ``pathlib.Path`` always means a
+        host path.
+
+        Raises:
+            InvalidArgumentError: A path is malformed.
+            NotFoundError: A container or the source is missing.
+            PartialOperationError: Some entries could not be copied.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         if not isinstance(recursive, bool):
             raise InvalidArgumentError(
                 "recursive must be a boolean.", operation="copy"
@@ -1690,7 +1832,17 @@ class ProotDistro:
         self, source: _PathArgument, destination: _PathArgument, *,
         cancel_event: Optional[CancellationToken] = None,
     ) -> TransferResult:
-        """Move a file or directory between host and container paths."""
+        """Move a file or directory between host and container paths.
+
+        Same path rules as :meth:`copy`.
+
+        Raises:
+            InvalidArgumentError: A path is malformed.
+            NotFoundError: A container or the source is missing.
+            PartialOperationError: Some entries could not be moved.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         return self._transfer(
             "move", source, destination, cancel_event=cancel_event,
             move=True, recursive=False,
@@ -1705,7 +1857,18 @@ class ProotDistro:
         delete: bool = False,
         cancel_event: Optional[CancellationToken] = None,
     ) -> TransferResult:
-        """Synchronize a file or directory to another path."""
+        """Synchronize a file or directory to another path.
+
+        Same path rules as :meth:`copy`. With ``delete=True`` entries that
+        exist only in the destination are removed.
+
+        Raises:
+            InvalidArgumentError: A path or flag is invalid.
+            NotFoundError: A container or the source is missing.
+            PartialOperationError: Some entries could not be synchronized.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         if not isinstance(checksum, bool):
             raise InvalidArgumentError(
                 "checksum must be a boolean.", operation="sync"
@@ -1727,7 +1890,24 @@ class ProotDistro:
         compression: Optional[str] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> BackupResult:
-        """Write a container backup to a host path or binary stream."""
+        """Write a container backup to a host path or binary stream.
+
+        Args:
+            name: Container to archive.
+            output: New host path (compression is chosen from its suffix) or
+                a writable binary stream (no compression unless
+                ``compression`` is given). The API never closes the stream.
+            compression: ``None``, ``"none"``, ``"gzip"``, ``"bzip2"``,
+                ``"xz"`` or ``"zstd"``.
+            cancel_event: Optional cancellation token.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The container does not exist.
+            AlreadyExistsError: The output path already exists.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(cancel_event, operation="backup")
         name = _require_name(name, operation="backup")
         output_path, output_stream = _path_or_stream(
@@ -1774,7 +1954,16 @@ class ProotDistro:
         self, archive: _PathOrBinaryStream, *,
         cancel_event: Optional[CancellationToken] = None,
     ) -> RestoreResult:
-        """Restore one container from a host path or binary stream."""
+        """Restore one container from a host path or binary stream.
+
+        Raises:
+            InvalidArgumentError: *archive* is not a path or readable stream.
+            NotFoundError: The archive path does not exist.
+            BusyError: The target container is locked by another operation.
+            IntegrityError: The archive is damaged or malformed.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(cancel_event, operation="restore")
         archive_path, archive_stream = _path_or_stream(
             archive, operation="restore", argument="archive", readable=True
@@ -1819,7 +2008,31 @@ class ProotDistro:
         credentials: Optional[RegistryCredentials] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> BuildResult:
-        """Build an OCI image from a Dockerfile and context directory."""
+        """Build an OCI image from a Dockerfile and context directory.
+
+        Args:
+            path: Build context directory.
+            dockerfile: Path or readable binary stream; default is the
+                Dockerfile in the context.
+            tags: Image tags to create.
+            build_args: Mapping of build-argument names to string values.
+                Do not pass secrets: they are visible to ``RUN`` steps.
+            architecture, target, emulator: Build platform, stage, emulator.
+            outputs: OCI archive paths or writable binary streams.
+            install_as: Also install the result as this container name.
+            no_cache: Ignore the Dockerfile build cache.
+            credentials: Static registry credentials for this build,
+                overriding the instance's.
+            cancel_event: Optional cancellation token.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The context or a referenced base is missing.
+            AuthenticationError: A registry refused the credentials.
+            NetworkError: A registry could not be reached.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: The build failed.
+        """
         cancel_event = _cancel_control(cancel_event, operation="build")
         path = _path_argument(
             path, operation="build", argument="path", host_only=True
@@ -1985,7 +2198,16 @@ class ProotDistro:
         allow_insecure: bool = False,
         cancel_event: Optional[CancellationToken] = None,
     ) -> PushResult:
-        """Push one cached image tag to its registry."""
+        """Push one cached image tag to its registry.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The image is not cached.
+            AuthenticationError: The registry refused the credentials.
+            NetworkError: The registry could not be reached.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(cancel_event, operation="push")
         if not isinstance(image_ref, str) or not image_ref:
             raise InvalidArgumentError(
@@ -2047,7 +2269,14 @@ class ProotDistro:
         self, identifier: str, *, architecture: Optional[str] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> ImageRemovalResult:
-        """Remove cached image variants addressed by reference or image ID."""
+        """Remove cached image variants addressed by reference or image ID.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: No cached image matches.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(
             cancel_event, operation="remove_image"
         )
@@ -2092,7 +2321,17 @@ class ProotDistro:
         self, *, orphan: bool = False, build_cache: bool = False,
         cancel_event: Optional[CancellationToken] = None,
     ) -> CacheCleanupResult:
-        """Clear all cache data or selected orphan/build-cache data."""
+        """Clear all cache data or selected orphan/build-cache data.
+
+        With no flags the whole cache is cleared. ``orphan`` limits it to
+        layers no image uses; ``build_cache`` to the Dockerfile build cache.
+
+        Raises:
+            InvalidArgumentError: A flag is not a boolean.
+            BusyError: A build or install is running; nothing was deleted.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(cancel_event, operation="clear_cache")
         if not isinstance(orphan, bool) or not isinstance(build_cache, bool):
             raise InvalidArgumentError(
@@ -2359,7 +2598,21 @@ class ProotDistro:
         startup_timeout: Optional[float] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> SessionProcess:
-        """Start a login shell or shell-wrapped command inside a container."""
+        """Start a login shell or shell-wrapped command inside a container.
+
+        Without ``stdin``/``stdout``/``stderr`` the session shares this
+        process's streams; other values follow ``subprocess.Popen``.
+        ``startup_timeout`` (seconds, ``None`` for no limit) and
+        ``cancel_event`` apply only until proot has been executed.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The container does not exist.
+            BusyError: The container is locked by another operation.
+            SessionStartupTimeoutError: Setup exceeded ``startup_timeout``.
+            OperationCancelledError: Cancelled during setup.
+            OperationError: Any other setup failure.
+        """
         options = self._session_options(
             "start", user=user, environment=environment, binds=binds,
             work_dir=work_dir, redirect_ports=redirect_ports,
@@ -2402,7 +2655,11 @@ class ProotDistro:
         startup_timeout: Optional[float] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> SessionProcess:
-        """Start the image Entrypoint/Cmd, optionally replacing Cmd arguments."""
+        """Start the image Entrypoint/Cmd, optionally replacing Cmd arguments.
+
+        Same options, streams and errors as :meth:`start`; the image's
+        Entrypoint and Cmd define the command.
+        """
         options = self._session_options(
             "run", user=user, environment=environment, binds=binds,
             work_dir=work_dir, redirect_ports=redirect_ports,
@@ -2478,7 +2735,20 @@ class ProotDistro:
         stderr: _DetachedOutput = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> DetachedSession:
-        """Start a detached login command with optional append-only logs."""
+        """Start a detached login command with optional append-only logs.
+
+        The session outlives this process. Its input is ``/dev/null``;
+        ``stdout`` and ``stderr`` are ``None``/``subprocess.DEVNULL``,
+        append-only host paths, or (for ``stderr``) ``subprocess.STDOUT``.
+        Returns after proot has started.
+
+        Raises:
+            InvalidArgumentError: An argument or log destination is invalid.
+            NotFoundError: The container does not exist.
+            BusyError: The container is locked by another operation.
+            OperationCancelledError: Cancelled before the launch.
+            OperationError: Any other failure.
+        """
         stdout = _detached_output(
             stdout, operation="start_detached", argument="stdout"
         )
@@ -2527,7 +2797,10 @@ class ProotDistro:
         stderr: _DetachedOutput = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> DetachedSession:
-        """Start the image Entrypoint/Cmd with optional append-only logs."""
+        """Start the image Entrypoint/Cmd with optional append-only logs.
+
+        Same options and errors as :meth:`start_detached`.
+        """
         stdout = _detached_output(
             stdout, operation="run_detached", argument="stdout"
         )
@@ -2643,7 +2916,17 @@ class ProotDistro:
         hostname: Optional[str] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> SessionCommand:
-        """Inspect the path-based command corresponding to :meth:`start`."""
+        """Inspect the path-based command corresponding to :meth:`start`.
+
+        Prepares the session without executing proot. See ``API.md`` for the
+        difference between the printable command and a real session.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The container does not exist.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         options = self._session_options(
             "inspect_start", user=user, environment=environment, binds=binds,
             work_dir=work_dir, redirect_ports=redirect_ports,
@@ -2681,7 +2964,10 @@ class ProotDistro:
         hostname: Optional[str] = None,
         cancel_event: Optional[CancellationToken] = None,
     ) -> SessionCommand:
-        """Inspect the path-based command corresponding to :meth:`run`."""
+        """Inspect the path-based command corresponding to :meth:`run`.
+
+        Same options and errors as :meth:`inspect_start`.
+        """
         options = self._session_options(
             "inspect_run", user=user, environment=environment, binds=binds,
             work_dir=work_dir, redirect_ports=redirect_ports,
@@ -2701,7 +2987,16 @@ class ProotDistro:
         signal_name: _SignalArgument = "TERM",
         cancel_event: Optional[CancellationToken] = None,
     ) -> SessionSignalResult:
-        """Signal a tracked session PID or every session of a container."""
+        """Signal a tracked session PID or every session of a container.
+
+        *target* is a PID, or a container name to signal all its sessions.
+        The whole tracked process tree is signalled, not only its parent.
+
+        Raises:
+            InvalidArgumentError: *target* or *signal_name* is invalid.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(
             cancel_event, operation="kill_session"
         )
@@ -2741,7 +3036,13 @@ class ProotDistro:
         self, *, signal_name: _SignalArgument = "TERM",
         cancel_event: Optional[CancellationToken] = None,
     ) -> SessionSignalResult:
-        """Signal every active tracked session in this runtime."""
+        """Signal every active tracked session in this runtime.
+
+        Raises:
+            InvalidArgumentError: *signal_name* is not a valid signal.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
+        """
         cancel_event = _cancel_control(
             cancel_event, operation="kill_all_sessions"
         )
@@ -2837,4 +3138,4 @@ class ProotDistro:
         return SearchResult(query=normalized, total=total, hits=hits)
 
 
-__all__ = ("EventHandler", "ProotDistro")
+__all__ = ("ProotDistro",)
