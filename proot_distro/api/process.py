@@ -23,6 +23,7 @@
 import subprocess
 from typing import Any, BinaryIO, Optional, Tuple
 
+from proot_distro.api.errors import ProotDistroError
 from proot_distro.api.models import SessionSignalResult
 
 
@@ -112,18 +113,31 @@ class SessionProcess:
 
     def terminate(self) -> SessionSignalResult:
         """Request graceful teardown of the complete tracked session tree."""
-        result = self._owner.kill_session(self.pid, signal_name="TERM")
-        if not result.pids and self.poll() is None:
-            # Session registration is best-effort. This PID is still safe to
-            # signal directly because it is the child handle this object owns.
-            self._process.terminate()
-        return result
+        return self._signal("TERM", self._process.terminate)
 
     def kill(self) -> SessionSignalResult:
         """Immediately kill the complete tracked session tree."""
-        result = self._owner.kill_session(self.pid, signal_name="KILL")
+        return self._signal("KILL", self._process.kill)
+
+    def _signal(self, name: str, direct) -> SessionSignalResult:
+        """Signal the tracked tree, falling back to the owned child.
+
+        A session that has already been reaped is never signalled: its PID
+        may belong to an unrelated process by now. Session registration is
+        best-effort and the signalling worker can fail, so the child handle
+        this object owns is signalled directly when the tree lookup finds
+        nothing or errors out.
+        """
+        if self.poll() is not None:
+            return SessionSignalResult(str(self.pid), name, ())
+        try:
+            result = self._owner.kill_session(self.pid, signal_name=name)
+        except ProotDistroError:
+            if self.poll() is None:
+                direct()
+            raise
         if not result.pids and self.poll() is None:
-            self._process.kill()
+            direct()
         return result
 
 

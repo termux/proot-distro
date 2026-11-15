@@ -83,9 +83,30 @@ def _request_parts(request: dict):
     return kind, container, arguments, options
 
 
+def _error_kind(exc: BaseException) -> str:
+    """Map a setup failure to the public error kind the parent raises.
+
+    Session validation failures stay generic: the parent has already
+    validated the caller's arguments, so what remains (an unreadable
+    manifest, say) is container state, not an invalid argument.
+    """
+    from proot_distro.operation_errors import (
+        BusyFailure, NotFoundFailure, UnsupportedFailure,
+    )
+    for failure_type, kind in (
+        (NotFoundFailure, "not_found"),
+        (BusyFailure, "busy"),
+        (UnsupportedFailure, "unsupported"),
+    ):
+        if isinstance(exc, failure_type):
+            return kind
+    return "operation"
+
+
 def main() -> int:
     request_fd = status_fd = None
     logs = []
+    error_kind = "operation"
     try:
         request_fd = _fd_from_env("_PROOT_DISTRO_SESSION_REQUEST_FD")
         status_fd = _fd_from_env("_PROOT_DISTRO_SESSION_STATUS_FD")
@@ -126,6 +147,7 @@ def main() -> int:
         message = messages[-1] if messages else f"session setup exited: {exc.code}"
     except BaseException as exc:
         message = f"session setup failed: {quote_error(exc)}"
+        error_kind = _error_kind(exc)
     finally:
         if request_fd is not None:
             try:
@@ -135,10 +157,12 @@ def main() -> int:
 
     if status_fd is not None:
         try:
-            _write_frame(status_fd, {"error": message})
+            _write_frame(status_fd, {"error": message, "kind": error_kind})
         except ValueError:
             try:
-                _write_frame(status_fd, {"error": _OVERSIZED_STATUS_ERROR})
+                _write_frame(status_fd, {
+                    "error": _OVERSIZED_STATUS_ERROR, "kind": error_kind,
+                })
             except OSError:
                 pass
         except OSError:

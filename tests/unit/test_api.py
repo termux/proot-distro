@@ -533,6 +533,20 @@ def test_search_translates_operation_error(monkeypatch):
     assert exc.value.operation == "search"
 
 
+def test_search_http_refusal_is_a_network_error(monkeypatch):
+    """Regression: HTTP 429/5xx from Hub are retryable network failures."""
+    from urllib.error import HTTPError
+
+    def fail(*args, **kwargs):
+        cause = HTTPError("https://hub.test", 429, "Too Many", None, None)
+        raise RuntimeError("Docker Hub refused: HTTP 429.") from cause
+
+    monkeypatch.setattr(program, "search_images", fail)
+    with pytest.raises(NetworkError) as exc:
+        ProotDistro().search("alpine")
+    assert exc.value.operation == "search"
+
+
 def test_public_errors_share_one_base():
     assert issubclass(AlreadyExistsError, ProotDistroError)
     assert issubclass(AuthenticationError, ProotDistroError)
@@ -621,6 +635,53 @@ def test_worker_result_rejects_malformed_documents(monkeypatch, payload):
 
     assert exc.value.operation == "list_images"
     assert "Traceback" not in str(exc.value)
+
+
+def test_blocked_input_stream_does_not_hang_finished_worker(monkeypatch):
+    """Regression: a never-EOF input stream must not hang the call."""
+    release = threading.Event()
+
+    class Blocked:
+        def read(self, _size):
+            release.wait(30)
+            return b""
+
+    class Process:
+        pid = 321
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def communicate(
+        _process, _request, event_fd, _handler, _operation, **_kwargs
+    ):
+        os.close(event_fd)
+        return b"{}", b""
+
+    monkeypatch.setattr(program, "_INPUT_PUMP_JOIN_SECONDS", 0.05)
+    monkeypatch.setattr(
+        program.subprocess, "Popen", lambda *_a, **_k: Process()
+    )
+    monkeypatch.setattr(program, "_communicate_with_channels", communicate)
+    finished = {}
+
+    def call():
+        try:
+            finished["result"] = program._run_worker(
+                "restore", {}, input_streams={"input": Blocked()}
+            )
+        except BaseException as exc:
+            finished["error"] = exc
+
+    thread = threading.Thread(target=call, daemon=True)
+    thread.start()
+    try:
+        thread.join(5)
+        assert not thread.is_alive(), "call hung on a blocked input stream"
+        assert finished.get("result") == {}
+    finally:
+        release.set()
 
 
 def test_worker_result_accepts_document_at_size_limit(monkeypatch):
@@ -940,13 +1001,37 @@ def test_worker_event_channel_rejects_oversized_frame(monkeypatch):
     assert "oversized event" in str(exc.value)
 
 
-def test_worker_event_writer_enforces_frame_limit():
+def test_worker_event_writer_truncates_oversized_message():
+    """Regression: an oversized message is shortened, not fatal."""
+    read_fd, write_fd = os.pipe()
+    try:
+        _worker._write_event(write_fd, {
+            "kind": "info",
+            "message": "\u00e9" * _worker._MAX_EVENT_BYTES,
+            "phase": "install",
+        })
+        os.close(write_fd)
+        write_fd = None
+        frame = os.read(read_fd, _worker._MAX_EVENT_BYTES + 100)
+    finally:
+        os.close(read_fd)
+        if write_fd is not None:
+            os.close(write_fd)
+
+    assert 0 < len(frame) <= _worker._MAX_EVENT_BYTES
+    event = json.loads(frame)
+    assert event["message"].endswith("[truncated]")
+    assert event["phase"] == "install"
+
+
+def test_worker_event_writer_rejects_unshrinkable_frame():
     read_fd, write_fd = os.pipe()
     try:
         with pytest.raises(RuntimeError) as exc:
             _worker._write_event(write_fd, {
                 "kind": "info",
-                "message": "x" * _worker._MAX_EVENT_BYTES,
+                "message": "x",
+                "resource": "r" * _worker._MAX_EVENT_BYTES,
             })
     finally:
         os.close(read_fd)
@@ -1064,6 +1149,95 @@ def test_worker_channel_cancellation_interrupts_and_drains(monkeypatch):
 
     assert exc.value.operation == "copy"
     assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_wait_readable_supports_descriptors_above_select_limit():
+    """Regression: fds >= 1024 made select.select raise ValueError."""
+    import fcntl
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = 1100
+    if hard != resource.RLIM_INFINITY and hard <= wanted:
+        pytest.skip("hard fd limit is too low")
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, wanted + 16), hard))
+    read_fd, write_fd = os.pipe()
+    high = fcntl.fcntl(read_fd, fcntl.F_DUPFD, wanted)
+    try:
+        assert high >= 1024
+        assert program._wait_readable([high], 0) == []
+        os.write(write_fd, b"x")
+        assert program._wait_readable([high], 1) == [high]
+    finally:
+        os.close(high)
+        os.close(read_fd)
+        os.close(write_fd)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+def test_cancel_escalates_to_kill_when_worker_ignores_sigint(monkeypatch):
+    """Regression: a worker that ignores SIGINT must not block forever."""
+    event_read, event_write = os.pipe()
+    killed = threading.Event()
+    signals = []
+
+    class Process:
+        pid = 323
+        returncode = None
+
+        def communicate(self, _request):
+            assert killed.wait(5)
+            self.returncode = -9
+            return b"", b""
+
+    def send(pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGKILL:
+            killed.set()
+            os.close(event_write)
+
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(program.os, "killpg", send)
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 0.2)
+
+    with pytest.raises(OperationCancelledError):
+        program._communicate_with_channels(
+            Process(), b"{}", event_read, None, "build",
+            cancel_event=cancelled,
+        )
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def test_cancel_racing_successful_worker_returns_result(monkeypatch):
+    """Regression: a cancel after the worker committed must not mask it."""
+    event_read, event_write = os.pipe()
+    stopped = threading.Event()
+
+    class Process:
+        pid = 322
+        returncode = None
+
+        def communicate(self, _request):
+            assert stopped.wait(5)
+            self.returncode = 0
+            return b'{"ok": true}', b""
+
+    def interrupt(_pid, _signal):
+        stopped.set()
+        os.close(event_write)
+
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(program.os, "killpg", interrupt)
+
+    streams = program._communicate_with_channels(
+        Process(), b"{}", event_read, None, "install",
+        cancel_event=cancelled,
+    )
+
+    assert streams == (b'{"ok": true}', b"")
 
 
 def test_pre_cancelled_worker_does_not_start(monkeypatch):
@@ -1300,6 +1474,54 @@ def test_session_process_falls_back_when_registry_has_no_record():
     assert raw.terminated is True
 
 
+class _FakeChild:
+    pid = 123
+    returncode = None
+    stdin = stdout = stderr = None
+
+    def __init__(self, exited=False):
+        self.exited = exited
+        self.signals = []
+
+    def poll(self):
+        return 0 if self.exited else None
+
+    def terminate(self):
+        self.signals.append("TERM")
+
+    def kill(self):
+        self.signals.append("KILL")
+
+
+def test_session_process_does_not_signal_reaped_child():
+    """Regression: a reaped child's PID may now belong to someone else."""
+    class Owner:
+        def kill_session(self, *_args, **_kwargs):
+            pytest.fail("a reaped session must not be signalled")
+
+    child = _FakeChild(exited=True)
+    handle = SessionProcess(Owner(), child, container="box", kind="login")
+
+    assert handle.terminate().pids == ()
+    assert handle.kill().pids == ()
+    assert child.signals == []
+
+
+def test_session_process_signals_child_when_worker_fails():
+    """Regression: a failing signalling worker must not skip teardown."""
+    class Owner:
+        def kill_session(self, *_args, **_kwargs):
+            raise OperationError("worker failed", operation="kill_session")
+
+    child = _FakeChild()
+    handle = SessionProcess(Owner(), child, container="box", kind="login")
+
+    with pytest.raises(OperationError):
+        handle.kill()
+
+    assert child.signals == ["KILL"]
+
+
 def _read_startup_payload(payload, event_handler=None):
     read_fd, write_fd = os.pipe()
 
@@ -1381,6 +1603,40 @@ def test_session_startup_delivers_valid_event_and_error():
         "start", EventKind.WARNING, "careful",
         phase="setup", resource="box",
     )]
+
+
+def test_session_startup_error_keeps_its_kind():
+    """Regression: setup errors carry a typed kind, not just text."""
+    error = _read_startup_payload(
+        b'{"error":"container is busy","kind":"busy"}\n', None
+    )
+
+    assert error == "container is busy"
+    assert error.kind == "busy"
+    assert program._WORKER_ERROR_TYPES[error.kind] is BusyError
+
+
+def test_session_startup_error_unknown_kind_is_generic():
+    error = _read_startup_payload(
+        b'{"error":"boom","kind":"bogus"}\n', None
+    )
+
+    assert error.kind == "operation"
+
+
+def test_session_worker_classifies_setup_failures():
+    from proot_distro.operation_errors import (
+        BusyFailure, NotFoundFailure, UnsupportedFailure,
+    )
+    from proot_distro.session_errors import SessionValidationFailure
+
+    assert _session_worker._error_kind(
+        SessionValidationFailure("x")
+    ) == "operation"
+    assert _session_worker._error_kind(NotFoundFailure("x")) == "not_found"
+    assert _session_worker._error_kind(BusyFailure("x")) == "busy"
+    assert _session_worker._error_kind(UnsupportedFailure("x")) == "unsupported"
+    assert _session_worker._error_kind(RuntimeError("x")) == "operation"
 
 
 def _read_session_request(payload):
@@ -1476,6 +1732,7 @@ def test_session_worker_replaces_oversized_error_with_bounded_status(
 
     assert json.loads(frame) == {
         "error": _session_worker._OVERSIZED_STATUS_ERROR,
+        "kind": "operation",
     }
 
 

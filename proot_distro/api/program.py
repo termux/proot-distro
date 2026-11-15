@@ -30,7 +30,7 @@ import io
 import json
 import math
 import os
-import select
+import selectors
 import signal
 import socket
 import subprocess
@@ -130,6 +130,8 @@ _MAX_WORKER_EVENT_BYTES = 64 * 1024
 _MAX_WORKER_RESULT_BYTES = 16 * 1024 * 1024
 _MAX_SESSION_STATUS_BYTES = 64 * 1024
 _MAX_CREDENTIAL_FRAME_BYTES = 1024 * 1024
+# How long a cancelled worker may take to clean up before it is killed.
+_WORKER_CANCEL_GRACE_SECONDS = 10.0
 _WORKER_STOP_GRACE_SECONDS = 5.0
 
 
@@ -392,7 +394,10 @@ def _read_session_startup(
                 message = payload["error"]
                 if not isinstance(message, str) or not message:
                     raise TypeError
-                setup_error = message
+                setup_error = _SetupError(message)
+                kind = payload.get("kind", "operation")
+                if kind in _WORKER_ERROR_TYPES:
+                    setup_error.kind = kind
                 return
             event = payload["event"]
             if not isinstance(event, dict):
@@ -432,7 +437,7 @@ def _read_session_startup(
         if cancel_event is not None:
             wait = 0.1 if wait is None else min(wait, 0.1)
         try:
-            readable, _, _ = select.select([fd], [], [], wait)
+            readable = _wait_readable([fd], wait)
         except OSError as exc:
             raise OperationError(
                 f"cannot wait for session startup status: {exc}",
@@ -528,6 +533,7 @@ _WORKER_ERROR_TYPES = {
     "already_exists": AlreadyExistsError,
     "authentication": AuthenticationError,
     "busy": BusyError,
+    "invalid_argument": InvalidArgumentError,
     "integrity": IntegrityError,
     "network": NetworkError,
     "not_found": NotFoundError,
@@ -535,6 +541,12 @@ _WORKER_ERROR_TYPES = {
     "partial": PartialOperationError,
     "unsupported": UnsupportedOperationError,
 }
+
+
+class _SetupError(str):
+    """A session-setup failure message that remembers its error kind."""
+
+    kind = "operation"
 
 
 def _structured_worker_error(operation: str, stdout: bytes):
@@ -668,6 +680,19 @@ def _operation_event(operation: str, raw: bytes) -> OperationEvent:
     )
 
 
+def _wait_readable(readers, timeout):
+    """Return the *readers* that are ready, waiting up to *timeout* seconds.
+
+    ``selectors`` is used instead of ``select.select`` because the latter
+    raises ValueError for any descriptor numbered 1024 or higher, which an
+    embedding application with many open files can easily hand us.
+    """
+    with selectors.DefaultSelector() as selector:
+        for reader in readers:
+            selector.register(reader, selectors.EVENT_READ)
+        return [key.fileobj for key, _ in selector.select(timeout)]
+
+
 def _communicate_with_channels(
     proc,
     request: bytes,
@@ -701,6 +726,8 @@ def _communicate_with_channels(
     credential_open = credential_sock is not None
     build_output_open = build_output_fd is not None
     cancelled = False
+    cancel_started = 0.0
+    cancel_killed = False
     caller_interrupt = None
 
     def close_channels() -> None:
@@ -721,8 +748,19 @@ def _communicate_with_channels(
                 if (caller_interrupt is None and not cancelled
                         and _cancellation_requested(cancel_event, operation)):
                     cancelled = True
+                    cancel_started = time.monotonic()
                     try:
                         os.killpg(proc.pid, signal.SIGINT)
+                    except OSError:
+                        pass
+                elif (cancelled and not cancel_killed
+                        and time.monotonic() - cancel_started
+                        > _WORKER_CANCEL_GRACE_SECONDS):
+                    # The worker ignored SIGINT (stuck in an uninterruptible
+                    # call): without escalation the caller would wait forever.
+                    cancel_killed = True
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
                     except OSError:
                         pass
                 readers = []
@@ -732,8 +770,8 @@ def _communicate_with_channels(
                     readers.append(credential_sock)
                 if build_output_open:
                     readers.append(build_output_fd)
-                readable, _, _ = select.select(
-                    readers, [], [], 0.1 if cancel_event is not None else None
+                readable = _wait_readable(
+                    readers, 0.1 if cancel_event is not None else None
                 )
                 if event_open and event_fd in readable:
                     chunk = os.read(event_fd, 65536)
@@ -857,7 +895,11 @@ def _communicate_with_channels(
         raise caller_interrupt
     if provider_error is not None:
         raise provider_error
-    if cancelled:
+    # A cancel that raced the worker's completion must not mask a
+    # committed result: when the worker exited 0 the operation happened
+    # (container installed, session started), so report that, not
+    # "cancelled", or the caller retries or leaks the new state.
+    if cancelled and getattr(proc, "returncode", None) != 0:
         raise OperationCancelledError(
             f"{operation} was cancelled.", operation=operation
         )
@@ -901,6 +943,10 @@ def _write_stream_chunk(stream, chunk: bytes, operation: str) -> None:
         view = view[written:]
 
 
+# How long a finished call waits for a caller input stream's blocked read().
+_INPUT_PUMP_JOIN_SECONDS = 1.0
+
+
 def _start_stream_pumps(
     proc,
     parent_inputs,
@@ -915,9 +961,13 @@ def _start_stream_pumps(
 
     def fail(exc) -> None:
         with error_lock:
-            if not errors:
+            first = not errors
+            if first:
                 errors.append(exc)
-                _stop_worker(proc)
+        # Stop the worker outside the lock: it can wait up to the stop grace
+        # period, and other pumps must be able to record their own failure.
+        if first:
+            _stop_worker(proc)
 
     def pump_input(fd: int, stream) -> None:
         try:
@@ -957,6 +1007,7 @@ def _start_stream_pumps(
         thread = threading.Thread(
             target=pump_input, args=(fd, stream), daemon=True
         )
+        thread._pd_input_pump = True
         thread.start()
         threads.append(thread)
     for name, fd, stream in parent_outputs:
@@ -1113,7 +1164,14 @@ def _run_worker(operation: str, options: dict,
         raise
     finally:
         for thread in pump_threads:
-            thread.join()
+            if getattr(thread, "_pd_input_pump", False):
+                # The worker has exited. An input pump still blocked in the
+                # caller's read() (a socket or pipe that never reaches EOF)
+                # cannot be interrupted, so give it a moment and let the
+                # daemon thread end on its own instead of hanging the call.
+                thread.join(_INPUT_PUMP_JOIN_SECONDS)
+            else:
+                thread.join()
 
     if stream_errors:
         raise stream_errors[0]
@@ -2253,7 +2311,9 @@ class ProotDistro:
             os.close(status_read)
         if setup_error is not None:
             process.wait()
-            raise OperationError(setup_error, operation=operation)
+            raise _WORKER_ERROR_TYPES[
+                getattr(setup_error, "kind", "operation")
+            ](str(setup_error), operation=operation)
         return SessionProcess(
             self, process, container=container, kind=kind
         )
@@ -2694,9 +2754,15 @@ class ProotDistro:
     ) -> SearchResult:
         """Search public Docker Hub repositories.
 
-        Search is the only method in this initial API surface that performs
-        network I/O. Registry credentials are never sent to Docker Hub's
+        Search runs in the calling process, without a worker, and cannot be
+        cancelled. Registry credentials are never sent to Docker Hub's
         public search endpoint.
+
+        Raises:
+            InvalidArgumentError: *query* or *limit* is invalid.
+            NetworkError: Docker Hub is unreachable or refused the request
+                (including HTTP 429 and 5xx responses).
+            OperationError: Docker Hub returned a malformed response.
         """
         if not isinstance(query, str):
             raise InvalidArgumentError(
@@ -2739,6 +2805,11 @@ class ProotDistro:
         except NETWORK_ERRORS as exc:
             raise NetworkError(str(exc), operation="search") from exc
         except RuntimeError as exc:
+            # The helper wraps HTTP refusals (429, 5xx) and certificate
+            # failures in RuntimeError; their cause marks them as network
+            # failures a caller may reasonably retry.
+            if isinstance(exc.__cause__, NETWORK_ERRORS):
+                raise NetworkError(str(exc), operation="search") from exc
             raise OperationError(str(exc), operation="search") from exc
 
         hits = tuple(SearchHit(

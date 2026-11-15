@@ -149,13 +149,34 @@ def _channel_fd_from_env(name: str):
     return fd
 
 
-def _write_event(fd: int, event: dict) -> None:
-    """Write one bounded newline-delimited event frame."""
-    data = json.dumps(
+def _encode_event(event: dict) -> bytes:
+    """Return one newline-terminated, ASCII-only JSON event frame."""
+    return json.dumps(
         event, ensure_ascii=True, separators=(",", ":")
     ).encode("ascii") + b"\n"
+
+
+def _write_event(fd: int, event: dict) -> None:
+    """Write one bounded newline-delimited event frame."""
+    data = _encode_event(event)
     if len(data) > _MAX_EVENT_BYTES:
-        raise RuntimeError("operation event is too large")
+        # A long log line or registry error body must not abort an
+        # otherwise healthy operation: shorten the free-form message
+        # until the frame fits. Only a frame that is oversized even
+        # without its message (a pathological resource/phase) is fatal.
+        message = event.get("message")
+        if not isinstance(message, str):
+            raise RuntimeError("operation event is too large")
+        marker = "... [truncated]"
+        keep = len(message)
+        while keep > 0:
+            keep //= 2
+            shortened = dict(event, message=message[:keep] + marker)
+            data = _encode_event(shortened)
+            if len(data) <= _MAX_EVENT_BYTES:
+                break
+        else:
+            raise RuntimeError("operation event is too large")
     while data:
         written = os.write(fd, data)
         data = data[written:]
