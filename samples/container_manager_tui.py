@@ -570,6 +570,15 @@ def _curses_main(screen) -> None:
 
 def main() -> int:
     """Start the TUI and convert expected failures into concise messages."""
+    # curses needs a real terminal on both ends; with redirected streams it
+    # fails with a confusing low-level error, so say what is wrong instead.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(
+            "This interface needs an interactive terminal; standard input "
+            "and output must not be redirected.",
+            file=sys.stderr,
+        )
+        return 2
     try:
         # wrapper() initializes curses and always restores the terminal before
         # propagating an exception to this boundary.

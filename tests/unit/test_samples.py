@@ -538,3 +538,20 @@ def test_tui_fit_uses_display_width():
     # A wide character takes two columns and is never split.
     assert module._fit("中文", 3) == "中 "
     assert module._fit("éx", 2) == "éx"
+
+
+def test_tui_refuses_to_start_without_a_terminal(monkeypatch, capsys):
+    module = _load("container_manager_tui")
+
+    class NotATty:
+        def isatty(self):
+            return False
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("curses must not start without a terminal")
+
+    monkeypatch.setattr(module.sys, "stdin", NotATty())
+    monkeypatch.setattr(module.curses, "wrapper", fail)
+
+    assert module.main() == 2
+    assert "interactive terminal" in capsys.readouterr().err
