@@ -65,7 +65,10 @@ from proot_distro.operation_errors import (
     OperationFailure,
 )
 from proot_distro.operations.context import OperationContext
-from proot_distro.operations.errors import BuildValidationFailure
+from proot_distro.operations.errors import (
+    BuildValidationFailure,
+    build_failure,
+)
 from proot_distro.operations.install import install_container
 from proot_distro.operations.inventory import list_images
 from proot_distro.operations.locks import operation_lock
@@ -348,15 +351,15 @@ def _run_build(
                 emulator=emulator,
             )
         except (BuildError, OSError) as exc:
-            raise OperationFailure(
-                f"Build failed: {quote_error(exc)}"
+            raise build_failure(
+                exc, f"Build failed: {quote_error(exc)}"
             ) from exc
         engine.api_output_fd = build_output_fd
         try:
             final_stage = engine.run(instructions)
         except (BuildError, OSError) as exc:
-            raise OperationFailure(
-                f"Build failed: {quote_error(exc)}"
+            raise build_failure(
+                exc, f"Build failed: {quote_error(exc)}"
             ) from exc
 
         arch_docker = ARCH_TO_DOCKER.get(target_arch, (target_arch, ""))[0]

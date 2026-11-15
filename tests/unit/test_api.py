@@ -1210,6 +1210,101 @@ def test_cancel_escalates_to_kill_when_worker_ignores_sigint(monkeypatch):
     assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
 
 
+def _stuck_worker(monkeypatch, interrupts):
+    """A worker that only dies to SIGKILL; *interrupts* Ctrl-Cs are raised."""
+    event_read, event_write = os.pipe()
+    killed = threading.Event()
+    signals = []
+
+    class Process:
+        pid = 324
+        returncode = None
+
+        def communicate(self, _request):
+            assert killed.wait(10)
+            self.returncode = -9
+            return b"", b""
+
+    def send(_pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGKILL:
+            killed.set()
+            os.close(event_write)
+
+    remaining = [interrupts]
+    real_wait = program._wait_readable
+
+    def wait(readers, timeout):
+        if remaining[0]:
+            remaining[0] -= 1
+            raise KeyboardInterrupt
+        return real_wait(readers, timeout)
+
+    monkeypatch.setattr(program.os, "killpg", send)
+    monkeypatch.setattr(program, "_wait_readable", wait)
+    return Process(), event_read, signals
+
+
+def test_repeated_ctrl_c_force_kills_a_stuck_worker(monkeypatch):
+    """Regression: a stuck worker made even repeated Ctrl-C a no-op."""
+    process, event_read, signals = _stuck_worker(monkeypatch, 2)
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 60)
+
+    with pytest.raises(KeyboardInterrupt):
+        program._communicate_with_channels(
+            process, b"{}", event_read, None, "build"
+        )
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def test_single_ctrl_c_escalates_after_the_grace_period(monkeypatch):
+    process, event_read, signals = _stuck_worker(monkeypatch, 1)
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 0.2)
+
+    with pytest.raises(KeyboardInterrupt):
+        program._communicate_with_channels(
+            process, b"{}", event_read, None, "build"
+        )
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def test_ctrl_c_while_waiting_for_worker_exit_stops_the_worker(monkeypatch):
+    """Regression: Ctrl-C after the channels closed left the worker running."""
+    import signal as signal_module
+    import subprocess
+    import sys
+
+    event_read, event_write = os.pipe()
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, start_new_session=True,
+    )
+    os.close(event_write)  # the event channel is already at EOF
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 0.5)
+    main_thread = threading.main_thread().ident
+    timer = threading.Timer(
+        0.3, lambda: signal_module.pthread_kill(
+            main_thread, signal_module.SIGINT
+        ),
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            timer.start()
+            program._communicate_with_channels(
+                process, b"{}", event_read, None, "install"
+            )
+        # The worker ignores neither signal: it was stopped, not orphaned.
+        assert process.poll() is not None
+    finally:
+        timer.cancel()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def test_cancel_racing_successful_worker_returns_result(monkeypatch):
     """Regression: a cancel after the worker committed must not mask it."""
     event_read, event_write = os.pipe()

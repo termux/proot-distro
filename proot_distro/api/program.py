@@ -783,12 +783,19 @@ def _communicate_with_channels(
 ):
     """Drain process pipes while serving live channels in the caller thread."""
     result = {}
+    # Set by the communicate thread itself when it is finished. Waiting on
+    # this instead of Thread.join()/is_alive() matters: a KeyboardInterrupt
+    # during join() can leave CPython 3.12 believing a still-running thread
+    # has stopped, which would let us raise before the worker is reaped.
+    finished = threading.Event()
 
     def communicate():
         try:
             result["streams"] = _communicate_bounded(proc, request)
         except BaseException as exc:
             result["error"] = exc
+        finally:
+            finished.set()
 
     thread = threading.Thread(target=communicate, daemon=True)
     thread.start()
@@ -802,9 +809,49 @@ def _communicate_with_channels(
     credential_open = credential_sock is not None
     build_output_open = build_output_fd is not None
     cancelled = False
-    cancel_started = 0.0
-    cancel_killed = False
     caller_interrupt = None
+    # Stopping a worker is a two-step affair shared by cancellation and
+    # Ctrl-C: SIGINT first so it can clean up, SIGKILL once the grace
+    # period passes (or at once on a repeated Ctrl-C) so a worker stuck in
+    # an uninterruptible call cannot leave the caller hanging forever.
+    stop_started = None
+    killed = False
+
+    def interrupt_worker() -> None:
+        nonlocal stop_started
+        if stop_started is None:
+            stop_started = time.monotonic()
+            try:
+                os.killpg(proc.pid, signal.SIGINT)
+            except OSError:
+                pass
+
+    def kill_worker() -> None:
+        nonlocal killed
+        if not killed:
+            killed = True
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    def escalate_if_due() -> None:
+        if (stop_started is not None and not killed
+                and time.monotonic() - stop_started
+                > _WORKER_CANCEL_GRACE_SECONDS):
+            kill_worker()
+
+    def note_interrupt(exc: KeyboardInterrupt) -> None:
+        """Record Ctrl-C: the first asks the worker to stop, more force it."""
+        nonlocal caller_interrupt
+        if caller_interrupt is None:
+            caller_interrupt = exc
+            if stop_started is None:
+                interrupt_worker()
+            else:
+                kill_worker()
+        else:
+            kill_worker()
 
     def close_channels() -> None:
         nonlocal event_open, credential_open, build_output_open
@@ -824,21 +871,8 @@ def _communicate_with_channels(
                 if (caller_interrupt is None and not cancelled
                         and _cancellation_requested(cancel_event, operation)):
                     cancelled = True
-                    cancel_started = time.monotonic()
-                    try:
-                        os.killpg(proc.pid, signal.SIGINT)
-                    except OSError:
-                        pass
-                elif (cancelled and not cancel_killed
-                        and time.monotonic() - cancel_started
-                        > _WORKER_CANCEL_GRACE_SECONDS):
-                    # The worker ignored SIGINT (stuck in an uninterruptible
-                    # call): without escalation the caller would wait forever.
-                    cancel_killed = True
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except OSError:
-                        pass
+                    interrupt_worker()
+                escalate_if_due()
                 readers = []
                 if event_open:
                     readers.append(event_fd)
@@ -847,7 +881,9 @@ def _communicate_with_channels(
                 if build_output_open:
                     readers.append(build_output_fd)
                 readable = _wait_readable(
-                    readers, 0.1 if cancel_event is not None else None
+                    readers,
+                    0.1 if (cancel_event is not None
+                            or stop_started is not None) else None,
                 )
                 if event_open and event_fd in readable:
                     chunk = os.read(event_fd, 65536)
@@ -950,12 +986,7 @@ def _communicate_with_channels(
                 # own interruption handlers report their final event before
                 # cleaning staged state. Closing the event pipe here turned
                 # that report into BrokenPipeError and skipped the cleanup.
-                if caller_interrupt is None:
-                    caller_interrupt = exc
-                    try:
-                        os.killpg(proc.pid, signal.SIGINT)
-                    except OSError:
-                        pass
+                note_interrupt(exc)
                 # The handler may itself have raised KeyboardInterrupt. Do
                 # not invoke it again while draining the worker's cleanup.
                 event_handler = None
@@ -966,7 +997,15 @@ def _communicate_with_channels(
         raise
     finally:
         close_channels()
-    thread.join()
+    # The channels are closed but the worker may still be finishing (or
+    # stuck). Wait in short slices so Ctrl-C and the kill escalation keep
+    # working here too, instead of blocking uninterruptibly in join().
+    while not finished.is_set():
+        try:
+            finished.wait(0.1)
+        except KeyboardInterrupt as exc:
+            note_interrupt(exc)
+        escalate_if_due()
     if caller_interrupt is not None:
         raise caller_interrupt
     if provider_error is not None:
@@ -1545,10 +1584,11 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: An argument is malformed.
             AlreadyExistsError: A container with that name exists.
-            NotFoundError: The image or archive does not exist.
+            NotFoundError: The image, URL or archive does not exist.
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry or URL could not be reached.
-            IntegrityError: Downloaded content failed validation.
+            IntegrityError: Downloaded or archived content failed validation.
+            BusyError: The container name is locked by another operation.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -1639,7 +1679,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: *name* is malformed.
             NotFoundError: The container does not exist.
-            BusyError: A session is using the container.
+            BusyError: The container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -1667,7 +1707,7 @@ class ProotDistro:
             InvalidArgumentError: A name is malformed or both are equal.
             NotFoundError: The container does not exist.
             AlreadyExistsError: The new name is taken.
-            BusyError: A session is using the container.
+            BusyError: The container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -1702,11 +1742,13 @@ class ProotDistro:
         All changes made inside the container are lost.
 
         Raises:
+            InvalidArgumentError: *name* is malformed.
             NotFoundError: The container does not exist.
             UnsupportedOperationError: It was not installed from an OCI image.
-            BusyError: A session is using the container.
+            BusyError: The container is locked by another operation or session.
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry could not be reached.
+            IntegrityError: Downloaded content failed validation.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -1815,6 +1857,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: A path is malformed.
             NotFoundError: A container or the source is missing.
+            BusyError: The container is locked by another operation or session.
             PartialOperationError: Some entries could not be copied.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
@@ -1839,6 +1882,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: A path is malformed.
             NotFoundError: A container or the source is missing.
+            BusyError: The container is locked by another operation or session.
             PartialOperationError: Some entries could not be moved.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
@@ -1865,6 +1909,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: A path or flag is invalid.
             NotFoundError: A container or the source is missing.
+            BusyError: The container is locked by another operation or session.
             PartialOperationError: Some entries could not be synchronized.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
@@ -1905,6 +1950,8 @@ class ProotDistro:
             InvalidArgumentError: An argument is malformed.
             NotFoundError: The container does not exist.
             AlreadyExistsError: The output path already exists.
+            UnsupportedOperationError: The compression is unavailable, for example zstd needs Python 3.14.
+            BusyError: The container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -1959,8 +2006,9 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: *archive* is not a path or readable stream.
             NotFoundError: The archive path does not exist.
-            BusyError: The target container is locked by another operation.
             IntegrityError: The archive is damaged or malformed.
+            UnsupportedOperationError: The archive's compression is unavailable, for example zstd needs Python 3.14.
+            BusyError: The target container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -2028,10 +2076,12 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: An argument is malformed.
             NotFoundError: The context or a referenced base is missing.
+            AlreadyExistsError: The ``install_as`` container already exists.
             AuthenticationError: A registry refused the credentials.
             NetworkError: A registry could not be reached.
+            BusyError: The image is locked by another operation.
             OperationCancelledError: Cancelled before completion.
-            OperationError: The build failed.
+            OperationError: Any other failure.
         """
         cancel_event = _cancel_control(cancel_event, operation="build")
         path = _path_argument(
@@ -2205,6 +2255,7 @@ class ProotDistro:
             NotFoundError: The image is not cached.
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry could not be reached.
+            BusyError: The image is locked by another operation.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -2274,6 +2325,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: An argument is malformed.
             NotFoundError: No cached image matches.
+            BusyError: The image is locked by another operation.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -2328,7 +2380,8 @@ class ProotDistro:
 
         Raises:
             InvalidArgumentError: A flag is not a boolean.
-            BusyError: A build or install is running; nothing was deleted.
+            BusyError: With ``orphan`` or ``build_cache``, a build or install
+                is running; nothing was deleted.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -2608,7 +2661,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: An argument is malformed.
             NotFoundError: The container does not exist.
-            BusyError: The container is locked by another operation.
+            BusyError: The container is locked by another operation or session.
             SessionStartupTimeoutError: Setup exceeded ``startup_timeout``.
             OperationCancelledError: Cancelled during setup.
             OperationError: Any other setup failure.
@@ -2659,6 +2712,14 @@ class ProotDistro:
 
         Same options, streams and errors as :meth:`start`; the image's
         Entrypoint and Cmd define the command.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The container does not exist.
+            BusyError: The container is locked by another operation or session.
+            SessionStartupTimeoutError: Setup exceeded ``startup_timeout``.
+            OperationCancelledError: Cancelled during setup.
+            OperationError: Any other setup failure.
         """
         options = self._session_options(
             "run", user=user, environment=environment, binds=binds,
@@ -2745,7 +2806,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: An argument or log destination is invalid.
             NotFoundError: The container does not exist.
-            BusyError: The container is locked by another operation.
+            BusyError: The container is locked by another operation or session.
             OperationCancelledError: Cancelled before the launch.
             OperationError: Any other failure.
         """
@@ -2800,6 +2861,13 @@ class ProotDistro:
         """Start the image Entrypoint/Cmd with optional append-only logs.
 
         Same options and errors as :meth:`start_detached`.
+
+        Raises:
+            InvalidArgumentError: An argument or log destination is invalid.
+            NotFoundError: The container does not exist.
+            BusyError: The container is locked by another operation or session.
+            OperationCancelledError: Cancelled before the launch.
+            OperationError: Any other failure.
         """
         stdout = _detached_output(
             stdout, operation="run_detached", argument="stdout"
@@ -2924,6 +2992,7 @@ class ProotDistro:
         Raises:
             InvalidArgumentError: An argument is malformed.
             NotFoundError: The container does not exist.
+            BusyError: The container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """
@@ -2967,6 +3036,13 @@ class ProotDistro:
         """Inspect the path-based command corresponding to :meth:`run`.
 
         Same options and errors as :meth:`inspect_start`.
+
+        Raises:
+            InvalidArgumentError: An argument is malformed.
+            NotFoundError: The container does not exist.
+            BusyError: The container is locked by another operation or session.
+            OperationCancelledError: Cancelled before completion.
+            OperationError: Any other failure.
         """
         options = self._session_options(
             "inspect_run", user=user, environment=environment, binds=binds,

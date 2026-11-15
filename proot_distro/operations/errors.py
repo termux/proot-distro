@@ -20,7 +20,13 @@
 
 """Typed internal failures carrying structured service diagnostics."""
 
-from proot_distro.operation_errors import NotFoundFailure, OperationFailure
+from proot_distro.helpers.docker.transport import RegistryAuthenticationError
+from proot_distro.operation_errors import (
+    IntegrityFailure,
+    NetworkFailure,
+    NotFoundFailure,
+    OperationFailure,
+)
 from proot_distro.session_errors import (
     SessionExecutionFailure,
     SessionNotFoundFailure,
@@ -37,6 +43,45 @@ class ImageNotFoundFailure(NotFoundFailure):
         self.identifier = identifier
         self.architecture = architecture
         self.similar = tuple(similar)
+
+
+class BuildNetworkFailure(OperationFailure, NetworkFailure):
+    """A build step could not reach a remote service.
+
+    Both bases on purpose: the command adapter handles every build failure
+    as an ``OperationFailure``, while API callers need the network kind.
+    """
+
+
+class BuildAuthenticationFailure(OperationFailure, RegistryAuthenticationError):
+    """A registry refused a build's credentials (see BuildNetworkFailure)."""
+
+
+class BuildIntegrityFailure(OperationFailure, IntegrityFailure):
+    """Content a build fetched failed validation (see BuildNetworkFailure)."""
+
+
+def build_failure(exc: BaseException, message: str) -> OperationFailure:
+    """Return the failure for a build-engine error, keeping its kind.
+
+    The engine flattens registry and download errors into a plain
+    ``BuildError`` whose ``__cause__`` is the typed original. Without this
+    the kind was lost and every unreachable base image looked like a
+    generic failure to API callers.
+    """
+    cause = exc.__cause__
+    for _ in range(8):
+        if cause is None:
+            break
+        for source, failure in (
+            (RegistryAuthenticationError, BuildAuthenticationFailure),
+            (NetworkFailure, BuildNetworkFailure),
+            (IntegrityFailure, BuildIntegrityFailure),
+        ):
+            if isinstance(cause, source):
+                return failure(message)
+        cause = cause.__cause__
+    return OperationFailure(message)
 
 
 class AmbiguousImageFailure(OperationFailure):
@@ -98,7 +143,11 @@ class SessionSignalFailure(OperationFailure):
 
 __all__ = (
     "AmbiguousImageFailure",
+    "BuildAuthenticationFailure",
+    "BuildIntegrityFailure",
+    "BuildNetworkFailure",
     "BuildValidationFailure",
+    "build_failure",
     "ImageNotFoundFailure",
     "InstallValidationFailure",
     "PushValidationFailure",
