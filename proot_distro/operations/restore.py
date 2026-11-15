@@ -562,6 +562,8 @@ def restore_container(
     restore_name = None
     lock = None
     committed = False
+    created = False             # this restore made containers/<name>
+    succeeded = False
     dests = None                # opened with the container dir, at commit
     root_fd = None
     pending_manifest = None     # (bytes, mode) written only on success
@@ -718,6 +720,11 @@ def restore_container(
                     # The container directory is opened here rather than
                     # earlier for the same reason the clear is deferred: an
                     # archive that never gets this far must leave no trace.
+                    # The exclusive lock is held, so nobody else can create
+                    # the name between this test and the open below.
+                    created = not os.path.lexists(
+                        container_dir(restore_name)
+                    )
                     root_fd = open_container_dir(
                         restore_name, create=True, raise_errors=True
                     )
@@ -811,6 +818,7 @@ def restore_container(
             f"Finished restoring the container '{restore_name}'.",
             phase="extract", resource=restore_name,
         )
+        succeeded = True
 
     except KeyboardInterrupt:
         clear_bar()
@@ -839,6 +847,14 @@ def restore_container(
                 os.close(root_fd)
             except OSError:
                 pass
+        if created and not succeeded:
+            # An existing container is overwritten in place and cannot be
+            # rolled back, so a failed restore leaves it half-replaced and
+            # a retry repairs it. A container this restore created has
+            # nothing to go back to: drop it, rather than leave a rootfs
+            # with no manifest that listings report as a container. Still
+            # under the lock, so no other command sees the partial tree.
+            statedir.remove_state_tree(container_dir(restore_name))
         if lock is not None:
             lock.release()
 

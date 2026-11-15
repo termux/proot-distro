@@ -19,12 +19,15 @@ that can produce them; they are not part of the per-method comparison.
 
 import http.server
 import inspect
+import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -60,15 +63,6 @@ _ERRORS = {
 
 #: Pairs shared with a verified path but not provokable offline.
 STATIC_ONLY = {
-    ("build", "AuthenticationError"):
-        "a private base image needs an https registry that answers 401",
-    ("reset_container", "AuthenticationError"):
-        "reset re-pulls through install, whose 401 path is verified",
-    ("reset_container", "IntegrityError"):
-        "reset re-pulls through install, whose corrupt-content path is "
-        "verified",
-    ("move", "PartialOperationError"):
-        "move shares copy's per-entry failure accounting",
     ("search", "NetworkError"):
         "needs Docker Hub; covered by unit tests with a stubbed transport",
 }
@@ -110,6 +104,59 @@ class _Registry(http.server.BaseHTTPRequestHandler):
     do_HEAD = do_POST = do_PUT = do_PATCH = do_GET
 
 
+class _Corrupt(_Registry):
+    """A registry whose blobs do not match the digests it advertises."""
+
+    def do_GET(self):
+        if "/manifests/" in self.path:
+            body = json.dumps({
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {
+                    "mediaType": "application/vnd.oci.image.config.v1+json",
+                    "digest": "sha256:" + "a" * 64,
+                    "size": 20,
+                },
+                "layers": [],
+            }).encode()
+            kind = "application/vnd.oci.image.manifest.v1+json"
+        else:
+            body, kind = b"x" * 20, "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    do_HEAD = do_GET
+
+
+def _tls_registry(handler, certificate, key):
+    """Serve *handler* over HTTPS with a throwaway certificate."""
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(certificate), str(key))
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _make_certificate(directory):
+    """Create a self-signed 127.0.0.1 certificate, or None without openssl."""
+    if shutil.which("openssl") is None:
+        return None
+    certificate, key = directory / "cert.pem", directory / "key.pem"
+    done = subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+         "-keyout", str(key), "-out", str(certificate), "-days", "2",
+         "-subj", "/CN=127.0.0.1",
+         "-addext", "subjectAltName=IP:127.0.0.1"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return (certificate, key) if done.returncode == 0 else None
+
+
 _HELPER = """
 import os, sys, time
 os.environ["_PROOT_DISTRO_API_RUNTIME_DIR"] = {runtime!r}
@@ -137,6 +184,11 @@ def env(tmp_path_factory):
     fake_proot.write_text("#!/bin/sh\nexit 0\n")
     fake_proot.chmod(0o755)
     runtime, cache = tmp / "rt", tmp / "cache"
+    # Workers inherit this, so they trust the throwaway TLS registries below.
+    tls = _make_certificate(tmp)
+    saved_ca = os.environ.get("SSL_CERT_FILE")
+    if tls is not None:
+        os.environ["SSL_CERT_FILE"] = str(tls[0])
     pd = ProotDistro(RuntimeConfig(runtime, cache, fake_proot))
 
     archive = tmp / "rootfs.tar"
@@ -161,6 +213,13 @@ def env(tmp_path_factory):
     (context / "Dockerfile").write_text("FROM scratch\nCOPY data /data\n")
     server = http.server.HTTPServer(("127.0.0.1", 0), _Registry)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    tls_refuse = tls_corrupt = None
+    tls_refused = tls_garbage = None
+    if tls is not None:
+        tls_refuse = _tls_registry(_Registry, *tls)
+        tls_corrupt = _tls_registry(_Corrupt, *tls)
+        tls_refused = f"127.0.0.1:{tls_refuse.server_port}/contract/tls:1"
+        tls_garbage = f"127.0.0.1:{tls_corrupt.server_port}/contract/tls:1"
     refused = f"127.0.0.1:{server.server_port}/contract/img:1"
     unreachable = "127.0.0.1:1/contract/img:1"
     # Refs used to *install* must stay out of the local cache, or the
@@ -174,6 +233,11 @@ def env(tmp_path_factory):
     reset_ref = "127.0.0.1:1/contract/reset:1"
     pd.build(context, tags=[reset_ref], install_as="refbox")
     pd.remove_image(reset_ref)
+    # reset pulls the recorded image again, so drop it after recording it.
+    if tls is not None:
+        for box, ref in (("authbox", tls_refused), ("badbox", tls_garbage)):
+            pd.build(context, tags=[ref], install_as=box)
+            pd.remove_image(ref)
     arch = pd.list_images()[0].architecture
 
     unreadable = tmp / "unreadable"
@@ -196,7 +260,8 @@ def env(tmp_path_factory):
             junk_archive=junk_archive, fake_zstd=fake_zstd,
             box_backup=box_backup, context=context, refused=refused,
             unreachable=unreachable, unreadable=unreadable,
-            absent_refused=absent_refused,
+            absent_refused=absent_refused, tls=tls is not None,
+            tls_refused=tls_refused,
             absent_unreachable=absent_unreachable,
         )
     finally:
@@ -204,6 +269,13 @@ def env(tmp_path_factory):
         helper.wait()
         (unreadable / "denied").chmod(0o600)
         server.shutdown()
+        for extra in (tls_refuse, tls_corrupt):
+            if extra is not None:
+                extra.shutdown()
+        if saved_ca is None:
+            os.environ.pop("SSL_CERT_FILE", None)
+        else:
+            os.environ["SSL_CERT_FILE"] = saved_ca
 
 
 def _zstd_available():
@@ -216,6 +288,22 @@ def _zstd_available():
 
 needs_no_zstd = pytest.mark.skipif(
     _zstd_available(), reason="zstd exists, so it is not 'unsupported'"
+)
+needs_openssl = pytest.mark.skipif(
+    shutil.which("openssl") is None, reason="openssl is needed for TLS"
+)
+_OTHER_DEVICE = "/dev/shm"
+
+
+def _on_other_device():
+    try:
+        return os.stat(_OTHER_DEVICE).st_dev != os.stat(tempfile.gettempdir()).st_dev
+    except OSError:
+        return False
+
+
+needs_other_device = pytest.mark.skipif(
+    not _on_other_device(), reason="needs a second filesystem for EXDEV"
 )
 unprivileged = pytest.mark.skipif(
     os.geteuid() == 0, reason="root can read the 'unreadable' file"
@@ -262,6 +350,13 @@ def _(e): e.pd.reset_container("ocibox")
 @_scenario("reset_container", "NetworkError")
 def _(e): e.pd.reset_container("refbox")
 
+@_scenario("reset_container", "AuthenticationError")
+@needs_openssl
+def _(e): e.pd.reset_container("authbox")
+@_scenario("reset_container", "IntegrityError")
+@needs_openssl
+def _(e): e.pd.reset_container("badbox")
+
 @_scenario("copy", "NotFoundError")
 def _(e): e.pd.copy(e.archive, "ghost:/tmp/")
 @_scenario("copy", "BusyError")
@@ -272,6 +367,18 @@ def _(e): e.pd.copy(e.unreadable, "spare:/tmp/", recursive=True)
 
 @_scenario("move", "NotFoundError")
 def _(e): e.pd.move(e.tmp / "missing", "spare:/tmp/")
+@_scenario("move", "PartialOperationError")
+@needs_other_device
+def _(e):
+    # Across devices a move copies then removes; a FIFO is never carried
+    # across, so the source is kept and the move is only half done.
+    source = Path(tempfile.mkdtemp(dir=_OTHER_DEVICE))
+    try:
+        (source / "ok").write_text("1")
+        os.mkfifo(source / "pipe")
+        e.pd.move(source, "spare:/tmp/")
+    finally:
+        shutil.rmtree(source, ignore_errors=True)
 @_scenario("move", "BusyError")
 def _(e): e.pd.move("box:/etc/hello", e.tmp / "moved")
 
@@ -314,6 +421,12 @@ def _(e):
         "FROM 127.0.0.1:1/contract/base:1\n"
     )
     e.pd.build(e.tmp / "net", tags=["contract/net:1"])
+@_scenario("build", "AuthenticationError")
+@needs_openssl
+def _(e):
+    (e.tmp / "auth").mkdir(exist_ok=True)
+    (e.tmp / "auth" / "Dockerfile").write_text(f"FROM {e.tls_refused}\n")
+    e.pd.build(e.tmp / "auth", tags=["contract/auth:1"])
 @_scenario("build", "BusyError")
 def _(e): e.pd.build(e.context, tags=["contract/locked:1"])
 

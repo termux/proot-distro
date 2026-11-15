@@ -6,6 +6,7 @@ import pytest
 
 from proot_distro.api import (
     EventKind,
+    IntegrityError,
     NotFoundError,
     OperationCancelledError,
     ProotDistro,
@@ -256,3 +257,115 @@ def test_cancellation_during_remove_can_be_retried(builders):
     except NotFoundError:
         pass
     assert not os.path.lexists(container_dir("cancel-remove"))
+
+
+def _bulky_container(builders, name):
+    builders.make_container(name, files={
+        f"data/item-{index:04d}": b"z" * 4096 for index in range(3000)
+    })
+
+
+def test_cancellation_during_backup_leaves_no_archive(tmp_path, builders):
+    _bulky_container(builders, "bulky")
+    output = tmp_path / "out" / "bulky.tar.gz"
+    output.parent.mkdir()
+    cancelled = threading.Event()
+
+    def cancel_when_archiving(event):
+        if event.operation == "backup" and event.kind == EventKind.PROGRESS:
+            cancelled.set()
+
+    pd = ProotDistro(event_handler=cancel_when_archiving)
+    with pytest.raises(OperationCancelledError) as exc:
+        pd.backup("bulky", output, cancel_event=cancelled)
+
+    assert exc.value.operation == "backup"
+    # Path outputs are published atomically: neither the archive nor a
+    # half-written temporary file may remain next to it.
+    assert os.listdir(output.parent) == []
+    # The container is unlocked and untouched, so a retry succeeds.
+    assert ProotDistro().backup("bulky", output).output == str(output)
+    assert output.stat().st_size > 0
+
+
+def test_cancelled_restore_removes_the_container_it_created(
+        tmp_path, builders):
+    archive = _restore_archive(tmp_path, builders)
+    cancelled = threading.Event()
+    seen = []
+
+    def cancel_mid_extract(event):
+        if event.operation == "restore" and event.kind == EventKind.PROGRESS:
+            seen.append(event)
+            if len(seen) == 50:
+                cancelled.set()
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(event_handler=cancel_mid_extract).restore(
+            archive, cancel_event=cancelled
+        )
+
+    assert exc.value.operation == "restore"
+    # The restore created this container, so there is nothing to go back
+    # to: no half-extracted, manifest-less container may be left listed.
+    assert not os.path.lexists(container_dir("recoverable"))
+    assert ProotDistro().list_containers() == ()
+    assert ProotDistro().restore(archive).container.name == "recoverable"
+
+
+def test_cancellation_during_build_leaves_no_image(tmp_path):
+    context = tmp_path / "context"
+    (context / "data").mkdir(parents=True)
+    for index in range(1500):
+        (context / "data" / f"item-{index:04d}").write_bytes(b"q" * 4096)
+    (context / "Dockerfile").write_text("FROM scratch\nCOPY data /data\n")
+    cancelled = threading.Event()
+
+    def cancel_on_first_event(event):
+        if event.operation == "build":
+            cancelled.set()
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(event_handler=cancel_on_first_event).build(
+            context, tags=["cancelled/build:1"], cancel_event=cancelled
+        )
+
+    assert exc.value.operation == "build"
+    assert ProotDistro().list_images() == ()
+    # The build lock was released and nothing half-built is reusable.
+    built = ProotDistro().build(context, tags=["cancelled/build:1"])
+    assert [image.reference for image in built.images] == [
+        "cancelled/build:1"
+    ]
+
+
+def test_failed_restore_removes_the_container_it_created(
+        tmp_path, builders):
+    """Regression: a truncated archive left a manifest-less container."""
+    archive = _restore_archive(tmp_path, builders)
+    data = archive.read_bytes()
+    truncated = tmp_path / "truncated.tar"
+    truncated.write_bytes(data[:len(data) // 2])
+
+    with pytest.raises(IntegrityError):
+        ProotDistro().restore(truncated)
+
+    assert not os.path.lexists(container_dir("recoverable"))
+    assert ProotDistro().list_containers() == ()
+    assert ProotDistro().restore(archive).container.name == "recoverable"
+
+
+def test_failed_restore_keeps_an_existing_container_recoverable(
+        tmp_path, builders):
+    """An overwritten container cannot be rolled back, and must not vanish."""
+    builders.make_container("recoverable", files={"old": b"old"})
+    archive = _restore_archive(tmp_path, builders)
+    data = archive.read_bytes()
+    truncated = tmp_path / "truncated.tar"
+    truncated.write_bytes(data[:len(data) // 2])
+
+    with pytest.raises(IntegrityError):
+        ProotDistro().restore(truncated)
+
+    assert os.path.isdir(container_rootfs("recoverable"))
+    assert ProotDistro().restore(archive).container.name == "recoverable"

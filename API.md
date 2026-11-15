@@ -149,6 +149,11 @@ For a path, compression is chosen from the file name. For a stream, the
 default is no compression. Pass `"gzip"`, `"bzip2"`, `"xz"` or `"zstd"`
 explicitly when you want it.
 
+Restoring over an existing container replaces it in place. If that restore
+fails or is cancelled, the container is left half-replaced: restore the same
+archive again to repair it. A restore that created the container removes it
+again on failure, so no incomplete container is left behind.
+
 **Stream rules**
 
 * Streams are read from their current position. They need not be seekable.

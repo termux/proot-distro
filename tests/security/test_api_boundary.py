@@ -374,16 +374,11 @@ def test_restore_rejects_multiple_containers_without_touching_second_target(
 
     assert exc.value.operation == "restore"
     assert not os.path.lexists(container_dir("second"))
-    assert open(os.path.join(
-        container_rootfs("first"), "etc", "safe"
-    ), "rb").read() == b"one"
-
-    # Restore is streamed and does not promise rollback after its first
-    # materialized rootfs member. The committed target remains confined and
-    # manageable after the typed late failure.
-    removed = pd.remove_container("first")
-    assert removed.name == "first"
+    # The late failure happens after "first" was materialised. Restore
+    # cannot roll back a container it replaced, but one it created has
+    # nothing to go back to and is removed, not left half-restored.
     assert not os.path.lexists(container_dir("first"))
+    assert pd.list_containers() == ()
 
     safe = tmp_path / "safe.tar"
     builders.make_tar(str(safe), [

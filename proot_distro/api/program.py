@@ -2003,6 +2003,11 @@ class ProotDistro:
     ) -> RestoreResult:
         """Restore one container from a host path or binary stream.
 
+        An existing container of the same name is replaced in place, which
+        cannot be rolled back: if the restore fails or is cancelled, restore
+        the archive again. A container created by this restore is removed
+        again on failure.
+
         Raises:
             InvalidArgumentError: *archive* is not a path or readable stream.
             NotFoundError: The archive path does not exist.

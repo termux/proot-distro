@@ -87,8 +87,13 @@ Design notes for the worker channel:
   `OperationFailure`, so the CLI adapter is unchanged.
   `tests/integration/test_api_error_contract.py` proves, with real workers,
   which typed errors each method raises, and checks that docstrings and
-  `API.md` list exactly those. Session validation
+  `API.md` list exactly those. Only `search`/`NetworkError` is left
+  unproven offline (it needs Docker Hub); the TLS cases use a throwaway
+  certificate that workers trust through `SSL_CERT_FILE`. Session validation
   failures stay generic because the parent already validated the arguments.
+* `restore` replaces an existing container in place and cannot roll that
+  back; a container it created itself is removed again if the restore
+  fails or is cancelled, so no manifest-less rootfs is left listed.
 * Event frames are bounded; an oversized message is truncated, never fatal.
 * Descriptor waits use `selectors`, because `select.select` rejects
   descriptors numbered 1024 and above.
