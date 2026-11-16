@@ -375,14 +375,52 @@ def _startup_controls(timeout, cancel_event, *, operation: str):
 
 
 def _stop_starting_session(process) -> None:
-    """Stop and reap a session worker that has not completed its handshake."""
+    """Stop and reap a session worker that has not completed its handshake.
+
+    SIGKILL cannot be ignored, so the wait ends; a Ctrl-C during it is
+    deferred until the child is reaped rather than leaving it behind.
+    """
     try:
         process.kill()
     except OSError:
         pass
+    interrupt = None
+    while True:
+        try:
+            process.wait()
+            break
+        except KeyboardInterrupt as exc:
+            interrupt = interrupt or exc
+        except OSError:
+            break
+    if interrupt is not None:
+        raise interrupt
+
+
+def _interrupt_starting_session(process) -> None:
+    """Let an interrupted session worker clean up, within limits.
+
+    The worker gets the caller's SIGINT and normally reports and exits at
+    once. If it does not within the grace period -- it may already have
+    become proot, which ignores SIGINT, and would then run until the
+    guest command ends -- or the caller presses Ctrl-C again, it is
+    killed. Either way it is reaped before the caller's interrupt goes on.
+    """
     try:
-        process.wait()
+        process.send_signal(signal.SIGINT)
     except OSError:
+        pass
+    try:
+        process.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
+        return
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        pass
+    except OSError:
+        return
+    try:
+        _stop_starting_session(process)
+    except KeyboardInterrupt:
+        # The caller's first interrupt is the one that goes on.
         pass
 
 
@@ -827,19 +865,13 @@ def _communicate_with_channels(
         nonlocal stop_started
         if stop_started is None:
             stop_started = time.monotonic()
-            try:
-                os.killpg(proc.pid, signal.SIGINT)
-            except OSError:
-                pass
+            _signal_worker_group(proc, signal.SIGINT)
 
     def kill_worker() -> None:
         nonlocal killed
         if not killed:
             killed = True
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
+            _signal_worker_group(proc, signal.SIGKILL)
 
     def escalate_if_due() -> None:
         if (stop_started is not None and not killed
@@ -997,9 +1029,25 @@ def _communicate_with_channels(
                 # not invoke it again while draining the worker's cleanup.
                 event_handler = None
     except BaseException:
-        _stop_worker(proc)
+        # An event handler, the credential provider or the protocol failed.
+        # Stop the worker, then wait for the communicate thread to reap it
+        # -- in slices, not with Thread.join(), for the reason given where
+        # `finished` is made. Ctrl-C meanwhile kills it and wins.
+        interrupt = None
+        try:
+            _stop_worker(proc)
+        except KeyboardInterrupt as exc:
+            interrupt = exc
+            kill_worker()
         close_channels()
-        thread.join()
+        while not finished.is_set():
+            try:
+                finished.wait(0.1)
+            except KeyboardInterrupt as exc:
+                interrupt = interrupt or exc
+                kill_worker()
+        if interrupt is not None:
+            raise interrupt
         raise
     finally:
         close_channels()
@@ -1029,11 +1077,27 @@ def _communicate_with_channels(
     return result["streams"]
 
 
+def _signal_worker_group(proc, sig) -> bool:
+    """Signal the worker's process group unless the worker is reaped.
+
+    The group ID is the worker's PID. Once the worker has been reaped and
+    its group has emptied, that number is free for the kernel to hand out
+    again, so a signal sent to it then could reach an unrelated process
+    group. A worker known to be reaped is therefore never signalled.
+    Returns whether the signal was sent.
+    """
+    if getattr(proc, "returncode", None) is not None:
+        return False
+    try:
+        os.killpg(proc.pid, sig)
+    except OSError:
+        return False
+    return True
+
+
 def _stop_worker(proc) -> None:
     """Interrupt a failed worker for cleanup, then kill it if it stalls."""
-    try:
-        os.killpg(proc.pid, signal.SIGINT)
-    except OSError:
+    if not _signal_worker_group(proc, signal.SIGINT):
         return
     try:
         proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
@@ -1044,10 +1108,7 @@ def _stop_worker(proc) -> None:
         pass
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except OSError:
-        pass
+    _signal_worker_group(proc, signal.SIGKILL)
 
 
 def _write_stream_chunk(stream, chunk: bytes, operation: str) -> None:
@@ -1074,11 +1135,18 @@ def _start_stream_pumps(
     parent_outputs,
     operation: str,
 ):
-    """Copy caller streams through worker pipes and report errors/counts."""
+    """Copy caller streams through worker pipes and report errors/counts.
+
+    Also returns an Event that the caller sets once the worker is gone:
+    an input pump then starts no further read() on the caller's stream.
+    A read already blocked cannot be interrupted and still finishes in its
+    daemon thread; whatever it returns is discarded.
+    """
     threads = []
     errors = []
     counts = {}
     error_lock = threading.Lock()
+    stop = threading.Event()
 
     def fail(exc) -> None:
         with error_lock:
@@ -1093,8 +1161,10 @@ def _start_stream_pumps(
     def pump_input(fd: int, stream) -> None:
         try:
             with os.fdopen(fd, "wb", buffering=0) as destination:
-                while True:
+                while not stop.is_set():
                     chunk = stream.read(128 * 1024)
+                    if stop.is_set():
+                        break
                     if not isinstance(chunk, (bytes, bytearray, memoryview)):
                         raise InvalidArgumentError(
                             "input stream read() must return bytes.",
@@ -1137,7 +1207,7 @@ def _start_stream_pumps(
         )
         thread.start()
         threads.append(thread)
-    return threads, errors, counts
+    return threads, errors, counts, stop
 
 
 def _run_worker(operation: str, options: dict,
@@ -1252,8 +1322,10 @@ def _run_worker(operation: str, options: dict,
         child_credentials.close()
     for fd in child_pipe_fds:
         os.close(fd)
-    pump_threads, stream_errors, stream_counts = _start_stream_pumps(
-        proc, parent_inputs, parent_outputs, api_operation
+    pump_threads, stream_errors, stream_counts, pumps_stop = (
+        _start_stream_pumps(
+            proc, parent_inputs, parent_outputs, api_operation
+        )
     )
     build_output_resource = None
     if operation == "build":
@@ -1284,6 +1356,8 @@ def _run_worker(operation: str, options: dict,
         proc.wait()
         raise
     finally:
+        # The worker is gone: no input pump may start another read().
+        pumps_stop.set()
         for thread in pump_threads:
             if getattr(thread, "_pd_input_pump", False):
                 # The worker has exited. An input pump still blocked in the
@@ -2597,11 +2671,7 @@ class ProotDistro:
                 startup_timeout, cancel_event,
             )
         except KeyboardInterrupt:
-            try:
-                process.send_signal(signal.SIGINT)
-            except OSError:
-                pass
-            process.wait()
+            _interrupt_starting_session(process)
             raise
         except BaseException:
             _stop_starting_session(process)
@@ -2609,7 +2679,15 @@ class ProotDistro:
         finally:
             os.close(status_read)
         if setup_error is not None:
-            process.wait()
+            # It reported and is exiting; one that does not is not waited
+            # for without end.
+            try:
+                process.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                _stop_starting_session(process)
+            except KeyboardInterrupt:
+                _stop_starting_session(process)
+                raise
             raise _WORKER_ERROR_TYPES[
                 getattr(setup_error, "kind", "operation")
             ](str(setup_error), operation=operation)

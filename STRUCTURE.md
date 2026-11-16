@@ -79,7 +79,14 @@ Design notes for the worker channel:
   stopped, which let the call raise before the worker was reaped. A worker that exited 0 wins over a late cancel request:
   the work committed, so its result is reported.
 * A caller input stream blocked in `read()` cannot be interrupted. Input pump
-  threads are daemons and are joined with a timeout once the worker is gone.
+  threads are daemons and are joined with a timeout once the worker is gone;
+  from then on they start no further `read()` and drop what an in-flight one
+  returns, so a caller can keep using its stream after the call.
+* A worker's process group is never signalled once the worker is reaped:
+  its PID, and so its group ID, may already belong to someone else.
+  Session setup interrupted by Ctrl-C gets the same SIGINT, grace period
+  and SIGKILL as a worker, and `SessionProcess.close()` always reaps, even
+  when the tracked-tree signal fails (it then signals its own child).
 * Worker error envelopes and the session-setup status frame both carry a
   `kind` that selects the public exception class. Build failures keep the
   kind of the registry or download error that caused them

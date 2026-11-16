@@ -27,6 +27,10 @@ from proot_distro.api.errors import ProotDistroError
 from proot_distro.api.models import SessionSignalResult
 
 
+# How long close() waits after a kill before signalling the child directly.
+_KILL_REAP_SECONDS = 5.0
+
+
 class SessionProcess:
     """A running foreground login or image-entrypoint session.
 
@@ -94,15 +98,28 @@ class SessionProcess:
         return False
 
     def close(self, timeout: float = 10.0) -> Optional[int]:
-        """Stop a live session, escalating after *timeout*, and close pipes."""
+        """Stop a live session, escalating after *timeout*, and close pipes.
+
+        The session is always reaped. A failure to signal the tracked tree
+        is not raised here: the owned child has then been signalled
+        directly, and an exception from ``close()`` would replace the one
+        that is leaving a ``with`` block. Ctrl-C while waiting kills the
+        session at once, reaps it and is raised again.
+        """
         try:
             if self.poll() is None:
-                self.terminate()
+                self._quietly(self.terminate)
                 try:
                     self.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
-                    self.kill()
-                    self.wait()
+                    self._quietly(self.kill)
+                    interrupt = self._reap_after_kill()
+                    if interrupt is not None:
+                        raise interrupt
+                except KeyboardInterrupt:
+                    self._quietly(self.kill)
+                    self._reap_after_kill()
+                    raise
             return self.returncode
         finally:
             closed = set()
@@ -110,6 +127,34 @@ class SessionProcess:
                 if stream is not None and id(stream) not in closed:
                     closed.add(id(stream))
                     stream.close()
+
+    @staticmethod
+    def _quietly(method) -> None:
+        """Signal for close(); a failed tree lookup already fell back."""
+        try:
+            method()
+        except ProotDistroError:
+            pass
+
+    def _reap_after_kill(self) -> Optional[KeyboardInterrupt]:
+        """Reap after a kill; return a Ctrl-C that arrived meanwhile.
+
+        If the tracked-tree kill did not reach the owned child in time it
+        is killed directly: SIGKILL cannot be ignored, so the wait ends.
+        """
+        interrupt = None
+        while True:
+            try:
+                self._process.wait(timeout=_KILL_REAP_SECONDS)
+                return interrupt
+            except subprocess.TimeoutExpired:
+                pass
+            except KeyboardInterrupt as exc:
+                interrupt = interrupt or exc
+            try:
+                self._process.kill()
+            except OSError:
+                pass
 
     def terminate(self) -> SessionSignalResult:
         """Request graceful teardown of the complete tracked session tree."""

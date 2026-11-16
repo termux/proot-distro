@@ -157,6 +157,10 @@ again on failure, so no incomplete container is left behind.
 **Stream rules**
 
 * Streams are read from their current position. They need not be seekable.
+* Give each call an input stream of its own. It is read in chunks until
+  its end, possibly past the end of the archive. A `read()` that is still
+  blocked when the call returns finishes in the background, and its data
+  is discarded. No further `read()` is made after the call returns.
 * The API never closes, seeks or flushes your streams.
 * A successful call means every output byte was passed to `write()`.
 * After a failure an output stream may hold a partial archive. Path outputs
@@ -251,6 +255,10 @@ timeout=)`, `terminate()`, `kill()` and `close(timeout=10)`.
   `proot` parent. They do nothing to a session that has already exited.
 * Leaving a `with` block (or calling `close()`) terminates the tree, waits
   up to ten seconds, kills it if needed, reaps it and closes pipes.
+  `close()` always reaps the session and never replaces an exception that
+  is leaving the block. Ctrl-C while it waits kills the session at once.
+* Ctrl-C while `start` or `run` is still setting up stops the setup. It
+  is killed if it has not stopped after five seconds.
 
 **Signalling by PID.** `kill_session(PID_OR_CONTAINER, signal_name="TERM")`
 signals one session, or every session of a container. `kill_all_sessions(
@@ -372,7 +380,8 @@ except OperationCancelledError:
 * Ctrl-C (`KeyboardInterrupt`) behaves the same way: the worker is asked to
   stop and clean up, then the interrupt is raised again in your thread. Press
   Ctrl-C a second time to kill the worker at once. A killed worker cannot
-  clean up, so check the state before retrying.
+  clean up, so check the state before retrying. A build `RUN` step that was
+  running when its worker was killed may go on running until it ends.
 * A running callback, credential provider or stream method must return
   before the token can be checked again.
 

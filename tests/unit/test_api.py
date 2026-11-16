@@ -3,6 +3,7 @@ import io
 import inspect
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -1532,7 +1533,7 @@ def test_input_stream_rejects_non_bytes_read_result(
         program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
     )
     try:
-        threads, errors, _counts = program._start_stream_pumps(
+        threads, errors, _counts, _stop = program._start_stream_pumps(
             Process(), [(write_fd, Input())], [], "restore"
         )
         for thread in threads:
@@ -1545,6 +1546,124 @@ def test_input_stream_rejects_non_bytes_read_result(
     assert isinstance(errors[0], InvalidArgumentError)
     assert errors[0].operation == "restore"
     assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_a_reaped_worker_group_is_never_signalled(monkeypatch):
+    """Regression: a failed call signalled the worker's group after reaping.
+
+    Its PID is free for reuse once the worker is reaped and its group is
+    empty, so the signal could reach an unrelated process group.
+    """
+    class Reaped:
+        pid = 321
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    signals = []
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    program._stop_worker(Reaped())
+    assert program._signal_worker_group(Reaped(), signal.SIGKILL) is False
+    assert signals == []
+
+
+def _sigint_ignoring_child():
+    child = subprocess.Popen([
+        sys.executable, "-c",
+        "import signal,sys,time\n"
+        "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+        "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
+        "time.sleep(60)\n",
+    ], stdout=subprocess.PIPE)
+    assert child.stdout.readline() == b"ready\n"
+    return child
+
+
+def test_interrupted_session_startup_is_bounded_and_reaped(monkeypatch):
+    """Regression: Ctrl-C during startup waited for the child without end.
+
+    A worker that had already become proot (which ignores SIGINT) kept the
+    caller waiting until the whole guest command finished.
+    """
+    monkeypatch.setattr(program, "_WORKER_STOP_GRACE_SECONDS", 0.3)
+    child = _sigint_ignoring_child()
+    try:
+        program._interrupt_starting_session(child)
+        assert child.returncode == -signal.SIGKILL
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+
+
+def test_repeated_ctrl_c_during_startup_kills_at_once(monkeypatch):
+    child = _sigint_ignoring_child()
+    real_wait = child.wait
+    calls = []
+
+    def interrupted(timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+        return real_wait(timeout)
+
+    monkeypatch.setattr(child, "wait", interrupted)
+    try:
+        program._interrupt_starting_session(child)
+        assert child.returncode == -signal.SIGKILL
+        assert calls[0] == program._WORKER_STOP_GRACE_SECONDS
+    finally:
+        if child.poll() is None:
+            child.kill()
+            real_wait()
+        child.stdout.close()
+
+
+def test_input_pump_reads_no_further_once_the_worker_is_gone():
+    """Regression: a pump kept reading the caller's stream after return.
+
+    The caller may go on using its socket or pipe after restore() or
+    build() returned. A pump that kept calling read() in its background
+    thread took bytes the caller expected to read next.
+    """
+    permits = threading.Semaphore(0)
+    reads = []
+
+    class Input:
+        def read(self, _size):
+            reads.append(len(reads))
+            permits.acquire()
+            return b"chunk-%d" % len(reads)
+
+    class Process:
+        pid = 321
+
+    read_fd, write_fd = os.pipe()
+    try:
+        threads, errors, _counts, stop = program._start_stream_pumps(
+            Process(), [(write_fd, Input())], [], "restore"
+        )
+        permits.release()
+        assert os.read(read_fd, 64) == b"chunk-1"
+        while len(reads) < 2:
+            threading.Event().wait(0.01)
+        # The worker exits while the pump is blocked in its second read.
+        stop.set()
+        permits.release()
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()
+        # The in-flight chunk was discarded and the pipe closed after it.
+        assert os.read(read_fd, 64) == b""
+    finally:
+        os.close(read_fd)
+
+    assert reads == [0, 1]
+    assert errors == []
 
 
 @pytest.mark.parametrize("result", [None, True, 0, -1, 4, 1.5])
@@ -1566,7 +1685,7 @@ def test_output_stream_invalid_result_stops_worker(
     monkeypatch.setattr(
         program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
     )
-    threads, errors, counts = program._start_stream_pumps(
+    threads, errors, counts, _stop = program._start_stream_pumps(
         Process(), [], [("backup_output", read_fd, Output())], "backup"
     )
     try:
@@ -1731,6 +1850,88 @@ def test_session_process_signals_child_when_worker_fails():
         handle.kill()
 
     assert child.signals == ["KILL"]
+
+
+class _FailingSignalOwner:
+    def kill_session(self, *_args, **_kwargs):
+        raise OperationError(
+            "cannot start the kill_session worker", operation="kill_session"
+        )
+
+
+def _stubborn_child():
+    """A real child that ignores SIGTERM, as a stuck session would."""
+    child = subprocess.Popen([
+        sys.executable, "-c",
+        "import signal,sys,time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
+        "time.sleep(60)\n",
+    ], stdout=subprocess.PIPE)
+    assert child.stdout.readline() == b"ready\n"
+    return child
+
+
+def test_session_close_escalates_and_reaps_when_tree_signal_fails():
+    """Regression: a failing kill_session worker made close() raise early.
+
+    It skipped the wait, the kill and the reap, so a session that ignored
+    the direct SIGTERM kept running with no handle left to stop it.
+    """
+    child = _stubborn_child()
+    handle = SessionProcess(
+        _FailingSignalOwner(), child, container="box", kind="login",
+    )
+    try:
+        assert handle.close(timeout=0.3) == -9
+        assert child.returncode == -9
+        assert child.stdout.closed
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_session_context_keeps_the_body_exception_when_signal_fails():
+    """Regression: __exit__ replaced the caller's exception with its own."""
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with pytest.raises(ValueError, match="body failed"):
+            with SessionProcess(
+                _FailingSignalOwner(), child, container="box", kind="login",
+            ):
+                raise ValueError("body failed")
+        # The direct SIGTERM fallback stopped it and it was reaped.
+        assert child.returncode == -signal.SIGTERM
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_session_close_kills_and_reraises_on_ctrl_c(monkeypatch):
+    child = _stubborn_child()
+    handle = SessionProcess(
+        _FailingSignalOwner(), child, container="box", kind="login",
+    )
+    real_wait = child.wait
+    calls = []
+
+    def interrupted_wait(timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+        return real_wait(timeout)
+
+    monkeypatch.setattr(child, "wait", interrupted_wait)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            handle.close(timeout=30)
+        assert child.returncode == -9
+    finally:
+        if child.poll() is None:
+            child.kill()
+            real_wait()
 
 
 def _read_startup_payload(payload, event_handler=None):
