@@ -181,6 +181,58 @@ def test_rename_container_rejects_an_invalid_container_record(
     assert exc.value.operation == "rename_container"
 
 
+@pytest.mark.parametrize("kwargs", [
+    {"build_args": {"A": "x\0y"}},
+    {"build_args": {"A\0": "x"}},
+    {"build_args": {"A=B": "x"}},
+    {"build_args": {"A": "\ud800"}},
+    {"build_args": {"": "x"}},
+    {"target": "stage\0"},
+    {"target": ""},
+])
+def test_build_rejects_unusable_arguments_before_any_worker(
+        monkeypatch, tmp_path, kwargs):
+    """Regression: these failed only inside the worker, as OperationError."""
+    worker = _Worker(monkeypatch, {})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().build(tmp_path, tags=["app:1"], **kwargs)
+
+    assert exc.value.operation == "build"
+    assert worker.calls == []
+
+
+def test_an_oversized_request_is_an_argument_error(monkeypatch, tmp_path):
+    """Regression: the worker refused it as a generic OperationError."""
+    monkeypatch.setattr(
+        program.subprocess, "Popen",
+        lambda *_a, **_k: pytest.fail("no worker may start"),
+    )
+    big = {f"ARG{i}": "x" * 1024 for i in range(1100)}
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().build(tmp_path, tags=["app:1"], build_args=big)
+
+    assert exc.value.operation == "build"
+    assert "too large" in str(exc.value)
+
+
+def test_worker_request_limit_matches_the_worker():
+    from proot_distro.api import _worker
+
+    assert program._MAX_WORKER_REQUEST_BYTES == _worker._MAX_INPUT_BYTES
+
+
+@pytest.mark.parametrize("value", [-3.0, -2.0, True, False, 1.5])
+def test_detached_output_sentinels_are_true_ints_only(monkeypatch, value):
+    """Regression: -3.0 was taken for subprocess.DEVNULL."""
+    worker = _Worker(monkeypatch, {})
+
+    with pytest.raises(InvalidArgumentError):
+        ProotDistro().start_detached("box", stdout=value)
+    assert worker.calls == []
+
+
 @pytest.mark.parametrize("spec", [":/etc", "~:x", "-box:/etc", "a b:/x"])
 def test_transfer_rejects_a_malformed_container_spec(monkeypatch, tmp_path,
                                                      spec):

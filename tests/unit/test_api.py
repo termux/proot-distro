@@ -1515,14 +1515,27 @@ def test_cancellation_token_must_return_boolean(monkeypatch, value):
     assert exc.value.operation == "list_images"
 
 
-@pytest.mark.parametrize("result", [None, True, False, 0, -1, 4, 1.5])
+class _RawNonBlocking(io.RawIOBase):
+    """A raw stream whose write() reports "would block" (None)."""
+
+    def writable(self):
+        return True
+
+    def write(self, _data):
+        return None
+
+
+@pytest.mark.parametrize("result", ["raw-none", True, False, 0, -1, 4, 1.5])
 def test_output_stream_rejects_invalid_write_result(result):
     class Output:
         def write(self, _data):
             return result
 
+    # None is "everything written" for a buffered or hand-written stream
+    # and "would block" only for a raw one, which is refused.
+    output = _RawNonBlocking() if result == "raw-none" else Output()
     with pytest.raises(InvalidArgumentError) as exc:
-        program._write_stream_chunk(Output(), b"abc", "backup")
+        program._write_stream_chunk(output, b"abc", "backup")
 
     assert exc.value.operation == "backup"
     assert "positive byte count" in str(exc.value)
@@ -1698,7 +1711,7 @@ def test_input_pump_reads_no_further_once_the_worker_is_gone():
     assert errors == []
 
 
-@pytest.mark.parametrize("result", [None, True, 0, -1, 4, 1.5])
+@pytest.mark.parametrize("result", ["raw-none", True, 0, -1, 4, 1.5])
 def test_output_stream_invalid_result_stops_worker(
     monkeypatch, result,
 ):
@@ -1712,13 +1725,15 @@ def test_output_stream_invalid_result_stops_worker(
         def write(self, _data):
             return result
 
+    output = _RawNonBlocking() if result == "raw-none" else Output()
+
     signals = []
     read_fd, write_fd = os.pipe()
     monkeypatch.setattr(
         program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
     )
     threads, errors, counts, _stop = program._start_stream_pumps(
-        Process(), [], [("backup_output", read_fd, Output())], "backup"
+        Process(), [], [("backup_output", read_fd, output)], "backup"
     )
     try:
         os.write(write_fd, b"abc")
@@ -1733,6 +1748,38 @@ def test_output_stream_invalid_result_stops_worker(
     assert errors[0].operation == "backup"
     assert counts == {}
     assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_output_stream_returning_none_wrote_everything():
+    """write() returning None is accepted unless the stream is raw.
+
+    Hand-written adapters and codecs.StreamWriter take everything and
+    return None; requiring a count refused them.
+    """
+    received = []
+
+    class Output:
+        def write(self, data):
+            received.append(bytes(data))
+
+    class Process:
+        pid = 321
+
+    read_fd, write_fd = os.pipe()
+    threads, errors, counts, _stop = program._start_stream_pumps(
+        Process(), [], [("backup_output", read_fd, Output())], "backup"
+    )
+    try:
+        os.write(write_fd, b"abc")
+    finally:
+        os.close(write_fd)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+
+    assert errors == []
+    assert b"".join(received) == b"abc"
+    assert counts == {"backup_output": 3}
 
 
 def test_worker_stop_allows_cooperative_cleanup(monkeypatch):

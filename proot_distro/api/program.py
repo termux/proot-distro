@@ -131,6 +131,8 @@ _MAX_WORKER_EVENT_BYTES = 64 * 1024
 _MAX_WORKER_RESULT_BYTES = 16 * 1024 * 1024
 _MAX_SESSION_STATUS_BYTES = 64 * 1024
 _MAX_CREDENTIAL_FRAME_BYTES = 1024 * 1024
+# What api/_worker.py reads from its standard input (its _MAX_INPUT_BYTES).
+_MAX_WORKER_REQUEST_BYTES = 1024 * 1024
 # How long a cancelled worker may take to clean up before it is killed.
 _WORKER_CANCEL_GRACE_SECONDS = 10.0
 _WORKER_STOP_GRACE_SECONDS = 5.0
@@ -238,11 +240,16 @@ def _path_or_stream(value, *, operation: str, argument: str,
 def _detached_output(value, *, operation: str, argument: str,
                      allow_stdout: bool = False):
     """Validate an append-only detached output path or stdio sentinel."""
-    if value is None or value == subprocess.DEVNULL:
+    if value is None:
         return None
-    if allow_stdout and value == subprocess.STDOUT:
+    # Only a true int is a subprocess sentinel: -3.0 compares equal to
+    # DEVNULL and True to 1, and neither was meant as one.
+    is_int = isinstance(value, int) and not isinstance(value, bool)
+    if is_int and value == subprocess.DEVNULL:
+        return None
+    if is_int and allow_stdout and value == subprocess.STDOUT:
         return "stdout"
-    if isinstance(value, int):
+    if isinstance(value, (int, float)):
         raise InvalidArgumentError(
             f"{argument} must be a host path, subprocess.DEVNULL, "
             f"{'subprocess.STDOUT, ' if allow_stdout else ''}or None.",
@@ -1145,14 +1152,25 @@ def _stop_worker(proc) -> None:
 
 
 def _write_stream_chunk(stream, chunk: bytes, operation: str) -> None:
-    """Write all of *chunk*, including through short-writing streams."""
+    """Write all of *chunk*, including through short-writing streams.
+
+    ``write()`` should return how many bytes it took. Many file-like
+    objects return ``None`` instead and take everything (a hand-written
+    adapter, ``codecs.StreamWriter``); that is accepted. Only for a raw,
+    unbuffered stream (``io.RawIOBase``) does ``None`` mean "nothing could
+    be written yet" -- a non-blocking descriptor -- which cannot be told
+    from a hang, so it is refused like any other impossible answer.
+    """
     view = memoryview(chunk)
     while view:
         written = stream.write(view)
+        if written is None and not isinstance(stream, io.RawIOBase):
+            return
         if (isinstance(written, bool) or not isinstance(written, int)
                 or written <= 0 or written > len(view)):
             raise InvalidArgumentError(
-                "output stream write() must return a positive byte count.",
+                "output stream write() must return a positive byte count "
+                "(or None for a stream that always writes everything).",
                 operation=operation,
             )
         view = view[written:]
@@ -1255,6 +1273,18 @@ def _run_worker(operation: str, options: dict,
     cancel_event = _cancel_control(cancel_event, operation=api_operation)
     config = config or RuntimeConfig.default()
     options = dict(options)
+    # The worker reads at most _MAX_WORKER_REQUEST_BYTES. A larger request
+    # (thousands of build arguments, say) is the caller's argument, and is
+    # refused here instead of as a generic failure from inside the worker.
+    # The descriptor table added below is a few dozen bytes; leave room.
+    if len(json.dumps(
+        {"operation": operation, "options": options},
+        ensure_ascii=True, separators=(",", ":"),
+    )) > _MAX_WORKER_REQUEST_BYTES - 4096:
+        raise InvalidArgumentError(
+            f"{api_operation} arguments are too large.",
+            operation=api_operation,
+        )
     child_stream_fds = {}
     parent_inputs = []
     parent_outputs = []
@@ -2185,13 +2215,21 @@ class ProotDistro:
             )
         encoded_build_args = {}
         for key, value in build_args.items():
-            if (not isinstance(key, str) or not key
-                    or not isinstance(value, str)):
+            # Same rules as an environment entry, which is what a build
+            # argument becomes in a RUN step: a NUL or an unencodable code
+            # point used to fail only inside the worker, as a generic
+            # error, and NAME=VALUE has no place for '=' in the name.
+            key = _string_argument(
+                key, operation="build", argument="build_args key"
+            )
+            if "=" in key:
                 raise InvalidArgumentError(
-                    "build_args keys must be non-empty strings and values "
-                    "must be strings.", operation="build"
+                    "build_args keys must not contain '='.", operation="build"
                 )
-            encoded_build_args[key] = value
+            encoded_build_args[key] = _string_argument(
+                value, operation="build", argument="build_args value",
+                allow_empty=True,
+            )
 
         if architecture is not None:
             if not isinstance(architecture, str):
@@ -2203,10 +2241,9 @@ class ProotDistro:
                 raise InvalidArgumentError(
                     "unsupported build architecture.", operation="build"
                 )
-        if target is not None and (not isinstance(target, str) or not target):
-            raise InvalidArgumentError(
-                "target must be a non-empty string or None.", operation="build"
-            )
+        target = _string_argument(
+            target, operation="build", argument="target", allow_none=True,
+        )
         if emulator is not None:
             emulator = _path_argument(
                 emulator, operation="build", argument="emulator",

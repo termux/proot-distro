@@ -162,6 +162,10 @@ again on failure, so no incomplete container is left behind.
   blocked when the call returns finishes in the background, and its data
   is discarded. No further `read()` is made after the call returns.
 * The API never closes, seeks or flushes your streams.
+* `write()` should return the number of bytes it took; short writes are
+  continued. `None` means "took everything", except on a raw unbuffered
+  stream (`io.RawIOBase`), where it means "would block" and stops the
+  call.
 * A successful call means every output byte was passed to `write()`.
 * After a failure an output stream may hold a partial archive. Path outputs
   are written atomically and are not left half-written.
