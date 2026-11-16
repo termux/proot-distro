@@ -303,7 +303,10 @@ def test_root_is_proot_accepts_renamed_binary(monkeypatch, tmp_path):
     alt = tmp_path / "proot-static"
     shutil.copy(shutil.which("sh"), alt)
     alt.chmod(0o755)
-    proc = subprocess.Popen([str(alt), "-c", "sleep 30"])
+    # A group of its own: a shell that forks `sleep` instead of exec'ing
+    # it (dash does) would otherwise leave it running after proc.kill().
+    proc = subprocess.Popen([str(alt), "-c", "sleep 30"],
+                            start_new_session=True)
     try:
         time.sleep(0.3)
         with open(f"/proc/{proc.pid}/comm") as stream:
@@ -316,7 +319,7 @@ def test_root_is_proot_accepts_renamed_binary(monkeypatch, tmp_path):
         monkeypatch.setenv("PD_PROOT_BIN", str(alt))
         assert _root_is_proot(proc.pid) is True
     finally:
-        proc.kill()
+        os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
 
 
