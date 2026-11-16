@@ -208,7 +208,7 @@ def _default_event_resource(operation: str, options: dict):
         return options.get("name")
     if operation == "rename_container":
         return options.get("new_name")
-    if operation in ("copy", "sync"):
+    if operation in ("copy", "move", "sync"):
         return options.get("destination")
     if operation == "backup":
         return options.get("name")
@@ -223,7 +223,9 @@ def _default_event_resource(operation: str, options: dict):
         return options.get("image_ref")
     if operation == "remove_image":
         return options.get("identifier")
-    if operation in ("start_detached", "inspect_session"):
+    if operation in (
+        "start_detached", "run_detached", "inspect_start", "inspect_run",
+    ):
         return options.get("container")
     if operation == "kill_session":
         return options.get("target")

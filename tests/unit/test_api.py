@@ -1249,6 +1249,26 @@ def test_worker_event_resource_prefers_public_operation_subject():
     }) == "box:/srv/data"
 
 
+@pytest.mark.parametrize("operation", sorted(_worker._OPERATIONS))
+def test_every_subject_bearing_operation_names_a_default_resource(operation):
+    """Regression: move, run_detached and inspect_* events had no resource.
+
+    The table named a non-existent "inspect_session" and left out real
+    operations, so their events lacked the subject the others carry.
+    """
+    options = {
+        "name": "box", "new_name": "box2", "old_name": "box",
+        "source": "/host/src", "destination": "box:/dst", "archive": "/a.tar",
+        "tags": ["app:1"], "image_ref": "app:1", "identifier": "app:1",
+        "container": "box", "target": "box",
+    }
+    resource = _worker._default_event_resource(operation, options)
+    if operation.startswith("list_") or operation == "clear_cache":
+        assert resource is None
+    else:
+        assert isinstance(resource, str) and resource, operation
+
+
 def test_worker_channel_cancellation_interrupts_and_drains(monkeypatch):
     event_read, event_write = os.pipe()
     stopped = threading.Event()
