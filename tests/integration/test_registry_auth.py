@@ -33,8 +33,8 @@ from _builders import pull_image_into
 from _registry import CA_FILE, FakeRegistry, basic
 from proot_distro import constants
 from proot_distro.api import (
-    AuthenticationError, EventKind, ProotDistro, PushResult,
-    OperationCancelledError, RegistryCredentials,
+    AuthenticationError, EventKind, InvalidArgumentError, ProotDistro,
+    PushResult, OperationCancelledError, RegistryCredentials,
 )
 from proot_distro.arch import get_device_cpu_arch
 from proot_distro.commands.build import command_build
@@ -271,6 +271,23 @@ def test_api_reports_rejected_credentials_without_revealing_secret(registry):
     assert exc.value.operation == "install"
     assert "credentials" in str(exc.value).lower()
     assert secret not in str(exc.value)
+    assert "PD_DOCKER_AUTH" not in str(exc.value)
+
+
+def test_api_refusal_advice_names_api_credentials(registry, monkeypatch):
+    # The API ignores PD_DOCKER_AUTH; its advice must not send the caller
+    # to set it -- even when the embedding process happens to have it.
+    registry.add_image("team/api-anonymous", "1", FILES, CONFIG)
+    monkeypatch.setenv("PD_DOCKER_AUTH", "alice:s3cret")
+
+    with pytest.raises(AuthenticationError) as exc:
+        ProotDistro().install(
+            f"{registry.host()}/team/api-anonymous:1", name="api-anonymous"
+        )
+
+    assert "PD_DOCKER_AUTH" not in str(exc.value)
+    assert "RegistryCredentials" in str(exc.value)
+    assert not any(seen.authorization for seen in registry.seen("auth"))
 
 
 def test_api_build_pulls_private_base_with_explicit_credentials(
@@ -283,8 +300,15 @@ def test_api_build_pulls_private_base_with_explicit_credentials(
         'CMD ["/bin/sh"]\n'
     )
 
+    # A Dockerfile chooses its registries, so build credentials name theirs.
+    with pytest.raises(InvalidArgumentError):
+        ProotDistro(credentials=RegistryCredentials(
+            "alice", "s3cret"
+        )).build(context, tags=["api-private-build:1"])
+    assert registry.seen() == []
+
     result = ProotDistro(credentials=RegistryCredentials(
-        "alice", "s3cret"
+        "alice", "s3cret", registry=registry.host()
     )).build(context, tags=["api-private-build:1"])
 
     assert [image.reference for image in result.images] == [

@@ -528,7 +528,7 @@
       "members": {}
     },
     "RegistryCredentials": {
-      "constructor": "(username: str, password: str) -> None",
+      "constructor": "(username: str, password: str, registry: Optional[str] = None) -> None",
       "fields": [
         {
           "annotation": "str",
@@ -541,6 +541,12 @@
           "default": "<required>",
           "name": "password",
           "repr": false
+        },
+        {
+          "annotation": "Optional[str]",
+          "default": "None",
+          "name": "registry",
+          "repr": true
         }
       ],
       "frozen": true,

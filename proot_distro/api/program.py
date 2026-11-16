@@ -65,6 +65,7 @@ from proot_distro.helpers.docker.refs import (
     InvalidReference,
     parse_reference,
     parse_tag_reference,
+    registry_key,
     with_explicit_tag,
 )
 from proot_distro.helpers.download import NETWORK_ERRORS
@@ -597,6 +598,7 @@ def _handle_credential_request(raw, sock, provider, operation: str) -> None:
             registry, repository, actions,
         )):
             raise TypeError
+        registry = registry_key(registry)
     except (
         KeyError, TypeError, ValueError, UnicodeDecodeError, RecursionError,
     ):
@@ -619,6 +621,10 @@ def _handle_credential_request(raw, sock, provider, operation: str) -> None:
     except BaseException:
         _reject_credential_request(sock)
         raise
+    if (credentials is not None and credentials.registry is not None
+            and credentials.registry != registry):
+        # Scoped to another registry: never sent here, whoever chose them.
+        credentials = None
     response = {
         "credentials": (
             None if credentials is None else {
@@ -1356,35 +1362,38 @@ class _OperationContext:
             reported_operation,
         )
 
-    def credentials_for(
-        self, registry: str, repository: str, operation: str,
-    ) -> Optional[RegistryCredentials]:
-        """Resolve explicit credentials for one registry operation."""
-        if self.credentials is not None:
-            return self.credentials
-        if self.credential_provider is None:
-            return None
-        request = CredentialRequest(registry, repository, operation)
-        credentials = self.credential_provider(request)
-        if credentials is not None and not isinstance(
-            credentials, RegistryCredentials
-        ):
-            raise InvalidArgumentError(
-                "credential_provider must return RegistryCredentials or None.",
-                operation=operation,
-            )
-        return credentials
+    def registry_credentials(
+        self, operation: str, *, target: Optional[str] = None,
+        override: Optional[RegistryCredentials] = None,
+    ) -> Optional[CredentialProvider]:
+        """Return what answers a worker's per-registry credential requests.
 
-    @staticmethod
-    def credential_payload(
-        credentials: Optional[RegistryCredentials],
-    ) -> Optional[dict]:
-        if credentials is None:
-            return None
-        return {
-            "username": credentials.username,
-            "password": credentials.password,
-        }
+        The worker asks by registry name at the moment it authenticates,
+        and _handle_credential_request drops anything scoped to another
+        registry. *target* is the registry_key the operation's own argument
+        names (install, push), or None when the registries are chosen by a
+        Dockerfile or by the container's guest-writable manifest (build,
+        reset). Unscoped static credentials are refused there: nothing the
+        caller said ties them to a registry.
+        """
+        static = override if override is not None else self.credentials
+        if static is None:
+            return self.credential_provider
+        scope = static.registry
+        if scope is None:
+            if target is None:
+                raise InvalidArgumentError(
+                    f"{operation} can contact registries its arguments do "
+                    "not name; give RegistryCredentials a registry= or use "
+                    "a credential_provider.",
+                    operation=operation,
+                )
+            scope = target
+
+        def answer(request: CredentialRequest):
+            return static if request.registry == scope else None
+
+        return answer
 
 
 class ProotDistro:
@@ -1403,10 +1412,14 @@ class ProotDistro:
             network retries). It runs synchronously in the calling thread,
             so it applies backpressure; exceptions it raises stop the
             operation and propagate to the caller.
-        credentials: Static registry credentials for install, reset, build
-            and push. Mutually exclusive with ``credential_provider``.
+        credentials: Static registry credentials. With ``registry=`` they
+            are sent only to that registry. Without it, only to the
+            registry an ``install`` or ``push`` argument names; ``build``
+            and ``reset_container`` refuse them. Mutually exclusive with
+            ``credential_provider``.
         credential_provider: Callable that chooses credentials per registry
-            request. It runs synchronously in the calling thread.
+            request, asked when an operation is about to authenticate. It
+            runs synchronously in the calling thread.
 
     Every method that starts work accepts ``cancel_event`` (a token with an
     ``is_set()`` method) except ``search``. All failures are subclasses of
@@ -1642,13 +1655,12 @@ class ProotDistro:
                 "allow_insecure must be a boolean.", operation="install"
             )
 
-        registry_credentials = None
+        # Only a registry reference contacts a registry; a local archive or
+        # a URL never gets credentials, scoped or not.
+        provider = None
         if reference is not None:
-            _cancel_control(cancel_event, operation="install")
-            registry_credentials = self._context.credentials_for(
-                reference.registry or "docker.io",
-                reference.repo,
-                "install",
+            provider = self._context.registry_credentials(
+                "install", target=registry_key(reference.registry),
             )
 
         result = self._context.worker("install", {
@@ -1656,10 +1668,7 @@ class ProotDistro:
             "name": name,
             "architecture": architecture,
             "allow_insecure": allow_insecure,
-            "credentials": self._context.credential_payload(
-                registry_credentials
-            ),
-        }, cancel_event=cancel_event)
+        }, credential_provider=provider, cancel_event=cancel_event)
         installed_name = result.get("container_name")
         if not isinstance(installed_name, str):
             raise OperationError(
@@ -1739,10 +1748,13 @@ class ProotDistro:
     ) -> ContainerInfo:
         """Reinstall a container from its recorded OCI image.
 
-        All changes made inside the container are lost.
+        All changes made inside the container are lost. The image reference
+        is read from the container's own metadata, so static credentials
+        must be scoped with ``registry=``.
 
         Raises:
-            InvalidArgumentError: *name* is malformed.
+            InvalidArgumentError: *name* is malformed, or the static
+                credentials have no ``registry``.
             NotFoundError: The container does not exist.
             UnsupportedOperationError: It was not installed from an OCI image.
             BusyError: The container is locked by another operation or session.
@@ -1756,30 +1768,12 @@ class ProotDistro:
             cancel_event, operation="reset_container"
         )
         name = _require_name(name, operation="reset_container")
-        current = None
-        for container in self._containers(cancel_event, "reset_container"):
-            if container.name == name:
-                current = container
-                break
-        registry_credentials = None
-        if current is not None and current.image_reference:
-            try:
-                reference = parse_reference(current.image_reference)
-            except InvalidReference:
-                reference = None
-            if reference is not None:
-                _cancel_control(cancel_event, operation="reset_container")
-                registry_credentials = self._context.credentials_for(
-                    reference.registry or "docker.io",
-                    reference.repo,
-                    "reset_container",
-                )
+        # The registry comes from the container's own manifest, so it is
+        # asked for while the worker resets, by the name it contacts.
+        provider = self._context.registry_credentials("reset_container")
         self._context.worker("reset_container", {
             "name": name,
-            "credentials": self._context.credential_payload(
-                registry_credentials
-            ),
-        }, cancel_event=cancel_event)
+        }, credential_provider=provider, cancel_event=cancel_event)
         return self._installed_container(
             name, "reset_container", cancel_event
         )
@@ -2075,11 +2069,14 @@ class ProotDistro:
             install_as: Also install the result as this container name.
             no_cache: Ignore the Dockerfile build cache.
             credentials: Static registry credentials for this build,
-                overriding the instance's.
+                overriding the instance's credentials and provider. A
+                Dockerfile chooses its registries, so they must name their
+                ``registry``.
             cancel_event: Optional cancellation token.
 
         Raises:
-            InvalidArgumentError: An argument is malformed.
+            InvalidArgumentError: An argument is malformed, or the static
+                credentials have no ``registry``.
             NotFoundError: The context or a referenced base is missing.
             AlreadyExistsError: The ``install_as`` container already exists.
             AuthenticationError: A registry refused the credentials.
@@ -2191,10 +2188,8 @@ class ProotDistro:
                 "credentials must be RegistryCredentials or None.",
                 operation="build",
             )
-        build_credentials = credentials or self._context.credentials
-        build_provider = (
-            self._context.credential_provider
-            if build_credentials is None else None
+        build_provider = self._context.registry_credentials(
+            "build", override=credentials,
         )
 
         result = self._context.worker("build", {
@@ -2208,9 +2203,6 @@ class ProotDistro:
             "outputs": outputs,
             "install_as": install_as,
             "no_cache": no_cache,
-            "credentials": self._context.credential_payload(
-                build_credentials
-            ),
         }, credential_provider=build_provider,
             input_streams=(
                 {"dockerfile_input": dockerfile_stream}
@@ -2290,18 +2282,14 @@ class ProotDistro:
             raise InvalidArgumentError(
                 "allow_insecure must be a boolean.", operation="push"
             )
-        _cancel_control(cancel_event, operation="push")
-        registry_credentials = self._context.credentials_for(
-            reference.registry or "docker.io", reference.repo, "push"
+        provider = self._context.registry_credentials(
+            "push", target=registry_key(reference.registry),
         )
         result = self._context.worker("push", {
             "image_ref": image_ref,
             "architecture": architecture,
             "allow_insecure": allow_insecure,
-            "credentials": self._context.credential_payload(
-                registry_credentials
-            ),
-        }, cancel_event=cancel_event)
+        }, credential_provider=provider, cancel_event=cancel_event)
         try:
             registry = result["registry"]
             repository = result["repo"]

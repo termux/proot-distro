@@ -59,7 +59,7 @@ Only names re-exported by `proot_distro.api` are public.
 | --- | --- |
 | `api/program.py` | `ProotDistro` facade plus caller-thread multiplexing of live events, credentials, binary streams, cooperative worker cancellation, and interruption-safe worker cleanup. |
 | `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
-| `api/credentials.py` | Redacted credentials, provider requests, and the public structural provider protocol; builds resolve multiple registries over a private bidirectional worker channel. |
+| `api/credentials.py` | Redacted, optionally registry-scoped credentials, provider requests, and the public structural provider protocol. Workers ask for credentials per registry over a private bidirectional channel. |
 | `api/cancellation.py` | Public structural protocol for cooperative cancellation tokens. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
@@ -94,6 +94,16 @@ Design notes for the worker channel:
 * `restore` replaces an existing container in place and cannot roll that
   back; a container it created itself is removed again if the restore
   fails or is cancelled, so no manifest-less rootfs is left listed.
+* Registry credentials never travel in a worker request or environment.
+  A worker names each registry when it is about to authenticate
+  (`transport.use_basic_auth_provider`), and the parent answers in the
+  caller's thread. Credentials scoped to another registry are dropped
+  there. Unscoped static ones answer only the registry an `install` or
+  `push` argument names; `build` and `reset_container` refuse them,
+  because a Dockerfile or a guest-writable manifest picks those
+  registries. Asking at the moment of use also means a manifest rewritten
+  during a reset cannot redirect credentials chosen earlier.
+  `tests/security/test_api_credential_scope.py` tries each route.
 * Event frames are bounded; an oversized message is truncated, never fatal.
 * Descriptor waits use `selectors`, because `select.select` rejects
   descriptors numbered 1024 and above.

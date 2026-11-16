@@ -35,7 +35,7 @@ import os
 import socket
 import sys
 import urllib.parse
-from contextlib import nullcontext
+from contextlib import contextmanager
 from dataclasses import asdict
 
 from proot_distro.message import capture_log_events, quote_error, set_quiet
@@ -256,19 +256,33 @@ def _write_error(kind: str, message: str) -> None:
     _write_result({"_error": {"kind": kind, "message": message}})
 
 
-def _apply_registry_credentials(options: dict) -> None:
-    """Apply one validated credential payload to this one-shot worker."""
-    credentials = options.get("credentials")
-    if credentials is None:
-        os.environ.pop("PD_DOCKER_AUTH", None)
-        return
-    if not isinstance(credentials, dict):
-        raise ValueError("registry credentials are not valid")
-    username = credentials.get("username")
-    password = credentials.get("password")
-    if not isinstance(username, str) or not isinstance(password, str):
-        raise ValueError("registry credentials are not valid")
-    os.environ["PD_DOCKER_AUTH"] = f"{username}:{password}"
+def _no_credentials(_registry: str, _repository: str, _actions: str):
+    """Anonymous registry access for a caller that configured none."""
+    return None
+
+
+@contextmanager
+def _registry_credentials():
+    """Resolve registry credentials only through the parent's channel.
+
+    The worker never reads PD_DOCKER_AUTH and never receives a secret in
+    its request. Each registry it is about to authenticate with is named
+    to the parent, which applies the caller's scoping rules and answers
+    with credentials for that registry or with none. Asking at the moment
+    of use matters for reset: the registry comes out of the container's
+    manifest, which a guest can rewrite, so credentials chosen earlier for
+    the registry it said then must not go to the one it says now.
+    """
+    from proot_distro.helpers.docker.transport import use_basic_auth_provider
+
+    os.environ.pop("PD_DOCKER_AUTH", None)
+    channel = _credential_channel_from_env()
+    try:
+        with use_basic_auth_provider(channel or _no_credentials):
+            yield
+    finally:
+        if channel is not None:
+            channel.close()
 
 
 def _image_result(image) -> dict:
@@ -308,13 +322,13 @@ def _list_sessions(_options: dict) -> dict:
 def _install(options: dict) -> dict:
     from proot_distro.operations.install import install_container
 
-    _apply_registry_credentials(options)
-    result = install_container(
-        options["source"],
-        name=options.get("name"),
-        architecture=options.get("architecture"),
-        allow_insecure=options.get("allow_insecure", False),
-    )
+    with _registry_credentials():
+        result = install_container(
+            options["source"],
+            name=options.get("name"),
+            architecture=options.get("architecture"),
+            allow_insecure=options.get("allow_insecure", False),
+        )
     return {"container_name": result.name}
 
 
@@ -338,8 +352,8 @@ def _rename(options: dict) -> dict:
 def _reset(options: dict) -> dict:
     from proot_distro.operations.reset import reset_container
 
-    _apply_registry_credentials(options)
-    result = reset_container(options["name"])
+    with _registry_credentials():
+        result = reset_container(options["name"])
     return {"container_name": result.name}
 
 
@@ -425,7 +439,6 @@ def _restore(options: dict) -> dict:
 def _build(options: dict) -> dict:
     from proot_distro.operations.build import build_image
 
-    _apply_registry_credentials(options)
     build_output_fd = _channel_fd_from_env(
         "_PROOT_DISTRO_BUILD_OUTPUT_FD"
     )
@@ -445,15 +458,8 @@ def _build(options: dict) -> dict:
                 raise ValueError("build output stream is not valid")
             output_files.append(stream)
             service_outputs.append(stream)
-    credential_channel = _credential_channel_from_env()
     try:
-        credential_scope = nullcontext()
-        if credential_channel is not None:
-            from proot_distro.helpers.docker.transport import (
-                use_basic_auth_provider,
-            )
-            credential_scope = use_basic_auth_provider(credential_channel)
-        with credential_scope:
+        with _registry_credentials():
             result = build_image(
                 build_path,
                 dockerfile_path=dockerfile,
@@ -476,8 +482,6 @@ def _build(options: dict) -> dict:
             output_file.close()
         if build_output_fd is not None:
             os.close(build_output_fd)
-        if credential_channel is not None:
-            credential_channel.close()
 
     return {
         "images": [_image_result(image) for image in result.images],
@@ -492,12 +496,12 @@ def _build(options: dict) -> dict:
 def _push(options: dict) -> dict:
     from proot_distro.operations.push import push_image
 
-    _apply_registry_credentials(options)
-    result = push_image(
-        options["image_ref"],
-        architecture=options.get("architecture"),
-        allow_insecure=options.get("allow_insecure", False),
-    )
+    with _registry_credentials():
+        result = push_image(
+            options["image_ref"],
+            architecture=options.get("architecture"),
+            allow_insecure=options.get("allow_insecure", False),
+        )
     return {
         "registry": result.registry,
         "repo": result.repository,

@@ -1035,6 +1035,42 @@ def test_denied_messages_mention_auth_env(monkeypatch):
     assert "correct" in transport.auth_denied_msg("ubuntu", 403)
 
 
+def test_provider_messages_never_point_at_the_ignored_variable(monkeypatch):
+    # An API worker ignores PD_DOCKER_AUTH, so telling its caller to set
+    # it was advice that could not work. Whether credentials were in use
+    # is the provider's answer for that registry, not the variable.
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:ignored")
+    answers = {"ghcr.io": ("u", "p")}
+    exc = urllib.error.HTTPError(
+        "https://ghcr.io/v2/", 429, "Too Many Requests", None, None
+    )
+
+    with transport.use_basic_auth_provider(
+        lambda registry, _repo, _actions: answers.get(registry)
+    ):
+        anonymous = [
+            transport.auth_denied_msg("ubuntu", 401),
+            transport.push_denied_msg("me/app", 403),
+            transport.rate_limited_msg(
+                "ubuntu", parse_reference("ubuntu"), exc
+            ),
+        ]
+        transport.env_basic_auth("GHCR.io", "me/app", "pull")
+        signed_in = [
+            transport.auth_denied_msg("ghcr.io/me/app:1", 403),
+            transport.push_denied_msg("ghcr.io/me/app:1", 403),
+            transport.credentials_rejected_msg("ghcr.io", 401),
+        ]
+
+    for text in anonymous + signed_in:
+        assert "PD_DOCKER_AUTH" not in text, text
+    assert all("credentials" in text for text in anonymous)
+    assert "does not exist or is a private image" in anonymous[0]
+    assert all("correct" in text for text in signed_in[:2])
+    # Outside the scope the CLI wording is back.
+    assert "PD_DOCKER_AUTH" in transport.auth_denied_msg("ubuntu", 403)
+
+
 # ----- 429 Too Many Requests ---------------------------------------------
 
 def _rate_limited(url, headers=()):

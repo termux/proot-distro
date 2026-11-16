@@ -75,7 +75,8 @@ def test_push_maps_worker_result(monkeypatch):
     operation, options = worker.calls[0]
     assert operation == "push"
     assert options["image_ref"] == "registry.test/team/app:1"
-    assert options["credentials"] is None
+    # Credentials are never part of a worker request.
+    assert "credentials" not in options
 
 
 @pytest.mark.parametrize("override", [

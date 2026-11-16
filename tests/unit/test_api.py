@@ -413,7 +413,24 @@ def test_search_suppresses_retry_without_handler(monkeypatch):
     ProotDistro().search("none")
 
 
-def test_credential_provider_receives_canonical_registry_request(monkeypatch):
+def _answer_credential_request(provider, operation, registry,
+                               repository="library/alpine"):
+    """Serve one worker credential request; return the decoded answer."""
+    parent, child = socket.socketpair()
+    try:
+        raw = json.dumps({
+            "registry": registry, "repository": repository,
+            "actions": "pull",
+        }).encode()
+        program._handle_credential_request(raw, parent, provider, operation)
+        return json.loads(child.recv(65536))
+    finally:
+        parent.close()
+        child.close()
+
+
+def test_install_serves_provider_over_channel_without_secret_in_request(
+        monkeypatch):
     requests = []
     worker_calls = []
 
@@ -421,8 +438,9 @@ def test_credential_provider_receives_canonical_registry_request(monkeypatch):
         requests.append(request)
         return RegistryCredentials("alice", "secret")
 
-    def worker(operation, options, *_args, **_kwargs):
-        worker_calls.append((operation, options))
+    def worker(operation, options, _config, _events, credential_provider,
+               *_args, **_kwargs):
+        worker_calls.append((operation, options, credential_provider))
         if operation == "install":
             return {"container_name": "alpine"}
         return {"items": [{
@@ -434,15 +452,23 @@ def test_credential_provider_receives_canonical_registry_request(monkeypatch):
     result = ProotDistro(credential_provider=provider).install("alpine")
 
     assert result.name == "alpine"
+    operation, options, served = worker_calls[0]
+    assert operation == "install"
+    # The request a worker reads never carries a secret; credentials are
+    # asked for by registry name while it runs.
+    assert "credentials" not in options
+    assert "secret" not in json.dumps(options)
+    assert served is provider
+    assert requests == []
+    answer = _answer_credential_request(served, "install", "Docker.IO")
+    assert answer == {"credentials": {
+        "username": "alice", "password": "secret",
+    }}
     assert requests == [CredentialRequest(
         registry="docker.io",
         repository="library/alpine",
         operation="install",
     )]
-    install_options = worker_calls[0][1]
-    assert install_options["credentials"] == {
-        "username": "alice", "password": "secret",
-    }
 
 
 def test_credential_provider_is_not_called_for_local_install(tmp_path,
@@ -464,52 +490,142 @@ def test_credential_provider_is_not_called_for_local_install(tmp_path,
     ProotDistro(credential_provider=provider).install(archive, name="local")
 
 
-def test_credential_provider_must_return_credentials(monkeypatch):
+def test_credential_provider_must_return_credentials():
+    parent, child = socket.socketpair()
+    try:
+        with pytest.raises(InvalidArgumentError) as exc:
+            program._handle_credential_request(
+                json.dumps({
+                    "registry": "docker.io", "repository": "library/alpine",
+                    "actions": "pull",
+                }).encode(),
+                parent, lambda _request: "alice:secret", "install",
+            )
+        # The worker is told the provider failed, not left waiting.
+        assert json.loads(child.recv(65536)) == {
+            "error": "credential provider failed",
+        }
+    finally:
+        parent.close()
+        child.close()
+    assert exc.value.operation == "install"
+
+
+def test_provider_credentials_scoped_elsewhere_are_not_sent():
+    def provider(_request):
+        return RegistryCredentials("alice", "secret", registry="ghcr.io")
+
+    assert _answer_credential_request(provider, "build", "docker.io") == {
+        "credentials": None,
+    }
+    assert _answer_credential_request(provider, "build", "GHCR.io") == {
+        "credentials": {"username": "alice", "password": "secret"},
+    }
+
+
+def test_unscoped_static_credentials_answer_only_the_named_registry(
+        monkeypatch):
+    served = []
+
+    def worker(operation, options, _config, _events, credential_provider,
+               *_args, **_kwargs):
+        if operation == "install":
+            served.append(credential_provider)
+            return {"container_name": "app"}
+        return {"items": [{
+            "name": "app", "image_reference": "ghcr.io/me/app:1",
+            "architecture": "x86_64", "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    ProotDistro(credentials=RegistryCredentials("alice", "secret")).install(
+        "GHCR.io/me/app:1"
+    )
+
+    assert _answer_credential_request(
+        served[0], "install", "ghcr.io", "me/app"
+    )["credentials"] == {"username": "alice", "password": "secret"}
+    # Docker Hub (a token realm, a mirror, anything else) gets nothing.
+    assert _answer_credential_request(
+        served[0], "install", "docker.io"
+    ) == {"credentials": None}
+
+
+@pytest.mark.parametrize("method,call", [
+    ("build", lambda pd, path: pd.build(path, tags=["x:1"])),
+    ("reset_container", lambda pd, _path: pd.reset_container("box")),
+])
+def test_unscoped_static_credentials_are_refused_where_registries_are_not_named(
+        method, call, tmp_path, monkeypatch):
     monkeypatch.setattr(
         program, "_run_worker",
         lambda *_args, **_kwargs: pytest.fail("worker should not start"),
     )
+    pd = ProotDistro(credentials=RegistryCredentials("alice", "secret"))
     with pytest.raises(InvalidArgumentError) as exc:
-        ProotDistro(credential_provider=lambda _request: "alice:secret").install(
-            "alpine"
+        call(pd, tmp_path)
+    assert exc.value.operation == method
+    assert "registry=" in str(exc.value)
+    assert "secret" not in str(exc.value)
+
+
+def test_build_credentials_override_must_also_be_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        program, "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail("worker should not start"),
+    )
+    with pytest.raises(InvalidArgumentError):
+        ProotDistro().build(
+            tmp_path, tags=["x:1"],
+            credentials=RegistryCredentials("alice", "secret"),
         )
-    assert exc.value.operation == "install"
 
 
-def test_reset_resolves_credentials_for_recorded_image(monkeypatch):
-    requests = []
-    reset_options = []
+def test_reset_asks_for_credentials_while_the_worker_runs(monkeypatch):
+    calls = []
 
-    def provider(request):
-        requests.append(request)
+    def provider(_request):
         return RegistryCredentials("alice", "secret")
 
-    def worker(operation, options, *_args, **_kwargs):
-        if operation == "list_containers":
-            return {"items": [{
-                "name": "box",
-                "image_reference": "ghcr.io/example/private:1",
-                "architecture": "x86_64",
-                "image_id": None,
-            }]}
+    def worker(operation, options, _config, _events, credential_provider,
+               *_args, **_kwargs):
+        calls.append((operation, options, credential_provider))
         if operation == "reset_container":
-            reset_options.append(options)
             return {"container_name": "box"}
-        raise AssertionError(operation)
+        return {"items": [{
+            "name": "box", "image_reference": "ghcr.io/example/private:1",
+            "architecture": "x86_64", "image_id": None,
+        }]}
 
     monkeypatch.setattr(program, "_run_worker", worker)
     result = ProotDistro(credential_provider=provider).reset_container("box")
 
     assert result.name == "box"
-    assert requests == [CredentialRequest(
-        registry="ghcr.io",
-        repository="example/private",
-        operation="reset_container",
-    )]
-    assert reset_options == [{
-        "name": "box",
-        "credentials": {"username": "alice", "password": "secret"},
-    }]
+    # The reset worker is the first one: nothing read the guest-writable
+    # manifest beforehand to choose credentials for it.
+    assert calls[0] == ("reset_container", {"name": "box"}, provider)
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("GHCR.io", "ghcr.io"),
+    ("docker.io", "docker.io"),
+    ("index.docker.io", "docker.io"),
+    ("localhost:5000", "localhost:5000"),
+    ("[::1]:5000", "[::1]:5000"),
+])
+def test_registry_credentials_normalize_their_scope(value, expected):
+    credentials = RegistryCredentials("alice", "secret", registry=value)
+    assert credentials.registry == expected
+    assert "secret" not in repr(credentials)
+
+
+@pytest.mark.parametrize("value", [
+    "", "https://ghcr.io", "ghcr.io/team", "ghcr.io:99999", "bad host", 5,
+])
+def test_registry_credentials_reject_malformed_scope(value):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RegistryCredentials("alice", "secret", registry=value)
+    assert exc.value.operation == "configure"
 
 
 def test_search_translates_network_error(monkeypatch):

@@ -84,6 +84,7 @@ from contextvars import ContextVar
 
 from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
 from proot_distro.message import quote_path
+from proot_distro.helpers.docker.refs import parse_image_ref, registry_key
 from proot_distro.helpers.download import (
     NETWORK_ERRORS,
     RedirectPolicyHandler,
@@ -103,23 +104,62 @@ REGISTRY_URL = "https://registry-1.docker.io"
 AUTH_URL = "https://auth.docker.io/token"
 HUB_SERVICE = "registry.docker.io"
 
-# An API build can encounter several registries while interpreting one
-# Dockerfile. Its worker installs a callback that obtains credentials over a
-# private parent channel. CLI calls see None and continue reading only
+# A programmatic API worker never reads PD_DOCKER_AUTH. It installs a
+# callback that is asked for the credentials of each registry it is about
+# to authenticate with, by name, and answers only for the registry the
+# caller scoped them to. CLI calls see None and continue reading only
 # PD_DOCKER_AUTH.
 _basic_auth_provider = ContextVar(
     "proot_distro_registry_basic_auth_provider", default=None
+)
+# The registries (registry_key spelling) the installed provider answered
+# with credentials, so a refusal can say whether any were sent there.
+_provider_answered = ContextVar(
+    "proot_distro_registry_provider_answered", default=None
 )
 
 
 @contextmanager
 def use_basic_auth_provider(provider):
-    """Temporarily resolve Basic credentials through *provider*."""
+    """Temporarily resolve Basic credentials through *provider*.
+
+    *provider(registry, repository, actions)* returns ``(username,
+    password)`` or ``None``. While it is installed PD_DOCKER_AUTH is not
+    consulted, and refusal messages talk about the caller's registry
+    credentials rather than about that variable.
+    """
     token = _basic_auth_provider.set(provider)
+    answered = _provider_answered.set(set())
     try:
         yield
     finally:
+        _provider_answered.reset(answered)
         _basic_auth_provider.reset(token)
+
+
+def _credentials_configured(registry: str = "") -> bool:
+    """Whether credentials are in use for *registry* ('' for Docker Hub)."""
+    if _basic_auth_provider.get() is not None:
+        answered = _provider_answered.get()
+        return bool(answered) and registry_key(registry) in answered
+    return bool(os.environ.get("PD_DOCKER_AUTH"))
+
+
+def _credential_hint(action: str = "authenticate") -> str:
+    """How to supply credentials, in the caller's own terms."""
+    if _basic_auth_provider.get() is not None:
+        return (
+            f"supply registry credentials (RegistryCredentials or a "
+            f"credential provider) to {action}"
+        )
+    return f"set PD_DOCKER_AUTH=username:password to {action}"
+
+
+def _credential_source() -> str:
+    """The credentials in use, as a message names them."""
+    if _basic_auth_provider.get() is not None:
+        return "the supplied registry credentials"
+    return "the credentials in PD_DOCKER_AUTH"
 
 
 # How large a metadata response may be before it is refused. Manifests,
@@ -420,23 +460,30 @@ def credentials_rejected_msg(registry: str, code: int) -> str:
     """
     who = f"Registry '{registry}'" if registry else "Docker Hub"
     return (
-        f"{who} rejected the credentials in PD_DOCKER_AUTH (HTTP {code}). "
+        f"{who} rejected {_credential_source()} (HTTP {code}). "
         f"Check the username and password. An access token may also have "
         f"expired or lack the required permissions."
     )
 
 
+def _check_hint() -> str:
+    """'Check that <the credentials> are correct', in the caller's terms."""
+    if _basic_auth_provider.get() is not None:
+        return "Check that the registry credentials are correct"
+    return "Check that PD_DOCKER_AUTH=username:password is correct"
+
+
 def auth_denied_msg(image_ref: str, code: int) -> str:
     """Return a descriptive error string for 401/403 registry responses."""
-    if os.environ.get("PD_DOCKER_AUTH"):
+    if _credentials_configured(parse_image_ref(image_ref)[0]):
         return (
             f"Access denied to '{image_ref}' (HTTP {code}). "
-            f"Check that PD_DOCKER_AUTH=username:password is correct "
-            f"and the account has pull access to the image."
+            f"{_check_hint()} and the account has pull access to the image."
         )
+    hint = _credential_hint()
     return (
         f"Unauthorized: '{image_ref}' does not exist or is a private image. "
-        f"Set PD_DOCKER_AUTH=username:password to authenticate."
+        f"{hint[0].upper()}{hint[1:]}."
     )
 
 
@@ -505,11 +552,15 @@ def rate_limited_msg(
     )
     wait = retry_after(exc)
     when = f"in {_wait_text(wait)}" if wait else "later"
-    if os.environ.get("PD_DOCKER_AUTH"):
-        return f"{text} for the account in PD_DOCKER_AUTH. Try again {when}."
+    if _credentials_configured(registry):
+        account = (
+            "the supplied credentials"
+            if _basic_auth_provider.get() is not None else "PD_DOCKER_AUTH"
+        )
+        return f"{text} for the account in {account}. Try again {when}."
     hub_account = (
-        f"set PD_DOCKER_AUTH=username:password to {action} with a Docker "
-        f"Hub account, which has a limit of its own"
+        f"{_credential_hint(action)} with a Docker Hub account, which has a "
+        f"limit of its own"
     )
     if not registry:
         why = (
@@ -532,23 +583,23 @@ def rate_limited_msg(
             f"{when}, or {hub_account}."
         )
     return (
-        f"{text}. Try again {when}, or set "
-        f"PD_DOCKER_AUTH=username:password to {action} with an account; "
-        f"registries usually allow signed-in users more."
+        f"{text}. Try again {when}, or {_credential_hint(action)} with an "
+        f"account; registries usually allow signed-in users more."
     )
 
 
 def push_denied_msg(image_ref: str, code: int) -> str:
     """Return a context-sensitive error string for 401/403 on push."""
-    if os.environ.get("PD_DOCKER_AUTH"):
+    if _credentials_configured(parse_image_ref(image_ref)[0]):
         return (
             f"Push denied for '{image_ref}' (HTTP {code}). "
-            f"Check that PD_DOCKER_AUTH=username:password is correct "
-            f"and the account has push access to the repository."
+            f"{_check_hint()} and the account has push access to the "
+            f"repository."
         )
+    hint = _credential_hint()
     return (
         f"Push denied for '{image_ref}' (HTTP {code}). "
-        f"Set PD_DOCKER_AUTH=username:password to authenticate, or, "
+        f"{hint[0].upper()}{hint[1:]}, or, "
         f"for self-hosted registries that allow anonymous push, check "
         f"the registry configuration."
     )
@@ -586,14 +637,21 @@ def env_basic_auth(registry: str = "", repo: str = "",
     Accepts 'username:password' — the colon is the required separator.
     Returns '' when the variable is unset; raises RuntimeError when the
     variable is set but contains no colon (wrong format).
+
+    Under use_basic_auth_provider() the provider is asked instead, with
+    the registry_key() of *registry*, and PD_DOCKER_AUTH is ignored.
     """
     provider = _basic_auth_provider.get()
     if provider is not None:
-        credentials = provider(registry or "docker.io", repo, actions)
+        key = registry_key(registry)
+        credentials = provider(key, repo, actions)
         if credentials is None:
             return ""
         username, password = credentials
         raw = f"{username}:{password}"
+        answered = _provider_answered.get()
+        if answered is not None:
+            answered.add(key)
     else:
         raw = os.environ.get("PD_DOCKER_AUTH", "")
     if not raw:

@@ -382,17 +382,32 @@ before retrying a destructive operation.
 
 ## Registry credentials
 
-The API does not read `PD_DOCKER_AUTH`. Pass credentials explicitly:
+The API does not read `PD_DOCKER_AUTH`. Pass credentials explicitly, and
+name the registry they belong to:
 
 ```python
 from proot_distro.api import ProotDistro, RegistryCredentials
 
-pd = ProotDistro(credentials=RegistryCredentials("myuser", "my-token"))
-pd.install("myuser/private-image:1", name="private-image")
+pd = ProotDistro(credentials=RegistryCredentials(
+    "myuser", "my-token", registry="ghcr.io",
+))
+pd.install("ghcr.io/myuser/private-image:1", name="private-image")
+pd.install("alpine:3.21")  # Docker Hub gets no credentials
 ```
 
-The password is hidden from `repr()`, never placed in command arguments, and
-used only for the registry operation.
+Credentials go only to the registry they are for:
+
+* With `registry=`, only to that registry. Use `docker.io` for Docker Hub.
+  A port is part of the name (`localhost:5000`).
+* Without `registry=`, only to the registry that an `install` or `push`
+  argument names.
+* `build` and `reset_container` refuse credentials without `registry=`.
+  A Dockerfile chooses which registries a build contacts, and a container
+  can change the image its own metadata records.
+
+The password is hidden from `repr()`, never placed in command arguments or
+the environment, and sent to the worker only when it authenticates with
+that registry.
 
 For several registries, give a provider function:
 
@@ -407,9 +422,15 @@ pd = ProotDistro(credential_provider=credentials_for)
 
 The provider (`CredentialProvider`) receives a `CredentialRequest` with
 `registry`, `repository` and `operation`, and returns `RegistryCredentials`
-or `None`. It runs in your calling thread. Use either `credentials` or
-`credential_provider`, not both. `build(credentials=...)` overrides them for
-one build. A refusal raises `AuthenticationError` without the secret.
+or `None`. `registry` is lowercase, and Docker Hub is always `docker.io`.
+The provider is asked when the operation is about to authenticate, in your
+calling thread. Credentials it returns with a different `registry=` are not
+used. Use either `credentials` or `credential_provider`, not both.
+`build(credentials=...)` replaces both for one build. A refusal raises
+`AuthenticationError` without the secret.
+
+Registries answer a missing repository the same way as a private one, so a
+mistyped image name is reported as `AuthenticationError`.
 
 ## Separate storage
 

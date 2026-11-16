@@ -106,12 +106,14 @@ def credentials_from_environment() -> Optional[
 
     # RegistryCredentials redacts its password/token representation, but the
     # secret should still be sourced outside command-line arguments.
-    credentials = RegistryCredentials(username, token)
+    # registry= scopes it: the API never sends it to any other host, even
+    # when the Dockerfile names several registries.
+    credentials = RegistryCredentials(username, token, registry=registry)
 
     def provide(request: CredentialRequest) -> Optional[RegistryCredentials]:
-        # Never send one registry's credentials in response to a request for a
-        # different host. Returning None requests anonymous authentication.
-        if request.registry == registry:
+        # Requests name the registry in lowercase, "docker.io" for Docker
+        # Hub. Returning None requests anonymous authentication.
+        if request.registry == credentials.registry:
             return credentials
         return None
 
