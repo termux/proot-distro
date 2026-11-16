@@ -52,6 +52,7 @@ from proot_distro.guestfile import guest_file_exists
 from proot_distro.locking import ContainerLock
 from proot_distro.message import quote_error
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
+from proot_distro.operation_errors import OperationFailure
 from proot_distro.operations.context import OperationContext
 from proot_distro.session_errors import (
     SessionNotFoundFailure,
@@ -238,6 +239,11 @@ def prepare_session(
             raise SessionNotFoundFailure(
                 f"container '{container_name}' is not installed."
             ) from None
+        except OperationFailure as exc:
+            # A planted or otherwise unusable entry under the container's
+            # name. The inventory does not list it as installed, so it is
+            # "not found" here too, with the message saying why.
+            raise SessionNotFoundFailure(str(exc)) from exc
         prepared = None
         try:
             launch = _prepare_with_rootfs(

@@ -26,7 +26,12 @@ import sys
 
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import C, crit_error, msg, warn
-from proot_distro.operation_errors import OperationFailure
+from proot_distro.operation_errors import (
+    BusyFailure,
+    NotFoundFailure,
+    OperationFailure,
+    UnsupportedFailure,
+)
 from proot_distro.operations.session_prepare import (
     SessionOptions,
     prepare_session,
@@ -88,7 +93,12 @@ def command_session(args, kind):
                 _print_detached(prepared.launch, pid)
                 return pid
             execute_session(prepared)
-    except OperationFailure as exc:
+    except (
+        OperationFailure, NotFoundFailure, BusyFailure, UnsupportedFailure,
+    ) as exc:
+        # Every typed failure preparation raises, not only OperationFailure:
+        # a missing container (SessionNotFoundFailure) or one locked by a
+        # reset (BusyFailure) used to end `login` and `run` in a traceback.
         crit_error(str(exc))
         raise SystemExit(1) from None
 

@@ -102,6 +102,53 @@ def test_unknown_option_rejected(monkeypatch, capsys):
     assert "unrecognized option" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("argv", [
+    ["login", "nosuchbox", "--", "true"],
+    ["login", "nosuchbox", "--get-proot-cmd"],
+    ["login", "nosuchbox", "--detach", "--", "true"],
+    ["run", "nosuchbox"],
+])
+def test_session_commands_report_a_missing_container(monkeypatch, capsys,
+                                                     argv):
+    """Regression: these ended in a SessionNotFoundFailure traceback."""
+    assert _run(monkeypatch, argv) == 1
+    err = capsys.readouterr().err
+    assert "container 'nosuchbox' is not installed" in err
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize("command", ["login", "run"])
+def test_session_commands_report_a_busy_container(monkeypatch, capsys,
+                                                  builders, command):
+    """Regression: a container held by reset ended in a BusyFailure trace."""
+    import subprocess
+
+    builders.make_container("box", arch=get_device_cpu_arch(), manifest={
+        "image_ref": "img:1", "arch": get_device_cpu_arch(),
+        "manifest": {}, "image_config": {"config": {"Cmd": ["true"]}},
+    })
+    # Held by another process, as a running reset would hold it.
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys\n"
+         "from proot_distro.locking import ContainerLock\n"
+         "lock = ContainerLock('box', exclusive=True, command='reset')\n"
+         "assert lock.acquire()\n"
+         "sys.stdout.write('held\\n'); sys.stdout.flush()\n"
+         "sys.stdin.read()\n"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    )
+    try:
+        assert holder.stdout.readline() == b"held\n"
+        assert _run(monkeypatch, [command, "box", "--get-proot-cmd"]) == 1
+    finally:
+        holder.stdin.close()
+        holder.wait(10)
+        holder.stdout.close()
+    err = capsys.readouterr().err
+    assert "box" in err and "Traceback" not in err
+
+
 def test_login_separator_inner_command(monkeypatch, capsys, builders):
     # Tokens after `--` become the inner command; --get-proot-cmd prints+exits.
     builders.make_container("box", arch=get_device_cpu_arch())
