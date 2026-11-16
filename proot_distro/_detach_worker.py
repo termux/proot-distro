@@ -30,6 +30,7 @@ descriptors.
 
 import json
 import os
+import signal
 import sys
 
 from proot_distro.session_errors import SessionExecutionFailure
@@ -144,6 +145,19 @@ def _write_response(response) -> None:
 
 
 def main() -> int:
+    # The launcher shares its parent's process group, and the API stops a
+    # cancelled worker with a SIGINT to that group. Landing mid-spawn it
+    # could interrupt a forked child before setsid() takes it out of the
+    # group, or lose the PID of a daemon that has already started. The
+    # spawn takes moments and is all or nothing, so SIGINT is ignored for
+    # the launcher's whole life; the daemon restores what it found (an
+    # inherited "ignore" stays, like any exec would keep it) before it
+    # becomes proot. SIGKILL still ends a launcher that hangs.
+    previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    child_sigint = (
+        signal.SIG_IGN if previous_sigint == signal.SIG_IGN
+        else signal.SIG_DFL
+    )
     try:
         (
             proot_bin,
@@ -172,6 +186,7 @@ def main() -> int:
             rootfs_fd=rootfs_fd,
             stdout_fd=stdout_fd,
             stderr_fd=stderr_fd,
+            child_sigint=child_sigint,
         )
     except SessionExecutionFailure as exc:
         _write_response({"error": str(exc)})

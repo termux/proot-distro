@@ -1,10 +1,97 @@
 import io
+import json
 import os
+import signal
+import subprocess
+import sys
+import time
 
 import pytest
 
 from proot_distro import _detach_worker
 from proot_distro.session_errors import SessionExecutionFailure
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(
+    _detach_worker.__file__
+)))
+
+
+def _run_launcher(prelude, request, timeout=30):
+    """Run _detach_worker.main() in a fresh interpreter after *prelude*.
+
+    The double fork must never happen inside pytest itself: a broken
+    child would carry on as a second copy of the test run.
+    """
+    script = (
+        f"import os, signal, sys\nsys.path.insert(0, {_ROOT!r})\n"
+        f"{prelude}\n"
+        "from proot_distro import _detach_worker\n"
+        "raise SystemExit(_detach_worker.main())\n"
+    )
+    return subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        input=json.dumps(request).encode(),
+        capture_output=True, timeout=timeout,
+    )
+
+
+def _request(proot_args):
+    return {
+        "proot_bin": proot_args[0],
+        "proot_args": proot_args,
+        "child_env": {"PATH": "/usr/bin:/bin"},
+        "register_kwargs": {},
+        "rootfs_fd": None,
+        "lock_fd": None,
+        "stdout_fd": None,
+        "stderr_fd": None,
+    }
+
+
+def test_a_failing_fork_child_never_writes_a_second_reply():
+    # Before setsid() the middle child is still in the launcher's process
+    # group, where a cancel's SIGINT lands. Only OSError was caught there,
+    # so a KeyboardInterrupt unwound into the launcher's main() inside the
+    # forked copy, which then wrote its own reply after the real one.
+    result = _run_launcher(
+        "def _interrupted():\n    raise KeyboardInterrupt\n"
+        "os.setsid = _interrupted\n",
+        _request(["/bin/true"]),
+    )
+
+    assert result.returncode == 1
+    reply = json.loads(result.stdout)
+    assert set(reply) == {"error"}
+
+
+@pytest.mark.parametrize("launcher_sigint,expect_ignored", [
+    ("", False),
+    ("signal.signal(signal.SIGINT, signal.SIG_IGN)", True),
+])
+def test_daemon_starts_with_the_sigint_disposition_it_was_given(
+        tmp_path, launcher_sigint, expect_ignored):
+    # The launcher ignores SIGINT while it spawns; that must not leak into
+    # the session, while a caller's own "ignore" is inherited as exec
+    # would inherit it.
+    status = tmp_path / "status"
+    result = _run_launcher(
+        "import proot_distro.session_runtime as runtime\n"
+        "runtime.register_session = lambda **_kwargs: None\n"
+        f"{launcher_sigint}",
+        _request([
+            "/bin/sh", "-c",
+            f"grep '^SigIgn:' /proc/self/status > '{status}.tmp' && "
+            f"mv '{status}.tmp' '{status}'",
+        ]),
+    )
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout)["pid"] > 0
+
+    deadline = time.monotonic() + 10
+    while not status.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    mask = int(status.read_text().split()[1], 16)
+    assert bool(mask & (1 << (signal.SIGINT - 1))) is expect_ignored
 
 
 class _Input:

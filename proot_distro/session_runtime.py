@@ -57,6 +57,7 @@
 
 import json
 import os
+import signal
 import subprocess
 
 from proot_distro._bootstrap import private_module_command
@@ -240,7 +241,7 @@ def spawn_detached(proot_bin, proot_args, child_env, *, register_kwargs,
 
 def _spawn_detached_local(proot_bin, proot_args, child_env, *,
                           register_kwargs, rootfs_fd=None, stdout_fd=None,
-                          stderr_fd=None):
+                          stderr_fd=None, child_sigint=None):
     """Double-fork from the single-threaded launcher and return the daemon PID.
 
     Startup failures raise ``SessionExecutionFailure``. Forked children never
@@ -258,6 +259,16 @@ def _spawn_detached_local(proot_bin, proot_args, child_env, *,
     Standard input always becomes ``/dev/null``. *stdout_fd* and *stderr_fd*
     are optional append-only descriptors opened by the API worker; omitted
     outputs also become ``/dev/null``. Sources are closed after ``dup2``.
+
+    *child_sigint*, when given, is the SIGINT disposition the daemon sets
+    just before its exec. The launcher ignores SIGINT while it spawns (see
+    _detach_worker.main), and an ignored signal stays ignored across exec,
+    so the daemon puts back what the session should start with.
+
+    The forked children leave only through ``os._exit()``. Unwinding an
+    exception in one of them would run the launcher's own handlers in a
+    copy of it, and its reply would be a second one on the launcher's
+    standard output.
     """
     try:
         read_fd, write_fd = os.pipe()
@@ -315,13 +326,15 @@ def _spawn_detached_local(proot_bin, proot_args, child_env, *,
     # Intermediate child. Detach into a new session, then fork the
     # daemon and exit so the daemon is reparented to init and is not a
     # session leader.
-    _safe_close(read_fd)
     try:
+        _safe_close(read_fd)
         os.setsid()
         pid2 = os.fork()
-    except OSError:
+    except BaseException:
         # Could not detach/fork the daemon: report failure by closing
-        # the pipe with nothing written, then exit.
+        # the pipe with nothing written, then exit. Not OSError alone:
+        # whatever is raised here must not unwind into the launcher's
+        # code in this forked copy (see the docstring).
         _safe_close(write_fd)
         os._exit(1)
 
@@ -338,6 +351,8 @@ def _spawn_detached_local(proot_bin, proot_args, child_env, *,
         # Keep a reference until execvpe so the session fd (and its
         # inherited flock) is not closed early. Best-effort.
         _session_fd = register_session(**register_kwargs)  # noqa: F841
+        if child_sigint is not None:
+            signal.signal(signal.SIGINT, child_sigint)
         try:
             os.write(write_fd, f"{os.getpid()}\n".encode())
         except OSError:
