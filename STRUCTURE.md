@@ -133,7 +133,7 @@ signalling, and descriptor-pinned login/run preparation are migrated.
 | `operations/restore.py` | Validated single-container archive extraction with deferred destructive commit. |
 | `operations/install.py` | Local archive, URL, and OCI installation with staged cleanup and rootfs fixups. |
 | `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
-| `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata. |
+| `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata; only a registry reference is honoured, never a guest-planted path or URL. |
 | `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, and optional installation. |
 | `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
 | `operations/session_signals.py` | Tracked-session selection, PID-reuse-safe process discovery, signal delivery, escalation, and survivor reporting. |

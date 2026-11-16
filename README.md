@@ -1154,7 +1154,8 @@ recorded at install time. **All data inside the container is lost.**
 The image reference and target architecture are read from
 `containers/<name>/manifest.json`. If that file is missing, the command
 exits with an error — reset is supported for OCI image installs only
-(plain rootfs tarballs cannot be re-pulled).
+(plain rootfs tarballs cannot be re-pulled). The recorded image must be a
+registry image: a local file path or URL found there is refused.
 
 | Option | Description |
 |---|---|
