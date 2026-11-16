@@ -36,6 +36,8 @@ proot_distro/
   dirfd.py  statedir.py  atomic.py  locking.py  paths.py        Safe filesystem layer
   guestfile.py  l2s.py  shm.py  sysdata.py  session.py         Container runtime state
   session_*.py  _bootstrap.py  _detach_worker.py                Session setup/runtime helpers
+  _api_worker.py  _api_session_worker.py                        Private API worker entry points
+  lazy_exports.py                                               On-demand package indexes
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -64,9 +66,9 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
 | `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context, plus the public handler protocol. |
-| `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
-| `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
+| `_api_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
+| `_api_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
 | `_bootstrap.py` | Isolated, site-disabled command bootstrap that loads private workers from the exact imported package, with its parent directory after the standard library. |
 
 Design notes for the worker channel:
@@ -123,6 +125,14 @@ Design notes for the worker channel:
   (`inventory.container_record`), and a missing container is the
   operation's own `NotFoundFailure`; nothing lists every container in a
   second interpreter first or afterwards.
+* A worker's start-up is part of every call, so it imports only what its
+  operation uses. The worker modules live outside `api/`, whose
+  `__init__` loads the whole facade. `operations/` and `helpers/docker/`
+  are indexes that import a submodule on first use (`lazy_exports.py`).
+  The version is looked up only for the help screen and a User-Agent.
+  `RegistryAuthenticationError` lives in `operation_errors.py` so naming
+  it does not load the HTTP stack. `tests/unit/test_worker_startup.py`
+  pins what a local worker may not import.
 
 ### Shared operations
 
@@ -156,6 +166,7 @@ signalling, and descriptor-pinned login/run preparation are migrated.
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
 | `operations/cache.py` | Shared full/orphan/build cache cleanup and reclaimed-byte accounting. |
+| `operations/__init__.py` | Lazy index of the services and models above: a name imports its submodule when first used. |
 
 ### Commands
 
@@ -201,7 +212,7 @@ Session implementation is split by concern:
 
 | Module | Role |
 | --- | --- |
-| `helpers/docker/` | Pure-Python registry client. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth and the `PD_DOCKER_AUTH` check, redirects, JSON caps, refusal messages), `pull.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
+| `helpers/docker/` | Pure-Python registry client, with a lazy package index. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth and the `PD_DOCKER_AUTH` check, redirects, JSON caps, refusal messages), `pull.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
 | `helpers/dockerfile.py` | Pure Dockerfile parser. No execution and no variable expansion. |
 | `helpers/build_engine/` | Dockerfile interpreter. `engine.py` (`BuildEngine`: FROM, dispatch, history), `stage.py` (per-FROM state and descriptors), `handlers.py` (metadata-only instructions and the dispatch table), `run_step.py` (RUN under proot), `copy_step.py` (COPY/ADD), `users.py`, `dockerignore.py`, `parsing.py`, `constants.py`, `errors.py`. |
 | `helpers/layer_diff.py` | Snapshot the rootfs before and after a RUN, diff, write a gzipped OCI layer with whiteouts. |
@@ -217,9 +228,10 @@ Roughly bottom-up. Higher entries import lower ones.
 
 | Module | Role |
 | --- | --- |
-| `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. |
+| `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. `program_version()` is looked up on first use. |
 | `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
-| `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, and unsupported failures; workers map them to public API exceptions while CLI catches remain unchanged. |
+| `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, unsupported, and registry-authentication failures; workers map them to public API exceptions while CLI catches remain unchanged. |
+| `lazy_exports.py` | `lazy_exports()`: the PEP 562 hooks behind a package index that imports a submodule only when one of its names is used. |
 | `names.py` | The one container-name rule. |
 | `progress.py` | Shared stderr progress bar and structured API progress routing with explicit phase/resource metadata. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |

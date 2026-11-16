@@ -18,7 +18,10 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-"""Configured child that becomes a foreground proot session."""
+"""Configured child that becomes a foreground proot session.
+
+Outside ``proot_distro.api`` for the reason ``_api_worker`` gives.
+"""
 
 import json
 import os

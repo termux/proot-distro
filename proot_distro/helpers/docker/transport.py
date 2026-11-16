@@ -82,8 +82,11 @@ import urllib.parse
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
+from proot_distro.constants import PROGRAM_NAME, program_version
 from proot_distro.message import quote_path
+# Defined with the other typed failures so that naming it does not load
+# this module; re-exported here, where the pull and push code raise it.
+from proot_distro.operation_errors import RegistryAuthenticationError
 from proot_distro.helpers.docker.refs import parse_image_ref, registry_key
 from proot_distro.helpers.download import (
     NETWORK_ERRORS,
@@ -174,7 +177,7 @@ MAX_METADATA_BYTES = 16 * 1024 * 1024
 
 
 def _ua() -> dict:
-    return {"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"}
+    return {"User-Agent": f"{PROGRAM_NAME}/{program_version()}"}
 
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -624,10 +627,6 @@ def _parse_bearer_challenge(header_value: str) -> dict:
         key: (quoted if quoted else bare)
         for key, quoted, bare in _CHALLENGE_PARAM_RE.findall(header_value)
     }
-
-
-class RegistryAuthenticationError(RuntimeError):
-    """A registry refused credentials or their requested permission."""
 
 
 def env_basic_auth(registry: str = "", repo: str = "",

@@ -28,6 +28,12 @@ instance's paths before importing stateful modules, streams bounded event
 frames through a private descriptor, and reports a small JSON result to its
 parent. It is an implementation detail, not a daemon or client-server
 protocol.
+
+It sits beside the package rather than inside ``proot_distro.api`` because
+every call starts one, and importing a module runs its package's
+``__init__`` first. The public package's one loads the whole facade
+(models, configuration, credentials and what they import), none of which
+a worker uses; it was the larger part of every worker's start-up.
 """
 
 import json
@@ -777,15 +783,13 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        from proot_distro.helpers.docker.transport import (
-            RegistryAuthenticationError,
-        )
         from proot_distro.operation_errors import (
             AlreadyExistsFailure,
             BusyFailure,
             IntegrityFailure,
             NetworkFailure,
             NotFoundFailure,
+            RegistryAuthenticationError,
             UnsupportedFailure,
         )
         if isinstance(exc, RegistryAuthenticationError):

@@ -24,18 +24,30 @@
 # used instead. IS_TERMUX is computed once at import time and drives both
 # path selection and runtime behaviour (e.g. isolated-mode default).
 
+import functools
 import os
 import platform
-from importlib.metadata import version, PackageNotFoundError
 
 PROGRAM_AUTHOR = "Termux (@sylirre)"
 PROGRAM_NAME = "proot-distro"
 CANONICAL_PROGRAM_NAME = "PRoot-Distro"
 
-try:
-    PROGRAM_VERSION = version(PROGRAM_NAME)
-except PackageNotFoundError:
-    PROGRAM_VERSION = "rolling"
+
+@functools.lru_cache(maxsize=None)
+def program_version() -> str:
+    """The installed distribution's version, or "rolling" from a checkout.
+
+    Looked up on first use rather than at import: importlib.metadata and
+    the distribution scan behind it were the largest single cost of
+    importing this module, which every API worker and CLI command does,
+    while only the help screen and an HTTP User-Agent need the answer.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(PROGRAM_NAME)
+    except PackageNotFoundError:
+        return "rolling"
 
 # ---------------------------------------------------------------------------
 # Termux / Android detection

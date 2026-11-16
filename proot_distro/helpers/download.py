@@ -48,7 +48,7 @@ import urllib.parse
 import urllib.request
 
 from proot_distro.atomic import atomic_write
-from proot_distro.constants import PROGRAM_NAME, PROGRAM_VERSION
+from proot_distro.constants import PROGRAM_NAME, program_version
 from proot_distro.message import msg, log_info, log_error, log_retry, quote_path
 from proot_distro.operation_errors import NetworkFailure
 from proot_distro.progress import clear_bar, draw_bytes_bar, fmt_size
@@ -689,7 +689,7 @@ def download_file(
 
     def _attempt():
         req = new_request(
-            url, headers={"User-Agent": f"{PROGRAM_NAME}/{PROGRAM_VERSION}"},
+            url, headers={"User-Agent": f"{PROGRAM_NAME}/{program_version()}"},
         )
         with atomic_write(dest, "wb") as fh:
             with opener.open(req) as resp:

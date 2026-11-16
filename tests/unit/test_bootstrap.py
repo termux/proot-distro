@@ -10,11 +10,11 @@ from proot_distro._bootstrap import private_module_command
 
 
 def test_private_module_command_isolated_and_uses_imported_package():
-    command = private_module_command("proot_distro.api._worker")
+    command = private_module_command("proot_distro._api_worker")
 
     assert command[0] == sys.executable
     assert command[1:3] == ["-I", "-S"]
-    assert command[-1] == "proot_distro.api._worker"
+    assert command[-1] == "proot_distro._api_worker"
     assert os.path.isabs(command[-2])
     assert command[-2] == os.path.dirname(os.path.dirname(
         os.path.abspath(_bootstrap.__file__)
@@ -34,7 +34,7 @@ def test_files_beside_the_package_do_not_shadow_the_standard_library(
     # replace the standard library inside every API worker.
     parent = tmp_path / "vendor"
     parent.mkdir()
-    real_parent = private_module_command("proot_distro.api._worker")[-2]
+    real_parent = private_module_command("proot_distro._api_worker")[-2]
     (parent / "proot_distro").symlink_to(
         os.path.join(real_parent, "proot_distro")
     )
@@ -42,7 +42,7 @@ def test_files_beside_the_package_do_not_shadow_the_standard_library(
         (parent / f"{name}.py").write_text(
             "import sys\nsys.stdout.write('SHADOWED')\nraise SystemExit(99)\n"
         )
-    command = private_module_command("proot_distro.api._worker")
+    command = private_module_command("proot_distro._api_worker")
     command[-2] = str(parent)
 
     result = subprocess.run(

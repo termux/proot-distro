@@ -20,12 +20,12 @@
 
 """Typed internal failures carrying structured service diagnostics."""
 
-from proot_distro.helpers.docker.transport import RegistryAuthenticationError
 from proot_distro.operation_errors import (
     IntegrityFailure,
     NetworkFailure,
     NotFoundFailure,
     OperationFailure,
+    RegistryAuthenticationError,
 )
 from proot_distro.session_errors import (
     SessionExecutionFailure,

@@ -53,7 +53,8 @@ from proot_distro.api import (
     UnsupportedOperationError,
 )
 from proot_distro.api import program
-from proot_distro.api import _session_worker, _worker
+from proot_distro import _api_session_worker as _session_worker
+from proot_distro import _api_worker as _worker
 from proot_distro.helpers.docker.cache import save_manifest_cache
 from proot_distro.helpers.docker.media import canonical_json
 

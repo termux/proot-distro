@@ -218,7 +218,7 @@ def test_an_oversized_request_is_an_argument_error(monkeypatch, tmp_path):
 
 
 def test_worker_request_limit_matches_the_worker():
-    from proot_distro.api import _worker
+    from proot_distro import _api_worker as _worker
 
     assert program._MAX_WORKER_REQUEST_BYTES == _worker._MAX_INPUT_BYTES
 

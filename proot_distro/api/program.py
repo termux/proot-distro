@@ -131,7 +131,7 @@ _MAX_WORKER_EVENT_BYTES = 64 * 1024
 _MAX_WORKER_RESULT_BYTES = 16 * 1024 * 1024
 _MAX_SESSION_STATUS_BYTES = 64 * 1024
 _MAX_CREDENTIAL_FRAME_BYTES = 1024 * 1024
-# What api/_worker.py reads from its standard input (its _MAX_INPUT_BYTES).
+# What _api_worker.py reads from its standard input (its _MAX_INPUT_BYTES).
 _MAX_WORKER_REQUEST_BYTES = 1024 * 1024
 # How long a cancelled worker may take to clean up before it is killed.
 _WORKER_CANCEL_GRACE_SECONDS = 10.0
@@ -1355,7 +1355,7 @@ def _run_worker(operation: str, options: dict,
         pass_fds += (child_credentials.fileno(),)
     try:
         proc = subprocess.Popen(
-            private_module_command("proot_distro.api._worker"),
+            private_module_command("proot_distro._api_worker"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2647,7 +2647,7 @@ class ProotDistro:
         env["_PROOT_DISTRO_SESSION_STATUS_FD"] = str(status_write)
         try:
             process = subprocess.Popen(
-                private_module_command("proot_distro.api._session_worker"),
+                private_module_command("proot_distro._api_session_worker"),
                 stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,

@@ -25,88 +25,51 @@ They never parse argparse namespaces, print terminal errors, or terminate the
 process. The CLI and API workers remain adapters around this internal layer.
 """
 
-from proot_distro.operations.containers import (
-    remove_container,
-    rename_container,
-)
-from proot_distro.operations.backup import backup_container
-from proot_distro.operations.build import build_image
-from proot_distro.operations.copy import copy_path, move_path
-from proot_distro.operations.cache import clear_cache
-from proot_distro.operations.images import remove_image
-from proot_distro.operations.install import install_container
-from proot_distro.operations.push import push_image
-from proot_distro.operations.inventory import (
-    list_containers,
-    list_images,
-    list_sessions,
-)
-from proot_distro.operations.sync import sync_path
-from proot_distro.operations.restore import restore_container
-from proot_distro.operations.reset import reset_container
-from proot_distro.operations.session_signals import signal_sessions
-from proot_distro.operations.session_prepare import (
-    PreparedSession,
-    SessionOptions,
-    prepare_session,
-    session_options,
-)
-from proot_distro.operations.context import OperationContext
-from proot_distro.operations.models import (
-    ActiveSession,
-    ArchiveBackup,
-    ArchiveRestore,
-    CacheCleanup,
-    CachedImage,
-    ContainerRemoval,
-    ContainerInstallation,
-    ContainerRename,
-    ImageRemoval,
-    ImageBuild,
-    ImagePush,
-    SessionSignal,
-    SessionLaunch,
-    InstalledContainer,
-    Transfer,
-)
+from proot_distro.lazy_exports import lazy_exports
 
 
-__all__ = (
-    "ActiveSession",
-    "ArchiveBackup",
-    "ArchiveRestore",
-    "CacheCleanup",
-    "CachedImage",
-    "ContainerRemoval",
-    "ContainerInstallation",
-    "ContainerRename",
-    "ImageRemoval",
-    "ImageBuild",
-    "ImagePush",
-    "InstalledContainer",
-    "OperationContext",
-    "PreparedSession",
-    "SessionLaunch",
-    "SessionOptions",
-    "SessionSignal",
-    "Transfer",
-    "backup_container",
-    "build_image",
-    "clear_cache",
-    "copy_path",
-    "install_container",
-    "list_containers",
-    "list_images",
-    "list_sessions",
-    "move_path",
-    "push_image",
-    "remove_container",
-    "remove_image",
-    "restore_container",
-    "reset_container",
-    "signal_sessions",
-    "prepare_session",
-    "session_options",
-    "rename_container",
-    "sync_path",
-)
+# Each name and the submodule defining it. Nothing is imported until a
+# name is used: a worker running one service must not load the others.
+_EXPORTS = {
+    "ActiveSession": "models",
+    "ArchiveBackup": "models",
+    "ArchiveRestore": "models",
+    "CacheCleanup": "models",
+    "CachedImage": "models",
+    "ContainerRemoval": "models",
+    "ContainerInstallation": "models",
+    "ContainerRename": "models",
+    "ImageRemoval": "models",
+    "ImageBuild": "models",
+    "ImagePush": "models",
+    "InstalledContainer": "models",
+    "OperationContext": "context",
+    "PreparedSession": "session_prepare",
+    "SessionLaunch": "models",
+    "SessionOptions": "session_prepare",
+    "SessionSignal": "models",
+    "Transfer": "models",
+    "backup_container": "backup",
+    "build_image": "build",
+    "clear_cache": "cache",
+    "copy_path": "copy",
+    "install_container": "install",
+    "list_containers": "inventory",
+    "list_images": "inventory",
+    "list_sessions": "inventory",
+    "move_path": "copy",
+    "push_image": "push",
+    "remove_container": "containers",
+    "remove_image": "images",
+    "restore_container": "restore",
+    "reset_container": "reset",
+    "signal_sessions": "session_signals",
+    "prepare_session": "session_prepare",
+    "session_options": "session_prepare",
+    "rename_container": "containers",
+    "sync_path": "sync",
+}
+
+__all__ = tuple(_EXPORTS)
+
+__getattr__, __dir__ = lazy_exports(__name__, _EXPORTS)

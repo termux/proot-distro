@@ -53,6 +53,10 @@ class UnsupportedFailure(RuntimeError):
     """The requested format or operation is unsupported."""
 
 
+class RegistryAuthenticationError(RuntimeError):
+    """A registry refused credentials or their requested permission."""
+
+
 __all__ = (
     "AlreadyExistsFailure",
     "BusyFailure",
@@ -60,5 +64,6 @@ __all__ = (
     "NetworkFailure",
     "NotFoundFailure",
     "OperationFailure",
+    "RegistryAuthenticationError",
     "UnsupportedFailure",
 )
