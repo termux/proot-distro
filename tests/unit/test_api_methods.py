@@ -181,6 +181,48 @@ def test_rename_container_rejects_an_invalid_container_record(
     assert exc.value.operation == "rename_container"
 
 
+@pytest.mark.parametrize("spec", [":/etc", "~:x", "-box:/etc", "a b:/x"])
+def test_transfer_rejects_a_malformed_container_spec(monkeypatch, tmp_path,
+                                                     spec):
+    """Regression: ":x" was a generic OperationError, "~:x" NotFoundError."""
+    worker = _Worker(monkeypatch, {})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().copy(spec, str(tmp_path / "out"))
+
+    assert exc.value.operation == "copy"
+    assert worker.calls == []
+
+
+@pytest.mark.parametrize("method,args,answer", [
+    ("copy", ("box:/etc/hostname", "out"),
+     lambda o: {"source": o["source"], "destination": o["destination"]}),
+    ("install", ("alpine",), {"container": _container("alpine")}),
+    ("remove_container", ("box",), {"container": _container("box")}),
+    ("reset_container", ("box",), {"container": _container("box")}),
+    ("inspect_start", ("box",), None),
+])
+def test_each_call_starts_exactly_one_worker(monkeypatch, tmp_path, method,
+                                             args, answer):
+    """Regression: most calls started a second, listing worker.
+
+    Without a cancel_event that worker's failures were also reported as
+    operation="list_containers" instead of the method called.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    def fail(options):
+        raise OperationError("worker failed", operation=method)
+
+    worker = _Worker(monkeypatch, {method: answer or fail})
+    try:
+        getattr(ProotDistro(), method)(*args)
+    except OperationError as exc:
+        assert answer is None
+        assert exc.operation == method
+    assert [name for name, _ in worker.calls] == [method]
+
+
 def test_sync_and_move_pass_options_and_echo_paths(monkeypatch, tmp_path):
     source = tmp_path / "src"
     source.mkdir()

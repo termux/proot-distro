@@ -457,6 +457,57 @@ def test_detached_session_can_merge_stderr_into_stdout(
         pd.kill_session(session.pid, signal_name="KILL")
 
 
+def test_detached_missing_container_creates_no_log(fake_proot, tmp_path):
+    """Regression: logs were opened before the container was checked."""
+    log = tmp_path / "never.log"
+
+    with pytest.raises(NotFoundError) as exc:
+        _program(fake_proot).start_detached("missing", stdout=log)
+
+    assert exc.value.operation == "start_detached"
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("make_log", [
+    lambda tmp: tmp,                               # a directory
+    lambda tmp: tmp / "no-such-dir" / "out.log",   # a missing parent
+])
+def test_detached_unusable_log_is_an_argument_error(
+        builders, fake_proot, tmp_path, make_log):
+    """Regression: the docstring promised InvalidArgumentError, not this."""
+    builders.make_container("detached-badlog")
+    pd = _program(fake_proot)
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        pd.start_detached(
+            "detached-badlog", stdout=make_log(tmp_path),
+            environment={"FAKE_PROOT_SLEEP": "1"},
+        )
+
+    assert exc.value.operation == "start_detached"
+    assert "stdout log" in str(exc.value)
+    assert pd.list_sessions() == ()
+
+
+def test_detached_log_fifo_without_reader_fails_fast(
+        builders, fake_proot, tmp_path):
+    """A FIFO with no reader used to block the open with the lock held."""
+    builders.make_container("detached-fifo")
+    fifo = tmp_path / "log.fifo"
+    os.mkfifo(fifo)
+    pd = _program(fake_proot)
+    started = time.monotonic()
+
+    with pytest.raises(InvalidArgumentError):
+        pd.start_detached(
+            "detached-fifo", stderr=fifo,
+            environment={"FAKE_PROOT_SLEEP": "1"},
+        )
+
+    assert time.monotonic() - started < 30
+    assert pd.list_sessions() == ()
+
+
 def test_run_detached_and_kill_all_sessions(builders, fake_proot):
     builders.make_container("run-detached", manifest={
         "image_config": {"config": {"Cmd": ["/bin/server"]}},
