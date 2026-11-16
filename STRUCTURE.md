@@ -116,6 +116,12 @@ Design notes for the worker channel:
   descriptors numbered 1024 and above.
 * Only the registry client uses the network in the parent process
   (`search`); everything else runs in a one-shot worker.
+* One call starts one worker. An operation that leaves a container behind
+  (install, rename, reset, restore, `build --install-as`, and remove for
+  the former record) returns that container's inventory record itself
+  (`inventory.container_record`), and a missing container is the
+  operation's own `NotFoundFailure`; nothing lists every container in a
+  second interpreter first or afterwards.
 
 ### Shared operations
 

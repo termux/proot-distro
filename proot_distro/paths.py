@@ -88,7 +88,7 @@ from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.message import crit_error, quote_path
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
-from proot_distro.operation_errors import OperationFailure
+from proot_distro.operation_errors import NotFoundFailure, OperationFailure
 
 
 def container_dir(name: str) -> str:
@@ -611,7 +611,7 @@ def resolve_container_path(
     if not container_is_installed(name):
         message = f"container '{name}' does not exist."
         if raise_errors:
-            raise OperationFailure(message)
+            raise NotFoundFailure(message)
         crit_error(message)
         sys.exit(1)
     rel_path = rel_path.lstrip("/")

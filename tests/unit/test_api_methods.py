@@ -145,16 +145,16 @@ def _container(name):
 
 def test_rename_container_returns_new_metadata(monkeypatch):
     worker = _Worker(monkeypatch, {
-        "rename_container": {},
-        "list_containers": {"items": [_container("new-name")]},
+        "rename_container": {"container": _container("new-name")},
     })
 
     result = ProotDistro().rename_container("old-name", "new-name")
 
     assert result.name == "new-name"
-    assert worker.calls[0] == (
+    # One worker: the record comes back with the rename, no second listing.
+    assert worker.calls == [(
         "rename_container", {"old_name": "old-name", "new_name": "new-name"}
-    )
+    )]
 
 
 def test_rename_container_rejects_same_name(monkeypatch):
@@ -166,10 +166,14 @@ def test_rename_container_rejects_same_name(monkeypatch):
     assert worker.calls == []
 
 
-def test_rename_container_fails_if_target_is_missing_afterwards(monkeypatch):
-    _Worker(monkeypatch, {
-        "rename_container": {}, "list_containers": {"items": []},
-    })
+@pytest.mark.parametrize("answer", [
+    {}, {"container": None}, {"container": _container("other-name")},
+    {"container": {**_container("new-name"), "image_id": 5}},
+    {"container": {**_container("new-name"), "extra": 1}},
+])
+def test_rename_container_rejects_an_invalid_container_record(
+        monkeypatch, answer):
+    _Worker(monkeypatch, {"rename_container": answer})
 
     with pytest.raises(OperationError) as exc:
         ProotDistro().rename_container("old-name", "new-name")
@@ -336,7 +340,6 @@ def test_communicate_tolerates_worker_that_ignores_input():
 
 def _detached_worker(monkeypatch, pid=4321, kind="login", name="box"):
     return _Worker(monkeypatch, {
-        "list_containers": {"items": [_container("box")]},
         "start_detached": {"pid": pid, "container": name, "kind": kind},
         "run_detached": {"pid": pid, "container": name, "kind": "run"},
     })
@@ -354,22 +357,9 @@ def test_start_and_run_detached_return_session_records(monkeypatch):
     )
     assert ran.kind == "run"
     operations = [name for name, _ in worker.calls]
-    assert operations == [
-        "list_containers", "start_detached", "list_containers", "run_detached",
-    ]
-    assert worker.calls[1][1]["arguments"] == ("sleep", "9")
-
-
-def test_detached_start_requires_installed_container(monkeypatch):
-    from proot_distro.api import NotFoundError
-
-    worker = _detached_worker(monkeypatch)
-
-    with pytest.raises(NotFoundError) as exc:
-        ProotDistro().start_detached("ghost")
-
-    assert exc.value.operation == "start_detached"
-    assert [name for name, _ in worker.calls] == ["list_containers"]
+    # No listing worker first: the session worker checks the container.
+    assert operations == ["start_detached", "run_detached"]
+    assert worker.calls[0][1]["arguments"] == ("sleep", "9")
 
 
 @pytest.mark.parametrize("pid,name,kind", [

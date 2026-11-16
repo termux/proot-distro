@@ -443,7 +443,10 @@ def test_install_serves_provider_over_channel_without_secret_in_request(
                *_args, **_kwargs):
         worker_calls.append((operation, options, credential_provider))
         if operation == "install":
-            return {"container_name": "alpine"}
+            return {"container": {
+                "name": "alpine", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
         return {"items": [{
             "name": "alpine", "image_reference": "alpine:latest",
             "architecture": "x86_64", "image_id": None,
@@ -481,7 +484,10 @@ def test_credential_provider_is_not_called_for_local_install(tmp_path,
 
     def worker(operation, _options, *_args, **_kwargs):
         if operation == "install":
-            return {"container_name": "local"}
+            return {"container": {
+                "name": "local", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
         return {"items": [{
             "name": "local", "image_reference": None,
             "architecture": None, "image_id": None,
@@ -532,7 +538,10 @@ def test_unscoped_static_credentials_answer_only_the_named_registry(
                *_args, **_kwargs):
         if operation == "install":
             served.append(credential_provider)
-            return {"container_name": "app"}
+            return {"container": {
+                "name": "app", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
         return {"items": [{
             "name": "app", "image_reference": "ghcr.io/me/app:1",
             "architecture": "x86_64", "image_id": None,
@@ -592,7 +601,10 @@ def test_reset_asks_for_credentials_while_the_worker_runs(monkeypatch):
                *_args, **_kwargs):
         calls.append((operation, options, credential_provider))
         if operation == "reset_container":
-            return {"container_name": "box"}
+            return {"container": {
+                "name": "box", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
         return {"items": [{
             "name": "box", "image_reference": "ghcr.io/example/private:1",
             "architecture": "x86_64", "image_id": None,

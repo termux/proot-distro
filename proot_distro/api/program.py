@@ -297,6 +297,39 @@ def _string_list(value, *, operation: str, argument: str) -> Tuple[str, ...]:
     ) for item in items)
 
 
+def _container_info(item) -> ContainerInfo:
+    """Validate one container record a worker returned."""
+    if not isinstance(item, dict):
+        raise TypeError
+    info = ContainerInfo(**item)
+    if not isinstance(info.name, str) or not is_valid_name(info.name):
+        raise ValueError
+    for value in (info.image_reference, info.architecture, info.image_id):
+        if value is not None and not isinstance(value, str):
+            raise TypeError
+    return info
+
+
+def _reported_container(result: dict, operation: str,
+                        name: Optional[str] = None) -> ContainerInfo:
+    """Return the container an operation's worker reported it left behind.
+
+    Workers describe the container they installed, renamed, reset or
+    restored themselves; listing every container again in a second worker
+    cost a whole interpreter start per call.
+    """
+    try:
+        info = _container_info(result.get("container"))
+        if name is not None and info.name != name:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise OperationError(
+            f"{operation} worker returned an invalid container record.",
+            operation=operation,
+        ) from None
+    return info
+
+
 def _write_all(fd: int, data: bytes) -> None:
     while data:
         written = os.write(fd, data)
@@ -1556,35 +1589,23 @@ class ProotDistro:
             operation, kind, message, phase=phase, resource=resource,
         )
 
-    def _containers(
-        self, cancel_event, operation: str,
-    ) -> Tuple[ContainerInfo, ...]:
-        """Return container inventory attributed to the calling operation."""
-        if cancel_event is None and operation != "list_containers":
-            return self.list_containers()
-        result = self._context.worker(
-            "list_containers", {}, cancel_event=cancel_event,
-            reported_operation=operation,
-        )
-        items = result.get("items")
-        if not isinstance(items, list):
-            raise OperationError(
-                "container inventory worker returned an invalid result.",
-                operation=operation,
-            )
-        try:
-            return tuple(ContainerInfo(**item) for item in items)
-        except (TypeError, ValueError):
-            raise OperationError(
-                "container inventory worker returned an invalid result.",
-                operation=operation,
-            ) from None
-
     def list_containers(
         self, *, cancel_event: Optional[CancellationToken] = None,
     ) -> Tuple[ContainerInfo, ...]:
         """Return installed containers sorted by name."""
-        return self._containers(cancel_event, "list_containers")
+        result = self._context.worker(
+            "list_containers", {}, cancel_event=cancel_event,
+        )
+        items = result.get("items")
+        try:
+            if not isinstance(items, list):
+                raise TypeError
+            return tuple(_container_info(item) for item in items)
+        except (TypeError, ValueError):
+            raise OperationError(
+                "container inventory worker returned an invalid result.",
+                operation="list_containers",
+            ) from None
 
     def list_images(
         self, *, cancel_event: Optional[CancellationToken] = None,
@@ -1638,17 +1659,6 @@ class ProotDistro:
                 operation="list_sessions",
             ) from None
 
-    def _installed_container(
-        self, name: str, operation: str, cancel_event=None,
-    ) -> ContainerInfo:
-        """Return *name* from this instance's configured state."""
-        for container in self._containers(cancel_event, operation):
-            if container.name == name:
-                return container
-        raise OperationError(
-            f"{operation} completed but container '{name}' is not installed.",
-            operation=operation,
-        )
 
     def install(
         self,
@@ -1743,15 +1753,7 @@ class ProotDistro:
             "architecture": architecture,
             "allow_insecure": allow_insecure,
         }, credential_provider=provider, cancel_event=cancel_event)
-        installed_name = result.get("container_name")
-        if not isinstance(installed_name, str):
-            raise OperationError(
-                "install worker did not identify the installed container.",
-                operation="install",
-            )
-        return self._installed_container(
-            installed_name, "install", cancel_event
-        )
+        return _reported_container(result, "install", name)
 
     def remove_container(
         self, name: str, *,
@@ -1770,15 +1772,10 @@ class ProotDistro:
             cancel_event, operation="remove_container"
         )
         name = _require_name(name, operation="remove_container")
-        previous = None
-        for container in self._containers(cancel_event, "remove_container"):
-            if container.name == name:
-                previous = container
-                break
-        self._context.worker(
+        result = self._context.worker(
             "remove_container", {"name": name}, cancel_event=cancel_event
         )
-        return previous or ContainerInfo(name, None, None, None)
+        return _reported_container(result, "remove_container", name)
 
     def rename_container(
         self, old_name: str, new_name: str, *,
@@ -1808,13 +1805,11 @@ class ProotDistro:
                 "old_name and new_name must differ.",
                 operation="rename_container",
             )
-        self._context.worker("rename_container", {
+        result = self._context.worker("rename_container", {
             "old_name": old_name,
             "new_name": new_name,
         }, cancel_event=cancel_event)
-        return self._installed_container(
-            new_name, "rename_container", cancel_event
-        )
+        return _reported_container(result, "rename_container", new_name)
 
     def reset_container(
         self, name: str, *,
@@ -1845,12 +1840,10 @@ class ProotDistro:
         # The registry comes from the container's own manifest, so it is
         # asked for while the worker resets, by the name it contacts.
         provider = self._context.registry_credentials("reset_container")
-        self._context.worker("reset_container", {
+        result = self._context.worker("reset_container", {
             "name": name,
         }, credential_provider=provider, cancel_event=cancel_event)
-        return self._installed_container(
-            name, "reset_container", cancel_event
-        )
+        return _reported_container(result, "reset_container", name)
 
     def _transfer(
         self,
@@ -1869,19 +1862,18 @@ class ProotDistro:
         )
         source_container = container_from_spec(source)
         destination_container = container_from_spec(destination)
-        if source_container or destination_container:
-            installed = {
-                item.name for item in self._containers(cancel_event, operation)
-            }
-            for role, container in (
-                ("source", source_container),
-                ("destination", destination_container),
-            ):
-                if container and container not in installed:
-                    raise NotFoundError(
-                        f"{role} container '{container}' is not installed.",
-                        operation=operation,
-                    )
+        # A spec's container name is checked here, so a typo such as
+        # ":/etc" or "~:x" is an argument error. Whether it is installed is
+        # the worker's to say (NotFoundError), under the locks it takes.
+        for role, container in (
+            ("source", source_container),
+            ("destination", destination_container),
+        ):
+            if container is not None:
+                _require_name(
+                    container, operation=operation,
+                    argument=f"{role} container",
+                )
         # A host path is made absolute and "~"-expanded here, whatever its
         # spelling. The worker and the existence check below must see the
         # same path: expanding only for the check let "~/file" pass it and
@@ -2097,20 +2089,13 @@ class ProotDistro:
             ),
             cancel_event=cancel_event,
         )
-        name = result.get("container_name")
-        if not isinstance(name, str) or not is_valid_name(name):
-            raise OperationError(
-                "restore worker returned an invalid container name.",
-                operation="restore",
-            )
         if result.get("archive") != archive_path:
             raise OperationError(
                 "restore worker returned an invalid archive path.",
                 operation="restore",
             )
         return RestoreResult(
-            self._installed_container(name, "restore", cancel_event),
-            archive_path,
+            _reported_container(result, "restore"), archive_path,
         )
 
     def build(
@@ -2306,8 +2291,9 @@ class ProotDistro:
             )
         installed = None
         if install_as is not None:
-            installed = self._installed_container(
-                install_as, "build", cancel_event
+            installed = _reported_container(
+                {"container": result.get("installed_container")}, "build",
+                install_as,
             )
         return BuildResult(images, outputs, installed)
 
@@ -2593,14 +2579,6 @@ class ProotDistro:
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
         )
-        if not any(
-            item.name == container
-            for item in self._containers(cancel_event, operation)
-        ):
-            raise NotFoundError(
-                f"container '{container}' is not installed.",
-                operation=operation,
-            )
         request = json.dumps({
             "kind": kind,
             "container": container,
@@ -2818,14 +2796,6 @@ class ProotDistro:
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
         )
-        if not any(
-            item.name == container
-            for item in self._containers(cancel_event, operation)
-        ):
-            raise NotFoundError(
-                f"container '{container}' is not installed.",
-                operation=operation,
-            )
         result = self._context.worker(operation, {
             "kind": kind,
             "container": container,
@@ -2973,14 +2943,6 @@ class ProotDistro:
         arguments = _string_list(
             arguments, operation=operation, argument="arguments"
         )
-        if not any(
-            item.name == container
-            for item in self._containers(cancel_event, operation)
-        ):
-            raise NotFoundError(
-                f"container '{container}' is not installed.",
-                operation=operation,
-            )
         result = self._context.worker(operation, {
             "kind": kind,
             "container": container,

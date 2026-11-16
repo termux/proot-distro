@@ -319,6 +319,17 @@ def _list_sessions(_options: dict) -> dict:
     return {"items": [asdict(item) for item in list_sessions()]}
 
 
+def _container_result(name: str) -> dict:
+    """The inventory record of *name*, as list_containers reports it.
+
+    Returned by every operation that leaves a container behind, so the
+    parent describes it without starting a second, listing worker.
+    """
+    from proot_distro.operations.inventory import container_record
+
+    return asdict(container_record(name))
+
+
 def _install(options: dict) -> dict:
     from proot_distro.operations.install import install_container
 
@@ -329,15 +340,19 @@ def _install(options: dict) -> dict:
             architecture=options.get("architecture"),
             allow_insecure=options.get("allow_insecure", False),
         )
-    return {"container_name": result.name}
+    return {"container": _container_result(result.name)}
 
 
 def _remove(options: dict) -> dict:
     from proot_distro.operations import remove_container
 
     name = options["name"]
+    # Read before the removal: afterwards there is nothing to describe.
+    # The service takes the lock and checks existence itself.
+    former = _container_result(name)
     result = remove_container(name)
-    return {"container_name": result.name}
+    former["name"] = result.name
+    return {"container": former}
 
 
 def _rename(options: dict) -> dict:
@@ -346,7 +361,7 @@ def _rename(options: dict) -> dict:
     old_name = options["old_name"]
     new_name = options["new_name"]
     result = rename_container(old_name, new_name)
-    return {"container_name": result.new_name}
+    return {"container": _container_result(result.new_name)}
 
 
 def _reset(options: dict) -> dict:
@@ -354,7 +369,7 @@ def _reset(options: dict) -> dict:
 
     with _registry_credentials():
         result = reset_container(options["name"])
-    return {"container_name": result.name}
+    return {"container": _container_result(result.name)}
 
 
 def _copy(options: dict) -> dict:
@@ -431,7 +446,7 @@ def _restore(options: dict) -> dict:
         if archive_stream is not None:
             archive_stream.close()
     return {
-        "container_name": result.container_name,
+        "container": _container_result(result.container_name),
         "archive": result.archive,
     }
 
@@ -487,7 +502,7 @@ def _build(options: dict) -> dict:
         "images": [_image_result(image) for image in result.images],
         "outputs": list(result.outputs),
         "installed_container": (
-            result.installed_container.name
+            _container_result(result.installed_container.name)
             if result.installed_container is not None else None
         ),
     }
@@ -546,41 +561,73 @@ def _kill_session(options: dict) -> dict:
     return {"pids": list(result.pids)}
 
 
+def _open_detached_logs(session_options: dict):
+    """Open the caller's append-only log paths; return (stdout, stderr).
+
+    The paths are the caller's own host paths, opened as the caller asked.
+    One that cannot be opened (a directory, a missing parent, no
+    permission) is the caller's argument at fault, so it is reported as
+    such rather than as an operation failure.
+    """
+    stdout_fd = stderr_fd = None
+    # O_NONBLOCK only for the open: a FIFO with no reader would otherwise
+    # block it forever, with the container lock held; this way it fails
+    # with ENXIO. The descriptor is made blocking again for the session.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    stdout_path = session_options.get("detach_stdout")
+    stderr_path = session_options.get("detach_stderr")
+    current = "stdout"
+
+    def open_log(path):
+        fd = os.open(path, flags, 0o666)
+        try:
+            os.set_blocking(fd, True)
+        except OSError:
+            os.close(fd)
+            raise
+        return fd
+
+    try:
+        if stdout_path is not None:
+            stdout_fd = open_log(stdout_path)
+        current = "stderr"
+        if stderr_path == "stdout":
+            stderr_fd = stdout_fd
+        elif stderr_path is not None:
+            stderr_fd = open_log(stderr_path)
+    except OSError as exc:
+        if stdout_fd is not None:
+            os.close(stdout_fd)
+        raise _WorkerFailure(
+            "invalid_argument",
+            f"cannot open the {current} log: {quote_error(exc)}",
+        ) from exc
+    return stdout_fd, stderr_fd
+
+
 def _start_detached(options: dict) -> dict:
     from proot_distro.operations.session_prepare import prepare_session
     from proot_distro.session_runtime import detach_session
 
-    stdout_fd = stderr_fd = None
     session_options = options.get("options") or {}
-    stdout_path = session_options.get("detach_stdout")
-    stderr_path = session_options.get("detach_stderr")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-    flags |= getattr(os, "O_CLOEXEC", 0)
-    try:
-        if stdout_path is not None:
-            stdout_fd = os.open(stdout_path, flags, 0o666)
-        if stderr_path == "stdout":
-            stderr_fd = stdout_fd
-        elif stderr_path is not None:
-            stderr_fd = os.open(stderr_path, flags, 0o666)
-    except OSError:
-        if stdout_fd is not None:
-            os.close(stdout_fd)
-        raise
     kind = options.get("kind")
-    try:
-        with prepare_session(
-            kind,
-            options.get("container"),
-            options.get("arguments") or (),
-            options=session_options,
-        ) as prepared:
+    with prepare_session(
+        kind,
+        options.get("container"),
+        options.get("arguments") or (),
+        options=session_options,
+    ) as prepared:
+        # Opened only once the container is known and locked, so a call
+        # naming a missing container creates no log files.
+        stdout_fd, stderr_fd = _open_detached_logs(session_options)
+        try:
             pid = detach_session(
                 prepared, stdout_fd=stdout_fd, stderr_fd=stderr_fd
             )
-    finally:
-        for fd in {stdout_fd, stderr_fd} - {None}:
-            os.close(fd)
+        finally:
+            for fd in {stdout_fd, stderr_fd} - {None}:
+                os.close(fd)
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         raise RuntimeError("detached session did not return a valid PID")
     return {"pid": pid, "container": options["container"], "kind": kind}

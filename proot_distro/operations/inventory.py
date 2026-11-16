@@ -38,6 +38,16 @@ def _text(value):
     return value if isinstance(value, str) and value else ""
 
 
+def container_record(name: str) -> InstalledContainer:
+    """Return the inventory record of one container, as list_containers would.
+
+    Operations that create, rename or remove a container report it with
+    this, so the programmatic API need not list every container again to
+    describe the one it just worked on.
+    """
+    return _container(name)
+
+
 def _container(name: str) -> InstalledContainer:
     """Build one container record without failing the whole inventory."""
     try:
@@ -113,6 +123,7 @@ def list_sessions() -> tuple:
 
 __all__ = (
     "cached_image_from_record",
+    "container_record",
     "list_containers",
     "list_images",
     "list_sessions",
