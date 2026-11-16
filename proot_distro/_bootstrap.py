@@ -24,8 +24,16 @@ Workers can be started while an application is inside an untrusted build
 directory or has Python startup hooks configured. ``-I -S`` excludes the
 working directory, environment-controlled Python paths, user site packages,
 and ``sitecustomize``/``usercustomize``. The tiny standard-library bootstrap
-then places this package's actual parent first and executes the requested
-private module.
+then appends this package's actual parent to ``sys.path`` and executes the
+requested private module.
+
+Appended, not prepended. That parent is site-packages, or whatever directory
+an application vendors this package into, and everything else in it --
+another distribution's ``json.py``, an application module named
+``selectors`` -- would otherwise shadow the standard library inside the
+worker, which no normal interpreter does. Under ``-I -S`` the only other
+entries are the standard library's own, which hold no ``proot_distro``, so
+appending still selects exactly the package this process imported.
 """
 
 import os
@@ -34,7 +42,7 @@ import sys
 
 _BOOTSTRAP = (
     "import runpy,sys;"
-    "sys.path.insert(0,sys.argv.pop(1));"
+    "sys.path.append(sys.argv.pop(1));"
     "runpy.run_module(sys.argv.pop(1),run_name='__main__')"
 )
 

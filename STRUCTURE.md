@@ -67,7 +67,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `api/_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
-| `_bootstrap.py` | Isolated, site-disabled command bootstrap that loads private workers from the exact imported package. |
+| `_bootstrap.py` | Isolated, site-disabled command bootstrap that loads private workers from the exact imported package, with its parent directory after the standard library. |
 
 Design notes for the worker channel:
 
