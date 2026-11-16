@@ -26,16 +26,16 @@ tests/                   unit/, integration/, security/, compatibility/,
 
 ```
 proot_distro/
-  api/                    Stable in-process Python interface
-  py.typed                PEP 561 marker for installed type information
-  operations/             Shared structured operation/service layer
+  api/                     Stable in-process Python interface
+  py.typed                 PEP 561 marker for installed type information
+  operations/              Shared structured operation/service layer
   cli.py  parser.py        Entry point, argparse construction
   commands/                One module (or subpackage) per subcommand
   helpers/                 Registry client, Dockerfile build engine, tar/layer I/O
   constants.py  message.py  names.py  progress.py  execenv.py   Small shared pieces
   dirfd.py  statedir.py  atomic.py  locking.py  paths.py        Safe filesystem layer
   guestfile.py  l2s.py  shm.py  sysdata.py  session.py         Container runtime state
-  session_*.py                                               Session setup/runtime helpers
+  session_*.py  _bootstrap.py  _detach_worker.py                Session setup/runtime helpers
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -76,8 +76,9 @@ Design notes for the worker channel:
   stuck in an uninterruptible call cannot block the caller. The wait for the
   worker uses an `Event` set by the communicate thread, not `Thread.join()`:
   an interrupted `join()` makes CPython 3.12 report a running thread as
-  stopped, which let the call raise before the worker was reaped. A worker that exited 0 wins over a late cancel request:
-  the work committed, so its result is reported.
+  stopped, which let the call raise before the worker was reaped. A worker
+  that exited 0 wins over a late cancel request: the work committed, so its
+  result is reported.
 * A caller input stream blocked in `read()` cannot be interrupted. Input pump
   threads are daemons and are joined with a timeout once the worker is gone;
   from then on they start no further `read()` and drop what an in-flight one

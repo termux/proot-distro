@@ -7,6 +7,17 @@ same containers, image cache and session list as the `proot-distro` command.
 The API runs inside your program. It is not a client for a server and starts
 no background service. It needs Python 3.9 or newer.
 
+Each call except `search` runs its work in a short-lived Python process
+(a *worker*) and waits for it. So:
+
+* Your program's working directory, environment and settings stay as they
+  are, and several `ProotDistro` objects can use different storage.
+* Each call costs one interpreter start: a fraction of a second, more on
+  a slow phone. Group work instead of calling in a tight loop.
+* `sys.executable` must be a working Python interpreter. Frozen or
+  embedded applications whose `sys.executable` is not one cannot use the
+  API.
+
 Ready-to-run scripts are in [`samples/`](samples/README.md).
 
 ## Contents
@@ -42,8 +53,13 @@ except ProotDistroError as exc:
     print(f"Failed: {exc}")
 ```
 
-Every method returns an immutable record. Methods never print messages and
-never call `sys.exit()`. All failures inherit from `ProotDistroError`.
+Methods return immutable records (or tuples of them). `start` and `run`
+return a `SessionProcess` handle. Methods never print messages and never
+call `sys.exit()`. All failures inherit from `ProotDistroError`.
+
+Text in results and events can come from third parties: image metadata,
+a container's own files (which the container can change), registries and
+Docker Hub. Remove control characters before you print it to a terminal.
 
 ## Compatibility
 
@@ -100,6 +116,11 @@ result = pd.search("alpine", limit=5)
 for hit in result.hits:
     print(hit.name, hit.stars)
 ```
+
+A string `SOURCE` is a local archive only when it starts with `/`, `./`,
+`../` or `~`, and a URL when it starts with `http://` or `https://`.
+Anything else is an image reference, so `rootfs.tar.gz` is looked up in a
+registry; write `./rootfs.tar.gz` or pass a `pathlib.Path`.
 
 `search` runs in your process and has no `cancel_event`. It never sends
 registry credentials. Docker Hub refusals (for example HTTP 429 or 5xx) raise
@@ -269,6 +290,11 @@ signals one session, or every session of a container. `kill_all_sessions(
 signal_name="TERM")` signals every session in the current storage. Both
 return a `SessionSignalResult`.
 
+* A target made only of digits is a PID, even when a container has that
+  name.
+* `signal_name` takes a name (`"TERM"`, `"SIGTERM"`), a number or a
+  `signal.Signals` value. The result names it as `"SIGTERM"`.
+
 ## Detached sessions
 
 A detached session keeps running after your program exits. Its input is
@@ -293,6 +319,8 @@ pd.kill_all_sessions(signal_name="KILL")
 They return after `proot` has started. `subprocess.DEVNULL` and `None` select
 `/dev/null`. `subprocess.STDOUT` is accepted for `stderr`. Pipes and
 in-memory streams are not accepted, because nothing is left to read them.
+A log path that cannot be opened (a folder, a missing parent folder, a FIFO
+nobody reads) raises `InvalidArgumentError` and nothing is started.
 
 ## Inspecting a session command
 
@@ -462,10 +490,10 @@ pd = ProotDistro(config)
 ```
 
 Paths may be strings or `pathlib.Path` objects. They are stored as absolute
-strings (read them back as `config.runtime_dir`). The two folders must differ, neither may be a
-filesystem root, and the runtime folder may not be inside the cache folder.
-Each `ProotDistro` keeps its own configuration, so one Python process can use
-several independent setups.
+strings (read them back as `config.runtime_dir`). The two folders must
+differ, neither may be a filesystem root, and the runtime folder may not be
+inside the cache folder. Each `ProotDistro` keeps its own configuration, so
+one Python process can use several independent setups.
 
 ## Errors
 
@@ -491,10 +519,11 @@ Every exception has an `operation` attribute naming the API method.
 
 ### Errors by method
 
-Beyond the common errors above, these methods can raise these specific ones. Every
-method can also raise `InvalidArgumentError`, `OperationCancelledError` (when
-given a `cancel_event`) and `OperationError`. `BusyError` is not rare: it means
-another program (or another call) holds a lock on that container or image.
+Beyond the common errors, these methods can raise these specific ones.
+Every method can also raise `InvalidArgumentError`,
+`OperationCancelledError` (when given a `cancel_event`) and
+`OperationError`. `BusyError` is not rare: it means another program (or
+another call) holds a lock on that container or image.
 
 | Method | Specific errors |
 |---|---|

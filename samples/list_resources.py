@@ -51,9 +51,11 @@ from proot_distro.api import ProotDistro, ProotDistroError
 def _clean(text: str) -> str:
     """Replace control characters in text that came from outside.
 
-    Docker Hub descriptions (and the command lines of other sessions) are
-    chosen by third parties. Printed raw, an escape sequence in them could
-    rewrite the terminal screen or title.
+    Docker Hub descriptions, the command lines of other sessions, and the
+    image references and architectures recorded in a container's or the
+    cache's metadata are chosen by third parties -- a container can rewrite
+    its own metadata. Printed raw, an escape sequence in them could rewrite
+    the terminal screen or title.
     """
     return "".join(
         char if char.isprintable() else "?" for char in str(text)
@@ -107,8 +109,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         print(f"Containers ({len(containers)}):")
         for container in containers:
-            origin = container.image_reference or "local archive"
-            architecture = container.architecture or "unknown architecture"
+            origin = _clean(container.image_reference or "local archive")
+            architecture = _clean(
+                container.architecture or "unknown architecture"
+            )
             print(f"  {container.name}: {origin} [{architecture}]")
         if not containers:
             print("  (none)")
@@ -116,7 +120,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"\nCached images ({len(images)}):")
         for image in images:
             state = "complete" if image.complete else "incomplete"
-            reference = image.reference or image.identifier
+            reference = _clean(image.reference or image.identifier)
             print(
                 f"  {reference}: {_size(image.size_bytes)}, "
                 f"{image.layer_count} layers, {state}"

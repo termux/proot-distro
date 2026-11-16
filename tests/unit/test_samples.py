@@ -530,6 +530,80 @@ def test_list_resources_strips_terminal_escapes_from_search_hits(
     assert "hi?[2Jthere" in output
 
 
+def test_list_resources_strips_escapes_from_recorded_metadata(
+    monkeypatch, capsys,
+):
+    """Regression: container and image references were printed raw.
+
+    A container can rewrite its own manifest.json (and the cache entries
+    are under the same guest-writable tree on Termux), so these are a
+    third party's text as much as a Hub description is.
+    """
+    module = _load("list_resources")
+
+    class FakeApi:
+        def list_containers(self):
+            return (SimpleNamespace(
+                name="box", image_reference="evil\x1b]0;pwned\x07:1",
+                architecture="x86\x1b[2J64",
+            ),)
+
+        def list_images(self):
+            return (SimpleNamespace(
+                reference="img\x1b[31m:1", identifier="abc", complete=True,
+                size_bytes=1, layer_count=1,
+            ),)
+
+        def list_sessions(self):
+            return ()
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+
+    assert module.main([]) == 0
+    output = capsys.readouterr().out
+    assert "\x1b" not in output and "\x07" not in output
+    assert "evil?]0;pwned?:1" in output
+
+
+def test_install_and_run_strips_escapes_from_guest_derived_fields(
+    monkeypatch, capsys,
+):
+    """The inspected shell and home come from the guest's /etc/passwd."""
+    module = _load("install_and_run")
+
+    class FakeProcess:
+        returncode = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def communicate(self, *, timeout):
+            return b"", b""
+
+    class FakeApi:
+        def install(self, source, *, name, architecture):
+            return SimpleNamespace(
+                name=name, image_reference=source, architecture=None,
+            )
+
+        def inspect_start(self, name, command, *, environment):
+            return SimpleNamespace(
+                inner_command=("/bin/\x1b]0;x\x07sh", "-c", "true"),
+                work_dir="/home/\x1b[2Jme",
+            )
+
+        def start(self, name, command, **options):
+            return FakeProcess()
+
+    monkeypatch.setattr(module, "ProotDistro", FakeApi)
+    assert module.main(["image:1", "demo"]) == 0
+    output = capsys.readouterr().out
+    assert "\x1b" not in output and "\x07" not in output
+
+
 def test_tui_fit_uses_display_width():
     module = _load("container_manager_tui")
 

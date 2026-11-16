@@ -36,8 +36,9 @@ explicitly. It opens the destination exclusively and removes partial output if
 the operation fails. The API does not close, seek, or flush caller-owned
 streams; this script owns those responsibilities through ``with`` blocks.
 
-Restore installs the container name stored in the archive and refuses to
-replace an existing container.
+Restore installs the container under the name stored in the archive. If a
+container with that name already exists, it is replaced in place and its
+current contents are lost. Back it up first, or rename it, if you need it.
 """
 
 import argparse
@@ -123,7 +124,11 @@ def _parser() -> argparse.ArgumentParser:
         help="stream compression (default: gzip)",
     )
 
-    restore = commands.add_parser("restore", help="restore a streamed backup")
+    restore = commands.add_parser(
+        "restore",
+        help="restore a streamed backup (replaces a container of the same "
+             "name)",
+    )
     restore.add_argument("archive", type=Path, help="existing host archive path")
     return parser
 

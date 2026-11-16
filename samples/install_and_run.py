@@ -55,6 +55,18 @@ if __package__ in (None, ""):
 from proot_distro.api import ProotDistro, ProotDistroError
 
 
+def _clean(text: str) -> str:
+    """Replace control characters in text that came from the container.
+
+    The inspected shell and working directory come from the guest's own
+    /etc/passwd. Printed raw, an escape sequence there could rewrite the
+    terminal screen or title.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the parser for installation and process-control options."""
     parser = argparse.ArgumentParser(
@@ -144,8 +156,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             command,
             environment={"PD_API_SAMPLE": "1"},
         )
-        print(f"Prepared guest command: {' '.join(description.inner_command)}")
-        print(f"Working directory: {description.work_dir}")
+        print(
+            "Prepared guest command: "
+            f"{_clean(' '.join(description.inner_command))}"
+        )
+        print(f"Working directory: {_clean(description.work_dir)}")
 
         # PIPE asks SessionProcess to capture bytes instead of inheriting this
         # script's terminal. The context manager guarantees process-tree
