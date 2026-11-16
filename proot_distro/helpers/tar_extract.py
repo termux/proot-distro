@@ -96,6 +96,7 @@ import stat
 import tarfile
 
 from proot_distro import dirfd
+from proot_distro.interrupts import open_tar_member
 from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.compress import (
     require_read_support, require_read_support_fd,
@@ -638,7 +639,7 @@ def _write_regular(parent_fd, name, member, tf) -> None:
     other inode. A directory in the way still ends the extraction, as
     open(dest, "wb") did on EISDIR.
     """
-    fobj = tf.extractfile(member)
+    fobj = open_tar_member(tf, member)
     if fobj is None:
         return
     try:
@@ -655,6 +656,7 @@ def _write_regular(parent_fd, name, member, tf) -> None:
                 pass
         finally:
             os.close(fd)
+            fobj.close()
         try:
             os.utime(name, (member.mtime, member.mtime), dir_fd=parent_fd,
                      follow_symlinks=False)

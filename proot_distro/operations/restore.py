@@ -64,6 +64,7 @@ from proot_distro.compress import (
     ZSTD_AVAILABLE, ZSTD_MAGIC, file_is_zstd, header_is_zstd, unsupported_msg,
 )
 from proot_distro.constants import PROGRAM_NAME
+from proot_distro.interrupts import open_tar_member
 from proot_distro.message import quote_error, quote_path
 from proot_distro.operation_errors import (
     BusyFailure, IntegrityFailure, NotFoundFailure, OperationFailure,
@@ -667,7 +668,7 @@ def restore_container(
                 # clobbers the target's metadata. Anything else is ignored.
                 if not _is_rootfs_dest(parts):
                     if member.isreg() and parts == ("manifest.json",):
-                        fobj = tf.extractfile(member)
+                        fobj = open_tar_member(tf, member)
                         data = b''
                         if fobj is not None:
                             try:
@@ -758,7 +759,7 @@ def restore_container(
                     os.symlink(member.linkname, leaf, dir_fd=dir_fd)
 
                 else:                       # member.isreg()
-                    fobj = tf.extractfile(member)
+                    fobj = open_tar_member(tf, member)
                     if fobj is None:
                         continue
                     try:

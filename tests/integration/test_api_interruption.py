@@ -79,11 +79,11 @@ def test_cancellation_during_install_leaves_recoverable_state(
     assert exc.value.operation == "install"
     assert progress_seen
 
-    # Progress events cross a buffered pipe. A fast worker can commit the
-    # installation before the callback's cancellation reaches it, especially
-    # on older interpreters. Cancellation is not a rollback guarantee, so
-    # accept either a cleaned staging tree or a committed container and prove
-    # both outcomes can be recovered through the public API.
+    # Cancellation is not a rollback guarantee, so accept either a cleaned
+    # staging tree or a committed container and prove both outcomes can be
+    # recovered through the public API. (A cancel that still let the
+    # install finish was a Ctrl-C lost inside tarfile -- see
+    # tests/unit/test_interrupt_delivery.py -- not the event pipe.)
     cleanup = ProotDistro()
     if os.path.lexists(container_dir("cancelled-install")):
         cleanup.remove_container("cancelled-install")

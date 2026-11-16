@@ -38,6 +38,7 @@ proot_distro/
   session_*.py  _bootstrap.py  _detach_worker.py                Session setup/runtime helpers
   _api_worker.py  _api_session_worker.py                        Private API worker entry points
   lazy_exports.py                                               On-demand package indexes
+  interrupts.py                                                 Ctrl-C delivery CPython could lose
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -114,6 +115,9 @@ Design notes for the worker channel:
   registries. Asking at the moment of use also means a manifest rewritten
   during a reset cannot redirect credentials chosen earlier.
   `tests/security/test_api_credential_scope.py` tries each route.
+* Cancellation reaches a worker as SIGINT and stops it through the
+  operation's own KeyboardInterrupt handling, so a SIGINT must never be
+  lost inside the worker (`interrupts.py`).
 * Event frames are bounded; an oversized message is truncated, never fatal.
 * Descriptor waits use `selectors`, because `select.select` rejects
   descriptors numbered 1024 and above.
@@ -232,6 +236,7 @@ Roughly bottom-up. Higher entries import lower ones.
 | `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
 | `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, unsupported, and registry-authentication failures; workers map them to public API exceptions while CLI catches remain unchanged. |
 | `lazy_exports.py` | `lazy_exports()`: the PEP 562 hooks behind a package index that imports a submodule only when one of its names is used. |
+| `interrupts.py` | `defer_sigint()` holds SIGINT pending across a place where CPython would lose or misplace its KeyboardInterrupt; `open_tar_member()` is the only way the package opens a tar member, because `BufferedReader` discards what tarfile's `tell()` raises. API cancellation is a SIGINT, so a lost one let a cancelled operation finish. |
 | `names.py` | The one container-name rule. |
 | `progress.py` | Shared stderr progress bar and structured API progress routing with explicit phase/resource metadata. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |

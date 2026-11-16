@@ -70,10 +70,10 @@
 import contextlib
 import errno
 import os
-import signal
 import tempfile
 
 from proot_distro import dirfd, statedir
+from proot_distro.interrupts import defer_sigint
 
 
 def _state_location(path: str):
@@ -185,28 +185,6 @@ def _close_quietly(fd: int) -> None:
         pass
 
 
-@contextlib.contextmanager
-def _defer_sigint():
-    """Defer SIGINT until a newly created resource has a cleanup scope.
-
-    Python may raise ``KeyboardInterrupt`` immediately after a creation syscall
-    returns but before its result is assigned. Blocking SIGINT only around that
-    syscall lets the surrounding ``try`` learn the descriptor and name first;
-    restoring the mask then delivers any pending interrupt inside the cleanup
-    scope. The project targets Linux/Android, where ``pthread_sigmask`` is
-    available, but the fallback retains ordinary behavior on other hosts.
-    """
-    pthread_sigmask = getattr(signal, "pthread_sigmask", None)
-    if pthread_sigmask is None:
-        yield
-        return
-    previous = pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
-    try:
-        yield
-    finally:
-        pthread_sigmask(signal.SIG_SETMASK, previous)
-
-
 def _replace_at(dir_fd: int, name: str, suffix: str):
     """atomic_replace's body for a destination directory already validated."""
     tmp_name = dirfd.temp_name(
@@ -218,7 +196,7 @@ def _replace_at(dir_fd: int, name: str, suffix: str):
     # the name a second time.
     fd = None
     try:
-        with _defer_sigint():
+        with defer_sigint():
             fd, _st = dirfd.open_new_at(
                 dir_fd, tmp_name, 0o600, readable=True
             )
@@ -274,7 +252,7 @@ def _replace_by_name(path: str, suffix: str):
     fd = None
     tmp = None
     try:
-        with _defer_sigint():
+        with defer_sigint():
             fd, tmp = tempfile.mkstemp(
                 prefix=os.path.basename(path) + ".",
                 suffix=suffix,

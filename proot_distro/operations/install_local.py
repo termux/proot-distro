@@ -41,6 +41,7 @@ import tarfile
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.compress import require_read_support
+from proot_distro.interrupts import open_tar_member
 from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.operations.context import OperationContext
 from proot_distro.progress import clear_bar
@@ -159,7 +160,7 @@ def _oci_open_member(tf, member_map, path):
         raise IntegrityFailure(
             f"OCI archive entry is not a regular file: {path}"
         )
-    fobj = tf.extractfile(member)
+    fobj = open_tar_member(tf, member)
     if fobj is None:
         raise IntegrityFailure(
             f"OCI archive entry is not a regular file: {path}"
@@ -317,9 +318,9 @@ def _oci_cache_layer(tf, member_map, digest):
     """
     blob_path = _oci_blob_path(digest)
     _algo, expected_hex = split_digest(digest)
-    fobj = _oci_open_member(tf, member_map, blob_path)
     cache_path = layer_cache_path(digest)
     hasher = hashlib.sha256()
+    fobj = _oci_open_member(tf, member_map, blob_path)
     try:
         # atomic_replace removes the temporary on any exception, so a
         # mismatch leaves nothing behind for a later pull to pick up.
