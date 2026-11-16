@@ -54,7 +54,7 @@ def test_a_step_that_ends_cleanly_is_simply_waited_for(subreaper):
     run_step._wait_for_step(proc, baseline)
 
     assert proc.poll() == 5
-    assert run_step._stop_step(proc.pid, baseline, skip_pid=proc.pid) == 0
+    assert run_step._stop_step(proc, baseline) == 0
 
 
 def test_a_backgrounded_leftover_ends_the_wait_and_is_stopped(subreaper,
@@ -69,8 +69,7 @@ def test_a_backgrounded_leftover_ends_the_wait_and_is_stopped(subreaper,
         assert proc.poll() is None
         assert time.monotonic() - started < 10
 
-        assert run_step._stop_step(proc.pid, baseline,
-                                   skip_pid=proc.pid) >= 1
+        assert run_step._stop_step(proc, baseline) >= 1
         assert run_step._leftovers(proc.pid, baseline, proc.pid) == []
         # proot itself is left alone: it is still owed the chance to
         # report the step's exit status.
@@ -100,10 +99,9 @@ def test_a_daemonised_leftover_is_found_through_adoption(subreaper):
     pid = adopted[0]
 
     # Its own group, not the step's -- there is no step group here at
-    # all. Passing this process's own pgid is what a caller must never
-    # be able to turn into a signal: _leftovers refuses it and answers
-    # from adoption alone, which is the half this test is about.
-    assert run_step._stop_step(os.getpgrp(), baseline) >= 1
+    # all, so the sweep answers from adoption alone, which is the half
+    # this test is about.
+    assert run_step._stop_step(None, baseline) >= 1
     deadline = time.monotonic() + 5
     while _alive(pid) and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -143,7 +141,7 @@ def test_the_wait_does_not_cut_a_step_short_over_a_mid_step_orphan(subreaper):
         assert time.monotonic() - started >= 0.9
     finally:
         _stop(proc)
-        run_step._stop_step(proc.pid, baseline)
+        run_step._stop_step(proc, baseline)
 
 
 def test_leftovers_never_names_this_process_or_its_group():

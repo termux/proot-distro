@@ -38,6 +38,18 @@
 # _stop_step() closes both halves of that: the process group proot
 # leads, and the descendants that daemonise out of it, which land back
 # on this process because it makes itself a child subreaper first.
+#
+# proot itself is never what is killed first. It ignores SIGTERM, SIGINT
+# and SIGHUP, and it sets no PTRACE_O_EXITKILL, so a SIGKILLed proot does
+# not take its tracees with it: they are detached and go on as plain host
+# processes with no path translation, where a step's `rm -rf /x` reaches
+# the host's /x. Its SIGQUIT handler is the safe way out: it SIGKILLs
+# every tracee it has, wherever it sits, and then exits (the same lever
+# operations/session_signals.py uses on sessions). So the sweep leaves
+# proot alone, _end_proot() ends it with SIGQUIT if it does not exit by
+# itself, and the kernel sends it that same SIGQUIT if this process dies
+# first (PR_SET_PDEATHSIG): a build killed outright, or an API worker
+# force-killed on a second Ctrl-C, no longer leaves its RUN step running.
 
 import ctypes
 import os
@@ -339,7 +351,7 @@ def _exec_proot(engine, stage, command, stdin_input):
                 else None
             ),
             start_new_session=True,
-            preexec_fn=_chdir_to(stage.rootfs_fd),
+            preexec_fn=_step_child_setup(stage.rootfs_fd),
         )
     except FileNotFoundError as exc:
         raise BuildError(f"proot binary not available: {exc}") from exc
@@ -356,41 +368,69 @@ def _exec_proot(engine, stage, command, stdin_input):
     try:
         _wait_for_step(proc, baseline)
     except KeyboardInterrupt:
-        # proot goes with the rest here: the build is over either way.
-        _stop_step(proc.pid, baseline, quiet=True)
-        proc.wait()
+        # The build is over either way: everything of the step goes, and
+        # proot last. Pressed again, the waiting stops, but proot still
+        # goes the one way that takes its tracees with it.
+        try:
+            _stop_step(proc, baseline, quiet=True)
+            _end_proot(proc)
+        except KeyboardInterrupt:
+            _signal_proot(proc, signal.SIGQUIT)
+            raise
         raise
 
-    _stop_step(proc.pid, baseline, skip_pid=proc.pid)
-    try:
-        return proc.wait(timeout=_STRAY_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        # Nothing of the step should still be holding proot open, but a
-        # step that cannot be settled must not hang the build either.
-        proc.kill()
-        return proc.wait()
+    _stop_step(proc, baseline)
+    return _end_proot(proc)
 
 
-def _chdir_to(rootfs_fd):
-    """A preexec hook that fchdirs into *rootfs_fd*, or None.
+def _step_child_setup(rootfs_fd, parent=None):
+    """The preexec hook proot is started with.
 
-    The other half of `--rootfs=.`: the argv names a relative root, so
-    the process proot starts in has to be the rootfs. In the *child*
-    rather than here, because this process's own working directory is
-    where a relative --output, a relative build context and every
-    message that names one are resolved from, and a step must not move
-    it. `login` does the same fchdir in the process that becomes proot,
-    which is the same place -- it just has no parent left to protect.
+    Two things, in the forked child before it execs proot:
 
-    preexec_fn runs after the fork and before the exec, and fchdir(2) is
-    one syscall; the caveat about it (unsafe with threads) does not
-    apply, this program having none. Nothing else is done there.
+    PR_SET_PDEATHSIG, so the kernel sends proot SIGQUIT when *parent*
+    (this process) dies -- see the note at the top of this module. The
+    signal survives the exec. It is tied to the thread that forked, and
+    the step is started and waited for by the same thread. Should the
+    parent already be gone by the time it is set, nothing would ever
+    send it, so the child then exits instead of starting the step.
+    Where prctl cannot be reached the step runs without it, as before.
+
+    One window is left, and it is proot's: it installs its SIGQUIT
+    handler only after forking its first tracee, so a parent dying in
+    those few microseconds kills proot by SIGQUIT's default action and
+    leaves that tracee detached before it has exec'd anything. It then
+    stops on its own SIGSTOP or dies of the SIGHUP the kernel sends an
+    orphaned group with a stopped member; only with SIGHUP ignored and
+    a later SIGCONT would it go on, untraced. Nothing of the build's
+    guests is running at that point to arrange that: every process of
+    the previous step was ended before this proot was started. Blocking
+    SIGQUIT over the window is no way out -- proot never unblocks it.
+
+    fchdir into *rootfs_fd*, the other half of `--rootfs=.`: the argv
+    names a relative root, so the process proot starts in has to be the
+    rootfs. In the *child* rather than here, because this process's own
+    working directory is where a relative --output, a relative build
+    context and every message that names one are resolved from, and a
+    step must not move it. `login` does the same fchdir in the process
+    that becomes proot, which is the same place -- it just has no parent
+    left to protect.
+
+    preexec_fn runs after the fork and before the exec; the caveat about
+    it (unsafe with threads) does not apply, this program having none.
+    prctl is looked up here, before the fork, so the child only calls it.
     """
-    if rootfs_fd is None:
-        return None
+    if parent is None:
+        parent = os.getpid()
+    prctl = _libc_prctl()
 
     def _hook():
-        os.fchdir(rootfs_fd)
+        if prctl is not None:
+            if prctl(_PR_SET_PDEATHSIG, int(signal.SIGQUIT), 0, 0, 0) == 0:
+                if os.getppid() != parent:
+                    os._exit(1)
+        if rootfs_fd is not None:
+            os.fchdir(rootfs_fd)
 
     return _hook
 
@@ -432,10 +472,24 @@ def _stdin_file(engine, stdin_input):
 _STEP_POLL_INTERVAL = 0.05
 _STRAY_GRACE_SECONDS = 2.0
 
-# prctl(2), Linux 3.4 and up, Android included.
+# prctl(2) options: PDEATHSIG since Linux 2.1.57, CHILD_SUBREAPER since
+# 3.4; Android included.
+_PR_SET_PDEATHSIG = 1
 _PR_SET_CHILD_SUBREAPER = 36
 
+_libc = None
 _subreaper_asked = None
+
+
+def _libc_prctl():
+    """libc's prctl(2) through ctypes, or None where it cannot be had."""
+    global _libc
+    try:
+        if _libc is None:
+            _libc = ctypes.CDLL(None, use_errno=True)
+        return _libc.prctl
+    except (OSError, AttributeError):
+        return None
 
 
 def _become_subreaper() -> bool:
@@ -454,12 +508,12 @@ def _become_subreaper() -> bool:
     """
     global _subreaper_asked
     if _subreaper_asked is None:
+        prctl = _libc_prctl()
         try:
-            libc = ctypes.CDLL(None, use_errno=True)
-            _subreaper_asked = libc.prctl(
+            _subreaper_asked = prctl is not None and prctl(
                 _PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0
             ) == 0
-        except (OSError, AttributeError, ValueError):
+        except (OSError, ValueError):
             _subreaper_asked = False
     return _subreaper_asked
 
@@ -588,14 +642,15 @@ def _reap(pids) -> None:
             pass
 
 
-def _leftovers(pgid: int, baseline, skip_pid) -> list:
+def _leftovers(pgid, baseline, skip_pid) -> list:
     """Every process the step still has running, most-derived first.
 
     This process and the group it is in are never among them. A step
     runs in a session of its own, so its group id can only be proot's;
     one that is this program's own group would mean the caller got the
     pgid wrong, and the answer to that must not be a SIGTERM to
-    everything sharing a terminal with the build.
+    everything sharing a terminal with the build. With *pgid* None only
+    the adopted processes are looked at.
     """
     found = list(_adopted(baseline, skip_pid=skip_pid))
     skip = set(found)
@@ -608,17 +663,25 @@ def _leftovers(pgid: int, baseline, skip_pid) -> list:
     return found
 
 
-def _stop_step(pgid: int, baseline=(), *, skip_pid=None,
-               quiet: bool = False) -> int:
+def _stop_step(proc, baseline=(), *, quiet: bool = False) -> int:
     """Stop whatever the step still has running. Returns how many it found.
 
-    *skip_pid* is proot, while it is still owed the chance to report the
-    step's exit status; on the interrupt path it goes with the rest.
+    *proc* is proot's Popen, or None to look at adopted processes only.
+    proot itself is never among the targets: it is still tracing what is
+    being stopped, and it is ended afterwards, by _end_proot(), the one
+    way that cannot leave a tracee untraced. Its group is searched only
+    while proot is unreaped, since until then its pid -- the group's id
+    -- cannot have been handed to anyone else; nothing here reaps it.
 
     Costs one small /proc read when the step ended cleanly, which is the
     usual case and the only one on Termux, where proot's --kill-on-exit
     has already done this.
     """
+    pgid = skip_pid = None
+    if proc is not None:
+        skip_pid = proc.pid
+        if proc.returncode is None:
+            pgid = proc.pid
     targets = _leftovers(pgid, baseline, skip_pid)
     if not targets:
         return 0
@@ -643,6 +706,34 @@ def _stop_step(pgid: int, baseline=(), *, skip_pid=None,
              f"finished; they were stopped, so the layer captures a "
              f"settled rootfs.")
     return found
+
+
+def _signal_proot(proc, sig) -> None:
+    """Send *sig* to proot unless it has been reaped already."""
+    try:
+        proc.send_signal(sig)
+    except OSError:
+        pass
+
+
+def _end_proot(proc) -> int:
+    """Wait for proot to exit, ending it safely if it does not.
+
+    Runs after _stop_step(), so proot normally exits on its own within
+    moments and reports the step's status. If it does not, something of
+    the step is still running unseen -- forked after the last sweep, or
+    in a session of its own whose parent was alive at the time -- and
+    proot is sent SIGQUIT, whose handler SIGKILLs every tracee it has
+    before exiting. SIGKILL comes only after that, for a proot that does
+    not answer it either; on its own it would leave the tracees running
+    untraced. Popen.send_signal() never signals a reaped proot.
+    """
+    for sig in (signal.SIGQUIT, signal.SIGKILL):
+        try:
+            return proc.wait(timeout=_STRAY_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            _signal_proot(proc, sig)
+    return proc.wait()
 
 
 def _refuse_host_exec(engine, key):

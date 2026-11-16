@@ -38,7 +38,8 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
   package contents, typing metadata, API compatibility, dependencies, and both
   console scripts.
 - `live/` — opt-in smoke tests behind `@pytest.mark.live`, skipped unless
-  `RUN_LIVE_TESTS=1` (real Docker Hub pull, real proot run).
+  `RUN_LIVE_TESTS=1` (real Docker Hub pull, real proot run, and how a RUN
+  step's real proot is ended).
 
 ## How isolation works
 

@@ -299,7 +299,11 @@ needed (only RUN-family instructions). `BuildEngine` creates a scratch root
 under `build-tmp/` and one `Stage` per FROM. Each instruction becomes a
 history entry and, if it changes files, a layer. RUN looks up the recipe hash
 in `build_cache`; on a miss it snapshots, runs under proot, snapshots again,
-and `layer_diff` writes the layer. COPY/ADD build a file map and write the
+and `layer_diff` writes the layer. A step is over when nothing of it runs:
+leftovers are stopped first, and proot is ended last with SIGQUIT, never
+SIGKILL first, because a SIGKILLed proot leaves its tracees running
+untraced. Its parent-death signal is that same SIGQUIT, so a step does
+not outlive a build process that is killed outright. COPY/ADD build a file map and write the
 layer straight from it. `oci_writer` then stores the manifest in the cache, and
 optionally writes an OCI tarball (`--output`) or installs a container
 (`--install-as`).

@@ -413,7 +413,7 @@ except OperationCancelledError:
   stop and clean up, then the interrupt is raised again in your thread. Press
   Ctrl-C a second time to kill the worker at once. A killed worker cannot
   clean up, so check the state before retrying. A build `RUN` step that was
-  running when its worker was killed may go on running until it ends.
+  running is still stopped: its processes end with the worker.
 * A running callback, credential provider or stream method must return
   before the token can be checked again.
 
