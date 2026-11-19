@@ -553,6 +553,18 @@ has been rebuilt since. `clear-cache --build-cache` is the opposite
 target: it drops the index and the layers only it was holding, leaving
 the downloaded base images alone.
 
+**Interrupting a build:**
+
+A build keeps its work-in-progress files in `build-tmp/` and removes
+them when it ends. CTRL-C stops a build, but its files are still
+removed first; press CTRL-C again to skip that. If a build was killed
+or stopped before it could clean up, the next `build` removes what it
+left and says so:
+
+```
+Removing scratch left by 1 interrupted build(s)...
+```
+
 **Examples:**
 
 ```sh
@@ -1609,6 +1621,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
 | `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
 | `sessions/<pid>.json` | Active-session registry entry for `ps`; holds an inherited `flock` for the session lifetime and is pruned when the session ends |
+| `build-tmp/pd-build-<pid>.<random>/` | Work-in-progress files of a running `build`; locked while it runs, removed when it ends, or by the next `build` if it was killed |
 | `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
 | `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags), each recording the image reference and architecture it was cached for — this is what `list --image` inventories |
 | `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |

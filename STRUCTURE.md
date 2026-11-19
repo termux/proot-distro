@@ -169,7 +169,7 @@ signalling, and descriptor-pinned login/run preparation are migrated.
 | `operations/install.py` | Local archive, URL, and OCI installation with staged cleanup and rootfs fixups. |
 | `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
 | `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata; only a registry reference is honoured, never a guest-planted path or URL. |
-| `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, and optional installation. |
+| `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, optional installation, and the scratch root's lifecycle (locked while in use, swept once its build is gone). |
 | `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
 | `operations/session_signals.py` | Tracked-session selection, PID-reuse-safe process discovery, signal delivery, escalation, and survivor reporting. |
 | `operations/session_prepare.py` | Shared login/run validation, pinned state access, identity and environment resolution, immutable launch metadata, and scoped descriptor ownership. |
@@ -275,7 +275,8 @@ RUNTIME_DIR                    Termux: <prefix>/var/lib/proot-distro
   sessions/<pid>.json          Active proot sessions
   locks/<name>.lock            Container locks
   locks/build/<key>.lock       Build locks
-  build-tmp/                   Scratch roots for running builds
+  build-tmp/                   Scratch roots for running builds (locked;
+                               a dead build's is swept by the next)
 
 BASE_CACHE_DIR                 Termux: <RUNTIME_DIR>/cache
                                Linux:  $XDG_CACHE_HOME/proot-distro
@@ -307,8 +308,11 @@ as long as the session. `run` reads Entrypoint/Cmd from `manifest.json`,
 validates their shape, and calls `command_login`.
 
 **build.** Parse the Dockerfile (`dockerfile.py`) and decide if proot is
-needed (only RUN-family instructions). `BuildEngine` creates a scratch root
-under `build-tmp/` and one `Stage` per FROM. Each instruction becomes a
+needed (only RUN-family instructions). `operations/build.py` creates a
+scratch root under `build-tmp/`, named after its process and flock'ed for
+as long as the build runs, after sweeping the roots whose process is gone
+and whose lock is free; a first interrupt during the final removal lets
+it finish. `BuildEngine` makes one `Stage` per FROM in it. Each instruction becomes a
 history entry and, if it changes files, a layer. RUN looks up the recipe hash
 in `build_cache`; on a miss it snapshots, runs under proot, snapshots again,
 and `layer_diff` writes the layer. A step is over when nothing of it runs:
