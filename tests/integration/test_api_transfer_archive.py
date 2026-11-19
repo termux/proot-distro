@@ -1,6 +1,7 @@
 import io
 import os
 import threading
+import time
 
 import pytest
 
@@ -503,15 +504,31 @@ def test_backup_stream_failure_preserves_documented_partial_output(builders):
 def test_backup_callback_exception_removes_path_temporary(
     tmp_path, builders,
 ):
+    """Regression: a slow handler that failed left the temporary behind.
+
+    The handler fails on the first event. The worker reports progress
+    for every file, several times what the parent has read plus what the
+    event pipe holds when it stops the worker, so the backup cannot have
+    finished: the stop always meets an unpublished archive. (Failing on
+    the first event of a one-file backup raced the worker, and a slow
+    runner saw the finished archive.)
+
+    The handler also takes a while, so the pipe is full by the time it
+    raises. The worker reports events while it cleans up after the
+    SIGINT; the parent used to stop reading, so those writes blocked
+    until the SIGKILL, and the temporary beside the output stayed.
+    """
     builders.make_container("callback-output", files={
-        "payload": b"x" * (1024 * 1024),
+        f"payload/{index:04d}": b"x" for index in range(4000)
     })
     output = tmp_path / "callback-output.tar"
     expected = LookupError("event destination unavailable")
+    events = []
 
     def fail(event):
-        if event.phase == "archive":
-            raise expected
+        events.append(event)
+        time.sleep(0.5)
+        raise expected
 
     with pytest.raises(LookupError) as exc:
         ProotDistro(event_handler=fail).backup(
@@ -519,7 +536,7 @@ def test_backup_callback_exception_removes_path_temporary(
         )
 
     assert exc.value is expected
-    assert not output.exists()
+    assert len(events) == 1
     assert list(tmp_path.iterdir()) == []
 
 

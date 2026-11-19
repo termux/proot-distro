@@ -82,6 +82,13 @@ Design notes for the worker channel:
   stopped, which let the call raise before the worker was reaped. A worker
   that exited 0 wins over a late cancel request: the work committed, so its
   result is reported.
+* When an event handler, the credential provider or the channel protocol
+  fails, the worker gets the same `SIGINT` and grace period, and its event
+  and build-output pipes are still read, and discarded, until it exits. It
+  reports events while it cleans up, and a pipe left full behind a slow
+  handler blocked that cleanup until the `SIGKILL`. A stop already under
+  way (a cancel) is not signalled a second time, which would interrupt the
+  cleanup it started.
 * A caller input stream blocked in `read()` cannot be interrupted. Input pump
   threads are daemons and are joined with a timeout once the worker is gone;
   from then on they start no further `read()` and drop what an in-flight one

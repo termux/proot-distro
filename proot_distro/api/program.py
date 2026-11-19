@@ -943,6 +943,58 @@ def _communicate_with_channels(
             os.close(build_output_fd)
             build_output_open = False
 
+    def stop_while_draining() -> None:
+        """Stop the worker after a failure on this side, still reading it.
+
+        The worker reports events while it unwinds from the SIGINT, and
+        a write to a full pipe blocks. Waiting on the process alone left
+        a worker whose event pipe had filled behind a slow handler stuck
+        in that write until the SIGKILL, so its staged state -- the
+        temporary beside a path output -- was never removed. What is
+        read here is thrown away: the handler that failed is not called
+        again. The credential channel is closed instead, so a request
+        made during cleanup fails at once rather than waits for an answer.
+
+        A stop already under way (a cancel the handler then failed
+        during) keeps its SIGINT and its deadline: a second SIGINT could
+        cut the worker's cleanup short.
+        """
+        nonlocal event_open, credential_open, build_output_open
+        if credential_open:
+            credential_sock.close()
+            credential_open = False
+        if stop_started is None:
+            interrupt_worker()
+            grace = _WORKER_STOP_GRACE_SECONDS
+        else:
+            grace = _WORKER_CANCEL_GRACE_SECONDS
+        deadline = stop_started + grace
+        while not finished.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                kill_worker()
+                return
+            readers = []
+            if event_open:
+                readers.append(event_fd)
+            if build_output_open:
+                readers.append(build_output_fd)
+            if not readers:
+                finished.wait(min(remaining, 0.1))
+                continue
+            for fd in _wait_readable(readers, min(remaining, 0.1)):
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    chunk = b""
+                if chunk:
+                    continue
+                os.close(fd)
+                if fd == event_fd:
+                    event_open = False
+                else:
+                    build_output_open = False
+
     try:
         while event_open or credential_open or build_output_open:
             try:
@@ -1070,12 +1122,13 @@ def _communicate_with_channels(
                 event_handler = None
     except BaseException:
         # An event handler, the credential provider or the protocol failed.
-        # Stop the worker, then wait for the communicate thread to reap it
-        # -- in slices, not with Thread.join(), for the reason given where
-        # `finished` is made. Ctrl-C meanwhile kills it and wins.
+        # Stop the worker, reading what it still sends, then wait for the
+        # communicate thread to reap it -- in slices, not with
+        # Thread.join(), for the reason given where `finished` is made.
+        # Ctrl-C meanwhile kills it and wins.
         interrupt = None
         try:
-            _stop_worker(proc)
+            stop_while_draining()
         except KeyboardInterrupt as exc:
             interrupt = exc
             kill_worker()

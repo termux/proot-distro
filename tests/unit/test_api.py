@@ -1234,6 +1234,168 @@ def test_slow_event_handler_applies_backpressure_and_recovers():
     assert len(events) == frame_count
 
 
+def _unwinding_worker(monkeypatch, cleanup_frames, linger=0.0):
+    """A worker that reports *cleanup_frames* events once it gets SIGINT.
+
+    It then stays for *linger* seconds before it exits. Returns (process,
+    event_fd, signals, outcome); *outcome* says whether the cleanup ran
+    to the end or met a closed channel.
+    """
+    event_read, event_write = os.pipe()
+    interrupted = threading.Event()
+    exited = threading.Event()
+    signals = []
+    outcome = []
+    frame = b'{"kind":"info","message":"worker event"}\n'
+
+    def run():
+        try:
+            program._write_all(event_write, frame)
+            assert interrupted.wait(10)
+            program._write_all(event_write, frame * cleanup_frames)
+            outcome.append("cleaned up")
+            threading.Event().wait(linger)
+        except BrokenPipeError:
+            outcome.append("channel closed")
+        finally:
+            os.close(event_write)
+            exited.set()
+
+    class Process:
+        pid = 325
+        returncode = None
+
+        def communicate(self, _request):
+            assert exited.wait(10)
+            self.returncode = 130
+            return b"", b""
+
+        def wait(self, timeout=None):
+            if not exited.wait(timeout):
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return self.returncode
+
+    def send(_pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGINT:
+            interrupted.set()
+
+    monkeypatch.setattr(program.os, "killpg", send)
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    return Process(), event_read, signals, outcome
+
+
+def test_failed_handler_lets_the_worker_report_its_cleanup(monkeypatch):
+    """Regression: a worker unwinding behind a full event pipe was killed.
+
+    When a handler raised, the parent stopped reading and only waited for
+    the worker to exit. The worker reports events while it cleans up, and
+    once the pipe was full those writes blocked until the SIGKILL, so the
+    cleanup -- the temporary beside a path output -- never finished.
+    """
+    monkeypatch.setattr(program, "_WORKER_STOP_GRACE_SECONDS", 2.0)
+    # Several times what a pipe holds, all written after the SIGINT.
+    process, event_read, signals, outcome = _unwinding_worker(
+        monkeypatch, 10000
+    )
+    expected = LookupError("event destination unavailable")
+    calls = []
+
+    def handle(event):
+        calls.append(event)
+        raise expected
+
+    with pytest.raises(LookupError) as exc:
+        program._communicate_with_channels(
+            process, b"{}", event_read, handle, "backup"
+        )
+
+    assert exc.value is expected
+    assert outcome == ["cleaned up"]
+    assert signals == [program.signal.SIGINT]
+    assert len(calls) == 1
+
+
+def test_failed_handler_during_a_cancel_sends_no_second_sigint(monkeypatch):
+    """The handler failing while a cancel is unwinding the worker.
+
+    The worker was already interrupted; a second SIGINT would raise again
+    inside the cleanup the first one started. The worker stays a moment
+    after its cleanup so that it is still there to be signalled.
+    """
+    process, event_read, signals, outcome = _unwinding_worker(
+        monkeypatch, 1, linger=0.3
+    )
+    cancelled = threading.Event()
+    cancelled.set()
+    expected = LookupError("event destination unavailable")
+
+    def handle(_event):
+        raise expected
+
+    with pytest.raises(LookupError) as exc:
+        program._communicate_with_channels(
+            process, b"{}", event_read, handle, "backup",
+            cancel_event=cancelled,
+        )
+
+    assert exc.value is expected
+    assert outcome == ["cleaned up"]
+    assert signals == [program.signal.SIGINT]
+
+
+def test_failed_handler_still_kills_a_worker_that_does_not_stop(
+        monkeypatch):
+    """Reading the worker's reports must not stretch the grace period."""
+    monkeypatch.setattr(program, "_WORKER_STOP_GRACE_SECONDS", 0.3)
+    event_read, event_write = os.pipe()
+    killed = threading.Event()
+    signals = []
+    frame = b'{"kind":"info","message":"worker event"}\n'
+
+    def chatter():
+        # Never stops on SIGINT, and never stops writing either.
+        try:
+            while not killed.is_set():
+                program._write_all(event_write, frame * 100)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(event_write)
+
+    class Process:
+        pid = 326
+        returncode = None
+
+        def communicate(self, _request):
+            assert killed.wait(10)
+            self.returncode = -9
+            return b"", b""
+
+    def send(_pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGKILL:
+            killed.set()
+
+    def handle(_event):
+        raise LookupError("event destination unavailable")
+
+    monkeypatch.setattr(program.os, "killpg", send)
+    writer = threading.Thread(target=chatter, daemon=True)
+    writer.start()
+    try:
+        with pytest.raises(LookupError):
+            program._communicate_with_channels(
+                Process(), b"{}", event_read, handle, "backup"
+            )
+    finally:
+        killed.set()
+        writer.join(10)
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
 def test_worker_event_resource_strips_url_secrets():
     resource = _worker._default_event_resource("install", {
         "source": "https://user:secret@example.test/rootfs.tar?token=hidden#x",
