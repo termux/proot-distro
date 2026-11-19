@@ -2,6 +2,7 @@ import io
 import json
 import os
 import tarfile
+import time
 
 import pytest
 
@@ -132,22 +133,76 @@ def test_build_run_output_streams_as_live_events(tmp_path):
 
 
 def test_build_callback_exception_cleans_scratch_and_path_output(tmp_path):
+    # The handler fails on the output of a RUN step whose stand-in proot
+    # then waits, so the build is still inside that step when it is
+    # stopped: it cannot have published anything. (Failing on the
+    # "Writing OCI archive" event instead raced the worker, which goes on
+    # writing while the event is handled; a slow runner saw the finished
+    # archive.)
     context = _context(tmp_path)
+    (context / "Dockerfile").write_text(
+        "FROM scratch\nCOPY rootfs/ /\nRUN wait-for-the-stop\n"
+    )
+    fake_proot = tmp_path / "fake-build-proot"
+    fake_proot.write_text(
+        "#!/bin/sh\nprintf 'step is running\\n'\nsleep 30\nexit 0\n"
+    )
+    fake_proot.chmod(0o755)
     output = tmp_path / "callback-output.oci.tar"
     expected = LookupError("build event destination unavailable")
 
     def fail(event):
+        if (event.phase == "build-output"
+                and "step is running" in event.message):
+            raise expected
+
+    default = RuntimeConfig.default()
+    pd = ProotDistro(RuntimeConfig(
+        default.runtime_dir, default.cache_dir, fake_proot
+    ), event_handler=fail)
+    with pytest.raises(LookupError) as exc:
+        pd.build(context, tags=["callback-output:1"], outputs=[output])
+
+    assert exc.value is expected
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "context", "fake-build-proot",
+    ]
+    assert os.listdir(os.path.join(RUNTIME_DIR, "build-tmp")) == []
+    assert ProotDistro().list_images() == ()
+
+
+def test_build_callback_exception_after_publishing_keeps_the_whole_output(
+        tmp_path):
+    # A handler runs after the worker reported, and the worker does not
+    # wait for it, so a handler that fails late can find the output
+    # already published. Its exception still reaches the caller, and what
+    # was published is the whole archive, never part of one.
+    context = _context(tmp_path)
+    output = tmp_path / "callback-output.oci.tar"
+    expected = LookupError("build event destination unavailable")
+
+    def fail_once_published(event):
         if event.phase == "build-output":
+            deadline = time.monotonic() + 60
+            while not output.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
             raise expected
 
     with pytest.raises(LookupError) as exc:
-        ProotDistro(event_handler=fail).build(
+        ProotDistro(event_handler=fail_once_published).build(
             context, tags=["callback-output:1"], outputs=[output]
         )
 
     assert exc.value is expected
-    assert not output.exists()
-    assert not list(tmp_path.glob("*.tmp"))
+    with tarfile.open(output) as archive:
+        names = archive.getnames()
+        index = json.load(archive.extractfile("index.json"))
+    assert "oci-layout" in names
+    assert any(name.startswith("blobs/sha256/") for name in names)
+    assert index["manifests"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "callback-output.oci.tar", "context",
+    ]
     build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
     assert not os.path.isdir(build_tmp) or os.listdir(build_tmp) == []
 
