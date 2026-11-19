@@ -51,6 +51,11 @@ The application is deliberately single-threaded. API operations run one at a
 time, while structured events update the status line. Before a guest shell is
 started, curses restores the terminal to its normal mode. The TUI mode is
 restored after the shell exits, even when startup fails or is interrupted.
+
+Image references and architectures come from a container's metadata, which
+the container can rewrite. Event and error text can quote a registry. curses
+does not make such text harmless, so everything the interface shows passes
+through _printable() first. See its docstring for what curses would do.
 """
 
 import curses
@@ -82,28 +87,60 @@ _STATUS_PAIR = 3
 _ERROR_PAIR = 4
 
 
+def _printable(text: object) -> str:
+    """Return *text* with every character a terminal would act on replaced.
+
+    curses draws other text unchanged, but not these characters:
+
+    * A NUL makes it raise ValueError, and the interface stops.
+    * A newline, carriage return or backspace moves the cursor. The rest
+      of the text then lands on other rows and columns, for example as a
+      fake container row.
+    * Format characters, such as a right-to-left override, reach the
+      terminal as they are.
+
+    Whitespace becomes a space. Any other character that is not printable
+    becomes "?". Each character left takes the columns that _cell_width()
+    gives it.
+    """
+    return "".join(
+        char if char.isprintable() else " " if char.isspace() else "?"
+        for char in str(text)
+    )
+
+
 def _cell_width(char: str) -> int:
-    """Return how many terminal columns *char* occupies."""
-    if unicodedata.combining(char):
+    """Return how many terminal columns a printable *char* occupies."""
+    # Combining and enclosing marks are drawn over the previous character.
+    if unicodedata.category(char) in ("Mn", "Me"):
         return 0
     return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
 
 
-def _fit(text: str, width: int) -> str:
-    """Truncate or pad *text* to exactly *width* terminal columns.
+def _clip(text: object, width: int) -> str:
+    """Return *text*, made printable, cut to at most *width* columns.
 
-    ``str.format`` counts code points, which misaligns columns for wide
-    (East Asian) and combining characters.
+    A wide character that would cross the limit is left out whole.
     """
     out = []
     used = 0
-    for char in text:
+    for char in _printable(text):
         step = _cell_width(char)
         if used + step > width:
             break
         out.append(char)
         used += step
-    return "".join(out) + " " * (width - used)
+    return "".join(out)
+
+
+def _fit(text: object, width: int) -> str:
+    """Make *text* printable and cut or pad it to exactly *width* columns.
+
+    ``str.format`` counts code points, which misaligns columns for wide
+    (East Asian) and combining characters.
+    """
+    clipped = _clip(text, width)
+    return clipped + " " * (width - sum(map(_cell_width, clipped)))
 
 
 class ContainerManager:
@@ -199,7 +236,13 @@ class ContainerManager:
         attribute: int = 0,
         width: Optional[int] = None,
     ) -> None:
-        """Draw bounded text and ignore terminal-edge curses errors."""
+        """Draw *text* within row *y*, in at most *width* columns.
+
+        Everything the interface draws goes through here, and _clip() makes
+        it printable first. addnstr() would count code points rather than
+        columns, so wide characters could run onto the next row. Errors
+        at the terminal edge are ignored.
+        """
         height, screen_width = self.screen.getmaxyx()
         if y < 0 or y >= height or x < 0 or x >= screen_width:
             return
@@ -209,7 +252,7 @@ class ContainerManager:
         if available <= 0:
             return
         try:
-            self.screen.addnstr(y, x, text, available, attribute)
+            self.screen.addstr(y, x, _clip(text, available), attribute)
         except curses.error:
             # Writing the lower-right terminal cell may report an error even
             # when the character was displayed. A TUI should keep running.
@@ -454,7 +497,12 @@ class ContainerManager:
             curses.def_prog_mode()
             curses.endwin()
             self.terminal_suspended = True
-            print(f"Opening shell in {container.name}. Exit it to return to the TUI.")
+            # This is printed outside curses, so it is cleaned here. The API
+            # validates names, but an adapted copy may use another source.
+            print(
+                f"Opening shell in {_printable(container.name)}. "
+                "Exit it to return to the TUI."
+            )
 
             # Calling start() without a command starts the container's login
             # shell. SessionProcess ensures the tracked process tree is reaped.
@@ -581,17 +629,21 @@ def main() -> int:
         return 2
     try:
         # wrapper() initializes curses and always restores the terminal before
-        # propagating an exception to this boundary.
+        # propagating an exception to this boundary. The messages below go
+        # straight to the terminal, so their text is cleaned too.
         curses.wrapper(_curses_main)
     except ProotDistroError as exc:
         operation = exc.operation or "initialize"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(_printable(f"{operation} failed: {exc}"), file=sys.stderr)
         return 1
     except curses.error as exc:
-        print(f"terminal interface failed: {exc}", file=sys.stderr)
+        print(_printable(f"terminal interface failed: {exc}"), file=sys.stderr)
         return 1
     except (OSError, ValueError) as exc:
-        print(f"cannot start terminal interface: {exc}", file=sys.stderr)
+        print(
+            _printable(f"cannot start terminal interface: {exc}"),
+            file=sys.stderr,
+        )
         return 1
     except KeyboardInterrupt:
         print("Interrupted after terminal cleanup.", file=sys.stderr)

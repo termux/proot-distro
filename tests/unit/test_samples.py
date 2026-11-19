@@ -614,6 +614,139 @@ def test_tui_fit_uses_display_width():
     assert module._fit("éx", 2) == "éx"
 
 
+def test_tui_printable_replaces_what_a_terminal_acts_on():
+    module = _load("container_manager_tui")
+
+    assert module._printable(
+        "a\x00b\nc\td\re\bf\x1b[2J\x9b\u202e\u2066\udc80\ue000"
+    ) == "a?b c d e?f?[2J?????"
+    # Printable text, wide and combining characters included, is kept.
+    assert module._printable("alpine:3.21 \u4e2d e\u0301") == (
+        "alpine:3.21 \u4e2d e\u0301"
+    )
+
+
+def test_tui_fit_counts_controls_and_zero_width_marks():
+    module = _load("container_manager_tui")
+
+    assert module._fit("a\nb", 4) == "a b "
+    assert module._fit("ab\x1b", 4) == "ab? "
+    # Marks with no combining class still draw over the previous cell.
+    assert module._fit("a\u20dd", 2) == "a\u20dd "
+    assert module._fit("a\u034fb", 2) == "a\u034fb"
+
+
+def test_tui_draws_every_string_printable_and_within_its_row(monkeypatch):
+    module = _load("container_manager_tui")
+    drawn = []
+
+    class FakeScreen:
+        def keypad(self, enabled):
+            pass
+
+        def timeout(self, value):
+            pass
+
+        def getmaxyx(self):
+            return 24, 80
+
+        def erase(self):
+            pass
+
+        def refresh(self):
+            pass
+
+        def addstr(self, y, x, text, attribute=0):
+            drawn.append((y, x, text))
+
+    class FakeApi:
+        def list_containers(self):
+            return (SimpleNamespace(
+                name="box", image_reference="evil\x00\n\u4e2d" * 30,
+                architecture="x\r\x1b",
+            ),)
+
+    monkeypatch.setattr(module.curses, "has_colors", lambda: False)
+    monkeypatch.setattr(module.curses, "curs_set", lambda value: None)
+    manager = module.ContainerManager(FakeScreen(), FakeApi())
+    manager._reload_containers()
+    manager._handle_event(OperationEvent(
+        "install", EventKind.PROGRESS, "\u4e2d\n" * 80,
+    ))
+
+    assert drawn
+    for y, x, text in drawn:
+        assert text.isprintable(), (y, text)
+        assert x + sum(map(module._cell_width, text)) <= 80, (y, text)
+
+
+def test_tui_cleans_the_error_it_prints_after_curses(monkeypatch, capsys):
+    module = _load("container_manager_tui")
+
+    class Tty:
+        def isatty(self):
+            return True
+
+    def fail(_main):
+        raise module.ProotDistroError("bad\x1b]0;title\x07 value")
+
+    monkeypatch.setattr(module.sys, "stdin", Tty())
+    monkeypatch.setattr(module.sys, "stdout", Tty())
+    monkeypatch.setattr(module.curses, "wrapper", fail)
+
+    assert module.main() == 1
+    assert "bad?]0;title? value" in capsys.readouterr().err
+
+
+def test_tui_cleans_the_name_it_prints_before_a_shell(monkeypatch, capsys):
+    module = _load("container_manager_tui")
+    calls = []
+
+    class FakeScreen:
+        def keypad(self, enabled):
+            pass
+
+        def timeout(self, value):
+            pass
+
+        def getmaxyx(self):
+            return 24, 80
+
+        def clear(self):
+            pass
+
+        def refresh(self):
+            pass
+
+    class FakeProcess:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def wait(self):
+            return 0
+
+    class FakeApi:
+        # An adapted copy may list containers from another source.
+        def start(self, name):
+            calls.append(name)
+            return FakeProcess()
+
+    monkeypatch.setattr(module.curses, "has_colors", lambda: False)
+    for name in ("curs_set", "def_prog_mode", "endwin", "reset_prog_mode",
+                 "noecho", "cbreak"):
+        monkeypatch.setattr(module.curses, name, lambda *args: None)
+    manager = module.ContainerManager(FakeScreen(), FakeApi())
+    manager.containers = [SimpleNamespace(name="box\x1b[2J")]
+    monkeypatch.setattr(manager, "_draw", lambda: None)
+    manager._launch_shell()
+
+    assert calls == ["box\x1b[2J"]
+    assert "Opening shell in box?[2J." in capsys.readouterr().out
+
+
 def test_tui_refuses_to_start_without_a_terminal(monkeypatch, capsys):
     module = _load("container_manager_tui")
 

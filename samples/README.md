@@ -103,7 +103,11 @@ not command-line arguments. This keeps them out of process listings and shell
 history. See that script's module docstring for the variable names.
 
 Do not pass secrets with `--build-arg`: build arguments are visible to `RUN`
-steps and may end up in image history. Text from Docker Hub is cleaned of
-control characters before `list_resources.py` prints it.
+steps and may end up in image history.
+
+Some text comes from third parties: Docker Hub descriptions, and image
+metadata that a container can change. `list_resources.py`,
+`install_and_run.py` and `container_manager_tui.py` replace its control
+characters before showing it.
 
 See the full API guide in [`API.md`](../API.md).
