@@ -29,7 +29,7 @@ import shutil
 import textwrap
 
 from proot_distro.constants import (
-    PROGRAM_NAME, CANONICAL_PROGRAM_NAME, PROGRAM_AUTHOR, PROGRAM_VERSION,
+    PROGRAM_NAME, CANONICAL_PROGRAM_NAME, PROGRAM_AUTHOR, program_version,
 )
 from proot_distro.message import C, msg
 
@@ -278,7 +278,7 @@ def footer(width: int) -> None:
     msg()
     msg(_hrule(width, _RULE_SINGLE, C["CYAN"]))
     paragraph(
-        f"{CANONICAL_PROGRAM_NAME} version '{PROGRAM_VERSION}' by "
+        f"{CANONICAL_PROGRAM_NAME} version '{program_version()}' by "
         f"{PROGRAM_AUTHOR}.",
         width, indent=0, color=C["ICYAN"],
     )

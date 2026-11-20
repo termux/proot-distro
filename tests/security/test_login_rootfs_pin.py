@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro.arch import get_device_cpu_arch
-from proot_distro.commands import login as login_mod
+import proot_distro.operations.session_prepare as login_mod
 from proot_distro.commands.login import command_login
 from proot_distro.paths import container_dir, container_rootfs
 

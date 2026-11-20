@@ -25,7 +25,7 @@ from proot_distro.helpers.build_engine import run_step
 from proot_distro.helpers.build_engine.engine import BuildEngine
 from proot_distro.helpers.build_engine.errors import BuildError
 from proot_distro.helpers.docker import pull as pull_mod
-from proot_distro.helpers.docker import push as push_mod
+from proot_distro.operations import push as push_mod
 from proot_distro.constants import LAYER_CACHE_DIR
 from proot_distro.helpers.docker.cache import (
     blob_present, layer_cache_name, layer_cache_path,
@@ -422,7 +422,7 @@ def test_push_refuses_a_poisoned_layer_blob(builders, monkeypatch):
                         lambda *a, **k: uploaded.append(a))
 
     with pytest.raises(RuntimeError, match="does not match its digest"):
-        push_mod.push_image("reg.example/me/app:latest", "x86_64")
+        push_mod._push_registry_image("reg.example/me/app:latest", "x86_64")
     assert uploaded == []
     # Nothing deleted: a built layer exists nowhere else.
     assert os.path.isfile(layer_cache_path(digest))

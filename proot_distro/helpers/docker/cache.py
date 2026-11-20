@@ -83,6 +83,7 @@ from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_write
 from proot_distro.constants import LAYER_CACHE_DIR, MANIFEST_CACHE_DIR
 from proot_distro.message import warn
+from proot_distro.operation_errors import IntegrityFailure, NotFoundFailure
 from proot_distro.helpers.docker.refs import DOCKER_TO_ARCH, canonical_ref
 
 
@@ -433,7 +434,7 @@ def require_data_digest(data: bytes, digest: str, what: str = "Blob") -> bytes:
     a JSON blob read out of an OCI archive.
     """
     if not data_matches_digest(data, digest):
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"{what} does not match its digest {digest} "
             f"(got sha256:{hashlib.sha256(data).hexdigest()}). "
             f"The content was altered in transit or at rest."
@@ -568,14 +569,14 @@ def open_required_layer(digest: str, *, what: str = "Layer blob") -> int:
     """
     opened = _open_blob(digest)
     if opened is None:
-        raise RuntimeError(
+        raise NotFoundFailure(
             f"{what} {digest} is missing from the layer cache."
         )
     dir_fd, fd = opened
     try:
         if not fd_matches_digest(fd, digest):
             os.close(fd)
-            raise RuntimeError(
+            raise IntegrityFailure(
                 f"{what} {digest} does not match its digest; the layer "
                 f"cache holds content that was not produced by this "
                 f"build. Rebuild the image to repopulate the cache."
@@ -705,6 +706,7 @@ def _read_record(dir_fd: int, name: str, layer_fd=None,
             _text(payload.get("arch")) or arch
             or DOCKER_TO_ARCH.get(_text(image_config.get("architecture")), "")
         ),
+        "config_digest": config_digest,
         "image_id": config_digest.split(":")[-1],
         "layers": layers,
         "size": size,

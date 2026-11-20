@@ -1,0 +1,2534 @@
+import hashlib
+import io
+import inspect
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import threading
+
+import pytest
+
+from proot_distro.api import (
+    API_VERSION,
+    AlreadyExistsError,
+    AuthenticationError,
+    BackupResult,
+    BuildResult,
+    BusyError,
+    CacheCleanupResult,
+    CancellationToken,
+    ContainerInfo,
+    CredentialProvider,
+    CredentialRequest,
+    DetachedSession,
+    EventHandler,
+    EventKind,
+    ImageInfo,
+    ImageRemovalResult,
+    IntegrityError,
+    InvalidArgumentError,
+    NetworkError,
+    NotFoundError,
+    OperationCancelledError,
+    OperationError,
+    OperationEvent,
+    ProotDistro,
+    ProotDistroError,
+    PartialOperationError,
+    PushResult,
+    RegistryCredentials,
+    RestoreResult,
+    RuntimeConfig,
+    SearchHit,
+    SearchResult,
+    SessionInfo,
+    SessionCommand,
+    SessionProcess,
+    SessionSignalResult,
+    SessionStartupTimeoutError,
+    TransferResult,
+    UnsupportedOperationError,
+)
+from proot_distro.api import program
+from proot_distro import _api_session_worker as _session_worker
+from proot_distro import _api_worker as _worker
+from proot_distro.helpers.docker.cache import save_manifest_cache
+from proot_distro.helpers.docker.media import canonical_json
+
+
+_DEEPLY_NESTED_JSON = b"[" * 2000 + b"]" * 2000
+
+
+def test_public_exports_are_explicit():
+    import proot_distro.api as api
+
+    assert set(api.__all__) == {
+        "API_VERSION", "AlreadyExistsError", "AuthenticationError", "BackupResult",
+        "BuildResult", "BusyError", "CacheCleanupResult", "ContainerInfo",
+        "CancellationToken", "CredentialProvider",
+        "CredentialRequest", "DetachedSession", "EventHandler", "EventKind",
+        "ImageInfo",
+        "ImageRemovalResult",
+        "IntegrityError", "InvalidArgumentError", "NetworkError",
+        "NotFoundError", "OperationError", "OperationEvent",
+        "OperationCancelledError", "PartialOperationError", "ProotDistro",
+        "ProotDistroError", "PushResult",
+        "RegistryCredentials", "RestoreResult", "RuntimeConfig", "SearchHit",
+        "SearchResult", "SessionCommand", "SessionInfo", "SessionProcess",
+        "SessionSignalResult", "SessionStartupTimeoutError", "TransferResult",
+        "UnsupportedOperationError",
+    }
+
+
+def test_api_version_is_independent_string_metadata():
+    assert API_VERSION == "1.0"
+
+
+def test_public_protocols_accept_documented_structures():
+    assert isinstance(lambda _event: None, EventHandler)
+    assert isinstance(lambda _request: None, CredentialProvider)
+    assert isinstance(threading.Event(), CancellationToken)
+
+
+def test_public_models_copy_mutable_collections():
+    command = ["/bin/sh"]
+    hits = [SearchHit("alpine", "small", 1, 2, True, False)]
+    image = ImageInfo(
+        "alpine:latest", "alpine:latest", "library/alpine", "x86_64",
+        None, 1, 1, 0, None, 1.0,
+    )
+    images = [image]
+    outputs = [None]
+    removed = [image]
+    pids = [123]
+    argv = ["/usr/bin/proot"]
+    environment = [["HOME", "/root"]]
+    inner_command = ["/bin/sh"]
+    session = SessionInfo(
+        123, "box", "login", command, "root", 1.0, False, False, False
+    )
+    result = SearchResult("alpine", 1, hits)
+    build = BuildResult(images, outputs, None)
+    removal = ImageRemovalResult(removed)
+    signal_result = SessionSignalResult("123", "SIGTERM", pids)
+    inspected = SessionCommand(
+        "login", "box", "/usr/bin/proot", argv, environment,
+        inner_command, "/rootfs", "/root", "root", '"/usr/bin/proot"',
+    )
+
+    command.append("changed")
+    hits.clear()
+    images.clear()
+    outputs.clear()
+    removed.clear()
+    pids.clear()
+    argv.append("changed")
+    environment[0][1] = "changed"
+    inner_command.append("changed")
+
+    assert session.command == ("/bin/sh",)
+    assert result.hits == (SearchHit("alpine", "small", 1, 2, True, False),)
+    assert build.images == (image,)
+    assert build.outputs == (None,)
+    assert removal.removed == (image,)
+    assert signal_result.pids == (123,)
+    assert inspected.argv == ("/usr/bin/proot",)
+    assert inspected.environment == (("HOME", "/root"),)
+    assert inspected.inner_command == ("/bin/sh",)
+
+
+def test_import_does_not_change_process_umask():
+    code = """
+import os
+os.umask(0o077)
+import proot_distro.api
+observed = os.umask(0o077)
+raise SystemExit(0 if observed == 0o077 else 1)
+"""
+    result = subprocess.run([sys.executable, "-c", code], check=False)
+    assert result.returncode == 0
+
+
+def test_constructor_rejects_non_callable_event_handler():
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro(event_handler="print")
+    assert exc.value.operation == "initialize"
+
+
+def test_constructor_rejects_unknown_config_type():
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro(config={})
+    assert exc.value.operation == "initialize"
+
+
+def test_registry_credentials_hide_password_from_repr():
+    credentials = RegistryCredentials("alice", "very-secret")
+    assert credentials.username == "alice"
+    assert credentials.password == "very-secret"
+    assert "very-secret" not in repr(credentials)
+
+
+@pytest.mark.parametrize("username,password", [
+    ("", "secret"),
+    ("user:name", "secret"),
+    ("alice", ""),
+    ("alice\0", "secret"),
+    ("alice", "secret\0"),
+])
+def test_registry_credentials_validate_fields(username, password):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RegistryCredentials(username, password)
+    assert exc.value.operation == "configure"
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"credentials": "alice:secret"},
+    {"credential_provider": "provider"},
+    {
+        "credentials": RegistryCredentials("alice", "secret"),
+        "credential_provider": lambda _request: None,
+    },
+])
+def test_constructor_validates_credential_configuration(kwargs):
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro(**kwargs)
+    assert exc.value.operation == "initialize"
+
+
+def test_runtime_config_normalizes_paths(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = RuntimeConfig("state", "cache", "bin/proot")
+
+    assert config.runtime_dir == os.path.join(str(tmp_path), "state")
+    assert config.cache_dir == os.path.join(str(tmp_path), "cache")
+    assert config.proot_path == os.path.join(str(tmp_path), "bin", "proot")
+    assert ProotDistro(config).config is config
+
+
+@pytest.mark.parametrize("runtime,cache", [
+    ("", "cache"),
+    ("state", ""),
+    (os.path.sep, "cache"),
+    ("state", os.path.sep),
+    ("same", "same"),
+    ("cache/state", "cache"),
+    ("bad\0state", "cache"),
+])
+def test_runtime_config_rejects_unsafe_roots(runtime, cache):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RuntimeConfig(runtime, cache)
+    assert exc.value.operation == "configure"
+
+
+def test_runtime_config_rejects_invalid_proot_path(tmp_path):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RuntimeConfig(tmp_path / "state", tmp_path / "cache", "bad\0proot")
+    assert exc.value.operation == "configure"
+
+
+def test_worker_environment_carries_runtime_config(tmp_path):
+    config = RuntimeConfig(
+        tmp_path / "state", tmp_path / "cache", tmp_path / "proot"
+    )
+    env = program._worker_environment(config)
+
+    assert env["_PROOT_DISTRO_API_RUNTIME_DIR"] == config.runtime_dir
+    assert env["_PROOT_DISTRO_API_CACHE_DIR"] == config.cache_dir
+    assert env["PD_PROOT_BIN"] == config.proot_path
+
+
+def test_worker_environment_does_not_inherit_cli_credentials(tmp_path,
+                                                             monkeypatch):
+    monkeypatch.setenv("PD_DOCKER_AUTH", "ambient:secret")
+    config = RuntimeConfig(tmp_path / "state", tmp_path / "cache")
+    assert "PD_DOCKER_AUTH" not in program._worker_environment(config)
+
+
+def test_operation_worker_ignores_startup_hooks_and_cwd_package_shadow(
+        tmp_path, monkeypatch):
+    site_marker = tmp_path / "worker-sitecustomize-ran"
+    shadow_marker = tmp_path / "worker-shadow-package-loaded"
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(site_marker)!r}).write_text('loaded')\n"
+    )
+    working = tmp_path / "working"
+    shadow = working / "proot_distro"
+    shadow.mkdir(parents=True)
+    (shadow / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(shadow_marker)!r}).write_text('loaded')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(hooks))
+    monkeypatch.setenv("PYTHONINSPECT", "1")
+    monkeypatch.chdir(working)
+
+    assert ProotDistro().list_containers() == ()
+    assert not site_marker.exists()
+    assert not shadow_marker.exists()
+
+
+def test_empty_inventories_return_tuples(capsys):
+    pd = ProotDistro()
+
+    assert pd.list_containers() == ()
+    assert pd.list_images() == ()
+    assert pd.list_sessions() == ()
+    assert capsys.readouterr() == ("", "")
+
+
+def test_container_inventory_returns_recorded_origin(builders):
+    digest = "sha256:" + "ab" * 32
+    manifest = builders.simple_image_manifest("example/app:1", "aarch64")
+    manifest["manifest"]["config"] = {"digest": digest}
+    builders.make_container("app", arch="aarch64", manifest=manifest)
+
+    assert ProotDistro().list_containers() == (
+        ContainerInfo("app", "example/app:1", "aarch64", digest),
+    )
+
+
+def test_plain_container_has_no_image_metadata(builders):
+    builders.make_container("plain")
+    assert ProotDistro().list_containers() == (
+        ContainerInfo("plain", None, None, None),
+    )
+
+
+def test_image_inventory_returns_immutable_model(builders):
+    layer_digest, layer_size, _diff_id = builders.seed_cached_layer([
+        {"name": "file", "type": "file", "data": b"layer data"},
+    ])
+    layer = {"digest": layer_digest, "size": layer_size}
+    config = {"architecture": "amd64", "created": "2026-01-02T03:04:05Z"}
+    config_bytes = canonical_json(config)
+    digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+    manifest = {
+        "schemaVersion": 2,
+        "config": {"digest": digest, "size": len(config_bytes)},
+        "layers": [layer],
+    }
+    save_manifest_cache("example/app:1", "x86_64", manifest,
+                        "example/app", config)
+
+    images = ProotDistro().list_images()
+
+    assert len(images) == 1
+    image = images[0]
+    assert isinstance(image, ImageInfo)
+    assert image.identifier == "example/app:1"
+    assert image.reference == "example/app:1"
+    assert image.architecture == "x86_64"
+    assert image.image_id == digest
+    assert image.size_bytes == layer["size"]
+    assert image.layer_count == 1
+    assert image.missing_layers == 0
+    assert image.complete is True
+    with pytest.raises(AttributeError):
+        image.identifier = "changed"
+
+
+def test_session_inventory_copies_mutable_command(monkeypatch):
+    command = ["/bin/sh", "-l"]
+    monkeypatch.setattr(program, "_run_worker", lambda *_args, **_kwargs: {
+        "items": [{
+            "pid": 123,
+            "container": "box",
+            "kind": "login",
+            "command": command,
+            "user": "root",
+            "start_time": 10.5,
+            "isolated": True,
+            "minimal": False,
+            "detached": True,
+        }],
+    })
+
+    sessions = ProotDistro().list_sessions()
+    command.append("changed")
+
+    assert sessions == (
+        SessionInfo(123, "box", "login", ("/bin/sh", "-l"), "root",
+                    10.5, True, False, True),
+    )
+
+
+@pytest.mark.parametrize("query", [None, 1, [], "", "   ", "bad\udcff"])
+def test_search_rejects_invalid_query(query):
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().search(query)
+    assert exc.value.operation == "search"
+
+
+@pytest.mark.parametrize("limit", [True, 1.5, "2", 0, 1001])
+def test_search_rejects_invalid_limit(limit):
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().search("alpine", limit=limit)
+    assert exc.value.operation == "search"
+
+
+def test_search_returns_models_without_printing(monkeypatch, capsys):
+    monkeypatch.setattr(program, "search_images", lambda query, limit, **kw: (
+        [{"name": "alpine", "description": "small", "stars": 7,
+          "pulls": 11, "official": True, "automated": False}],
+        20,
+    ))
+
+    result = ProotDistro().search(" alpine ", limit=3)
+
+    assert result == SearchResult(
+        query="alpine",
+        total=20,
+        hits=(SearchHit("alpine", "small", 7, 11, True, False),),
+    )
+    assert capsys.readouterr() == ("", "")
+
+
+def test_search_forwards_retry_as_event(monkeypatch):
+    events = []
+
+    def fake_search(query, limit, *, on_retry):
+        on_retry("retry notice")
+        return [], 0
+
+    monkeypatch.setattr(program, "search_images", fake_search)
+    result = ProotDistro(event_handler=events.append).search("none")
+
+    assert result.hits == ()
+    assert events == [OperationEvent(
+        "search", EventKind.RETRY, "retry notice",
+        phase="network", resource="none",
+    )]
+
+
+def test_search_suppresses_retry_without_handler(monkeypatch):
+    def fake_search(query, limit, *, on_retry):
+        assert on_retry is None
+        return [], 0
+
+    monkeypatch.setattr(program, "search_images", fake_search)
+    ProotDistro().search("none")
+
+
+def _answer_credential_request(provider, operation, registry,
+                               repository="library/alpine"):
+    """Serve one worker credential request; return the decoded answer."""
+    parent, child = socket.socketpair()
+    try:
+        raw = json.dumps({
+            "registry": registry, "repository": repository,
+            "actions": "pull",
+        }).encode()
+        program._handle_credential_request(raw, parent, provider, operation)
+        return json.loads(child.recv(65536))
+    finally:
+        parent.close()
+        child.close()
+
+
+def test_install_serves_provider_over_channel_without_secret_in_request(
+        monkeypatch):
+    requests = []
+    worker_calls = []
+
+    def provider(request):
+        requests.append(request)
+        return RegistryCredentials("alice", "secret")
+
+    def worker(operation, options, _config, _events, credential_provider,
+               *_args, **_kwargs):
+        worker_calls.append((operation, options, credential_provider))
+        if operation == "install":
+            return {"container": {
+                "name": "alpine", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
+        return {"items": [{
+            "name": "alpine", "image_reference": "alpine:latest",
+            "architecture": "x86_64", "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    result = ProotDistro(credential_provider=provider).install("alpine")
+
+    assert result.name == "alpine"
+    operation, options, served = worker_calls[0]
+    assert operation == "install"
+    # The request a worker reads never carries a secret; credentials are
+    # asked for by registry name while it runs.
+    assert "credentials" not in options
+    assert "secret" not in json.dumps(options)
+    assert served is provider
+    assert requests == []
+    answer = _answer_credential_request(served, "install", "Docker.IO")
+    assert answer == {"credentials": {
+        "username": "alice", "password": "secret",
+    }}
+    assert requests == [CredentialRequest(
+        registry="docker.io",
+        repository="library/alpine",
+        operation="install",
+    )]
+
+
+def test_credential_provider_is_not_called_for_local_install(tmp_path,
+                                                             monkeypatch):
+    archive = tmp_path / "rootfs.tar"
+
+    def provider(_request):
+        pytest.fail("local installs must not request registry credentials")
+
+    def worker(operation, _options, *_args, **_kwargs):
+        if operation == "install":
+            return {"container": {
+                "name": "local", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
+        return {"items": [{
+            "name": "local", "image_reference": None,
+            "architecture": None, "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    ProotDistro(credential_provider=provider).install(archive, name="local")
+
+
+def test_credential_provider_must_return_credentials():
+    parent, child = socket.socketpair()
+    try:
+        with pytest.raises(InvalidArgumentError) as exc:
+            program._handle_credential_request(
+                json.dumps({
+                    "registry": "docker.io", "repository": "library/alpine",
+                    "actions": "pull",
+                }).encode(),
+                parent, lambda _request: "alice:secret", "install",
+            )
+        # The worker is told the provider failed, not left waiting.
+        assert json.loads(child.recv(65536)) == {
+            "error": "credential provider failed",
+        }
+    finally:
+        parent.close()
+        child.close()
+    assert exc.value.operation == "install"
+
+
+def test_provider_credentials_scoped_elsewhere_are_not_sent():
+    def provider(_request):
+        return RegistryCredentials("alice", "secret", registry="ghcr.io")
+
+    assert _answer_credential_request(provider, "build", "docker.io") == {
+        "credentials": None,
+    }
+    assert _answer_credential_request(provider, "build", "GHCR.io") == {
+        "credentials": {"username": "alice", "password": "secret"},
+    }
+
+
+def test_unscoped_static_credentials_answer_only_the_named_registry(
+        monkeypatch):
+    served = []
+
+    def worker(operation, options, _config, _events, credential_provider,
+               *_args, **_kwargs):
+        if operation == "install":
+            served.append(credential_provider)
+            return {"container": {
+                "name": "app", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
+        return {"items": [{
+            "name": "app", "image_reference": "ghcr.io/me/app:1",
+            "architecture": "x86_64", "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    ProotDistro(credentials=RegistryCredentials("alice", "secret")).install(
+        "GHCR.io/me/app:1"
+    )
+
+    assert _answer_credential_request(
+        served[0], "install", "ghcr.io", "me/app"
+    )["credentials"] == {"username": "alice", "password": "secret"}
+    # Docker Hub (a token realm, a mirror, anything else) gets nothing.
+    assert _answer_credential_request(
+        served[0], "install", "docker.io"
+    ) == {"credentials": None}
+
+
+@pytest.mark.parametrize("method,call", [
+    ("build", lambda pd, path: pd.build(path, tags=["x:1"])),
+    ("reset_container", lambda pd, _path: pd.reset_container("box")),
+])
+def test_unscoped_static_credentials_are_refused_where_registries_are_not_named(
+        method, call, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        program, "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail("worker should not start"),
+    )
+    pd = ProotDistro(credentials=RegistryCredentials("alice", "secret"))
+    with pytest.raises(InvalidArgumentError) as exc:
+        call(pd, tmp_path)
+    assert exc.value.operation == method
+    assert "registry=" in str(exc.value)
+    assert "secret" not in str(exc.value)
+
+
+def test_build_credentials_override_must_also_be_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        program, "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail("worker should not start"),
+    )
+    with pytest.raises(InvalidArgumentError):
+        ProotDistro().build(
+            tmp_path, tags=["x:1"],
+            credentials=RegistryCredentials("alice", "secret"),
+        )
+
+
+def test_reset_asks_for_credentials_while_the_worker_runs(monkeypatch):
+    calls = []
+
+    def provider(_request):
+        return RegistryCredentials("alice", "secret")
+
+    def worker(operation, options, _config, _events, credential_provider,
+               *_args, **_kwargs):
+        calls.append((operation, options, credential_provider))
+        if operation == "reset_container":
+            return {"container": {
+                "name": "box", "image_reference": None,
+                "architecture": None, "image_id": None,
+            }}
+        return {"items": [{
+            "name": "box", "image_reference": "ghcr.io/example/private:1",
+            "architecture": "x86_64", "image_id": None,
+        }]}
+
+    monkeypatch.setattr(program, "_run_worker", worker)
+    result = ProotDistro(credential_provider=provider).reset_container("box")
+
+    assert result.name == "box"
+    # The reset worker is the first one: nothing read the guest-writable
+    # manifest beforehand to choose credentials for it.
+    assert calls[0] == ("reset_container", {"name": "box"}, provider)
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("GHCR.io", "ghcr.io"),
+    ("docker.io", "docker.io"),
+    ("index.docker.io", "docker.io"),
+    ("localhost:5000", "localhost:5000"),
+    ("[::1]:5000", "[::1]:5000"),
+])
+def test_registry_credentials_normalize_their_scope(value, expected):
+    credentials = RegistryCredentials("alice", "secret", registry=value)
+    assert credentials.registry == expected
+    assert "secret" not in repr(credentials)
+
+
+@pytest.mark.parametrize("value", [
+    "", "https://ghcr.io", "ghcr.io/team", "ghcr.io:99999", "bad host", 5,
+])
+def test_registry_credentials_reject_malformed_scope(value):
+    with pytest.raises(InvalidArgumentError) as exc:
+        RegistryCredentials("alice", "secret", registry=value)
+    assert exc.value.operation == "configure"
+
+
+def test_search_translates_network_error(monkeypatch):
+    def fail(*args, **kwargs):
+        from urllib.error import URLError
+        raise URLError("offline")
+
+    monkeypatch.setattr(program, "search_images", fail)
+    with pytest.raises(NetworkError) as exc:
+        ProotDistro().search("alpine")
+    assert exc.value.operation == "search"
+
+
+def test_search_translates_operation_error(monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("bad response")
+
+    monkeypatch.setattr(program, "search_images", fail)
+    with pytest.raises(OperationError) as exc:
+        ProotDistro().search("alpine")
+    assert exc.value.operation == "search"
+
+
+def test_search_http_refusal_is_a_network_error(monkeypatch):
+    """Regression: HTTP 429/5xx from Hub are retryable network failures."""
+    from urllib.error import HTTPError
+
+    def fail(*args, **kwargs):
+        cause = HTTPError("https://hub.test", 429, "Too Many", None, None)
+        raise RuntimeError("Docker Hub refused: HTTP 429.") from cause
+
+    monkeypatch.setattr(program, "search_images", fail)
+    with pytest.raises(NetworkError) as exc:
+        ProotDistro().search("alpine")
+    assert exc.value.operation == "search"
+
+
+def test_public_errors_share_one_base():
+    assert issubclass(AlreadyExistsError, ProotDistroError)
+    assert issubclass(AuthenticationError, ProotDistroError)
+    assert issubclass(BusyError, ProotDistroError)
+    assert issubclass(IntegrityError, ProotDistroError)
+    assert issubclass(InvalidArgumentError, ProotDistroError)
+    assert issubclass(NetworkError, ProotDistroError)
+    assert issubclass(NotFoundError, ProotDistroError)
+    assert issubclass(OperationError, ProotDistroError)
+    assert issubclass(OperationCancelledError, OperationError)
+    assert issubclass(PartialOperationError, ProotDistroError)
+    assert issubclass(UnsupportedOperationError, ProotDistroError)
+    assert issubclass(SessionStartupTimeoutError, OperationError)
+
+
+@pytest.mark.parametrize("kind,exception_type", [
+    ("already_exists", AlreadyExistsError),
+    ("authentication", AuthenticationError),
+    ("busy", BusyError),
+    ("integrity", IntegrityError),
+    ("network", NetworkError),
+    ("not_found", NotFoundError),
+    ("operation", OperationError),
+    ("partial", PartialOperationError),
+    ("unsupported", UnsupportedOperationError),
+])
+def test_structured_worker_error_mapping(kind, exception_type):
+    payload = (
+        '{"_error":{"kind":"' + kind + '","message":"detail"}}'
+    ).encode()
+    error = program._structured_worker_error("test", payload)
+    assert isinstance(error, exception_type)
+    assert error.operation == "test"
+
+
+# A worker message that interpolated someone else's text raw: an OSC that
+# retitles the terminal, a C1 CSI, and a right-to-left override.
+_HOSTILE_TEXT = "x\x1b]0;pwned\x07\x9b2J\u202ey"
+_ESCAPED_TEXT = "x\\e]0;pwned\\x07\\x9b2J\\u202ey"
+
+
+def test_structured_worker_error_escapes_the_message():
+    # Regression: the message became the exception's text as it was, and
+    # some worker paths (a busy lock's holder, the last error before a
+    # sys.exit()) never quoted what they put in it.
+    payload = json.dumps({"_error": {
+        "kind": "busy", "message": _HOSTILE_TEXT,
+    }}).encode()
+    error = program._structured_worker_error("test", payload)
+    assert str(error) == _ESCAPED_TEXT
+
+
+@pytest.mark.parametrize("error_type", [
+    AlreadyExistsError, AuthenticationError, BusyError, IntegrityError,
+    InvalidArgumentError, NetworkError, NotFoundError, OperationError,
+    OperationCancelledError, PartialOperationError, ProotDistroError,
+    SessionStartupTimeoutError, UnsupportedOperationError,
+])
+def test_every_api_error_escapes_its_message(error_type):
+    # The base class escapes, so no path that builds an error -- in the
+    # worker or here -- can hand a caller raw escape sequences.
+    error = error_type(_HOSTILE_TEXT, operation="test")
+    assert str(error) == _ESCAPED_TEXT
+    assert error.operation == "test"
+
+
+def test_worker_stderr_is_escaped_into_the_error():
+    # The last line of a traceback quotes an exception's str().
+    stderr = (
+        "Traceback (most recent call last):\n  File \"x\"\n"
+        f"RuntimeError: {_HOSTILE_TEXT}\n"
+    ).encode("utf-8")
+    error = program._worker_error("test", stderr)
+    assert str(error) == f"test worker failed: RuntimeError: {_ESCAPED_TEXT}"
+    plain = program._worker_error("test", _HOSTILE_TEXT.encode("utf-8"))
+    assert str(plain) == _ESCAPED_TEXT
+
+
+def test_worker_event_messages_are_escaped():
+    event = program._operation_event("push", json.dumps({
+        "kind": "warning", "message": _HOSTILE_TEXT,
+    }).encode())
+    assert event.message == _ESCAPED_TEXT
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"{}",
+    b'{"_error":null}',
+    b'{"_error":{"kind":"unknown","message":"detail"}}',
+    b'{"_error":{"kind":"operation","message":""}}',
+    b'{"_error":{"kind":"operation","message":1}}',
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_structured_worker_error_rejects_malformed_envelopes(payload):
+    assert program._structured_worker_error("test", payload) is None
+
+
+def _mock_worker_result(monkeypatch, stdout, *, returncode=0, stderr=b""):
+    class Process:
+        pid = 321
+
+        def __init__(self):
+            self.returncode = returncode
+
+        def wait(self):
+            return self.returncode
+
+    def communicate(
+        _process, _request, event_fd, _handler, _operation, **_kwargs
+    ):
+        os.close(event_fd)
+        return stdout, stderr
+
+    monkeypatch.setattr(program.subprocess, "Popen", lambda *_a, **_k: Process())
+    monkeypatch.setattr(program, "_communicate_with_channels", communicate)
+    return program._run_worker("list_images", {})
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"not json",
+    b'{"_events":null}',
+    b'{"_events":[{"kind":"info","message":"late"}]}',
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_worker_result_rejects_malformed_documents(monkeypatch, payload):
+    with pytest.raises(OperationError) as exc:
+        _mock_worker_result(monkeypatch, payload)
+
+    assert exc.value.operation == "list_images"
+    assert "Traceback" not in str(exc.value)
+
+
+def test_blocked_input_stream_does_not_hang_finished_worker(monkeypatch):
+    """Regression: a never-EOF input stream must not hang the call."""
+    release = threading.Event()
+
+    class Blocked:
+        def read(self, _size):
+            release.wait(30)
+            return b""
+
+    class Process:
+        pid = 321
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def communicate(
+        _process, _request, event_fd, _handler, _operation, **_kwargs
+    ):
+        os.close(event_fd)
+        return b"{}", b""
+
+    monkeypatch.setattr(program, "_INPUT_PUMP_JOIN_SECONDS", 0.05)
+    monkeypatch.setattr(
+        program.subprocess, "Popen", lambda *_a, **_k: Process()
+    )
+    monkeypatch.setattr(program, "_communicate_with_channels", communicate)
+    finished = {}
+
+    def call():
+        try:
+            finished["result"] = program._run_worker(
+                "restore", {}, input_streams={"input": Blocked()}
+            )
+        except BaseException as exc:
+            finished["error"] = exc
+
+    thread = threading.Thread(target=call, daemon=True)
+    thread.start()
+    try:
+        thread.join(5)
+        assert not thread.is_alive(), "call hung on a blocked input stream"
+        assert finished.get("result") == {}
+    finally:
+        release.set()
+
+
+def test_worker_result_accepts_document_at_size_limit(monkeypatch):
+    prefix = b'{"value":1}'
+    payload = prefix + b" " * (program._MAX_WORKER_RESULT_BYTES - len(prefix))
+
+    result = _mock_worker_result(monkeypatch, payload)
+
+    assert result == {"value": 1}
+
+
+def test_worker_result_rejects_document_over_size_limit(monkeypatch):
+    prefix = b'{"value":1}'
+    payload = prefix + b" " * (
+        program._MAX_WORKER_RESULT_BYTES + 1 - len(prefix)
+    )
+
+    with pytest.raises(OperationError) as exc:
+        _mock_worker_result(monkeypatch, payload)
+
+    assert exc.value.operation == "list_images"
+    assert "oversized result" in str(exc.value)
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"not json",
+    b"\xff",
+    b"{}",
+    b'{"operation":"list_images","options":[]}',
+    b'{"operation":"unknown","options":{}}',
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_worker_rejects_malformed_request_document(monkeypatch, payload):
+    class Input:
+        buffer = io.BytesIO(payload)
+
+    monkeypatch.setattr(_worker.sys, "stdin", Input())
+
+    with pytest.raises((ValueError, UnicodeDecodeError, RecursionError)):
+        _worker._read_request()
+
+
+def test_worker_rejects_oversized_request_document(monkeypatch):
+    payload = b"x" * (_worker._MAX_INPUT_BYTES + 1)
+
+    class Input:
+        buffer = io.BytesIO(payload)
+
+    monkeypatch.setattr(_worker.sys, "stdin", Input())
+
+    with pytest.raises(ValueError) as exc:
+        _worker._read_request()
+
+    assert "too large" in str(exc.value)
+
+
+def test_worker_rejects_unknown_operation_without_traceback():
+    with pytest.raises(OperationError) as exc:
+        program._run_worker("unknown", {})
+    assert exc.value.operation == "unknown"
+    assert "not valid" in str(exc.value)
+    assert "Traceback" not in str(exc.value)
+
+
+def test_credential_service_rejects_malformed_request_without_deadlock():
+    parent, worker = socket.socketpair()
+    try:
+        worker.sendall(b"not json\n")
+        error = program._serve_credential_requests(
+            parent, lambda _request: None, "build"
+        )
+        response = worker.recv(4096)
+    finally:
+        parent.close()
+        worker.close()
+
+    assert isinstance(error, OperationError)
+    assert b"credential provider failed" in response
+
+
+@pytest.mark.parametrize("raw_request", [
+    b"",
+    b"[]",
+    b"{}",
+    b'{"registry":null,"repository":"team/app","actions":"pull"}',
+    b'{"registry":"example.test","repository":"","actions":"pull"}',
+    b'{"registry":"example.test","repository":"team/app","actions":[]}',
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_credential_request_rejects_malformed_fields(raw_request):
+    parent, worker = socket.socketpair()
+    called = []
+    try:
+        with pytest.raises(OperationError) as exc:
+            program._handle_credential_request(
+                raw_request, parent, called.append, "push"
+            )
+        response = worker.recv(4096)
+    finally:
+        parent.close()
+        worker.close()
+
+    assert exc.value.operation == "push"
+    assert called == []
+    assert b"credential provider failed" in response
+
+
+def test_credential_request_service_rejects_truncated_frame():
+    parent, worker = socket.socketpair()
+    try:
+        worker.sendall(b'{"registry":"example.test"}')
+        worker.shutdown(socket.SHUT_WR)
+        error = program._serve_credential_requests(
+            parent, lambda _request: None, "build"
+        )
+    finally:
+        parent.close()
+        worker.close()
+
+    assert isinstance(error, OperationError)
+    assert error.operation == "build"
+    assert "truncated request" in str(error)
+
+
+def test_credential_request_service_rejects_oversized_frame():
+    parent, worker = socket.socketpair()
+    response = []
+
+    def send_request():
+        try:
+            worker.sendall(b"x" * (program._MAX_CREDENTIAL_FRAME_BYTES + 1))
+            response.append(worker.recv(4096))
+        finally:
+            worker.close()
+
+    sender = threading.Thread(target=send_request)
+    sender.start()
+    try:
+        error = program._serve_credential_requests(
+            parent, lambda _request: None, "install"
+        )
+    finally:
+        parent.close()
+        sender.join(5)
+
+    assert not sender.is_alive()
+    assert isinstance(error, OperationError)
+    assert error.operation == "install"
+    assert "too large" in str(error)
+    assert response and b"credential provider failed" in response[0]
+
+
+def _credential_response(response):
+    parent, worker = socket.socketpair()
+
+    def serve():
+        try:
+            request = bytearray()
+            while b"\n" not in request:
+                chunk = worker.recv(4096)
+                if not chunk:
+                    return
+                request.extend(chunk)
+            if response:
+                worker.sendall(response)
+        finally:
+            worker.close()
+
+    server = threading.Thread(target=serve)
+    server.start()
+    channel = _worker._CredentialChannel(parent.detach())
+    try:
+        return channel("example.test", "team/app", "pull")
+    finally:
+        channel.close()
+        server.join(5)
+        assert not server.is_alive()
+
+
+@pytest.mark.parametrize("response,detail", [
+    (b"not json\n", "invalid"),
+    (b"[]\n", "invalid"),
+    (b'{"error":"no"}\n', "failed"),
+    (b'{"credentials":[]}\n', "invalid"),
+    (b'{"credentials":{"username":1,"password":"secret"}}\n', "invalid"),
+    (b'{"credentials":{"username":"alice","password":null}}\n', "invalid"),
+    (b"\xff\n", "invalid"),
+    pytest.param(
+        _DEEPLY_NESTED_JSON + b"\n", "invalid", id="deeply-nested"
+    ),
+])
+def test_worker_rejects_malformed_credential_response(response, detail):
+    with pytest.raises(RuntimeError) as exc:
+        _credential_response(response)
+
+    assert detail in str(exc.value)
+
+
+def test_worker_rejects_truncated_credential_response():
+    with pytest.raises(RuntimeError) as exc:
+        _credential_response(b'{"credentials":null}')
+
+    assert "closed" in str(exc.value)
+
+
+def test_worker_rejects_oversized_credential_response():
+    response = b"x" * (_worker._MAX_CREDENTIAL_RESPONSE_BYTES + 1)
+
+    with pytest.raises(RuntimeError) as exc:
+        _credential_response(response)
+
+    assert "too large" in str(exc.value)
+
+
+def test_worker_event_frame_preserves_progress_context():
+    event = program._operation_event("push", json.dumps({
+        "kind": "progress",
+        "message": "uploading",
+        "current": 10,
+        "total": 20,
+        "unit": "bytes",
+        "phase": "upload",
+        "resource": "sha256:abc",
+    }).encode())
+
+    assert event == OperationEvent(
+        "push", EventKind.PROGRESS, "uploading", 10, 20, "bytes",
+        "upload", "sha256:abc",
+    )
+
+
+def test_worker_event_frame_rejects_invalid_context():
+    with pytest.raises(OperationError) as exc:
+        program._operation_event("copy", b'{"kind":"info","message":1}')
+
+    assert exc.value.operation == "copy"
+
+
+def _read_worker_event_channel(monkeypatch, payload):
+    event_read, event_write = os.pipe()
+    finished = threading.Event()
+
+    def write_events():
+        try:
+            program._write_all(event_write, payload)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(event_write)
+            finished.set()
+
+    writer = threading.Thread(target=write_events)
+    writer.start()
+
+    class Process:
+        pid = 321
+
+        def communicate(self, _request):
+            assert finished.wait(5)
+            return b"{}", b""
+
+    monkeypatch.setattr(program.os, "killpg", lambda *_args: None)
+    try:
+        return program._communicate_with_channels(
+            Process(), b"{}", event_read, None, "copy"
+        )
+    finally:
+        writer.join(5)
+        assert not writer.is_alive()
+
+
+@pytest.mark.parametrize("payload", [
+    b"\n",
+    b"not json\n",
+    b"[]\n",
+    b"{}\n",
+    b'{"kind":"unknown","message":"text"}\n',
+    b'{"kind":"info","message":null}\n',
+    b'{"kind":"progress","message":"x","current":true}\n',
+    b'{"kind":"progress","message":"x","total":1.5}\n',
+    b'{"kind":"info","message":"x","phase":1}\n',
+    b'{"kind":"info","message":"x","resource":[]}\n',
+    b"\xff\n",
+    pytest.param(
+        _DEEPLY_NESTED_JSON + b"\n", id="deeply-nested"
+    ),
+])
+def test_worker_event_channel_rejects_malformed_frames(monkeypatch, payload):
+    with pytest.raises(OperationError) as exc:
+        _read_worker_event_channel(monkeypatch, payload)
+
+    assert exc.value.operation == "copy"
+    assert "invalid event" in str(exc.value)
+
+
+def test_worker_event_channel_rejects_truncated_frame(monkeypatch):
+    with pytest.raises(OperationError) as exc:
+        _read_worker_event_channel(
+            monkeypatch, b'{"kind":"info","message":"partial"}'
+        )
+
+    assert exc.value.operation == "copy"
+    assert "truncated event" in str(exc.value)
+
+
+def test_worker_event_channel_rejects_oversized_frame(monkeypatch):
+    payload = b"x" * (program._MAX_WORKER_EVENT_BYTES + 1)
+
+    with pytest.raises(OperationError) as exc:
+        _read_worker_event_channel(monkeypatch, payload)
+
+    assert exc.value.operation == "copy"
+    assert "oversized event" in str(exc.value)
+
+
+def test_worker_event_writer_truncates_oversized_message():
+    """Regression: an oversized message is shortened, not fatal."""
+    read_fd, write_fd = os.pipe()
+    try:
+        _worker._write_event(write_fd, {
+            "kind": "info",
+            "message": "\u00e9" * _worker._MAX_EVENT_BYTES,
+            "phase": "install",
+        })
+        os.close(write_fd)
+        write_fd = None
+        frame = os.read(read_fd, _worker._MAX_EVENT_BYTES + 100)
+    finally:
+        os.close(read_fd)
+        if write_fd is not None:
+            os.close(write_fd)
+
+    assert 0 < len(frame) <= _worker._MAX_EVENT_BYTES
+    event = json.loads(frame)
+    assert event["message"].endswith("[truncated]")
+    assert event["phase"] == "install"
+
+
+def test_worker_event_writer_rejects_unshrinkable_frame():
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            _worker._write_event(write_fd, {
+                "kind": "info",
+                "message": "x",
+                "resource": "r" * _worker._MAX_EVENT_BYTES,
+            })
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert "too large" in str(exc.value)
+
+
+def test_slow_event_handler_applies_backpressure_and_recovers():
+    event_read, event_write = os.pipe()
+    entered = threading.Event()
+    release = threading.Event()
+    writer_finished = threading.Event()
+    call_finished = threading.Event()
+    events = []
+    result = {}
+    frame = (
+        b'{"kind":"info","message":"event payload for backpressure"}\n'
+    )
+    frame_count = 20000
+
+    def write_events():
+        try:
+            program._write_all(event_write, frame * frame_count)
+        finally:
+            os.close(event_write)
+            writer_finished.set()
+
+    writer = threading.Thread(target=write_events)
+    writer.start()
+
+    class Process:
+        pid = 321
+
+        def communicate(self, _request):
+            assert writer_finished.wait(10)
+            return b"{}", b""
+
+    def handle(event):
+        events.append(event)
+        if len(events) == 1:
+            entered.set()
+            assert release.wait(10)
+
+    def call():
+        try:
+            result["streams"] = program._communicate_with_channels(
+                Process(), b"{}", event_read, handle, "copy"
+            )
+        except BaseException as exc:
+            result["error"] = exc
+        finally:
+            call_finished.set()
+
+    caller = threading.Thread(target=call)
+    caller.start()
+    try:
+        assert entered.wait(5)
+        assert not writer_finished.wait(0.1)
+        assert not call_finished.is_set()
+    finally:
+        release.set()
+    caller.join(15)
+    writer.join(15)
+
+    assert not caller.is_alive()
+    assert not writer.is_alive()
+    assert "error" not in result
+    assert result["streams"] == (b"{}", b"")
+    assert len(events) == frame_count
+
+
+def _unwinding_worker(monkeypatch, cleanup_frames, linger=0.0):
+    """A worker that reports *cleanup_frames* events once it gets SIGINT.
+
+    It then stays for *linger* seconds before it exits. Returns (process,
+    event_fd, signals, outcome); *outcome* says whether the cleanup ran
+    to the end or met a closed channel.
+    """
+    event_read, event_write = os.pipe()
+    interrupted = threading.Event()
+    exited = threading.Event()
+    signals = []
+    outcome = []
+    frame = b'{"kind":"info","message":"worker event"}\n'
+
+    def run():
+        try:
+            program._write_all(event_write, frame)
+            assert interrupted.wait(10)
+            program._write_all(event_write, frame * cleanup_frames)
+            outcome.append("cleaned up")
+            threading.Event().wait(linger)
+        except BrokenPipeError:
+            outcome.append("channel closed")
+        finally:
+            os.close(event_write)
+            exited.set()
+
+    class Process:
+        pid = 325
+        returncode = None
+
+        def communicate(self, _request):
+            assert exited.wait(10)
+            self.returncode = 130
+            return b"", b""
+
+        def wait(self, timeout=None):
+            if not exited.wait(timeout):
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return self.returncode
+
+    def send(_pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGINT:
+            interrupted.set()
+
+    monkeypatch.setattr(program.os, "killpg", send)
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    return Process(), event_read, signals, outcome
+
+
+def test_failed_handler_lets_the_worker_report_its_cleanup(monkeypatch):
+    """Regression: a worker unwinding behind a full event pipe was killed.
+
+    When a handler raised, the parent stopped reading and only waited for
+    the worker to exit. The worker reports events while it cleans up, and
+    once the pipe was full those writes blocked until the SIGKILL, so the
+    cleanup -- the temporary beside a path output -- never finished.
+    """
+    monkeypatch.setattr(program, "_WORKER_STOP_GRACE_SECONDS", 2.0)
+    # Several times what a pipe holds, all written after the SIGINT.
+    process, event_read, signals, outcome = _unwinding_worker(
+        monkeypatch, 10000
+    )
+    expected = LookupError("event destination unavailable")
+    calls = []
+
+    def handle(event):
+        calls.append(event)
+        raise expected
+
+    with pytest.raises(LookupError) as exc:
+        program._communicate_with_channels(
+            process, b"{}", event_read, handle, "backup"
+        )
+
+    assert exc.value is expected
+    assert outcome == ["cleaned up"]
+    assert signals == [program.signal.SIGINT]
+    assert len(calls) == 1
+
+
+def test_failed_handler_during_a_cancel_sends_no_second_sigint(monkeypatch):
+    """The handler failing while a cancel is unwinding the worker.
+
+    The worker was already interrupted; a second SIGINT would raise again
+    inside the cleanup the first one started. The worker stays a moment
+    after its cleanup so that it is still there to be signalled.
+    """
+    process, event_read, signals, outcome = _unwinding_worker(
+        monkeypatch, 1, linger=0.3
+    )
+    cancelled = threading.Event()
+    cancelled.set()
+    expected = LookupError("event destination unavailable")
+
+    def handle(_event):
+        raise expected
+
+    with pytest.raises(LookupError) as exc:
+        program._communicate_with_channels(
+            process, b"{}", event_read, handle, "backup",
+            cancel_event=cancelled,
+        )
+
+    assert exc.value is expected
+    assert outcome == ["cleaned up"]
+    assert signals == [program.signal.SIGINT]
+
+
+def test_failed_handler_still_kills_a_worker_that_does_not_stop(
+        monkeypatch):
+    """Reading the worker's reports must not stretch the grace period."""
+    monkeypatch.setattr(program, "_WORKER_STOP_GRACE_SECONDS", 0.3)
+    event_read, event_write = os.pipe()
+    killed = threading.Event()
+    signals = []
+    frame = b'{"kind":"info","message":"worker event"}\n'
+
+    def chatter():
+        # Never stops on SIGINT, and never stops writing either.
+        try:
+            while not killed.is_set():
+                program._write_all(event_write, frame * 100)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(event_write)
+
+    class Process:
+        pid = 326
+        returncode = None
+
+        def communicate(self, _request):
+            assert killed.wait(10)
+            self.returncode = -9
+            return b"", b""
+
+    def send(_pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGKILL:
+            killed.set()
+
+    def handle(_event):
+        raise LookupError("event destination unavailable")
+
+    monkeypatch.setattr(program.os, "killpg", send)
+    writer = threading.Thread(target=chatter, daemon=True)
+    writer.start()
+    try:
+        with pytest.raises(LookupError):
+            program._communicate_with_channels(
+                Process(), b"{}", event_read, handle, "backup"
+            )
+    finally:
+        killed.set()
+        writer.join(10)
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def test_worker_event_resource_strips_url_secrets():
+    resource = _worker._default_event_resource("install", {
+        "source": "https://user:secret@example.test/rootfs.tar?token=hidden#x",
+        "name": None,
+    })
+
+    assert resource == "https://example.test/rootfs.tar"
+
+
+def test_worker_event_resource_prefers_public_operation_subject():
+    assert _worker._default_event_resource("copy", {
+        "source": "/host/source",
+        "destination": "box:/srv/data",
+    }) == "box:/srv/data"
+
+
+@pytest.mark.parametrize("operation", sorted(_worker._OPERATIONS))
+def test_every_subject_bearing_operation_names_a_default_resource(operation):
+    """Regression: move, run_detached and inspect_* events had no resource.
+
+    The table named a non-existent "inspect_session" and left out real
+    operations, so their events lacked the subject the others carry.
+    """
+    options = {
+        "name": "box", "new_name": "box2", "old_name": "box",
+        "source": "/host/src", "destination": "box:/dst", "archive": "/a.tar",
+        "tags": ["app:1"], "image_ref": "app:1", "identifier": "app:1",
+        "container": "box", "target": "box",
+    }
+    resource = _worker._default_event_resource(operation, options)
+    if operation.startswith("list_") or operation == "clear_cache":
+        assert resource is None
+    else:
+        assert isinstance(resource, str) and resource, operation
+
+
+def test_worker_channel_cancellation_interrupts_and_drains(monkeypatch):
+    event_read, event_write = os.pipe()
+    stopped = threading.Event()
+    signals = []
+
+    class Process:
+        pid = 321
+
+        def communicate(self, _request):
+            assert stopped.wait(5)
+            return b"", b""
+
+    def interrupt(pid, selected_signal):
+        signals.append((pid, selected_signal))
+        stopped.set()
+        os.close(event_write)
+
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(program.os, "killpg", interrupt)
+
+    with pytest.raises(OperationCancelledError) as exc:
+        program._communicate_with_channels(
+            Process(), b"{}", event_read, None, "copy",
+            cancel_event=cancelled,
+        )
+
+    assert exc.value.operation == "copy"
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_wait_readable_supports_descriptors_above_select_limit():
+    """Regression: fds >= 1024 made select.select raise ValueError."""
+    import fcntl
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = 1100
+    if hard != resource.RLIM_INFINITY and hard <= wanted:
+        pytest.skip("hard fd limit is too low")
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, wanted + 16), hard))
+    read_fd, write_fd = os.pipe()
+    high = fcntl.fcntl(read_fd, fcntl.F_DUPFD, wanted)
+    try:
+        assert high >= 1024
+        assert program._wait_readable([high], 0) == []
+        os.write(write_fd, b"x")
+        assert program._wait_readable([high], 1) == [high]
+    finally:
+        os.close(high)
+        os.close(read_fd)
+        os.close(write_fd)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+def test_cancel_escalates_to_kill_when_worker_ignores_sigint(monkeypatch):
+    """Regression: a worker that ignores SIGINT must not block forever."""
+    event_read, event_write = os.pipe()
+    killed = threading.Event()
+    signals = []
+
+    class Process:
+        pid = 323
+        returncode = None
+
+        def communicate(self, _request):
+            assert killed.wait(5)
+            self.returncode = -9
+            return b"", b""
+
+    def send(pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGKILL:
+            killed.set()
+            os.close(event_write)
+
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(program.os, "killpg", send)
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 0.2)
+
+    with pytest.raises(OperationCancelledError):
+        program._communicate_with_channels(
+            Process(), b"{}", event_read, None, "build",
+            cancel_event=cancelled,
+        )
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def _stuck_worker(monkeypatch, interrupts):
+    """A worker that only dies to SIGKILL; *interrupts* Ctrl-Cs are raised."""
+    event_read, event_write = os.pipe()
+    killed = threading.Event()
+    signals = []
+
+    class Process:
+        pid = 324
+        returncode = None
+
+        def communicate(self, _request):
+            assert killed.wait(10)
+            self.returncode = -9
+            return b"", b""
+
+    def send(_pid, selected_signal):
+        signals.append(selected_signal)
+        if selected_signal == program.signal.SIGKILL:
+            killed.set()
+            os.close(event_write)
+
+    remaining = [interrupts]
+    real_wait = program._wait_readable
+
+    def wait(readers, timeout):
+        if remaining[0]:
+            remaining[0] -= 1
+            raise KeyboardInterrupt
+        return real_wait(readers, timeout)
+
+    monkeypatch.setattr(program.os, "killpg", send)
+    monkeypatch.setattr(program, "_wait_readable", wait)
+    return Process(), event_read, signals
+
+
+def test_repeated_ctrl_c_force_kills_a_stuck_worker(monkeypatch):
+    """Regression: a stuck worker made even repeated Ctrl-C a no-op."""
+    process, event_read, signals = _stuck_worker(monkeypatch, 2)
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 60)
+
+    with pytest.raises(KeyboardInterrupt):
+        program._communicate_with_channels(
+            process, b"{}", event_read, None, "build"
+        )
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def test_single_ctrl_c_escalates_after_the_grace_period(monkeypatch):
+    process, event_read, signals = _stuck_worker(monkeypatch, 1)
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 0.2)
+
+    with pytest.raises(KeyboardInterrupt):
+        program._communicate_with_channels(
+            process, b"{}", event_read, None, "build"
+        )
+
+    assert signals == [program.signal.SIGINT, program.signal.SIGKILL]
+
+
+def test_ctrl_c_while_waiting_for_worker_exit_stops_the_worker(monkeypatch):
+    """Regression: Ctrl-C after the channels closed left the worker running."""
+    import signal as signal_module
+    import subprocess
+    import sys
+
+    event_read, event_write = os.pipe()
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, start_new_session=True,
+    )
+    os.close(event_write)  # the event channel is already at EOF
+    monkeypatch.setattr(program, "_WORKER_CANCEL_GRACE_SECONDS", 0.5)
+    main_thread = threading.main_thread().ident
+    timer = threading.Timer(
+        0.3, lambda: signal_module.pthread_kill(
+            main_thread, signal_module.SIGINT
+        ),
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            timer.start()
+            program._communicate_with_channels(
+                process, b"{}", event_read, None, "install"
+            )
+        # The worker ignores neither signal: it was stopped, not orphaned.
+        assert process.poll() is not None
+    finally:
+        timer.cancel()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def test_cancel_racing_successful_worker_returns_result(monkeypatch):
+    """Regression: a cancel after the worker committed must not mask it."""
+    event_read, event_write = os.pipe()
+    stopped = threading.Event()
+
+    class Process:
+        pid = 322
+        returncode = None
+
+        def communicate(self, _request):
+            assert stopped.wait(5)
+            self.returncode = 0
+            return b'{"ok": true}', b""
+
+    def interrupt(_pid, _signal):
+        stopped.set()
+        os.close(event_write)
+
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(program.os, "killpg", interrupt)
+
+    streams = program._communicate_with_channels(
+        Process(), b"{}", event_read, None, "install",
+        cancel_event=cancelled,
+    )
+
+    assert streams == (b'{"ok": true}', b"")
+
+
+def test_pre_cancelled_worker_does_not_start(monkeypatch):
+    cancelled = threading.Event()
+    cancelled.set()
+    monkeypatch.setattr(
+        program.subprocess, "Popen",
+        lambda *_args, **_kwargs: pytest.fail("worker must not start"),
+    )
+
+    with pytest.raises(OperationCancelledError) as exc:
+        program._run_worker("list_images", {}, cancel_event=cancelled)
+
+    assert exc.value.operation == "list_images"
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false", (), object()])
+def test_cancellation_token_must_return_boolean(monkeypatch, value):
+    class InvalidCancellation:
+        def is_set(self):
+            return value
+
+    monkeypatch.setattr(
+        program.subprocess, "Popen",
+        lambda *_args, **_kwargs: pytest.fail("worker must not start"),
+    )
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        ProotDistro().list_images(cancel_event=InvalidCancellation())
+
+    assert exc.value.operation == "list_images"
+
+
+class _RawNonBlocking(io.RawIOBase):
+    """A raw stream whose write() reports "would block" (None)."""
+
+    def writable(self):
+        return True
+
+    def write(self, _data):
+        return None
+
+
+@pytest.mark.parametrize("result", ["raw-none", True, False, 0, -1, 4, 1.5])
+def test_output_stream_rejects_invalid_write_result(result):
+    class Output:
+        def write(self, _data):
+            return result
+
+    # None is "everything written" for a buffered or hand-written stream
+    # and "would block" only for a raw one, which is refused.
+    output = _RawNonBlocking() if result == "raw-none" else Output()
+    with pytest.raises(InvalidArgumentError) as exc:
+        program._write_stream_chunk(output, b"abc", "backup")
+
+    assert exc.value.operation == "backup"
+    assert "positive byte count" in str(exc.value)
+
+
+def test_output_stream_accepts_short_writes_until_chunk_is_complete():
+    class Output:
+        def __init__(self):
+            self.data = bytearray()
+
+        def write(self, data):
+            size = min(2, len(data))
+            self.data.extend(data[:size])
+            return size
+
+    output = Output()
+
+    program._write_stream_chunk(output, b"abcdef", "backup")
+
+    assert output.data == b"abcdef"
+
+
+@pytest.mark.parametrize("result", [None, "text", 1, object()])
+def test_input_stream_rejects_non_bytes_read_result(
+    monkeypatch, result,
+):
+    class Process:
+        pid = 321
+
+        def wait(self, timeout=None):
+            return 0
+
+    class Input:
+        def read(self, _size):
+            return result
+
+    signals = []
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    try:
+        threads, errors, _counts, _stop = program._start_stream_pumps(
+            Process(), [(write_fd, Input())], [], "restore"
+        )
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()
+    finally:
+        os.close(read_fd)
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], InvalidArgumentError)
+    assert errors[0].operation == "restore"
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_a_reaped_worker_group_is_never_signalled(monkeypatch):
+    """Regression: a failed call signalled the worker's group after reaping.
+
+    Its PID is free for reuse once the worker is reaped and its group is
+    empty, so the signal could reach an unrelated process group.
+    """
+    class Reaped:
+        pid = 321
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    signals = []
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    program._stop_worker(Reaped())
+    assert program._signal_worker_group(Reaped(), signal.SIGKILL) is False
+    assert signals == []
+
+
+def _sigint_ignoring_child():
+    child = subprocess.Popen([
+        sys.executable, "-c",
+        "import signal,sys,time\n"
+        "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+        "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
+        "time.sleep(60)\n",
+    ], stdout=subprocess.PIPE)
+    assert child.stdout.readline() == b"ready\n"
+    return child
+
+
+def test_interrupted_session_startup_is_bounded_and_reaped(monkeypatch):
+    """Regression: Ctrl-C during startup waited for the child without end.
+
+    A worker that had already become proot (which ignores SIGINT) kept the
+    caller waiting until the whole guest command finished.
+    """
+    monkeypatch.setattr(program, "_WORKER_STOP_GRACE_SECONDS", 0.3)
+    child = _sigint_ignoring_child()
+    try:
+        program._interrupt_starting_session(child)
+        assert child.returncode == -signal.SIGKILL
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+
+
+def test_repeated_ctrl_c_during_startup_kills_at_once(monkeypatch):
+    child = _sigint_ignoring_child()
+    real_wait = child.wait
+    calls = []
+
+    def interrupted(timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+        return real_wait(timeout)
+
+    monkeypatch.setattr(child, "wait", interrupted)
+    try:
+        program._interrupt_starting_session(child)
+        assert child.returncode == -signal.SIGKILL
+        assert calls[0] == program._WORKER_STOP_GRACE_SECONDS
+    finally:
+        if child.poll() is None:
+            child.kill()
+            real_wait()
+        child.stdout.close()
+
+
+def test_input_pump_reads_no_further_once_the_worker_is_gone():
+    """Regression: a pump kept reading the caller's stream after return.
+
+    The caller may go on using its socket or pipe after restore() or
+    build() returned. A pump that kept calling read() in its background
+    thread took bytes the caller expected to read next.
+    """
+    permits = threading.Semaphore(0)
+    reads = []
+
+    class Input:
+        def read(self, _size):
+            reads.append(len(reads))
+            permits.acquire()
+            return b"chunk-%d" % len(reads)
+
+    class Process:
+        pid = 321
+
+    read_fd, write_fd = os.pipe()
+    try:
+        threads, errors, _counts, stop = program._start_stream_pumps(
+            Process(), [(write_fd, Input())], [], "restore"
+        )
+        permits.release()
+        assert os.read(read_fd, 64) == b"chunk-1"
+        while len(reads) < 2:
+            threading.Event().wait(0.01)
+        # The worker exits while the pump is blocked in its second read.
+        stop.set()
+        permits.release()
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()
+        # The in-flight chunk was discarded and the pipe closed after it.
+        assert os.read(read_fd, 64) == b""
+    finally:
+        os.close(read_fd)
+
+    assert reads == [0, 1]
+    assert errors == []
+
+
+@pytest.mark.parametrize("result", ["raw-none", True, 0, -1, 4, 1.5])
+def test_output_stream_invalid_result_stops_worker(
+    monkeypatch, result,
+):
+    class Process:
+        pid = 321
+
+        def wait(self, timeout=None):
+            return 0
+
+    class Output:
+        def write(self, _data):
+            return result
+
+    output = _RawNonBlocking() if result == "raw-none" else Output()
+
+    signals = []
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    threads, errors, counts, _stop = program._start_stream_pumps(
+        Process(), [], [("backup_output", read_fd, output)], "backup"
+    )
+    try:
+        os.write(write_fd, b"abc")
+    finally:
+        os.close(write_fd)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], InvalidArgumentError)
+    assert errors[0].operation == "backup"
+    assert counts == {}
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_output_stream_returning_none_wrote_everything():
+    """write() returning None is accepted unless the stream is raw.
+
+    Hand-written adapters and codecs.StreamWriter take everything and
+    return None; requiring a count refused them.
+    """
+    received = []
+
+    class Output:
+        def write(self, data):
+            received.append(bytes(data))
+
+    class Process:
+        pid = 321
+
+    read_fd, write_fd = os.pipe()
+    threads, errors, counts, _stop = program._start_stream_pumps(
+        Process(), [], [("backup_output", read_fd, Output())], "backup"
+    )
+    try:
+        os.write(write_fd, b"abc")
+    finally:
+        os.close(write_fd)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+
+    assert errors == []
+    assert b"".join(received) == b"abc"
+    assert counts == {"backup_output": 3}
+
+
+def test_worker_stop_allows_cooperative_cleanup(monkeypatch):
+    class Process:
+        pid = 321
+
+        def __init__(self):
+            self.timeouts = []
+
+        def wait(self, timeout=None):
+            self.timeouts.append(timeout)
+            return 130
+
+    process = Process()
+    signals = []
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+
+    program._stop_worker(process)
+
+    assert process.timeouts == [program._WORKER_STOP_GRACE_SECONDS]
+    assert signals == [(321, program.signal.SIGINT)]
+
+
+def test_worker_stop_escalates_after_cleanup_timeout(monkeypatch):
+    class Process:
+        pid = 321
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+    signals = []
+    monkeypatch.setattr(
+        program.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+
+    program._stop_worker(Process())
+
+    assert signals == [
+        (321, program.signal.SIGINT),
+        (321, program.signal.SIGKILL),
+    ]
+
+
+def test_worker_backed_public_methods_accept_cancellation():
+    methods = (
+        "list_containers", "list_images", "list_sessions", "install",
+        "remove_container", "rename_container", "reset_container", "copy",
+        "move", "sync", "backup", "restore", "build", "push",
+        "remove_image", "clear_cache", "start_detached", "run_detached",
+        "inspect_start", "inspect_run", "kill_session", "kill_all_sessions",
+    )
+
+    for name in methods:
+        assert "cancel_event" in inspect.signature(
+            getattr(ProotDistro, name)
+        ).parameters
+
+
+def test_pre_cancelled_install_does_not_request_credentials():
+    cancelled = threading.Event()
+    cancelled.set()
+
+    def credentials(_request):
+        pytest.fail("credential provider must not be called")
+
+    with pytest.raises(OperationCancelledError) as exc:
+        ProotDistro(credential_provider=credentials).install(
+            "example.test/team/image:1", cancel_event=cancelled
+        )
+
+    assert exc.value.operation == "install"
+
+
+def test_session_process_falls_back_when_registry_has_no_record():
+    class Owner:
+        def kill_session(self, pid, *, signal_name):
+            return SessionSignalResult(str(pid), "SIG" + signal_name, ())
+
+    class Process:
+        pid = 123
+        returncode = None
+        stdin = stdout = stderr = None
+
+        def __init__(self):
+            self.terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+    raw = Process()
+    handle = SessionProcess(Owner(), raw, container="box", kind="login")
+
+    result = handle.terminate()
+
+    assert result.pids == ()
+    assert raw.terminated is True
+
+
+class _FakeChild:
+    pid = 123
+    returncode = None
+    stdin = stdout = stderr = None
+
+    def __init__(self, exited=False):
+        self.exited = exited
+        self.signals = []
+
+    def poll(self):
+        return 0 if self.exited else None
+
+    def terminate(self):
+        self.signals.append("TERM")
+
+    def kill(self):
+        self.signals.append("KILL")
+
+
+def test_session_process_does_not_signal_reaped_child():
+    """Regression: a reaped child's PID may now belong to someone else."""
+    class Owner:
+        def kill_session(self, *_args, **_kwargs):
+            pytest.fail("a reaped session must not be signalled")
+
+    child = _FakeChild(exited=True)
+    handle = SessionProcess(Owner(), child, container="box", kind="login")
+
+    assert handle.terminate().pids == ()
+    assert handle.kill().pids == ()
+    assert child.signals == []
+
+
+def test_session_process_signals_child_when_worker_fails():
+    """Regression: a failing signalling worker must not skip teardown."""
+    class Owner:
+        def kill_session(self, *_args, **_kwargs):
+            raise OperationError("worker failed", operation="kill_session")
+
+    child = _FakeChild()
+    handle = SessionProcess(Owner(), child, container="box", kind="login")
+
+    with pytest.raises(OperationError):
+        handle.kill()
+
+    assert child.signals == ["KILL"]
+
+
+class _FailingSignalOwner:
+    def kill_session(self, *_args, **_kwargs):
+        raise OperationError(
+            "cannot start the kill_session worker", operation="kill_session"
+        )
+
+
+def _stubborn_child():
+    """A real child that ignores SIGTERM, as a stuck session would."""
+    child = subprocess.Popen([
+        sys.executable, "-c",
+        "import signal,sys,time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
+        "time.sleep(60)\n",
+    ], stdout=subprocess.PIPE)
+    assert child.stdout.readline() == b"ready\n"
+    return child
+
+
+def test_session_close_escalates_and_reaps_when_tree_signal_fails():
+    """Regression: a failing kill_session worker made close() raise early.
+
+    It skipped the wait, the kill and the reap, so a session that ignored
+    the direct SIGTERM kept running with no handle left to stop it.
+    """
+    child = _stubborn_child()
+    handle = SessionProcess(
+        _FailingSignalOwner(), child, container="box", kind="login",
+    )
+    try:
+        assert handle.close(timeout=0.3) == -9
+        assert child.returncode == -9
+        assert child.stdout.closed
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_session_context_keeps_the_body_exception_when_signal_fails():
+    """Regression: __exit__ replaced the caller's exception with its own."""
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with pytest.raises(ValueError, match="body failed"):
+            with SessionProcess(
+                _FailingSignalOwner(), child, container="box", kind="login",
+            ):
+                raise ValueError("body failed")
+        # The direct SIGTERM fallback stopped it and it was reaped.
+        assert child.returncode == -signal.SIGTERM
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_session_close_kills_and_reraises_on_ctrl_c(monkeypatch):
+    child = _stubborn_child()
+    handle = SessionProcess(
+        _FailingSignalOwner(), child, container="box", kind="login",
+    )
+    real_wait = child.wait
+    calls = []
+
+    def interrupted_wait(timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+        return real_wait(timeout)
+
+    monkeypatch.setattr(child, "wait", interrupted_wait)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            handle.close(timeout=30)
+        assert child.returncode == -9
+    finally:
+        if child.poll() is None:
+            child.kill()
+            real_wait()
+
+
+def test_session_setup_error_and_events_are_escaped():
+    events = []
+    payload = (
+        json.dumps({"event": {"kind": "info", "message": _HOSTILE_TEXT}})
+        + "\n"
+        + json.dumps({"error": _HOSTILE_TEXT, "kind": "busy"}) + "\n"
+    ).encode()
+    setup_error = _read_startup_payload(payload, events.append)
+    assert setup_error.kind == "busy"
+    # Raised the way start() raises it.
+    error = program._WORKER_ERROR_TYPES[setup_error.kind](
+        str(setup_error), operation="start")
+    assert isinstance(error, BusyError)
+    assert str(error) == _ESCAPED_TEXT
+    assert [event.message for event in events] == [_ESCAPED_TEXT]
+
+
+def _read_startup_payload(payload, event_handler=None):
+    read_fd, write_fd = os.pipe()
+
+    def write_status():
+        try:
+            program._write_all(write_fd, payload)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(write_fd)
+
+    writer = threading.Thread(target=write_status)
+    writer.start()
+    try:
+        return program._read_session_startup(
+            read_fd, "start", event_handler, 5, None
+        )
+    finally:
+        os.close(read_fd)
+        writer.join(5)
+        assert not writer.is_alive()
+
+
+@pytest.mark.parametrize("payload", [
+    b"\n",
+    b"not json\n",
+    b"[]\n",
+    b"{}\n",
+    b'{"error":""}\n',
+    b'{"error":1}\n',
+    b'{"event":null}\n',
+    b'{"event":{"kind":"progress","message":"x"}}\n',
+    b'{"event":{"kind":"info","message":1}}\n',
+    b'{"event":{"kind":"info","message":"x","phase":1}}\n',
+    b'{"event":{"kind":"warning","message":"x","resource":[]}}\n',
+    b"\xff\n",
+    pytest.param(
+        _DEEPLY_NESTED_JSON + b"\n", id="deeply-nested"
+    ),
+])
+def test_session_startup_rejects_malformed_status_frames(payload):
+    with pytest.raises(OperationError) as exc:
+        _read_startup_payload(payload)
+
+    assert exc.value.operation == "start"
+    assert "invalid setup status" in str(exc.value)
+
+
+def test_session_startup_rejects_truncated_status_frame():
+    with pytest.raises(OperationError) as exc:
+        _read_startup_payload(b'{"event":')
+
+    assert exc.value.operation == "start"
+    assert "truncated setup status" in str(exc.value)
+
+
+def test_session_startup_rejects_oversized_status_frame():
+    payload = b"x" * (program._MAX_SESSION_STATUS_BYTES + 1)
+
+    with pytest.raises(OperationError) as exc:
+        _read_startup_payload(payload)
+
+    assert exc.value.operation == "start"
+    assert "oversized setup status" in str(exc.value)
+
+
+def test_session_startup_delivers_valid_event_and_error():
+    events = []
+    payload = (
+        b'{"event":{"kind":"warning","message":"careful",'
+        b'"phase":"setup","resource":"box"}}\n'
+        b'{"error":"cannot execute guest"}\n'
+    )
+
+    error = _read_startup_payload(payload, events.append)
+
+    assert error == "cannot execute guest"
+    assert events == [OperationEvent(
+        "start", EventKind.WARNING, "careful",
+        phase="setup", resource="box",
+    )]
+
+
+def test_session_startup_error_keeps_its_kind():
+    """Regression: setup errors carry a typed kind, not just text."""
+    error = _read_startup_payload(
+        b'{"error":"container is busy","kind":"busy"}\n', None
+    )
+
+    assert error == "container is busy"
+    assert error.kind == "busy"
+    assert program._WORKER_ERROR_TYPES[error.kind] is BusyError
+
+
+def test_session_startup_error_unknown_kind_is_generic():
+    error = _read_startup_payload(
+        b'{"error":"boom","kind":"bogus"}\n', None
+    )
+
+    assert error.kind == "operation"
+
+
+def test_session_worker_classifies_setup_failures():
+    from proot_distro.operation_errors import (
+        BusyFailure, NotFoundFailure, UnsupportedFailure,
+    )
+    from proot_distro.session_errors import SessionValidationFailure
+
+    assert _session_worker._error_kind(
+        SessionValidationFailure("x")
+    ) == "operation"
+    assert _session_worker._error_kind(NotFoundFailure("x")) == "not_found"
+    assert _session_worker._error_kind(BusyFailure("x")) == "busy"
+    assert _session_worker._error_kind(UnsupportedFailure("x")) == "unsupported"
+    assert _session_worker._error_kind(RuntimeError("x")) == "operation"
+
+
+def _read_session_request(payload):
+    read_fd, write_fd = os.pipe()
+
+    def write_request():
+        try:
+            program._write_all(write_fd, payload)
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(write_fd)
+
+    writer = threading.Thread(target=write_request)
+    writer.start()
+    try:
+        return _session_worker._read_request(read_fd)
+    finally:
+        os.close(read_fd)
+        writer.join(5)
+        assert not writer.is_alive()
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"null",
+    b"[]",
+    b"not json",
+    b"\xff",
+    pytest.param(_DEEPLY_NESTED_JSON, id="deeply-nested"),
+])
+def test_session_worker_rejects_malformed_request_document(payload):
+    with pytest.raises((ValueError, UnicodeDecodeError, RecursionError)):
+        _read_session_request(payload)
+
+
+def test_session_worker_rejects_oversized_request_document():
+    payload = b"x" * (_session_worker._MAX_REQUEST_BYTES + 1)
+
+    with pytest.raises(ValueError) as exc:
+        _read_session_request(payload)
+
+    assert "too large" in str(exc.value)
+
+
+@pytest.mark.parametrize("session_request", [
+    {},
+    {"kind": "login", "container": "box", "arguments": [], "options": []},
+    {"kind": "invalid", "container": "box", "arguments": [], "options": {}},
+    {"kind": "login", "container": None, "arguments": [], "options": {}},
+    {"kind": "run", "container": "box", "arguments": (), "options": {}},
+])
+def test_session_worker_rejects_malformed_request_fields(session_request):
+    with pytest.raises(ValueError):
+        _session_worker._request_parts(session_request)
+
+
+def test_session_worker_status_writer_enforces_frame_limit():
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(ValueError) as exc:
+            _session_worker._write_frame(write_fd, {
+                "error": "x" * _session_worker._MAX_STATUS_BYTES,
+            })
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert "too large" in str(exc.value)
+
+
+def test_session_worker_replaces_oversized_error_with_bounded_status(
+    monkeypatch,
+):
+    request_read, request_write = os.pipe()
+    status_read, status_write = os.pipe()
+    descriptors = iter((request_read, status_write))
+    monkeypatch.setattr(
+        _session_worker, "_fd_from_env", lambda _name: next(descriptors)
+    )
+    monkeypatch.setattr(
+        _session_worker, "_read_request",
+        lambda _fd: (_ for _ in ()).throw(
+            ValueError("x" * _session_worker._MAX_STATUS_BYTES)
+        ),
+    )
+    try:
+        assert _session_worker.main() == 1
+        frame = os.read(status_read, _session_worker._MAX_STATUS_BYTES)
+    finally:
+        os.close(request_write)
+        os.close(status_read)
+
+    assert json.loads(frame) == {
+        "error": _session_worker._OVERSIZED_STATUS_ERROR,
+        "kind": "operation",
+    }
+
+
+def test_session_startup_status_timeout_is_typed():
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(SessionStartupTimeoutError) as exc:
+            program._read_session_startup(
+                read_fd, "start", None, 0.001, None
+            )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert exc.value.operation == "start"
+
+
+def test_session_startup_status_observes_cancellation():
+    class Cancellation:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(OperationCancelledError) as exc:
+            program._read_session_startup(
+                read_fd, "run", None, None, Cancellation()
+            )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    assert exc.value.operation == "run"
+
+
+def test_public_session_timeout_kills_and_reaps_setup_worker(monkeypatch):
+    class StalledWorker:
+        instances = []
+
+        def __init__(self, _argv, **kwargs):
+            request_fd, status_fd = kwargs["pass_fds"]
+            self.request_fd = os.dup(request_fd)
+            self.status_fd = os.dup(status_fd)
+            self.pid = 123
+            self.returncode = None
+            self.killed = False
+            self.waited = False
+            self.__class__.instances.append(self)
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+            for name in ("request_fd", "status_fd"):
+                fd = getattr(self, name)
+                if fd is not None:
+                    os.close(fd)
+                    setattr(self, name, None)
+
+        def wait(self):
+            self.waited = True
+            return self.returncode
+
+    pd = ProotDistro()
+    monkeypatch.setattr(pd, "list_containers", lambda: (
+        ContainerInfo("box", None, None, None),
+    ))
+    monkeypatch.setattr(program.subprocess, "Popen", StalledWorker)
+
+    with pytest.raises(SessionStartupTimeoutError):
+        pd.start("box", startup_timeout=0.001)
+
+    worker = StalledWorker.instances[0]
+    assert worker.killed is True
+    assert worker.waited is True

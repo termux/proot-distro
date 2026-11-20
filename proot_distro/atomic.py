@@ -73,6 +73,7 @@ import os
 import tempfile
 
 from proot_distro import dirfd, statedir
+from proot_distro.interrupts import defer_sigint
 
 
 def _state_location(path: str):
@@ -193,8 +194,12 @@ def _replace_at(dir_fd: int, name: str, suffix: str):
     # that must read its own bytes back (a layer blob handed to the
     # extractor) does it through this descriptor rather than by opening
     # the name a second time.
-    fd, _st = dirfd.open_new_at(dir_fd, tmp_name, 0o600, readable=True)
+    fd = None
     try:
+        with defer_sigint():
+            fd, _st = dirfd.open_new_at(
+                dir_fd, tmp_name, 0o600, readable=True
+            )
         yield fd
         written = os.fstat(fd)
         os.close(fd)
@@ -244,12 +249,15 @@ def _replace_by_name(path: str, suffix: str):
     """atomic_replace's body for a path the user chose, not the program."""
     dest_dir = os.path.dirname(path) or "."
     os.makedirs(dest_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        prefix=os.path.basename(path) + ".",
-        suffix=suffix,
-        dir=dest_dir,
-    )
+    fd = None
+    tmp = None
     try:
+        with defer_sigint():
+            fd, tmp = tempfile.mkstemp(
+                prefix=os.path.basename(path) + ".",
+                suffix=suffix,
+                dir=dest_dir,
+            )
         yield fd
         os.close(fd)
         fd = None
@@ -257,8 +265,9 @@ def _replace_by_name(path: str, suffix: str):
     except BaseException:
         if fd is not None:
             _close_quietly(fd)
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
         raise

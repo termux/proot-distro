@@ -19,7 +19,7 @@ import pytest
 
 from proot_distro import dirfd, statedir
 from proot_distro.atomic import publish_file
-from proot_distro.commands.build import _make_build_tmp
+from proot_distro.build_scratch import make_scratch_root
 from proot_distro.constants import LAYER_CACHE_DIR, RUNTIME_DIR
 
 
@@ -87,7 +87,7 @@ def test_publish_leaves_a_user_destination_alone(blob, tmp_path, outside):
 # --- the build's scratch root ----------------------------------------------
 
 def test_build_tmp_is_made_inside_the_runtime_tree():
-    root, fd = _make_build_tmp()
+    root, fd = make_scratch_root()
     try:
         assert os.path.dirname(root) == os.path.join(RUNTIME_DIR, "build-tmp")
         assert os.path.isdir(root)
@@ -102,7 +102,7 @@ def test_build_tmp_is_made_inside_the_runtime_tree():
 
 def test_build_tmp_does_not_follow_a_planted_name(outside):
     os.symlink(str(outside), os.path.join(RUNTIME_DIR, "build-tmp"))
-    root, fd = _make_build_tmp()
+    root, fd = make_scratch_root()
     try:
         # Refused, and the build falls back to the system temp dir the
         # way it always did when the runtime tree could not hold one.
@@ -115,7 +115,7 @@ def test_build_tmp_does_not_follow_a_planted_name(outside):
 
 def test_build_tmp_roots_are_distinct():
     (first, first_fd), (second, second_fd) = (
-        _make_build_tmp(), _make_build_tmp(),
+        make_scratch_root(), make_scratch_root(),
     )
     try:
         assert first != second
@@ -130,7 +130,7 @@ def test_build_tmp_descriptor_survives_the_name_being_re_pointed(outside):
     # What the descriptor is for: the run directory's name sits in a
     # world the invoking user can write, and a RUN step's leftovers are
     # the invoking user.
-    root, fd = _make_build_tmp()
+    root, fd = make_scratch_root()
     try:
         os.rename(root, root + ".moved")
         os.symlink(str(outside), root)

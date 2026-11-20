@@ -70,6 +70,9 @@ def test_materialise_refuses_a_file_standing_in_for_a_parent(tree):
         })
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_materialise_does_not_write_through_a_hardlink(tree):
     # O_NOFOLLOW cannot tell a hardlink from an ordinary entry: it *is*
     # the file, under a second name. Writing has to create a new inode.

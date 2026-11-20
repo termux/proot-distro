@@ -230,6 +230,7 @@ def test_record_string_fields_survive_an_entry_that_lies_about_them():
     assert record["arch"] == ""
     assert record["created"] == ""
     assert record["image_id"] == "ab" * 32
+    assert record["config_digest"] == "sha256:" + "ab" * 32
 
 
 # ---------------------------------------------------------------------------

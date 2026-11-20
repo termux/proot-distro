@@ -132,6 +132,10 @@ class FakeRegistry:
         # Kinds of request the registry refuses even with a good token
         # ("blob" for blob GETs), as a token revoked mid-pull would be.
         self.deny = set()
+        # What a manifest upload is answered with in Docker-Content-Digest:
+        # None for the digest of what was sent, "" for no header at all,
+        # and any other text for that text, as a lying registry would.
+        self.manifest_digest_header = None
         self.blobs = {}          # (repo, digest) -> bytes
         self.manifests = {}      # (repo, tag or digest) -> (bytes, media)
         self.tokens = {}         # token -> {repo: set(actions)}
@@ -461,10 +465,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 st.manifests[(repo, sha256(self.body))] = (self.body, media)
         if missing:
             return self._error(400, "MANIFEST_BLOB_UNKNOWN")
-        return self._reply(201, headers={
-            "Docker-Content-Digest": sha256(self.body),
-            "Location": f"/v2/{repo}/manifests/{sha256(self.body)}",
-        })
+        headers = {"Location": f"/v2/{repo}/manifests/{sha256(self.body)}"}
+        answer = st.manifest_digest_header
+        if answer is None:
+            answer = sha256(self.body)
+        if answer:
+            headers["Docker-Content-Digest"] = answer
+        return self._reply(201, headers=headers)
 
     def _finish_upload(self, upload):
         st = self.state

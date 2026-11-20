@@ -82,6 +82,8 @@ SEARCH_LIMIT_MAX = 1000
 # stalled connection must not hang the command indefinitely.
 _TIMEOUT = 30.0
 
+_DEFAULT_RETRY_REPORTER = object()
+
 
 
 def _count(value) -> int:
@@ -139,7 +141,8 @@ def _normalize(entry) -> dict:
     }
 
 
-def _fetch_page(query: str, page: int, page_size: int) -> dict:
+def _fetch_page(query: str, page: int, page_size: int,
+                on_retry=_DEFAULT_RETRY_REPORTER) -> dict:
     """Fetch one page of results and return the decoded JSON object."""
     params = urllib.parse.urlencode(
         {"q": query, "n": page_size, "page": page}
@@ -162,7 +165,12 @@ def _fetch_page(query: str, page: int, page_size: int) -> dict:
         return data
 
     try:
-        body = retry_http(_attempt, what=f"Searching for '{query}'")
+        retry_args = {}
+        if on_retry is not _DEFAULT_RETRY_REPORTER:
+            retry_args["on_retry"] = on_retry
+        body = retry_http(
+            _attempt, what=f"Searching for '{query}'", **retry_args
+        )
     except urllib.error.HTTPError as exc:
         raise RuntimeError(
             f"Docker Hub refused the search request: "
@@ -188,7 +196,8 @@ def _fetch_page(query: str, page: int, page_size: int) -> dict:
     return data
 
 
-def search_images(query: str, limit: int = SEARCH_DEFAULT_LIMIT) -> tuple:
+def search_images(query: str, limit: int = SEARCH_DEFAULT_LIMIT, *,
+                  on_retry=_DEFAULT_RETRY_REPORTER) -> tuple:
     """Search Docker Hub for *query*.
 
     Returns ``(results, total)`` where *results* is a list of at most
@@ -196,7 +205,9 @@ def search_images(query: str, limit: int = SEARCH_DEFAULT_LIMIT) -> tuple:
     ``official``, ``automated``) in the order Hub ranked them, and
     *total* is Hub's own count of matching repositories — which is
     normally far larger than what was asked for, and is what the
-    command reports as "showing N of M".
+    command reports as "showing N of M". Retry notices use the CLI logger
+    by default; *on_retry* may be a callable or ``None`` for programmatic
+    use.
 
     Only public repositories are searched; see the module comment on
     why credentials are not forwarded.
@@ -224,7 +235,12 @@ def search_images(query: str, limit: int = SEARCH_DEFAULT_LIMIT) -> tuple:
     total = 0
 
     for page in range(1, max_pages + 1):
-        data = _fetch_page(query, page, page_size)
+        if on_retry is _DEFAULT_RETRY_REPORTER:
+            # Preserve the original helper call shape for the CLI and for
+            # callers that replace _fetch_page in tests or integrations.
+            data = _fetch_page(query, page, page_size)
+        else:
+            data = _fetch_page(query, page, page_size, on_retry=on_retry)
         raw = data.get("results")
         if not isinstance(raw, list):
             raise RuntimeError(

@@ -14,7 +14,7 @@ import tarfile
 import pytest
 
 from proot_distro import l2s
-from proot_distro.commands.backup import _add_path
+from proot_distro.operations.backup import _add_path
 from proot_distro.helpers.layer_diff import _add_entry, _ParentFds
 
 

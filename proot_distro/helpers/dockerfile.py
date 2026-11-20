@@ -90,7 +90,7 @@ def parse_dockerfile(text: str):
         text = text.decode("utf-8", errors="replace")
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
 
     raw_lines = text.split("\n")

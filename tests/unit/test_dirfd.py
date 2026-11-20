@@ -193,6 +193,9 @@ def test_copy_tree_at_does_not_follow_symlinked_dirs(tmp_path):
     assert sorted(os.listdir(dst)) == ["link"]
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_open_new_at_replaces_a_name_rather_than_writing_into_it(tmp_path):
     """A hardlink is invisible to O_NOFOLLOW: it *is* the file, twice named.
 
@@ -220,6 +223,9 @@ def test_open_new_at_replaces_a_name_rather_than_writing_into_it(tmp_path):
     assert (box / "planted").read_text() == "payload"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_copy_file_at_never_writes_through_a_hardlink(tmp_path):
     src = tmp_path / "payload"
     src.write_text("payload")
@@ -447,12 +453,14 @@ def test_open_regular_at_refuses_a_directory(tmp_path):
 
 @pytest.mark.skipif(not getattr(os, "O_PATH", 0), reason="needs O_PATH")
 def test_make_writable_works_on_an_o_path_fd(tmp_path):
-    """paths.pin_path hands out O_PATH fds, where fchmod is EBADF.
+    """paths.pin_path hands out O_PATH fds, where fchmod is usually EBADF.
 
     Every caller wraps the chmod in `except OSError: pass`, so the failure
     was silent and the recovery it guards simply never happened at a copy or
     sync endpoint: `sync <file> box:/unwritable/f` reported the permission
-    error that make_writable was called to clear.
+    error that make_writable was called to clear. Android's libc can make the
+    direct call succeed, so restore the sealed mode there before exercising
+    the portable helper.
     """
     d = tmp_path / "d"
     d.mkdir()
@@ -460,9 +468,12 @@ def test_make_writable_works_on_an_o_path_fd(tmp_path):
 
     fd = os.open(str(d), dirfd._O_PATH_DIR)
     try:
-        with pytest.raises(OSError) as exc:
+        try:
             os.fchmod(fd, 0o700)        # the call that used to be swallowed
-        assert exc.value.errno == errno.EBADF
+        except OSError as exc:
+            assert exc.errno == errno.EBADF
+        else:
+            os.chmod(d, 0o500)
         dirfd.make_writable(fd)
     finally:
         os.close(fd)

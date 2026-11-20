@@ -1,32 +1,30 @@
-# Tests for proot_distro.commands.login.proot_cmd._add_custom_binds — the
+# Tests for proot_distro.session_command._add_custom_binds — the
 # validation gate for user-supplied --bind specs.
 
 import os
 
 import pytest
 
-from proot_distro.commands.login import proot_cmd
+from proot_distro.operations.errors import SessionValidationFailure
+from proot_distro import session_command as proot_cmd
 
 
-def test_empty_bind_rejected(capsys):
-    with pytest.raises(SystemExit) as exc:
+def test_empty_bind_rejected():
+    with pytest.raises(SessionValidationFailure) as exc:
         proot_cmd._add_custom_binds([], [""])
-    assert exc.value.code == 1
-    assert "cannot be empty" in capsys.readouterr().err
+    assert "cannot be empty" in str(exc.value)
 
 
-def test_empty_source_rejected(capsys):
-    with pytest.raises(SystemExit) as exc:
+def test_empty_source_rejected():
+    with pytest.raises(SessionValidationFailure) as exc:
         proot_cmd._add_custom_binds([], [":/dest"])
-    assert exc.value.code == 1
-    assert "source path cannot be empty" in capsys.readouterr().err
+    assert "source path cannot be empty" in str(exc.value)
 
 
-def test_relative_destination_rejected(capsys):
-    with pytest.raises(SystemExit) as exc:
+def test_relative_destination_rejected():
+    with pytest.raises(SessionValidationFailure) as exc:
         proot_cmd._add_custom_binds([], ["/src:relative/dest"])
-    assert exc.value.code == 1
-    assert "must be an absolute path" in capsys.readouterr().err
+    assert "must be an absolute path" in str(exc.value)
 
 
 def test_valid_bind_appended_with_abspath(tmp_path):

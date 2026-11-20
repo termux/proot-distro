@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proot_distro.commands import install
+from proot_distro.operations import install
 from proot_distro.commands.install import command_install
 from proot_distro.commands.remove import command_remove
 from proot_distro.commands.reset import command_reset
@@ -314,7 +314,7 @@ def test_list_skips_a_rootfs_that_is_a_symlink(outside, builders):
 # --- the download cache ----------------------------------------------------
 
 def test_url_temporary_lands_in_the_cache():
-    from proot_distro.commands.install import _cache_temp_file
+    from proot_distro.operations.install import _cache_temp_file
 
     path = _cache_temp_file("dl_install_box")
     assert os.path.dirname(path) == BASE_CACHE_DIR
@@ -325,7 +325,7 @@ def test_url_temporary_lands_in_the_cache():
 def test_url_temporary_is_refused_through_a_symlinked_cache(
         monkeypatch, tmp_path):
     from proot_distro import statedir
-    from proot_distro.commands.install import _cache_temp_file
+    from proot_distro.operations.install import _cache_temp_file
 
     outside = tmp_path / "outside"
     outside.mkdir()

@@ -21,8 +21,8 @@
 #
 #   default    — installed containers: subdirectories of CONTAINERS_DIR
 #                that contain a rootfs/. Rendered as a bullet list.
-#   --image    — cached OCI images: manifest-cache entries plus their
-#                layer blobs (helpers/docker/cache.iter_cached_images).
+#   --image    — cached OCI images: immutable shared inventory records for
+#                manifest-cache entries plus their layer blobs.
 #                Rendered as an IMAGE/ARCH/ID/SIZE/CREATED table that
 #                degrades to a stacked form when the terminal is too
 #                narrow to hold the columns (Termux on a phone).
@@ -36,9 +36,8 @@ import time
 
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import C, msg, quote_path, terminal_width
-from proot_distro.paths import installed_container_names
+from proot_distro.operations import list_containers, list_images
 from proot_distro.progress import fmt_size
-from proot_distro.helpers.docker import iter_cached_images
 
 # Fixed columns of the `--image` table.
 _IMAGE_HEADERS = ("IMAGE", "ARCH", "ID", "SIZE", "CREATED")
@@ -69,18 +68,14 @@ def command_list(args) -> None:
 def _list_containers(quiet: bool) -> None:
     """List every container directory that contains a rootfs/.
 
-    Both halves of that question are decided by descriptor
-    (paths.installed_container_names): os.listdir() plus
-    os.path.isdir(container_rootfs(name)) followed whatever stood in the
-    way, so a planted `containers/<name> -> <host dir>` holding a
-    `rootfs` was listed as an installed container that every other
-    command then refuses to touch.
+    The shared inventory decides both halves of that question through the
+    descriptor-scoped helpers in paths.py.
     """
-    entries = installed_container_names()
+    entries = list_containers()
 
     if quiet:
-        for name in entries:
-            print(name)
+        for container in entries:
+            print(container.name)
         return
 
     msg()
@@ -92,8 +87,8 @@ def _list_containers(quiet: bool) -> None:
     else:
         msg(f"{C['CYAN']}Installed containers:{C['RST']}")
         msg()
-        for name in entries:
-            msg(f"  {C['CYAN']}* {C['GREEN']}{name}{C['RST']}")
+        for container in entries:
+            msg(f"  {C['CYAN']}* {C['GREEN']}{container.name}{C['RST']}")
         msg()
         msg(f"{C['CYAN']}Log in with: "
             f"{C['GREEN']}{PROGRAM_NAME} login <name>{C['RST']}")
@@ -106,7 +101,7 @@ def _list_containers(quiet: bool) -> None:
 
 def _list_images(quiet: bool) -> None:
     """List every image held in the local manifest + layer cache."""
-    images = iter_cached_images()
+    images = list_images()
 
     if quiet:
         seen = set()
@@ -131,7 +126,7 @@ def _list_images(quiet: bool) -> None:
         return
 
     now = time.time()
-    any_incomplete = any(image["missing"] for image in images)
+    any_incomplete = any(image.missing_layers for image in images)
     # The first three cells are a manifest-cache entry's own text -- its
     # reference, its architecture, its config digest or else its file
     # name -- and that directory is guest-writable on Termux, so each is
@@ -140,10 +135,10 @@ def _list_images(quiet: bool) -> None:
     rows = [
         (
             quote_path(image_display_ref(image))
-            + ("*" if image["missing"] else ""),
-            quote_path(image["arch"] or "?"),
-            quote_path(image["image_id"][:12] or image["key"]),
-            fmt_size(image["size"]),
+            + ("*" if image.missing_layers else ""),
+            quote_path(image.architecture or "?"),
+            quote_path(image.cache_image_id[:12] or image.cache_key),
+            fmt_size(image.size_bytes),
             _fmt_created(image, now),
         )
         for image in images
@@ -201,7 +196,7 @@ def _render_stacked(rows: list) -> None:
         msg(f"    {C['CYAN']}{', '.join(row[1:])}{C['RST']}")
 
 
-def image_display_ref(image: dict) -> str:
+def image_display_ref(image) -> str:
     """Return the reference to show for *image*.
 
     Entries whose reference could not be recovered (written by an older
@@ -209,30 +204,33 @@ def image_display_ref(image: dict) -> str:
     repository they were pulled from and a `<none>` tag, mirroring how
     Docker labels an image it can no longer name.
     """
-    if image["image_ref"]:
-        return image["image_ref"]
-    return f"{image['repo']}:<none>" if image["repo"] else "<none>:<none>"
+    if image.reference:
+        return image.reference
+    return (
+        f"{image.repository}:<none>"
+        if image.repository else "<none>:<none>"
+    )
 
 
-def image_identifier(image: dict) -> str:
+def image_identifier(image) -> str:
     """Return the token that addresses *image* on the command line."""
-    return image["image_ref"] or image["image_id"][:12] or image["key"]
+    return image.identifier
 
 
-def _fmt_created(image: dict, now: float) -> str:
+def _fmt_created(image, now: float) -> str:
     """Render the CREATED cell for *image* relative to *now*."""
     epoch = _created_epoch(image)
     return _fmt_age(now - epoch) if epoch > 0 else "unknown"
 
 
-def _created_epoch(image: dict) -> float:
+def _created_epoch(image) -> float:
     """Return the image's creation time in epoch seconds.
 
     Falls back to the mtime of the manifest-cache entry — i.e. when the
     image was pulled or built — for images whose config carries no
     `created` field, which is the norm for locally built ones.
     """
-    match = _TIMESTAMP_RE.match(image.get("created") or "")
+    match = _TIMESTAMP_RE.match(image.created or "")
     if match:
         sign, off_h, off_m = match.group(7), match.group(8), match.group(9)
         try:
@@ -245,7 +243,7 @@ def _created_epoch(image: dict) -> float:
             return float(epoch)
         except (ValueError, OverflowError):
             pass
-    return float(image.get("cached_at") or 0.0)
+    return float(image.cached_at or 0.0)
 
 
 # Unit thresholds for _fmt_age, coarsest first.

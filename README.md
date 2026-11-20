@@ -34,7 +34,8 @@ bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
 1. [Introduction](#introduction)
 2. [Installation](#installation)
 3. [Quick start](#quick-start)
-4. [Commands](#commands-reference)
+4. [Python API](#python-api)
+5. [Commands](#commands-reference)
    * [`install`](#install--install-a-container)
    * [`search`](#search--search-docker-hub-for-images)
    * [`build`](#build--build-an-image-from-a-dockerfile)
@@ -52,12 +53,12 @@ bc1qxuwtc0sfjt43n3sufck6s0gaeand8eaeguajxs
    * [`copy`](#copy--copy-files-to-or-from-a-container)
    * [`sync`](#sync--synchronize-files-to-or-from-a-container)
    * [`clear-cache`](#clear-cache--delete-the-download-cache)
-5. [How PRoot-Distro works](#how-proot-distro-works)
-6. [Storage layout](#storage-layout)
-7. [Environment variables](#environment-variables)
-8. [Shell completions](#shell-completions)
-9. [Limitations](#limitations)
-10. [Donate](#donate)
+6. [How PRoot-Distro works](#how-proot-distro-works)
+7. [Storage layout](#storage-layout)
+8. [Environment variables](#environment-variables)
+9. [Shell completions](#shell-completions)
+10. [Limitations](#limitations)
+11. [Donate](#donate)
 
 ---
 
@@ -178,6 +179,29 @@ proot-distro reset ubuntu
 # Permanently remove a container
 proot-distro remove ubuntu
 ```
+
+---
+
+## Python API
+
+Use PRoot-Distro from your own Python programs. The `proot_distro.api` module
+can manage containers, images, files, backups, builds and sessions. It shares
+containers and cache with the command-line tool.
+
+```python
+from proot_distro.api import ProotDistro, ProotDistroError
+
+pd = ProotDistro()
+try:
+    pd.install("alpine:3.21", name="my-alpine")
+    with pd.start("my-alpine", ["uname", "-a"]) as session:
+        session.wait()
+except ProotDistroError as exc:
+    print(f"Failed: {exc}")
+```
+
+* Full guide: [`API.md`](API.md).
+* Ready-to-run examples: [`samples/`](samples/README.md).
 
 ---
 
@@ -361,6 +385,17 @@ Only HTTP or HTTPS links are supported.
 The default container name derived from the last URL component. Use `--name`
 to override.
 
+#### If an install fails or is stopped
+
+A failed install removes the half-installed container, so nothing is
+left that looks installed. CTRL-C stops an install, but the container
+is still removed first; press CTRL-C again to skip that. If anything is
+left, the install says so and tells you how to remove it:
+
+```
+The incomplete container 'ubuntu' was not fully removed. Remove it with 'proot-distro remove ubuntu'.
+```
+
 ---
 
 ### `search` — Search Docker Hub for images
@@ -529,6 +564,24 @@ has been rebuilt since. `clear-cache --build-cache` is the opposite
 target: it drops the index and the layers only it was holding, leaving
 the downloaded base images alone.
 
+**Interrupting a build:**
+
+A build keeps its work-in-progress files in `build-tmp/` and removes
+them when it ends. CTRL-C stops a build, but its files are still
+removed first; press CTRL-C again to skip that. If a build was killed
+or stopped before it could clean up, the next `build` removes what it
+left and says so. So does [`clear-cache`](#clear-cache--delete-the-download-cache):
+
+```
+Removing scratch left by 1 interrupted build(s)...
+```
+
+If `build-tmp/` cannot be used, a build keeps these files in the system
+temporary directory (`$TMPDIR`, usually `/tmp`) instead. They are
+removed the same way. Files left there by version 5.10 cannot be told
+apart from those of a running build, so delete old `pd-build-*`
+directories there yourself when no build is running.
+
 **Examples:**
 
 ```sh
@@ -629,9 +682,14 @@ the registry accepts unauthenticated `PUT`s.
 - The image config bytes are re-canonicalised from the cached dict
   and their SHA-256 is verified to match the digest recorded in the
   manifest before upload. A mismatch indicates a corrupted local
-  cache and aborts the push.
+  cache and aborts the push. So does a cached manifest that is not an
+  image manifest.
 - 401/403 responses (on any phase: token fetch, blob upload, manifest
   PUT) are reported with a hint to set or fix `PD_DOCKER_AUTH`.
+- The digest shown at the end is the one proot-distro works out from
+  the manifest it sent. If the registry reports a different digest,
+  the push ends with an error. The tag may still have changed on the
+  registry, so check it there.
 - A "too many requests" answer (HTTP 429) stops the push with a message
   saying whose limit was reached and when to try again, if the registry
   says. Short waits the registry asks for are waited out automatically.
@@ -1130,7 +1188,8 @@ recorded at install time. **All data inside the container is lost.**
 The image reference and target architecture are read from
 `containers/<name>/manifest.json`. If that file is missing, the command
 exits with an error — reset is supported for OCI image installs only
-(plain rootfs tarballs cannot be re-pulled).
+(plain rootfs tarballs cannot be re-pulled). The recorded image must be a
+registry image: a local file path or URL found there is refused.
 
 | Option | Description |
 |---|---|
@@ -1241,6 +1300,11 @@ materialised as independent file copies (via `shutil.copy2`) rather
 than real hard links, because the on-disk rootfs uses proot's
 link2symlink emulation and a host-level hard link would alias what
 the guest treats as separate inodes.
+
+If a restore fails or is stopped, a container it created is removed
+again, just like a [failed install](#if-an-install-fails-or-is-stopped).
+A container that already existed was being overwritten and cannot be
+put back: restore the same archive again to repair it.
 
 `restore` is **TTY-safe** when reading from a pipe that involves an
 interactive producer (`gpg -d archive.gpg | proot-distro restore`):
@@ -1376,6 +1440,11 @@ reported after the operation in human-readable units.
 | `--build-cache` | Drop the build cache index and the layer blobs only it was pinning. |
 | `-v`, `--verbose` | Log each deleted file. |
 | `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
+
+Whatever the options, `clear-cache` also removes the work-in-progress
+files of builds that were killed or interrupted (see
+[Interrupting a build](#build--build-an-image-from-a-dockerfile)). They
+are not part of the cache and are not counted in the space reported.
 
 After `clear-cache`, the next `install` (or `reset`) of an image
 requires network access again, and layers must be re-downloaded and
@@ -1584,6 +1653,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
 | `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
 | `sessions/<pid>.json` | Active-session registry entry for `ps`; holds an inherited `flock` for the session lifetime and is pruned when the session ends |
+| `build-tmp/pd-build-<pid>-<start>.<random>/` | Work-in-progress files of a running `build`; locked while it runs, removed when it ends, or by the next `build` or `clear-cache` if it was killed |
 | `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
 | `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags), each recording the image reference and architecture it was cached for — this is what `list --image` inventories |
 | `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |

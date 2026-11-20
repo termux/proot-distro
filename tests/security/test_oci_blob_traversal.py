@@ -1,5 +1,5 @@
 # Containment tests for the local OCI-image install path
-# (proot_distro.commands.install_local) — crafted digests in index.json must
+# (proot_distro.operations.install_local) — crafted digests in index.json must
 # not escape the blob layout, and hostile layer content must stay in rootfs.
 
 import io
@@ -9,7 +9,7 @@ import tarfile
 import pytest
 
 from _builders import install_local_into
-from proot_distro.commands import install_local
+from proot_distro.operations import install_local
 
 
 def test_oci_blob_path_valid():

@@ -257,6 +257,40 @@ def parse_tag_reference(ref: str) -> Reference:
     return parsed
 
 
+def registry_key(registry: str) -> str:
+    """The name registry credentials are scoped by, for a parsed registry.
+
+    *registry* is a Reference's registry ('' for Docker Hub). Host names
+    are case-insensitive, so the key is lowercase, and Docker Hub -- which
+    a reference spells as nothing, `docker.io` or `index.docker.io` -- is
+    always `docker.io`. Two spellings that reach the same registry this
+    way compare equal; a port is part of the key, since another port is
+    another server.
+    """
+    key = (registry or _DEFAULT_DOMAIN).lower()
+    return _DEFAULT_DOMAIN if key in _HUB_ALIASES else key
+
+
+def normalize_registry(value: str) -> str:
+    """Validate a registry name a caller typed and return its registry_key.
+
+    Only what a reference's first component may be: a host name or an
+    IPv6 literal in brackets, with an optional port. A scheme, a path or
+    anything else is refused with InvalidReference, so a credential can
+    never be scoped to a string no reference would ever match.
+    """
+    if not isinstance(value, str) or not value or len(value) > NAME_MAX:
+        raise InvalidReference("registry name is empty or too long")
+    host = _DOMAIN_RE.fullmatch(value)
+    if host is None:
+        raise InvalidReference(
+            "registry must be a host name with an optional port, such as "
+            "'ghcr.io' or 'localhost:5000'")
+    if host.group(1) is not None and int(host.group(1)) > _PORT_MAX:
+        raise InvalidReference("registry port is out of range")
+    return registry_key(value)
+
+
 def is_repository_path(name: str) -> bool:
     """True when *name* is a repository path Docker would accept.
 
