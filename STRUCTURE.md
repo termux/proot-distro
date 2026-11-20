@@ -66,7 +66,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/credentials.py` | Redacted, optionally registry-scoped credentials, provider requests, and the public structural provider protocol. Workers ask for credentials per registry over a private bidirectional channel. |
 | `api/cancellation.py` | Public structural protocol for cooperative cancellation tokens. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
-| `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. |
+| `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. The base class escapes every message's control and format characters. |
 | `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context, plus the public handler protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `_api_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
@@ -241,7 +241,7 @@ Roughly bottom-up. Higher entries import lower ones.
 | Module | Role |
 | --- | --- |
 | `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. `program_version()` is looked up on first use. |
-| `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
+| `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, `quote_path` (escapes control and format characters, C1 and bidi ones included, in names read from disk or network), and `printable_message` (the same for whole messages; every log helper applies it, and so do the API's error classes and its decoding of worker events). |
 | `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, unsupported, and registry-authentication failures; workers map them to public API exceptions while CLI catches remain unchanged. |
 | `lazy_exports.py` | `lazy_exports()`: the PEP 562 hooks behind a package index that imports a submodule only when one of its names is used. |
 | `interrupts.py` | `defer_sigint()` holds SIGINT pending across a place where CPython would lose or misplace its KeyboardInterrupt; `open_tar_member()` is the only way the package opens a tar member, because `BufferedReader` discards what tarfile's `tell()` raises. API cancellation is a SIGINT, so a lost one let a cancelled operation finish. `finish_cleanup()` lets the first interrupt landing in a cleanup wait for it to end, while a second stops it; build, install and restore remove what they leave through it. |

@@ -712,6 +712,56 @@ def test_structured_worker_error_mapping(kind, exception_type):
     assert error.operation == "test"
 
 
+# A worker message that interpolated someone else's text raw: an OSC that
+# retitles the terminal, a C1 CSI, and a right-to-left override.
+_HOSTILE_TEXT = "x\x1b]0;pwned\x07\x9b2J\u202ey"
+_ESCAPED_TEXT = "x\\e]0;pwned\\x07\\x9b2J\\u202ey"
+
+
+def test_structured_worker_error_escapes_the_message():
+    # Regression: the message became the exception's text as it was, and
+    # some worker paths (a busy lock's holder, the last error before a
+    # sys.exit()) never quoted what they put in it.
+    payload = json.dumps({"_error": {
+        "kind": "busy", "message": _HOSTILE_TEXT,
+    }}).encode()
+    error = program._structured_worker_error("test", payload)
+    assert str(error) == _ESCAPED_TEXT
+
+
+@pytest.mark.parametrize("error_type", [
+    AlreadyExistsError, AuthenticationError, BusyError, IntegrityError,
+    InvalidArgumentError, NetworkError, NotFoundError, OperationError,
+    OperationCancelledError, PartialOperationError, ProotDistroError,
+    SessionStartupTimeoutError, UnsupportedOperationError,
+])
+def test_every_api_error_escapes_its_message(error_type):
+    # The base class escapes, so no path that builds an error -- in the
+    # worker or here -- can hand a caller raw escape sequences.
+    error = error_type(_HOSTILE_TEXT, operation="test")
+    assert str(error) == _ESCAPED_TEXT
+    assert error.operation == "test"
+
+
+def test_worker_stderr_is_escaped_into_the_error():
+    # The last line of a traceback quotes an exception's str().
+    stderr = (
+        "Traceback (most recent call last):\n  File \"x\"\n"
+        f"RuntimeError: {_HOSTILE_TEXT}\n"
+    ).encode("utf-8")
+    error = program._worker_error("test", stderr)
+    assert str(error) == f"test worker failed: RuntimeError: {_ESCAPED_TEXT}"
+    plain = program._worker_error("test", _HOSTILE_TEXT.encode("utf-8"))
+    assert str(plain) == _ESCAPED_TEXT
+
+
+def test_worker_event_messages_are_escaped():
+    event = program._operation_event("push", json.dumps({
+        "kind": "warning", "message": _HOSTILE_TEXT,
+    }).encode())
+    assert event.message == _ESCAPED_TEXT
+
+
 @pytest.mark.parametrize("payload", [
     b"",
     b"null",
@@ -2174,6 +2224,23 @@ def test_session_close_kills_and_reraises_on_ctrl_c(monkeypatch):
         if child.poll() is None:
             child.kill()
             real_wait()
+
+
+def test_session_setup_error_and_events_are_escaped():
+    events = []
+    payload = (
+        json.dumps({"event": {"kind": "info", "message": _HOSTILE_TEXT}})
+        + "\n"
+        + json.dumps({"error": _HOSTILE_TEXT, "kind": "busy"}) + "\n"
+    ).encode()
+    setup_error = _read_startup_payload(payload, events.append)
+    assert setup_error.kind == "busy"
+    # Raised the way start() raises it.
+    error = program._WORKER_ERROR_TYPES[setup_error.kind](
+        str(setup_error), operation="start")
+    assert isinstance(error, BusyError)
+    assert str(error) == _ESCAPED_TEXT
+    assert [event.message for event in events] == [_ESCAPED_TEXT]
 
 
 def _read_startup_payload(payload, event_handler=None):

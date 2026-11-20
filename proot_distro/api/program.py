@@ -69,6 +69,7 @@ from proot_distro.helpers.docker.refs import (
     with_explicit_tag,
 )
 from proot_distro.helpers.download import NETWORK_ERRORS
+from proot_distro.message import printable_message
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
 from proot_distro.paths import container_from_spec
 
@@ -515,7 +516,8 @@ def _read_session_startup(
             ) from None
         if event_handler is not None:
             event_handler(OperationEvent(
-                operation, kind, message, phase=phase, resource=resource,
+                operation, kind, printable_message(message),
+                phase=phase, resource=resource,
             ))
 
     while True:
@@ -745,7 +747,11 @@ def _serve_credential_requests(sock, provider, operation: str):
 
 
 def _operation_event(operation: str, raw: bytes) -> OperationEvent:
-    """Validate one framed worker event and construct its public model."""
+    """Validate one framed worker event and construct its public model.
+
+    The message is escaped (printable_message). Build output does not
+    come this way: it is a RUN step's own output, passed on as it came.
+    """
     try:
         event = json.loads(raw)
         kind = EventKind(event["kind"])
@@ -773,7 +779,8 @@ def _operation_event(operation: str, raw: bytes) -> OperationEvent:
             operation=operation,
         ) from None
     return OperationEvent(
-        operation, kind, message, current, total, unit, phase, resource
+        operation, kind, printable_message(message), current, total, unit,
+        phase, resource,
     )
 
 

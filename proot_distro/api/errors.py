@@ -26,12 +26,22 @@ translated at this boundary so applications do not need to know how an
 operation is implemented.
 """
 
+from proot_distro.message import printable_message
+
 
 class ProotDistroError(Exception):
-    """Base class for failures reported by the programmatic API."""
+    """Base class for failures reported by the programmatic API.
+
+    The message has its control and format characters escaped
+    (message.printable_message). It is assembled from whatever the
+    failure involved -- a server's reason phrase, a lock holder's command
+    line, a traceback's last line -- and callers print it. Escaping it
+    here, the one place every API error passes through, means no path that
+    builds one can forget to.
+    """
 
     def __init__(self, message: str, *, operation: str = "") -> None:
-        super().__init__(message)
+        super().__init__(printable_message(message))
         self.operation = operation
 
 

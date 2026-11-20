@@ -688,6 +688,20 @@ def test_tui_draws_every_string_printable_and_within_its_row(monkeypatch):
         assert x + sum(map(module._cell_width, text)) <= 80, (y, text)
 
 
+def _raw_error(error_type, text, **kwargs):
+    """An *error_type* whose str() is *text*, controls and all.
+
+    ProotDistroError escapes its message when it is made, so no error
+    the library raises carries raw controls any more. The samples clean
+    what they print all the same: each stands alone, may run against
+    another version of the library, and catches more than its errors.
+    So the raw text is put back after the error is made.
+    """
+    error = error_type("placeholder", **kwargs)
+    error.args = (text,)
+    return error
+
+
 def test_tui_cleans_the_error_it_prints_after_curses(monkeypatch, capsys):
     module = _load("container_manager_tui")
 
@@ -696,7 +710,7 @@ def test_tui_cleans_the_error_it_prints_after_curses(monkeypatch, capsys):
             return True
 
     def fail(_main):
-        raise module.ProotDistroError("bad\x1b]0;title\x07 value")
+        raise _raw_error(module.ProotDistroError, "bad\x1b]0;title\x07 value")
 
     monkeypatch.setattr(module.sys, "stdin", Tty())
     monkeypatch.setattr(module.sys, "stdout", Tty())
@@ -773,11 +787,11 @@ def test_tui_refuses_to_start_without_a_terminal(monkeypatch, capsys):
 
 
 # Text a third party chose: an OSC title sequence (ESC ... BEL), a C1 CSI
-# and a right-to-left override. The library escapes C0 controls in the
-# messages it builds, but not C1 controls or format characters, and an
-# HTTP reason phrase is decoded as Latin-1, so a registry's bytes
-# 0x80-0x9f arrive as C1 controls. Results and events carry such text
-# unescaped.
+# and a right-to-left override. An HTTP reason phrase is decoded as
+# Latin-1, so a registry's bytes 0x80-0x9f arrive as C1 controls. The
+# library escapes such text in its error and event messages, but results
+# and build output carry it as it came, and errors are put together with
+# it raw here (_raw_error) for the reasons given there.
 HOSTILE = "bad\x1b]0;pwned\x07 \x9b2J\u202eend"
 CLEANED = "bad?]0;pwned? ?2J?end"
 
@@ -796,7 +810,7 @@ class _FailingApi:
 
     def __getattr__(self, method):
         def fail(*_args, **_kwargs):
-            raise ProotDistroError(HOSTILE, operation=method)
+            raise _raw_error(ProotDistroError, HOSTILE, operation=method)
         return fail
 
 
@@ -835,7 +849,8 @@ def test_samples_clean_errors_raised_while_setting_up(monkeypatch, capsys):
         module = _load(name)
 
         def refuse(*_args, **_kwargs):
-            raise ProotDistroError(HOSTILE, operation="initialize")
+            raise _raw_error(ProotDistroError, HOSTILE,
+                             operation="initialize")
 
         monkeypatch.setattr(module, "ProotDistro", refuse)
         assert module.main(argv) in (1, 2), name
@@ -847,7 +862,8 @@ def test_build_image_cleans_a_cancellation_message(monkeypatch, capsys):
 
     class CancelledApi(_FailingApi):
         def build(self, *_args, **_kwargs):
-            raise OperationCancelledError(HOSTILE, operation="build")
+            raise _raw_error(OperationCancelledError, HOSTILE,
+                             operation="build")
 
     monkeypatch.setattr(module, "ProotDistro", CancelledApi)
 

@@ -35,9 +35,15 @@
 # by command handlers when --quiet was passed) makes is_quiet() return True
 # so progress-bar code paths in helpers can skip their writes. msg() itself
 # is unaffected — error messages must always reach the user.
+#
+# Text that is not this program's own never reaches a terminal with its
+# control and format characters intact: quote_path() escapes a name before
+# it goes into a message, and the log helpers pass every message through
+# printable_message() before they print it or hand it on as an event.
 
 import os
 import sys
+import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -240,7 +246,14 @@ def msg(*args):
 
 
 def log_info(text: str, *, phase=None, resource=None):
-    """Emit a `[*] text` info line. No-op under --quiet."""
+    """Emit a `[*] text` info line. No-op under --quiet.
+
+    *text* goes through printable_message(), as in every log helper here,
+    so a message that interpolated someone else's text raw -- an
+    exception's str(), a server's reason phrase, a lock holder's command
+    -- cannot drive the terminal, nor an API caller's that prints events.
+    """
+    text = printable_message(text)
     if _emit_event("info", text, phase=phase, resource=resource):
         return
     if _quiet:
@@ -250,6 +263,7 @@ def log_info(text: str, *, phase=None, resource=None):
 
 def log_retry(text: str, *, resource=None):
     """Emit a retry notice, retaining the CLI's ordinary info styling."""
+    text = printable_message(text)
     if _emit_event("retry", text, phase="network", resource=resource):
         return
     if _quiet:
@@ -259,6 +273,7 @@ def log_retry(text: str, *, resource=None):
 
 def log_error(text: str, *, phase=None, resource=None):
     """Emit a `[!] text` error line. Always shown — even under --quiet."""
+    text = printable_message(text)
     if _emit_event("error", text, phase=phase, resource=resource):
         return
     msg(f"{C['BLUE']}[{C['RED']}!{C['BLUE']}] {C['CYAN']}{text}{C['RST']}")
@@ -266,6 +281,7 @@ def log_error(text: str, *, phase=None, resource=None):
 
 def warn(text: str, *, phase=None, resource=None):
     """Emit a 'Warning: text' line in yellow."""
+    text = printable_message(text)
     if _emit_event("warning", text, phase=phase, resource=resource):
         return
     msg(f"{C['BYELLOW']}Warning: {C['YELLOW']}{text}{C['RST']}")
@@ -273,6 +289,7 @@ def warn(text: str, *, phase=None, resource=None):
 
 def crit_error(text: str):
     """Emit an 'Error: text' line in red. Caller typically calls sys.exit(1)."""
+    text = printable_message(text)
     if _emit_event("error", text):
         return
     msg(f"{C['BRED']}Error: {C['RED']}{text}{C['RST']}")
@@ -287,6 +304,35 @@ _QUOTE_MAP = {
     "\x1b": "\\e",
 }
 
+# The kinds of character never shown literally, as Unicode general
+# categories: controls (C0, DEL, and C1, where U+009B is CSI to a terminal
+# just as ESC [ is), format characters (the bidi embeddings, overrides and
+# isolates that reorder what is shown, the zero-width characters a name
+# can hide behind, the soft hyphen), lone surrogates, and the line and
+# paragraph separators. Everything else is shown as it is: non-ASCII
+# spaces, private-use characters, and code points this Python's Unicode
+# data does not know yet.
+_ESCAPED_CATEGORIES = frozenset(("Cc", "Cf", "Cs", "Zl", "Zp"))
+
+# What printable_message() spells out readably. Its other escapes are
+# numeric, the same as quote_path's.
+_MESSAGE_MAP = {"\r": "\\r", "\x1b": "\\e"}
+
+
+def _shown_as_is(ch: str) -> bool:
+    return (ch.isprintable()
+            or unicodedata.category(ch) not in _ESCAPED_CATEGORIES)
+
+
+def _numeric_escape(ch: str) -> str:
+    """Python's own spelling of *ch*: \\xNN, \\uNNNN or \\UNNNNNNNN."""
+    code = ord(ch)
+    if code < 0x100:
+        return f"\\x{code:02x}"
+    if code < 0x10000:
+        return f"\\u{code:04x}"
+    return f"\\U{code:08x}"
+
 
 def quote_path(text: str) -> str:
     """Render *text* printable, C-style escapes for control characters.
@@ -298,8 +344,12 @@ def quote_path(text: str) -> str:
     OSError carries the name it failed on. A name holding ESC repaints the
     terminal, hides the lines around it, or hands the emulator whatever
     sequence follows it, so nothing below 0x20 — nor DEL — is allowed
-    through literally. Backslash is escaped too, so an escape this produced
-    cannot be confused with the same characters spelled out in a name.
+    through literally. Nor is anything else _ESCAPED_CATEGORIES names: a
+    C1 control such as U+009B is CSI to a terminal, and an HTTP reason
+    phrase, decoded as Latin-1, carries one for a byte 0x9b; a
+    right-to-left override makes a name read as another. Backslash is
+    escaped too, so an escape this produced cannot be confused with the
+    same characters spelled out in a name.
 
     A lone surrogate is escaped as well, as `\\udcff`. It is how a byte
     that is not UTF-8 arrives -- out of argv, the environment, or a JSON
@@ -311,17 +361,46 @@ def quote_path(text: str) -> str:
     the colour codes the log helpers wrap it in are control characters by
     definition.
     """
+    if text.isprintable() and "\\" not in text:
+        return text
     out = []
     for ch in text:
         escaped = _QUOTE_MAP.get(ch)
-        if escaped is not None:
-            out.append(escaped)
-        elif ch < " " or ch == "\x7f":
-            out.append(f"\\x{ord(ch):02x}")
-        elif "\ud800" <= ch <= "\udfff":
-            out.append(f"\\u{ord(ch):04x}")
-        else:
+        if escaped is None:
+            escaped = ch if _shown_as_is(ch) else _numeric_escape(ch)
+        out.append(escaped)
+    return "".join(out)
+
+
+def printable_message(text: str) -> str:
+    """*text*, a whole message, with its controls and format characters
+    escaped.
+
+    For text that already is a message rather than a name to put in one:
+    what a log helper is given, an error a worker reports, the tail of a
+    worker's stderr. Messages are assembled all over the program, and
+    one that interpolated someone else's text without quote_path() --
+    an exception's str(), a server's reason phrase -- used to carry its
+    escape sequences to the terminal.
+
+    The characters quote_path() escapes are escaped the same way, except
+    newline and tab, which are left alone: a message may run over several
+    lines and line up its parts. So is backslash, so that what
+    quote_path() already escaped passes through unchanged.
+
+    Anything else given in place of a string is shown as its str(), as
+    the f-strings the log helpers wrap it in always did.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    if text.isprintable():
+        return text
+    out = []
+    for ch in text:
+        if ch in "\n\t" or _shown_as_is(ch):
             out.append(ch)
+        else:
+            out.append(_MESSAGE_MAP.get(ch) or _numeric_escape(ch))
     return "".join(out)
 
 
