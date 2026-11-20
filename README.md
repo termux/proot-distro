@@ -777,7 +777,7 @@ proot-distro login ubuntu --get-proot-cmd
 | `-w`, `--work-dir PATH` | Set the initial working directory. Default: the user's home directory. |
 | `-e`, `--env VAR=VALUE` | Set an environment variable in the guest (repeatable). Wins over image-defined `Env`, the baseline defaults and the [identity variables](#guest-environment). |
 | `-d`, `--detach` | Start the session in the background and return to the prompt immediately. The session is daemonized (double-fork + `setsid`, detached from the controlling terminal) and its stdin/stdout/stderr are redirected to `/dev/null`, so output is discarded — redirect inside your own command if you need logs. A detached `login` with no `-- COMMAND` exits at once (the shell reads EOF). Track it with [`proot-distro ps`](#ps--list-active-sessions) and stop it with [`proot-distro kill`](#kill--stop-active-sessions). |
-| `--get-proot-cmd` | Print the fully assembled `env` + `proot` command line (escaped, with line continuations) and exit without running. |
+| `--get-proot-cmd` | Print the fully assembled `env` + `proot` command line (escaped, with line continuations) and exit without running. On a terminal, control characters in it are shown escaped (as `\e`) with a warning; redirect the output to a file to get it byte for byte. |
 
 **Options available only on Termux (Android):**
 

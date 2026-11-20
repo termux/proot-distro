@@ -25,7 +25,9 @@ import shlex
 import sys
 
 from proot_distro.constants import PROGRAM_NAME
-from proot_distro.message import C, crit_error, msg, quote_path, warn
+from proot_distro.message import (
+    C, crit_error, msg, printable_message, quote_path, warn,
+)
 from proot_distro.operation_errors import (
     BusyFailure,
     NotFoundFailure,
@@ -103,8 +105,34 @@ def command_session(args, kind):
         raise SystemExit(1) from None
 
 
+def _stdout_is_terminal() -> bool:
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def _print_command(text):
-    """Write an inspected command with filesystem-byte fidelity."""
+    """Write an inspected command with filesystem-byte fidelity.
+
+    Written to a file or a pipe, the command is byte for byte what was
+    built, so that it can be run or compared. Written to a terminal, its
+    control, format and undecodable characters are shown escaped
+    (printable_message), and a warning says so: the command embeds the
+    image's Entrypoint, Cmd and Env and names from the container, all of
+    which the container can rewrite, and a terminal obeys an escape
+    sequence in them. A command with one in it cannot be copied off the
+    screen intact anyway, since the terminal has acted on it.
+    """
+    if _stdout_is_terminal():
+        shown = printable_message(text)
+        if shown != text:
+            warn(
+                "the command holds control, format or undecodable "
+                "characters, shown escaped (as \\e or \\x9b). Redirect "
+                "the output to a file to get it byte for byte."
+            )
+        text = shown
     text += "\n"
     try:
         data = os.fsencode(text)
