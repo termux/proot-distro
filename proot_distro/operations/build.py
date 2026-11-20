@@ -36,6 +36,7 @@ from contextlib import ExitStack
 
 from proot_distro import dirfd, statedir
 from proot_distro.constants import RUNTIME_DIR
+from proot_distro.interrupts import finish_cleanup
 from proot_distro.paths import container_is_installed
 from proot_distro.message import quote_error, quote_path
 from proot_distro.locking import BuildLock
@@ -620,12 +621,10 @@ def _discard_build_tmp(engine, tmp_root, tmp_root_fd, *, interrupted):
 
     The build's last step, and the one an interrupt that comes late
     lands in: removing a large root takes a while, and the work it
-    follows is already done. One landing here cut the cleanup short and
-    stranded the root. So the first interrupt lets the cleanup run to
-    the end and is raised after it; a second stops it where it stands,
-    and _reclaim_build_tmp() takes the rest when the next build starts.
-    *interrupted* says the build is already unwinding from the first,
-    which makes one arriving here the second.
+    follows is already done. finish_cleanup() lets the first interrupt
+    there wait for the removal; a second stops it, and
+    _reclaim_build_tmp() takes the rest when the next build starts.
+    *interrupted* says the build is already unwinding from the first.
 
     The root's descriptor, which holds its lock, is closed last, once
     the tree is gone.
@@ -636,14 +635,7 @@ def _discard_build_tmp(engine, tmp_root, tmp_root_fd, *, interrupted):
         statedir.remove_state_tree(tmp_root)
 
     try:
-        if interrupted:
-            cleanup()
-        else:
-            try:
-                cleanup()
-            except KeyboardInterrupt:
-                cleanup()
-                raise
+        finish_cleanup(cleanup, interrupted=interrupted)
     finally:
         try:
             os.close(tmp_root_fd)

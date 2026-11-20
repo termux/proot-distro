@@ -38,7 +38,7 @@ proot_distro/
   session_*.py  _bootstrap.py  _detach_worker.py                Session setup/runtime helpers
   _api_worker.py  _api_session_worker.py                        Private API worker entry points
   lazy_exports.py                                               On-demand package indexes
-  interrupts.py                                                 Ctrl-C delivery CPython could lose
+  interrupts.py                                                 Ctrl-C delivery; cleanups that finish
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -165,15 +165,15 @@ signalling, and descriptor-pinned login/run preparation are migrated.
 | `operations/copy.py` | Descriptor-pinned copy and move services, including secure cross-device fallback. |
 | `operations/sync.py` | Descriptor-pinned mirroring, metadata comparison, progress, and optional pruning. |
 | `operations/backup.py` | Descriptor-safe container archive creation with atomic path publication and stream output. |
-| `operations/restore.py` | Validated single-container archive extraction with deferred destructive commit. |
-| `operations/install.py` | Local archive, URL, and OCI installation with staged cleanup and rootfs fixups. |
+| `operations/restore.py` | Validated single-container archive extraction with deferred destructive commit; a container it created is removed again if the restore does not finish. |
+| `operations/install.py` | Local archive, URL, and OCI installation with rootfs fixups; the container is removed again if the install does not finish. |
 | `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
 | `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata; only a registry reference is honoured, never a guest-planted path or URL. |
 | `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, optional installation, and the scratch root's lifecycle (locked while in use, swept once its build is gone). |
 | `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
 | `operations/session_signals.py` | Tracked-session selection, PID-reuse-safe process discovery, signal delivery, escalation, and survivor reporting. |
 | `operations/session_prepare.py` | Shared login/run validation, pinned state access, identity and environment resolution, immutable launch metadata, and scoped descriptor ownership. |
-| `operations/containers.py` | Shared secure container removal and rename implementations. |
+| `operations/containers.py` | Shared secure container removal and rename implementations, and `discard_incomplete_container()`: install's and restore's removal of a container they did not finish, through `finish_cleanup()`, naming whatever is left. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
 | `operations/cache.py` | Shared full/orphan/build cache cleanup and reclaimed-byte accounting. |
@@ -243,7 +243,7 @@ Roughly bottom-up. Higher entries import lower ones.
 | `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, and `quote_path` (escapes terminal control bytes in names read from disk or network). |
 | `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, unsupported, and registry-authentication failures; workers map them to public API exceptions while CLI catches remain unchanged. |
 | `lazy_exports.py` | `lazy_exports()`: the PEP 562 hooks behind a package index that imports a submodule only when one of its names is used. |
-| `interrupts.py` | `defer_sigint()` holds SIGINT pending across a place where CPython would lose or misplace its KeyboardInterrupt; `open_tar_member()` is the only way the package opens a tar member, because `BufferedReader` discards what tarfile's `tell()` raises. API cancellation is a SIGINT, so a lost one let a cancelled operation finish. |
+| `interrupts.py` | `defer_sigint()` holds SIGINT pending across a place where CPython would lose or misplace its KeyboardInterrupt; `open_tar_member()` is the only way the package opens a tar member, because `BufferedReader` discards what tarfile's `tell()` raises. API cancellation is a SIGINT, so a lost one let a cancelled operation finish. `finish_cleanup()` lets the first interrupt landing in a cleanup wait for it to end, while a second stops it; build, install and restore remove what they leave through it. |
 | `names.py` | The one container-name rule. |
 | `progress.py` | Shared stderr progress bar and structured API progress routing with explicit phase/resource metadata. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |

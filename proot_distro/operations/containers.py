@@ -29,7 +29,8 @@ import os
 import stat
 
 from proot_distro import dirfd, statedir
-from proot_distro.constants import CONTAINERS_DIR
+from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
+from proot_distro.interrupts import finish_cleanup
 from proot_distro.l2s import rewrite_l2s_targets
 from proot_distro.locking import ContainerLock
 from proot_distro.message import quote_path
@@ -70,6 +71,39 @@ def remove_path(path: str, on_remove=None) -> bool:
             else lambda rel: on_remove(os.path.join(path, rel) if rel else path)
         ),
     )
+
+
+def discard_incomplete_container(name, context, *, phase, interrupted):
+    """Remove a container that an install or restore created but did not finish.
+
+    The tree is whatever the image or the archive produced so far. It can
+    be deeper than the interpreter's stack and hold directories the image
+    sealed, which shutil.rmtree() could not remove: remove_state_tree()
+    walks it without recursing and relaxes modes. It reaches `containers`
+    through the same walk as every other state path, so a planted parent
+    cannot aim the removal at a host directory.
+
+    Until it is gone the tree looks like an installed container: it is
+    listed, it can be logged into, and the next install of the name is
+    refused. The removal comes right after the failure is reported, which
+    is where an API cancel or the stop after a failing event handler
+    lands, and one landing there used to cut it short. finish_cleanup()
+    now lets the first interrupt wait for it. Whatever a second interrupt
+    or a failed removal leaves is named to the user, along with the
+    command that removes it.
+    """
+    try:
+        finish_cleanup(
+            lambda: statedir.remove_state_tree(container_dir(name)),
+            interrupted=interrupted,
+        )
+    finally:
+        if container_entry_lstat(name) is not None:
+            context.error(
+                f"The incomplete container '{name}' was not fully "
+                f"removed. Remove it with '{PROGRAM_NAME} remove {name}'.",
+                phase=phase, resource=name,
+            )
 
 
 def remove_container(
@@ -193,4 +227,9 @@ def _rename_locked(
     )
 
 
-__all__ = ("remove_container", "remove_path", "rename_container")
+__all__ = (
+    "discard_incomplete_container",
+    "remove_container",
+    "remove_path",
+    "rename_container",
+)

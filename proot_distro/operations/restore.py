@@ -70,6 +70,7 @@ from proot_distro.operation_errors import (
     BusyFailure, IntegrityFailure, NotFoundFailure, OperationFailure,
     UnsupportedFailure,
 )
+from proot_distro.operations.containers import discard_incomplete_container
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import ArchiveRestore
 from proot_distro.progress import (
@@ -565,6 +566,7 @@ def restore_container(
     committed = False
     created = False             # this restore made containers/<name>
     succeeded = False
+    interrupted = False
     dests = None                # opened with the container dir, at commit
     root_fd = None
     pending_manifest = None     # (bytes, mode) written only on success
@@ -822,6 +824,7 @@ def restore_container(
         succeeded = True
 
     except KeyboardInterrupt:
+        interrupted = True
         clear_bar()
         context.error("Aborted by user.", phase="extract", resource=archive)
         raise
@@ -839,25 +842,32 @@ def restore_container(
             f"failed to restore container: {quote_error(exc)}"
         ) from exc
     finally:
-        if raw_fh is not None:
-            raw_fh.close()
-        if dests is not None:
-            dests.close()
-        if root_fd is not None:
-            try:
-                os.close(root_fd)
-            except OSError:
-                pass
-        if created and not succeeded:
-            # An existing container is overwritten in place and cannot be
-            # rolled back, so a failed restore leaves it half-replaced and
-            # a retry repairs it. A container this restore created has
-            # nothing to go back to: drop it, rather than leave a rootfs
-            # with no manifest that listings report as a container. Still
-            # under the lock, so no other command sees the partial tree.
-            statedir.remove_state_tree(container_dir(restore_name))
-        if lock is not None:
-            lock.release()
+        try:
+            if raw_fh is not None:
+                raw_fh.close()
+            if dests is not None:
+                dests.close()
+            if root_fd is not None:
+                try:
+                    os.close(root_fd)
+                except OSError:
+                    pass
+            if created and not succeeded:
+                # An existing container is overwritten in place and cannot
+                # be rolled back, so a failed restore leaves it
+                # half-replaced and a retry repairs it. A container this
+                # restore created has nothing to go back to: drop it,
+                # rather than leave a rootfs with no manifest that listings
+                # report as a container. Still under the lock, so no other
+                # command sees the partial tree, and the lock is released
+                # even if the removal is stopped.
+                discard_incomplete_container(
+                    restore_name, context,
+                    phase="extract", interrupted=interrupted,
+                )
+        finally:
+            if lock is not None:
+                lock.release()
 
     return ArchiveRestore(restore_name, archive)
 

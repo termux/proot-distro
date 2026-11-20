@@ -173,7 +173,8 @@ explicitly when you want it.
 Restoring over an existing container replaces it in place. If that restore
 fails or is cancelled, the container is left half-replaced: restore the same
 archive again to repair it. A restore that created the container removes it
-again on failure, so no incomplete container is left behind.
+again when it fails or is cancelled, so no incomplete container is left
+behind (see [Cancelling operations](#cancelling-operations)).
 
 **Stream rules**
 
@@ -415,6 +416,12 @@ except OperationCancelledError:
   clean up, so check the state before retrying. A build `RUN` step that was
   running is still stopped: its processes end with the worker, and the next
   build removes the scratch files the killed one left.
+* `install`, and a `restore` that created its container, remove that
+  container when they fail or are cancelled. This holds when the cancel
+  arrives during the removal itself, or while the failure is reported to
+  your event handler. A worker killed before the removal ends leaves the
+  container behind. If the container could not be removed, an event names
+  it, and `remove_container()` removes it.
 * A running callback, credential provider or stream method must return
   before the token can be checked again.
 

@@ -44,6 +44,7 @@ from proot_distro.operation_errors import (
     NotFoundFailure,
     OperationFailure,
 )
+from proot_distro.operations.containers import discard_incomplete_container
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.errors import InstallValidationFailure
 from proot_distro.operations.locks import operation_lock
@@ -53,7 +54,7 @@ from proot_distro.locking import ContainerLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
 from proot_distro.paths import (
-    container_dir, container_manifest, container_rootfs,
+    container_manifest, container_rootfs,
     container_is_installed, open_container_pair,
 )
 from proot_distro.sysdata import setup_fake_sysdata
@@ -269,7 +270,6 @@ def _run_install(
 ) -> ContainerInstallation:
     """Inner install logic — called with the container lock already held."""
     context = context if context is not None else OperationContext()
-    container_path = container_dir(install_name)
     rootfs_dir = container_rootfs(install_name)
 
     # Walked down to, not named: `containers/<name>` is guest-writable on
@@ -321,18 +321,13 @@ def _run_install(
         install_name, create=True, raise_errors=True
     )
 
-    def _cleanup() -> None:
-        # The tree being discarded is whatever the image or the archive
-        # produced, so it can be deeper than the interpreter's stack and
-        # can hold directories the image sealed. shutil.rmtree() managed
-        # neither: it recursed, and RecursionError is not an OSError, so
-        # the handler here let it past and the failed install took the
-        # command down with it instead of cleaning up. The walk reaches
-        # `containers` the same way everything else here does, so a
-        # planted parent cannot aim the removal at a host directory.
-        statedir.remove_state_tree(container_path)
-
+    # Whatever stops the install before its last step leaves the
+    # container to be removed in the finally below; the removal runs
+    # there, rather than in each handler, so an interrupt that lands
+    # while a handler reports the failure cannot skip it.
     tmp_archive = None
+    installed = False
+    interrupted = False
     try:
         if local_path is not None:
             context.info(
@@ -428,13 +423,14 @@ def _run_install(
                 os.close(etc_fd)
 
         setup_fake_sysdata(rootfs_dir, container_fd=container_fd)
+        installed = True
 
     except KeyboardInterrupt:
+        interrupted = True
         clear_bar()
         context.error(
             "Aborted by user.", phase="install", resource=install_name
         )
-        _cleanup()
         raise
     except (EOFError, OSError, tarfile.TarError, RuntimeError) as exc:
         clear_bar()
@@ -447,7 +443,6 @@ def _run_install(
             "distribution image.",
             phase="install", resource=install_name,
         )
-        _cleanup()
         if isinstance(exc, RuntimeError):
             raise
         if isinstance(exc, (EOFError, tarfile.TarError)):
@@ -455,17 +450,21 @@ def _run_install(
         failure = OperationFailure(str(exc))
         failure.reported = True
         raise failure from exc
-    except Exception:
-        _cleanup()
-        raise
     finally:
-        os.close(rootfs_fd)
-        os.close(container_fd)
-        if tmp_archive is not None:
-            try:
-                os.remove(tmp_archive)
-            except OSError:
-                pass
+        try:
+            if not installed:
+                discard_incomplete_container(
+                    install_name, context,
+                    phase="install", interrupted=interrupted,
+                )
+        finally:
+            os.close(rootfs_fd)
+            os.close(container_fd)
+            if tmp_archive is not None:
+                try:
+                    os.remove(tmp_archive)
+                except OSError:
+                    pass
 
     context.info(
         "Finished installation.", phase="install", resource=install_name

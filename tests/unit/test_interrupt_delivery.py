@@ -149,3 +149,51 @@ def test_nothing_opens_a_tar_member_around_the_helper():
                     and node.func.attr == "extractfile"):
                 offenders.append(f"{path.relative_to(package)}:{node.lineno}")
     assert offenders == []
+
+
+def _cleanup_interrupted(times):
+    """A cleanup whose first *times* runs are cut short by Ctrl-C."""
+    runs = []
+
+    def cleanup():
+        runs.append(None)
+        if len(runs) <= times:
+            raise KeyboardInterrupt
+
+    return cleanup, runs
+
+
+def test_finish_cleanup_runs_once_when_nothing_interrupts_it():
+    cleanup, runs = _cleanup_interrupted(0)
+
+    interrupts.finish_cleanup(cleanup, interrupted=False)
+
+    assert len(runs) == 1
+
+
+def test_a_first_interrupt_in_a_cleanup_waits_for_it_to_finish():
+    cleanup, runs = _cleanup_interrupted(1)
+
+    with pytest.raises(KeyboardInterrupt):
+        interrupts.finish_cleanup(cleanup, interrupted=False)
+
+    assert len(runs) == 2
+
+
+def test_a_second_interrupt_stops_a_cleanup():
+    cleanup, runs = _cleanup_interrupted(2)
+
+    with pytest.raises(KeyboardInterrupt):
+        interrupts.finish_cleanup(cleanup, interrupted=False)
+
+    assert len(runs) == 2
+
+
+def test_after_an_interrupt_the_next_one_stops_the_cleanup():
+    # The caller is unwinding from the first, so this is the second.
+    cleanup, runs = _cleanup_interrupted(1)
+
+    with pytest.raises(KeyboardInterrupt):
+        interrupts.finish_cleanup(cleanup, interrupted=True)
+
+    assert len(runs) == 1

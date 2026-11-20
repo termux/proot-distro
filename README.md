@@ -385,6 +385,17 @@ Only HTTP or HTTPS links are supported.
 The default container name derived from the last URL component. Use `--name`
 to override.
 
+#### If an install fails or is stopped
+
+A failed install removes the half-installed container, so nothing is
+left that looks installed. CTRL-C stops an install, but the container
+is still removed first; press CTRL-C again to skip that. If anything is
+left, the install says so and tells you how to remove it:
+
+```
+The incomplete container 'ubuntu' was not fully removed. Remove it with 'proot-distro remove ubuntu'.
+```
+
 ---
 
 ### `search` — Search Docker Hub for images
@@ -1278,6 +1289,11 @@ materialised as independent file copies (via `shutil.copy2`) rather
 than real hard links, because the on-disk rootfs uses proot's
 link2symlink emulation and a host-level hard link would alias what
 the guest treats as separate inodes.
+
+If a restore fails or is stopped, a container it created is removed
+again, just like a [failed install](#if-an-install-fails-or-is-stopped).
+A container that already existed was being overwritten and cannot be
+put back: restore the same archive again to repair it.
 
 `restore` is **TTY-safe** when reading from a pipe that involves an
 interactive producer (`gpg -d archive.gpg | proot-distro restore`):

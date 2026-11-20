@@ -34,6 +34,9 @@ kinds of place break that:
 
 defer_sigint() keeps SIGINT pending across such a place and raises it
 on the way out, from code that propagates it.
+
+A third kind of place is a cleanup, where an interrupt is not lost but
+lands too late: finish_cleanup() is for those.
 """
 
 import contextlib
@@ -81,4 +84,29 @@ def open_tar_member(tf, member):
         return tf.extractfile(member)
 
 
-__all__ = ("defer_sigint", "open_tar_member")
+def finish_cleanup(cleanup, *, interrupted):
+    """Run *cleanup* to its end through one interrupt; a second stops it.
+
+    A cleanup comes after the work, so it is where a late Ctrl-C, an API
+    cancel, or the stop that follows a failing event handler tends to
+    land, and removing a large tree takes long enough for one to land
+    there. One landing there cut the removal short and stranded what it
+    was removing. So the first interrupt lets *cleanup* run again, to its
+    end, and is raised after it; a second stops it where it stands, as a
+    second Ctrl-C stops the wait for a build's RUN step. *cleanup* must
+    therefore be safe to run twice.
+
+    *interrupted* says the caller is already unwinding from an interrupt
+    it caught, which makes one arriving here the second.
+    """
+    if interrupted:
+        cleanup()
+        return
+    try:
+        cleanup()
+    except KeyboardInterrupt:
+        cleanup()
+        raise
+
+
+__all__ = ("defer_sigint", "finish_cleanup", "open_tar_member")
