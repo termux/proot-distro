@@ -40,8 +40,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 REASON = "\x9b2J\x85gone"
 # For a lock file, which can hold anything: an OSC that retitles the
 # terminal, the C1 CSI, and a right-to-left override.
-HOLDER = "x\x1b]0;pwned\x07\x9b2J‮y"
-CONTROLS = ("\x1b", "\x07", "\x85", "\x9b", "‮")
+HOLDER = "x\x1b]0;pwned\x07\x9b2J\u202ey"
+CONTROLS = ("\x1b", "\x07", "\x85", "\x9b", "\u202e")
 
 
 def _assert_no_controls(text):
