@@ -25,7 +25,7 @@ import shlex
 import sys
 
 from proot_distro.constants import PROGRAM_NAME
-from proot_distro.message import C, crit_error, msg, warn
+from proot_distro.message import C, crit_error, msg, quote_path, warn
 from proot_distro.operation_errors import (
     BusyFailure,
     NotFoundFailure,
@@ -116,13 +116,21 @@ def _print_command(text):
 
 
 def _print_detached(launch, pid):
+    """Tell the user which detached session started, and what it runs.
+
+    The command is the image's Entrypoint and Cmd unless arguments
+    replaced them, and those come from the container's manifest, which
+    the container can rewrite. It is quoted (quote_path) after it is
+    joined, so an escape sequence in it is shown, not obeyed.
+    """
     msg()
     msg(f"{C['CYAN']}Started detached session for container "
         f"'{launch.container}':{C['RST']}")
     msg()
     msg(f"{C['CYAN']}PID:     {C['GREEN']}{pid}{C['RST']}")
     msg(f"{C['CYAN']}Command: "
-        f"{C['GREEN']}{shlex.join(launch.inner_command)}{C['RST']}")
+        f"{C['GREEN']}{quote_path(shlex.join(launch.inner_command))}"
+        f"{C['RST']}")
     msg()
     msg(f"{C['CYAN']}List sessions:  "
         f"{C['GREEN']}{PROGRAM_NAME} ps{C['RST']}")
