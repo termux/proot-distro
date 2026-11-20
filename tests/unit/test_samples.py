@@ -2,7 +2,15 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-from proot_distro.api import CredentialRequest, EventKind, OperationEvent
+import pytest
+
+from proot_distro.api import (
+    CredentialRequest,
+    EventKind,
+    OperationCancelledError,
+    OperationEvent,
+    ProotDistroError,
+)
 
 
 SAMPLES = Path(__file__).parents[2] / "samples"
@@ -762,3 +770,215 @@ def test_tui_refuses_to_start_without_a_terminal(monkeypatch, capsys):
 
     assert module.main() == 2
     assert "interactive terminal" in capsys.readouterr().err
+
+
+# Text a third party chose: an OSC title sequence (ESC ... BEL), a C1 CSI
+# and a right-to-left override. The library escapes C0 controls in the
+# messages it builds, but not C1 controls or format characters, and an
+# HTTP reason phrase is decoded as Latin-1, so a registry's bytes
+# 0x80-0x9f arrive as C1 controls. Results and events carry such text
+# unescaped.
+HOSTILE = "bad\x1b]0;pwned\x07 \x9b2J\u202eend"
+CLEANED = "bad?]0;pwned? ?2J?end"
+
+
+def _assert_cleaned(text):
+    for control in ("\x1b", "\x07", "\x9b", "\u202e"):
+        assert control not in text, repr(text)
+    assert CLEANED in text, repr(text)
+
+
+class _FailingApi:
+    """Every API method raises an error carrying HOSTILE."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def __getattr__(self, method):
+        def fail(*_args, **_kwargs):
+            raise ProotDistroError(HOSTILE, operation=method)
+        return fail
+
+
+@pytest.mark.parametrize("name, argv", [
+    ("install_container", ["alpine", "box"]),
+    ("list_containers", None),
+    ("list_resources", []),
+    ("run_command", ["box"]),
+    ("install_and_run", ["alpine", "box"]),
+    ("stream_archives", ["backup", "box", "{tmp}/new.tar.gz"]),
+    ("stream_archives", ["restore", "{tmp}/old.tar.gz"]),
+    ("build_image", ["{tmp}", "--tag", "app:1"]),
+])
+def test_samples_clean_the_error_they_print(
+    monkeypatch, capsys, tmp_path, name, argv,
+):
+    """Regression: an error's text reached the terminal raw."""
+    module = _load(name)
+    (tmp_path / "old.tar.gz").write_bytes(b"archive")
+    monkeypatch.setattr(module, "ProotDistro", _FailingApi)
+
+    if argv is None:
+        status = module.main()
+    else:
+        status = module.main([arg.format(tmp=tmp_path) for arg in argv])
+
+    assert status == 1
+    _assert_cleaned(capsys.readouterr().err)
+
+
+def test_samples_clean_errors_raised_while_setting_up(monkeypatch, capsys):
+    for name, argv in (
+        ("build_image", [".", "--tag", "app:1"]),
+        ("stream_archives", ["restore", "old.tar.gz"]),
+    ):
+        module = _load(name)
+
+        def refuse(*_args, **_kwargs):
+            raise ProotDistroError(HOSTILE, operation="initialize")
+
+        monkeypatch.setattr(module, "ProotDistro", refuse)
+        assert module.main(argv) in (1, 2), name
+        _assert_cleaned(capsys.readouterr().err)
+
+
+def test_build_image_cleans_a_cancellation_message(monkeypatch, capsys):
+    module = _load("build_image")
+
+    class CancelledApi(_FailingApi):
+        def build(self, *_args, **_kwargs):
+            raise OperationCancelledError(HOSTILE, operation="build")
+
+    monkeypatch.setattr(module, "ProotDistro", CancelledApi)
+
+    assert module.main([".", "--tag", "app:1"]) == 2
+    _assert_cleaned(capsys.readouterr().err)
+
+
+def test_install_and_run_cleans_an_error_during_cleanup(monkeypatch, capsys):
+    module = _load("install_and_run")
+
+    class Api(_FailingApi):
+        def install(self, source, *, name, architecture):
+            return SimpleNamespace(
+                name=name, image_reference=source, architecture=None,
+            )
+
+    monkeypatch.setattr(module, "ProotDistro", Api)
+
+    assert module.main(["alpine", "box", "--remove"]) == 1
+    err = capsys.readouterr().err
+    assert "failed during cleanup: " + CLEANED in err
+    _assert_cleaned(err)
+
+
+def test_build_image_cleans_event_messages_and_the_pushed_digest(
+    monkeypatch, tmp_path, capsys,
+):
+    """Regression: build events and the registry's digest were printed raw.
+
+    A build-output event is what a RUN step printed, and the digest is
+    the Docker-Content-Digest header the registry sent back.
+    """
+    module = _load("build_image")
+
+    class Api:
+        def __init__(self, _config, *, event_handler, credential_provider):
+            event_handler(OperationEvent(
+                "build", EventKind.INFO, HOSTILE, phase="build-output",
+            ))
+            event_handler(OperationEvent(
+                "build", EventKind.PROGRESS, HOSTILE, 1, 2, "layers",
+                "layer-pack",
+            ))
+
+        def build(self, context, **options):
+            return SimpleNamespace(
+                images=(), outputs=(), installed_container=None,
+            )
+
+        def push(self, tag, **options):
+            return SimpleNamespace(
+                registry="registry.example", repository="app", tag="1",
+                manifest_digest=HOSTILE, bytes_uploaded=10,
+            )
+
+    monkeypatch.setattr(module, "ProotDistro", Api)
+
+    assert module.main([str(tmp_path), "--tag", "app:1", "--push"]) == 0
+    out = capsys.readouterr().out
+    _assert_cleaned(out)
+    assert out.count(CLEANED) == 3
+
+
+@pytest.mark.parametrize("name, argv, method", [
+    ("list_containers", None, "list_containers"),
+    ("install_container", ["alpine", "box"], "install"),
+])
+def test_samples_clean_recorded_image_metadata(
+    monkeypatch, capsys, name, argv, method,
+):
+    """Regression: an image reference and architecture were printed raw.
+
+    They come from the image, and a container can rewrite its own copy.
+    """
+    module = _load(name)
+    container = SimpleNamespace(
+        name="box", image_reference=HOSTILE, architecture=HOSTILE,
+    )
+
+    class Api:
+        def list_containers(self):
+            return (container,)
+
+        def install(self, image, *, name):
+            return container
+
+    monkeypatch.setattr(module, "ProotDistro", Api)
+
+    assert (module.main() if argv is None else module.main(argv)) == 0
+    out = capsys.readouterr().out
+    _assert_cleaned(out)
+    assert out.count(CLEANED) == 2
+
+
+def test_install_and_run_cleans_the_installed_image_reference(
+    monkeypatch, capsys,
+):
+    module = _load("install_and_run")
+
+    class Api(_FailingApi):
+        def install(self, source, *, name, architecture):
+            return SimpleNamespace(
+                name=name, image_reference=HOSTILE, architecture=None,
+            )
+
+    monkeypatch.setattr(module, "ProotDistro", Api)
+
+    assert module.main(["alpine", "box"]) == 1
+    _assert_cleaned(capsys.readouterr().out)
+
+
+def test_list_resources_cleans_the_command_lines_of_sessions(
+    monkeypatch, capsys,
+):
+    """Another session's command line is whatever that session was given."""
+    module = _load("list_resources")
+
+    class Api:
+        def list_containers(self):
+            return ()
+
+        def list_images(self):
+            return ()
+
+        def list_sessions(self):
+            return (SimpleNamespace(
+                pid=7, container="box", kind="login", detached=False,
+                command=("sh", "-c", HOSTILE),
+            ),)
+
+    monkeypatch.setattr(module, "ProotDistro", Api)
+
+    assert module.main([]) == 0
+    _assert_cleaned(capsys.readouterr().out)

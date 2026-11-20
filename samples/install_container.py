@@ -47,6 +47,19 @@ if __package__ in (None, ""):
 from proot_distro.api import ProotDistro, ProotDistroError
 
 
+def _clean(text: object) -> str:
+    """Replace control characters in text that came from outside.
+
+    The image reference and architecture are read from the image, which a
+    registry or an archive supplies, and an error can quote a registry's
+    reply. Printed raw, an escape sequence in them could rewrite the
+    terminal screen or title.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the small command-line interface used by this sample."""
     parser = argparse.ArgumentParser(
@@ -71,15 +84,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         container = api.install(args.image, name=args.name)
     except ProotDistroError as exc:
         operation = exc.operation or "install"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         # The API has already cleaned up its worker before re-raising.
         print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
         return 130
 
-    source = container.image_reference or args.image
-    architecture = container.architecture or "unknown architecture"
+    source = _clean(container.image_reference or args.image)
+    architecture = _clean(container.architecture or "unknown architecture")
     print(f"Installed {container.name} from {source} ({architecture}).")
     return 0
 

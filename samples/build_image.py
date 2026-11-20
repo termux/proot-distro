@@ -72,20 +72,34 @@ from proot_distro.api import (
 )
 
 
+def _clean(text: object) -> str:
+    """Replace control characters in text that came from outside.
+
+    Event messages carry the output of RUN steps and text from registries
+    and base images, a pushed digest is what the registry answered, and an
+    error can quote a registry's reply. Printed raw, an escape sequence in
+    any of them could rewrite the terminal screen or title.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 def show_event(event: OperationEvent) -> None:
     """Render structured events without parsing their display messages."""
     # operation and phase are stable structured fields. message is intended
     # for display and should not be parsed to infer progress.
     context = "/".join(value for value in (event.operation, event.phase) if value)
+    message = _clean(event.message)
     if event.kind is EventKind.PROGRESS and event.current is not None:
         progress = str(event.current)
         if event.total is not None:
             progress += f"/{event.total}"
         if event.unit:
             progress += f" {event.unit}"
-        print(f"[{context}] {progress}: {event.message}", flush=True)
+        print(f"[{context}] {progress}: {message}", flush=True)
     else:
-        print(f"[{context}] {event.kind.value}: {event.message}", flush=True)
+        print(f"[{context}] {event.kind.value}: {message}", flush=True)
 
 
 def credentials_from_environment() -> Optional[
@@ -220,7 +234,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             credential_provider=provider,
         )
     except (ProotDistroError, ValueError) as exc:
-        print(f"configuration failed: {exc}", file=sys.stderr)
+        print(f"configuration failed: {_clean(exc)}", file=sys.stderr)
         return 2
 
     # threading.Event satisfies the API's structural CancellationToken
@@ -271,16 +285,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     allow_insecure=args.allow_insecure,
                     cancel_event=cancel,
                 )
-                digest = pushed.manifest_digest or "digest unavailable"
+                digest = _clean(pushed.manifest_digest or "digest unavailable")
                 print(
                     f"Pushed {pushed.registry}/{pushed.repository}:{pushed.tag} "
                     f"as {digest}; uploaded {pushed.bytes_uploaded} bytes."
                 )
     except OperationCancelledError as exc:
-        print(f"{exc.operation or 'operation'} cancelled: {exc}", file=sys.stderr)
+        print(f"{exc.operation or 'operation'} cancelled: {_clean(exc)}",
+              file=sys.stderr)
         return 2
     except ProotDistroError as exc:
-        print(f"{exc.operation or 'operation'} failed: {exc}", file=sys.stderr)
+        print(f"{exc.operation or 'operation'} failed: {_clean(exc)}",
+              file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         # No signal handler is needed: the API forwards Ctrl-C to its worker,

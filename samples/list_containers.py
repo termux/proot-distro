@@ -41,6 +41,18 @@ if __package__ in (None, ""):
 from proot_distro.api import ProotDistro, ProotDistroError
 
 
+def _clean(text: object) -> str:
+    """Replace control characters in text that came from outside.
+
+    A container's image reference and architecture are recorded in its
+    metadata, which the container itself can rewrite. Printed raw, an
+    escape sequence there could rewrite the terminal screen or title.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 def main() -> int:
     """Print every installed container and return a shell status code."""
     try:
@@ -51,7 +63,7 @@ def main() -> int:
         # One base exception catches all documented API failures. The
         # operation field identifies which API call reported the error.
         operation = exc.operation or "list_containers"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
@@ -65,8 +77,10 @@ def main() -> int:
     for container in containers:
         # Metadata can be absent for containers restored from older backups or
         # installed from a plain root filesystem archive.
-        source = container.image_reference or "local archive"
-        architecture = container.architecture or "unknown architecture"
+        source = _clean(container.image_reference or "local archive")
+        architecture = _clean(
+            container.architecture or "unknown architecture"
+        )
         print(f"- {container.name}: {source} ({architecture})")
     return 0
 

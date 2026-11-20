@@ -54,8 +54,9 @@ def _clean(text: str) -> str:
     Docker Hub descriptions, the command lines of other sessions, and the
     image references and architectures recorded in a container's or the
     cache's metadata are chosen by third parties -- a container can rewrite
-    its own metadata. Printed raw, an escape sequence in them could rewrite
-    the terminal screen or title.
+    its own metadata -- and an error can quote any of them, or a registry's
+    reply. Printed raw, an escape sequence in them could rewrite the
+    terminal screen or title.
     """
     return "".join(
         char if char.isprintable() else "?" for char in str(text)
@@ -153,7 +154,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # Specific subclasses can be caught when an application has a recovery
         # strategy. This reporting-only sample handles the common base class.
         operation = exc.operation or "operation"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

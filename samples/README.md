@@ -105,9 +105,11 @@ history. See that script's module docstring for the variable names.
 Do not pass secrets with `--build-arg`: build arguments are visible to `RUN`
 steps and may end up in image history.
 
-Some text comes from third parties: Docker Hub descriptions, and image
-metadata that a container can change. `list_resources.py`,
-`install_and_run.py` and `container_manager_tui.py` replace its control
-characters before showing it.
+Some text comes from third parties: Docker Hub descriptions, image
+metadata that a container can change, build output, registry replies, and
+error messages that quote any of these. Every sample replaces control
+characters in such text before printing it. The output of a guest command
+you run is the exception: it reaches your terminal as it would if you ran
+the command there.
 
 See the full API guide in [`API.md`](../API.md).

@@ -56,6 +56,18 @@ if __package__ in (None, ""):
 from proot_distro.api import ProotDistro, ProotDistroError
 
 
+def _clean(text: object) -> str:
+    """Replace control characters in text that came from outside.
+
+    An error can quote names from the container or the archive, which their
+    authors chose. Printed raw, an escape sequence in them could rewrite the
+    terminal screen or title.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 class HashingWriter:
     """Writable binary stream adapter that counts and hashes accepted bytes."""
 
@@ -169,7 +181,7 @@ def _backup(pd: ProotDistro, container: str, archive: Path, compression: str) ->
                   file=sys.stderr)
             return 130
         operation = getattr(exc, "operation", "") or "backup"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         return 1
 
 
@@ -190,7 +202,7 @@ def _restore(pd: ProotDistro, archive: Path) -> int:
         return 130
     except (OSError, ProotDistroError) as exc:
         operation = getattr(exc, "operation", "") or "restore"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         return 1
 
 
@@ -201,7 +213,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # No RuntimeConfig means backups operate on the CLI's container state.
         pd = ProotDistro()
     except ProotDistroError as exc:
-        print(f"{exc.operation or 'initialize'} failed: {exc}", file=sys.stderr)
+        print(f"{exc.operation or 'initialize'} failed: {_clean(exc)}",
+              file=sys.stderr)
         return 1
     if args.command == "backup":
         return _backup(pd, args.container, args.archive, args.compression)

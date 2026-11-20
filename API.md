@@ -57,9 +57,10 @@ Methods return immutable records (or tuples of them). `start` and `run`
 return a `SessionProcess` handle. Methods never print messages and never
 call `sys.exit()`. All failures inherit from `ProotDistroError`.
 
-Text in results and events can come from third parties: image metadata,
-a container's own files (which the container can change), registries and
-Docker Hub. Remove control characters before you print it to a terminal.
+Text in results, events and error messages can come from third parties:
+image metadata, a container's own files (which the container can change),
+registries and Docker Hub. Remove control characters before you print it to
+a terminal. Error messages escape some of them, but not all.
 
 ## Compatibility
 

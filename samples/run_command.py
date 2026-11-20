@@ -45,6 +45,19 @@ if __package__ in (None, ""):
 from proot_distro.api import ProotDistro, ProotDistroError
 
 
+def _clean(text: object) -> str:
+    """Replace control characters in text that came from outside.
+
+    An error can quote what the container holds, such as its configured
+    shell or working directory. Printed raw, an escape sequence there could
+    rewrite the terminal screen or title. The guest command's own output is
+    not filtered: it goes to this terminal as if the command were run here.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the command-line interface used by the example."""
     parser = argparse.ArgumentParser(
@@ -85,7 +98,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             returncode = process.wait()
     except ProotDistroError as exc:
         operation = exc.operation or "start"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)

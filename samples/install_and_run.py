@@ -59,8 +59,10 @@ def _clean(text: str) -> str:
     """Replace control characters in text that came from the container.
 
     The inspected shell and working directory come from the guest's own
-    /etc/passwd. Printed raw, an escape sequence there could rewrite the
-    terminal screen or title.
+    /etc/passwd, the image reference from the image, and an error can quote
+    either, or a registry's reply. Printed raw, an escape sequence there
+    could rewrite the terminal screen or title. The guest command's captured
+    output is printed as it is, as if the command were run here.
     """
     return "".join(
         char if char.isprintable() else "?" for char in str(text)
@@ -145,7 +147,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         installed = True
         print(
             f"Installed {container.name} from "
-            f"{container.image_reference or args.source}."
+            f"{_clean(container.image_reference or args.source)}."
         )
 
         command = _command(guest_command)
@@ -199,7 +201,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         status = 1
     except ProotDistroError as exc:
         operation = exc.operation or "operation"
-        print(f"{operation} failed: {exc}", file=sys.stderr)
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
         status = 1
     except KeyboardInterrupt:
         # The SessionProcess context has already stopped the guest tree.
@@ -215,7 +217,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             except ProotDistroError as exc:
                 operation = exc.operation or "cleanup"
                 print(
-                    f"{operation} failed during cleanup: {exc}",
+                    f"{operation} failed during cleanup: {_clean(exc)}",
                     file=sys.stderr,
                 )
                 status = 1
