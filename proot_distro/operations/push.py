@@ -22,7 +22,8 @@
 #
 #   1. Load the cached manifest + image_config produced by `build`.
 #      Re-canonicalize the config and verify its digest matches
-#      manifest.config.digest — guards against cache corruption.
+#      manifest.config.digest, and check the manifest's media type
+#      (_manifest_media) — guards against cache corruption.
 #   2. Resolve the registry's credential for `pull,push`: PD_DOCKER_AUTH,
 #      once the registry or its token service has accepted it, exchanged
 #      for a Bearer token, or sent as it is to a registry whose challenge
@@ -57,7 +58,7 @@ from proot_distro.helpers.docker.cache import (
     open_required_layer,
 )
 from proot_distro.helpers.docker.media import (
-    OCI_MANIFEST_MEDIA, canonical_json,
+    DOCKER_MANIFEST_MEDIA, OCI_MANIFEST_MEDIA, canonical_json,
 )
 from proot_distro.helpers.download import (
     NETWORK_TIMEOUT, new_request, retry_http,
@@ -476,6 +477,30 @@ def _refusal_msg(image_ref: str, ref, exc: urllib.error.HTTPError) -> str:
     return ""
 
 
+def _manifest_media(manifest: dict, image_ref: str) -> str:
+    """The Content-Type to upload the cached *manifest* under.
+
+    Its own mediaType, which must name one image manifest: OCI's, or
+    Docker's schema 2 that a pulled image may carry. An OCI manifest may
+    leave the field out, and is then sent as OCI's. The value is a
+    header of the upload, and it comes out of the manifest cache, which
+    a container can write to on Termux. It used to be sent as it was:
+    a list ended the push in a TypeError traceback, and a number went
+    out as the header. An index is no single manifest to push either.
+    Anything else is a damaged cache, refused before the registry is
+    asked anything.
+    """
+    media = manifest.get("mediaType", OCI_MANIFEST_MEDIA)
+    if media in (OCI_MANIFEST_MEDIA, DOCKER_MANIFEST_MEDIA):
+        return media
+    shown = f" '{quote_path(media)}'" if isinstance(media, str) else ""
+    raise IntegrityFailure(
+        f"Cached manifest for '{quote_path(image_ref)}' has an unsupported "
+        f"media type{shown}. The local cache appears corrupted; rebuild "
+        f"the image."
+    )
+
+
 def _strip_private_keys(d: dict) -> dict:
     """Return a shallow copy of *d* without keys starting with '_'.
 
@@ -529,6 +554,7 @@ def _push_registry_image(
         raise RuntimeError(
             f"Cached manifest for '{image_ref}' has no filesystem layers."
         )
+    manifest_media = _manifest_media(manifest, image_ref)
 
     # Asked of the layer cache's own descriptor, not of a composed
     # path: `oci_layers` is a name a guest can leave behind as a
@@ -661,7 +687,6 @@ def _push_registry_image(
             raise error(refusal) from exc
         raise
 
-    manifest_media = manifest.get("mediaType") or OCI_MANIFEST_MEDIA
     manifest_bytes = canonical_json(_strip_private_keys(manifest))
     manifest_digest = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
     log_info(

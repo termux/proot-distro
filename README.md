@@ -682,7 +682,8 @@ the registry accepts unauthenticated `PUT`s.
 - The image config bytes are re-canonicalised from the cached dict
   and their SHA-256 is verified to match the digest recorded in the
   manifest before upload. A mismatch indicates a corrupted local
-  cache and aborts the push.
+  cache and aborts the push. So does a cached manifest that is not an
+  image manifest.
 - 401/403 responses (on any phase: token fetch, blob upload, manifest
   PUT) are reported with a hint to set or fix `PD_DOCKER_AUTH`.
 - The digest shown at the end is the one proot-distro works out from

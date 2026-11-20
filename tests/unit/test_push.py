@@ -10,6 +10,7 @@ import os
 
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 
@@ -346,6 +347,103 @@ def test_push_refuses_a_malformed_cached_manifest(monkeypatch, manifest):
                         lambda ref, arch: (manifest, "me/app", {}))
     with pytest.raises(RuntimeError):
         push._push_registry_image("reg.example/me/app:latest", "x86_64")
+
+
+@pytest.mark.parametrize("media", [
+    ["a"],                                          # a list: a TypeError
+    {"type": "x"},                                  # an object
+    5,                                              # sent as "5"
+    None,
+    "",
+    "x\r\nX-Injected: 1",                           # a header of its own
+    "application/vnd.oci.image.index.v1+json",      # not one manifest
+    "text/plain",
+])
+def test_push_refuses_a_cached_manifest_media_type_it_cannot_send(
+        monkeypatch, media):
+    # The media type is the Content-Type of the manifest upload. It comes
+    # from the manifest cache, which a container can write to on Termux,
+    # and was sent as it was: a list ended `push` in a TypeError
+    # traceback, a number went out as the header. It is refused now,
+    # before anything goes to the registry.
+    manifest = {
+        "mediaType": media,
+        "config": {"digest": "sha256:" + "c" * 64},
+        "layers": [{"digest": "sha256:" + "a" * 64}],
+    }
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda ref, arch: (manifest, "me/app", {}))
+    monkeypatch.setattr(push, "blob_present", lambda d: True)
+
+    def no_network(*a, **k):
+        raise AssertionError("the registry was contacted")
+
+    monkeypatch.setattr(push, "get_auth_token", no_network)
+    with pytest.raises(IntegrityFailure) as exc:
+        push._push_registry_image("reg.example/me/app:latest", "x86_64")
+    text = str(exc.value)
+    assert "unsupported media type" in text
+    assert all(char.isprintable() for char in text)
+
+
+@pytest.mark.parametrize("media", [
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+    None,                                           # left out: OCI
+])
+def test_push_sends_an_image_manifest_under_its_own_media_type(
+        monkeypatch, tmp_path, media):
+    _pushable(monkeypatch, tmp_path)
+    manifest, _repo, _config = push.load_manifest_cache("", "")
+    if media is None:
+        del manifest["mediaType"]
+    else:
+        manifest["mediaType"] = media
+    sent = {}
+
+    def fake_put(repo, tag, body, media_type, token, base, insecure=False):
+        sent["media"] = media_type
+        return ""
+
+    monkeypatch.setattr(push, "_put_manifest", fake_put)
+    push._push_registry_image("reg.example/me/app:1", "x86_64")
+    assert sent["media"] == (
+        media or "application/vnd.oci.image.manifest.v1+json")
+
+
+def test_cli_push_reports_an_unsendable_media_type_without_a_traceback(
+        builders, monkeypatch, capsys):
+    # Through the real caches and the real manifest upload, the registry
+    # alone stubbed out: the CLI used to die in the TypeError that
+    # http.client raised while building the request.
+    from proot_distro.arch import get_device_cpu_arch
+    from proot_distro.commands.push import command_push
+    from proot_distro.helpers.docker.cache import save_manifest_cache
+    from proot_distro.helpers.docker.media import canonical_json
+
+    ref = "reg.invalid/me/app:1"
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "a", "type": "file", "data": b"x"}])
+    config = {"rootfs": {"type": "layers", "diff_ids": [diff_id]}}
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": ["application/vnd.oci.image.manifest.v1+json"],
+        "config": {"digest": "sha256:" + hashlib.sha256(
+            canonical_json(config)).hexdigest()},
+        "layers": [{"digest": digest, "size": size}],
+    }
+    save_manifest_cache(ref, get_device_cpu_arch(), manifest, "me/app",
+                        config)
+    monkeypatch.setattr(push, "get_auth_token",
+                        lambda *a, **k: ("", "https://reg.invalid"))
+    monkeypatch.setattr(push, "_blob_exists", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        command_push(SimpleNamespace(
+            image_ref=ref, override_arch=None, quiet=True,
+            allow_insecure=False,
+        ))
+    assert exc.value.code == 1
+    assert "unsupported media type" in capsys.readouterr().err
 
 
 def test_push_image_threads_base_and_insecure(monkeypatch):

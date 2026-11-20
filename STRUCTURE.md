@@ -328,9 +328,10 @@ layer straight from it. `oci_writer` then stores the manifest in the cache, and
 optionally writes an OCI tarball (`--output`) or installs a container
 (`--install-as`).
 
-**push.** Load the built image from the caches, verify the config digest,
-have `PD_DOCKER_AUTH` checked and exchange it for a token, HEAD-probe and
-upload missing blobs, upload the config, `PUT` the manifest. The digest
+**push.** Load the built image from the caches, verify the config digest and
+that the manifest's media type is an image manifest's, have `PD_DOCKER_AUTH`
+checked and exchange it for a token, HEAD-probe and upload missing blobs,
+upload the config, `PUT` the manifest. The digest
 reported is the SHA-256 of the manifest bytes sent; a `Docker-Content-Digest`
 answer naming another one is an integrity failure.
 
