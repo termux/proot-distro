@@ -42,6 +42,7 @@
 # printable_message() before they print it or hand it on as an event.
 
 import os
+import re
 import sys
 import unicodedata
 from contextlib import contextmanager
@@ -110,6 +111,14 @@ _COLORS = {
     "UBWHITE": _RST + _UNDERLINE + _BOLD + _WHITE,
 }
 _EMPTY = {k: "" for k in _COLORS}
+
+# This program's own colour sequences, longest first so that one is
+# never matched by its prefix: what msg() passes through unescaped while
+# colours are on. Any other escape sequence in what it prints is shown.
+_COLOR_RE = re.compile("|".join(
+    re.escape(code)
+    for code in sorted(set(_COLORS.values()), key=len, reverse=True)
+))
 
 
 def _init_colors() -> dict:
@@ -232,6 +241,13 @@ def msg(*args):
     a TTY: progress bars are drawn exclusively on a TTY, so off a TTY
     there is no partial line to clear and the escape would only inject
     control characters into a redirected log.
+
+    What is printed goes through printable_message(), except for the
+    colour sequences of C while colours are on: callers interpolate
+    values into their lines, and one that came from someone else and was
+    not quoted would otherwise drive the terminal. A value that holds one
+    of C's own sequences can set one of this program's colours, which
+    begin with a reset, and no more.
     """
     if not tty_safe_for_writes():
         return
@@ -242,7 +258,24 @@ def msg(*args):
     if is_tty:
         sys.stderr.write("\r\033[K")
         sys.stderr.flush()
-    print(*args, file=sys.stderr)
+    print(_printable_line(" ".join(str(arg) for arg in args)),
+          file=sys.stderr)
+
+
+def _printable_line(text: str) -> str:
+    """*text* as msg() prints it: see msg()."""
+    if text.isprintable():
+        return text
+    if C is not _COLORS:
+        return printable_message(text)
+    out = []
+    start = 0
+    for match in _COLOR_RE.finditer(text):
+        out.append(printable_message(text[start:match.start()]))
+        out.append(match.group())
+        start = match.end()
+    out.append(printable_message(text[start:]))
+    return "".join(out)
 
 
 def log_info(text: str, *, phase=None, resource=None):

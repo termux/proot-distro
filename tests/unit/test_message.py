@@ -237,3 +237,47 @@ def test_every_log_helper_escapes_the_event_it_hands_on(helper, kind):
             lambda k, text, phase, resource: seen.append((k, text))):
         getattr(message, helper)("x\x9b2J\u202ey")
     assert seen == [(kind, "x\\x9b2J\\u202ey")]
+
+
+# ----- msg ----------------------------------------------------------------
+
+_RLO = "\N{RIGHT-TO-LEFT OVERRIDE}"
+
+
+def test_msg_escapes_what_it_prints(capsys):
+    # Regression: msg() printed its arguments as they were, so a caller
+    # that interpolated someone else's text without quote_path() put that
+    # text's escape sequences on the terminal.
+    message.msg("value:", f"x\x1b]0;pwned\x07\x9b2J{_RLO}y")
+    assert capsys.readouterr().err == (
+        "value: x\\e]0;pwned\\x07\\x9b2J\\u202ey\n")
+
+
+def test_msg_keeps_its_own_colours_and_escapes_any_other(
+        monkeypatch, capsys):
+    colors = message._COLORS
+    monkeypatch.setattr(message, "C", colors)
+    message.msg(f"{colors['CYAN']}Command: {colors['GREEN']}"
+                f"x\x1b[8mhidden\x1b]0;t\x07{colors['RST']}")
+    assert capsys.readouterr().err == (
+        f"{colors['CYAN']}Command: {colors['GREEN']}"
+        f"x\\e[8mhidden\\e]0;t\\x07{colors['RST']}\n")
+    # Before the first colour and after the last one too.
+    message.msg(f"\x9bA{colors['RED']}x\x1b[2J")
+    assert capsys.readouterr().err == (
+        f"\\x9bA{colors['RED']}x\\e[2J\n")
+
+
+def test_msg_lets_no_colour_through_while_colours_are_off(capsys):
+    # Off a terminal C is empty, and so is what may pass unescaped.
+    message.msg(message._COLORS["RED"] + "x")
+    assert capsys.readouterr().err == "\\e[0m\\e[31mx\n"
+
+
+def test_msg_prints_its_arguments_as_print_would(capsys):
+    message.msg(1, None, "a")
+    assert capsys.readouterr().err == "1 None a\n"
+    message.msg()
+    assert capsys.readouterr().err == "\n"
+    message.msg("first\n\tsecond")
+    assert capsys.readouterr().err == "first\n\tsecond\n"

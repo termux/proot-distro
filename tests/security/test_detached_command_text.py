@@ -48,3 +48,13 @@ def test_a_detached_sessions_command_is_shown_not_obeyed(
     _assert_no_controls(err)
     assert "4242" in err
     assert QUOTED in err
+
+
+def test_msg_is_the_net_under_a_value_left_unquoted(
+        builders, monkeypatch, capsys):
+    # The same summary with its quote_path() taken away: msg() itself
+    # escapes what it prints now, so a caller that forgets to quote a
+    # value no longer hands its escape sequences to the terminal.
+    monkeypatch.setattr(session_command, "quote_path", str)
+    test_a_detached_sessions_command_is_shown_not_obeyed(
+        builders, monkeypatch, capsys)
