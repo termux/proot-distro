@@ -35,7 +35,6 @@ from proot_distro.operation_errors import (
 )
 from proot_distro.operations.build import (
     _derive_tag_from_path,
-    _make_build_tmp,
     build_image,
 )
 from proot_distro.operations.context import OperationContext
@@ -144,7 +143,6 @@ def _parse_build_args(raw):
 
 __all__ = (
     "_derive_tag_from_path",
-    "_make_build_tmp",
     "_parse_build_args",
     "command_build",
 )

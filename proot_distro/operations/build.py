@@ -25,17 +25,15 @@
 # requested output variants (manifest cache always; OCI tarball per
 # --output; container install per --install-as).
 
-import errno
-import fcntl
 import os
 import re
-import shutil
-import tempfile
 from collections.abc import Mapping
 from contextlib import ExitStack
 
-from proot_distro import dirfd, statedir
-from proot_distro.constants import RUNTIME_DIR
+from proot_distro import statedir
+from proot_distro.build_scratch import (
+    make_scratch_root, reclaim_scratch_roots,
+)
 from proot_distro.interrupts import finish_cleanup
 from proot_distro.paths import container_is_installed
 from proot_distro.message import quote_error, quote_path
@@ -337,11 +335,11 @@ def _run_build(
     build_output_fd, on_built, context,
 ):
     """Execute a validated build while its tag locks are held."""
-    _reclaim_build_tmp(lambda count: context.info(
+    reclaim_scratch_roots(lambda count: context.info(
         f"Removing scratch left by {count} interrupted build(s)...",
         phase="build",
     ))
-    tmp_root, tmp_root_fd = _make_build_tmp()
+    tmp_root, tmp_root_fd = make_scratch_root()
     engine = None
     interrupted = False
     try:
@@ -465,157 +463,6 @@ def _run_build(
 # helpers
 # ---------------------------------------------------------------------------
 
-def _make_build_tmp():
-    """Create the scratch root a build assembles its stages in. (path, fd).
-
-    RUNTIME_DIR/build-tmp is a predictable name inside the state tree, and
-    tempfile.mkdtemp(dir=...) resolves it: a guest that left
-    `build-tmp -> <host dir>` behind -- the runtime tree is under the
-    $TERMUX_PREFIX bound read-write into every non-isolated container --
-    had every stage rootfs, every spooled ADD and every packed layer
-    assembled inside that host directory, and the cleanup at the end of
-    the build remove what it found there. The directory is walked down to
-    with O_NOFOLLOW and the scratch root created with mkdirat off the
-    descriptor that walk validated; what is made *inside* it is this
-    process's own, since the name is fresh and the mode is 0700.
-
-    A runtime tree that cannot hold one falls back to the system
-    temporary directory, which is what the previous `build_tmp = None`
-    did.
-
-    The descriptor comes back with the path because the *contents* of
-    the scratch root are named too: each stage's directory and rootfs,
-    the ADD spool, a COPY --from image's throwaway tree. Composing those
-    onto the path and opening them left every one of them re-resolvable
-    by anything running as the invoking user -- which is what a RUN
-    step's leftovers are. The caller owns the descriptor and closes it
-    when the run is over.
-
-    The descriptor also holds the lock that marks the root in use, and
-    the name carries this process's ID: the two things
-    _reclaim_build_tmp() checks before it removes a root as one a build
-    left behind.
-    """
-    build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
-    try:
-        dir_fd = statedir.open_state_dir(build_tmp, create=True)
-    except OSError:
-        return _fallback_build_tmp()
-    try:
-        name = f"pd-build-{os.getpid()}.{os.urandom(4).hex()}"
-        os.mkdir(name, 0o700, dir_fd=dir_fd)
-        # Off the descriptor that walk validated, so what comes back
-        # names the directory just created and not whatever the name
-        # leads to by the time anything under it is used.
-        run_fd = dirfd.opendir_at(dir_fd, name)
-    except OSError:
-        return _fallback_build_tmp()
-    finally:
-        os.close(dir_fd)
-    # Between the mkdir and this, the root is unlocked; the process ID
-    # in its name, ours and alive, is what keeps a sweep off it then.
-    _lock_scratch(run_fd)
-    return os.path.join(build_tmp, name), run_fd
-
-
-# The names _make_build_tmp() gives: the creating process's ID, then
-# four random bytes. Nothing else in build-tmp/ is the sweep's to touch.
-_SCRATCH_NAME = re.compile(r"pd-build-([0-9]{1,10})\.[0-9a-f]{8}")
-
-
-def _lock_scratch(fd: int) -> bool:
-    """Take the lock that marks a scratch root in use. False if held.
-
-    flock(2) on the directory itself, exclusive and non-blocking. The
-    kernel drops it with the last descriptor of that open, so a build
-    process killed outright lets go of its root too. A filesystem that
-    cannot hold the lock answers as if it were free, the rule
-    locking.py applies; the process check in _reclaim_build_tmp() is
-    what keeps a running build's root then.
-    """
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        return exc.errno not in (errno.EAGAIN, errno.EACCES)
-    return True
-
-
-def _process_exists(pid: int) -> bool:
-    """True unless *pid* is known to name no process.
-
-    One there but not ours to signal still exists, and so does anything
-    that cannot be asked about: when in doubt, a root is kept.
-    """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (OSError, OverflowError, ValueError):
-        return True
-    return True
-
-
-def _reclaim_build_tmp(announce=None) -> int:
-    """Remove the scratch roots of builds that are no longer running.
-
-    A build removes its own root when it ends, but a build process
-    killed outright never gets to, and an interrupt pressed twice stops
-    that cleanup (see _discard_build_tmp). Nothing else ever removed
-    one, and a root holds the rootfs of every stage built in it.
-
-    A root is taken for left behind only when its name is one
-    _make_build_tmp() gives, the process that name carries is gone, and
-    its lock is free. The process check covers the moment before the
-    lock is taken and builds of a version that took none; the lock
-    covers a process ID that cannot be seen from here and a root renamed
-    after the fact. The lock is kept while the root is removed, so two
-    builds starting together do not both work on one. Entries are
-    opened O_NOFOLLOW and removed by rmtree_at(), which unlinks a link
-    instead of following it: build-tmp/ is guest-writable on Termux,
-    and what is planted there is removed at most, never reached through.
-
-    *announce(count)* is called before anything is removed, which can
-    take a while. Returns how many roots were removed; a failure to look
-    or to remove is never the build's.
-    """
-    build_tmp = os.path.join(RUNTIME_DIR, "build-tmp")
-    try:
-        dir_fd = statedir.open_state_dir(build_tmp)
-    except OSError:
-        return 0
-    claimed = []
-    try:
-        try:
-            names = os.listdir(dir_fd)
-        except OSError:
-            return 0
-        for name in sorted(names):
-            match = _SCRATCH_NAME.fullmatch(name)
-            if match is None or _process_exists(int(match.group(1))):
-                continue
-            try:
-                fd = dirfd.opendir_at(dir_fd, name)
-            except OSError:
-                continue
-            if not _lock_scratch(fd):
-                os.close(fd)
-                continue
-            claimed.append((name, fd))
-        if not claimed:
-            return 0
-        if announce is not None:
-            announce(len(claimed))
-        for name, _fd in claimed:
-            dirfd.rmtree_at(
-                dir_fd, name, force=True, on_error=lambda _rel, _exc: None
-            )
-        return len(claimed)
-    finally:
-        for _name, fd in claimed:
-            os.close(fd)
-        os.close(dir_fd)
-
-
 def _discard_build_tmp(engine, tmp_root, tmp_root_fd, *, interrupted):
     """Close the engine and remove the scratch root, interrupted or not.
 
@@ -623,7 +470,7 @@ def _discard_build_tmp(engine, tmp_root, tmp_root_fd, *, interrupted):
     lands in: removing a large root takes a while, and the work it
     follows is already done. finish_cleanup() lets the first interrupt
     there wait for the removal; a second stops it, and
-    _reclaim_build_tmp() takes the rest when the next build starts.
+    reclaim_scratch_roots() takes the rest when the next build starts.
     *interrupted* says the build is already unwinding from the first.
 
     The root's descriptor, which holds its lock, is closed last, once
@@ -641,20 +488,6 @@ def _discard_build_tmp(engine, tmp_root, tmp_root_fd, *, interrupted):
             os.close(tmp_root_fd)
         except OSError:
             pass
-
-
-def _fallback_build_tmp():
-    """The scratch root in the system temp dir, when the state tree fails.
-
-    mkdtemp() makes a fresh 0700 directory of its own, so opening it by
-    name is opening what this process just created.
-    """
-    path = tempfile.mkdtemp(prefix="pd-build-")
-    try:
-        return path, dirfd.opendir(path)
-    except OSError:
-        shutil.rmtree(path, ignore_errors=True)
-        raise
 
 
 def _derive_tag_from_path(build_dir, dockerfile):
@@ -689,6 +522,5 @@ def _derive_tag_from_path(build_dir, dockerfile):
 
 __all__ = (
     "_derive_tag_from_path",
-    "_make_build_tmp",
     "build_image",
 )

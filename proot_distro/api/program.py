@@ -2520,6 +2520,9 @@ class ProotDistro:
 
         With no flags the whole cache is cleared. ``orphan`` limits it to
         layers no image uses; ``build_cache`` to the Dockerfile build cache.
+        Whatever the flags, the scratch files that killed builds left are
+        removed too. They are not part of the cache, and the byte counts
+        leave them out.
 
         Raises:
             InvalidArgumentError: A flag is not a boolean.

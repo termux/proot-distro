@@ -570,11 +570,17 @@ A build keeps its work-in-progress files in `build-tmp/` and removes
 them when it ends. CTRL-C stops a build, but its files are still
 removed first; press CTRL-C again to skip that. If a build was killed
 or stopped before it could clean up, the next `build` removes what it
-left and says so:
+left and says so. So does [`clear-cache`](#clear-cache--delete-the-download-cache):
 
 ```
 Removing scratch left by 1 interrupted build(s)...
 ```
+
+If `build-tmp/` cannot be used, a build keeps these files in the system
+temporary directory (`$TMPDIR`, usually `/tmp`) instead. They are
+removed the same way. Files left there by version 5.10 cannot be told
+apart from those of a running build, so delete old `pd-build-*`
+directories there yourself when no build is running.
 
 **Examples:**
 
@@ -1430,6 +1436,11 @@ reported after the operation in human-readable units.
 | `-v`, `--verbose` | Log each deleted file. |
 | `-q`, `--quiet` | Suppress non-error output. Mutually exclusive with `--verbose`. |
 
+Whatever the options, `clear-cache` also removes the work-in-progress
+files of builds that were killed or interrupted (see
+[Interrupting a build](#build--build-an-image-from-a-dockerfile)). They
+are not part of the cache and are not counted in the space reported.
+
 After `clear-cache`, the next `install` (or `reset`) of an image
 requires network access again, and layers must be re-downloaded and
 re-verified.
@@ -1637,7 +1648,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
 | `locks/build/<sha256-prefix>.lock` | `BuildLock` keyed on `(image_ref, arch)` for `build` and `push` |
 | `sessions/<pid>.json` | Active-session registry entry for `ps`; holds an inherited `flock` for the session lifetime and is pruned when the session ends |
-| `build-tmp/pd-build-<pid>.<random>/` | Work-in-progress files of a running `build`; locked while it runs, removed when it ends, or by the next `build` if it was killed |
+| `build-tmp/pd-build-<pid>-<start>.<random>/` | Work-in-progress files of a running `build`; locked while it runs, removed when it ends, or by the next `build` or `clear-cache` if it was killed |
 | `$BASE_CACHE_DIR/oci_layers/` | Cached OCI layer blobs (registry pulls **and** `build` outputs) |
 | `$BASE_CACHE_DIR/oci_manifests/` | Cached resolved single-arch manifests (registry pulls **and** `build -t` tags), each recording the image reference and architecture it was cached for — this is what `list --image` inventories |
 | `$BASE_CACHE_DIR/build_cache_index.json` | `build` cache index: recipe-hash → layer-digest |

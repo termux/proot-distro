@@ -96,7 +96,7 @@ Only names in `proot_distro.api.__all__` are covered. Everything below
 | `rename_container(OLD, NEW)` | Rename a container. Returns the new `ContainerInfo`. |
 | `reset_container(NAME)` | Reinstall an OCI container from its image. All changes in it are lost. |
 | `remove_image(IDENTIFIER, architecture=)` | Remove cached images by reference, ID prefix or cache identifier. |
-| `clear_cache(orphan=False, build_cache=False)` | Clear the whole cache, only orphan layers, or only the build cache. |
+| `clear_cache(orphan=False, build_cache=False)` | Clear the whole cache, only orphan layers, or only the build cache. Also removes the scratch files of killed builds, which the byte counts leave out. |
 | `search(QUERY, limit=25)` | Search public Docker Hub repositories. Returns `SearchResult`. |
 
 ```python
@@ -415,7 +415,7 @@ except OperationCancelledError:
   Ctrl-C a second time to kill the worker at once. A killed worker cannot
   clean up, so check the state before retrying. A build `RUN` step that was
   running is still stopped: its processes end with the worker, and the next
-  build removes the scratch files the killed one left.
+  build, or `clear_cache()`, removes the scratch files the killed one left.
 * `install`, and a `restore` that created its container, remove that
   container when they fail or are cancelled. This holds when the cancel
   arrives during the removal itself, or while the failure is reported to

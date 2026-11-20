@@ -24,6 +24,16 @@ os.environ["XDG_CACHE_HOME"] = os.path.join(_SANDBOX, "cache")
 os.environ["HOME"] = os.path.join(_SANDBOX, "home")
 os.makedirs(os.environ["HOME"], exist_ok=True)
 
+# The system temporary directory too: a build falls back to it, and the
+# build scratch sweep looks there for roots dead builds left, so the
+# host's own must stay out of reach. TMPDIR carries it to the API
+# workers, tempfile.tempdir to this process. pytest's temporary root is
+# pinned where it was, so tmp_path is unaffected.
+os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", tempfile.gettempdir())
+os.environ["TMPDIR"] = os.path.join(_SANDBOX, "tmp")
+os.makedirs(os.environ["TMPDIR"])
+tempfile.tempdir = os.environ["TMPDIR"]
+
 # Deterministic, color-free output so assertions can match plain text.
 os.environ["PD_FORCE_NO_COLORS"] = "1"
 
@@ -65,7 +75,8 @@ import _builders  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def _assert_sandboxed():
-    for path in (constants.RUNTIME_DIR, constants.BASE_CACHE_DIR):
+    for path in (constants.RUNTIME_DIR, constants.BASE_CACHE_DIR,
+                 tempfile.gettempdir()):
         if not os.path.abspath(path).startswith(_SANDBOX):
             raise RuntimeError(
                 f"proot-distro path {path!r} is not inside the test sandbox "

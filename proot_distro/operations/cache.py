@@ -82,6 +82,7 @@ from proot_distro.helpers.docker import (
 )
 from proot_distro.locking import LockStateUnknown, busy_locks
 from proot_distro import dirfd, statedir
+from proot_distro.build_scratch import reclaim_scratch_roots
 from proot_distro.message import quote_error, quote_path
 from proot_distro.operation_errors import (
     BusyFailure, IntegrityFailure, OperationFailure,
@@ -249,9 +250,29 @@ def clear_cache(
     *, orphan: bool = False, build_cache: bool = False,
     context: OperationContext = None,
 ) -> CacheCleanup:
-    """Clear selected cache state and return before/after byte counts."""
+    """Clear selected cache state and return before/after byte counts.
+
+    Every mode then removes the scratch roots of builds that were killed,
+    or interrupted twice while cleaning up (see build_scratch). They are
+    not in the cache and the byte counts leave them out, but they are
+    garbage by any mode's measure and can be far larger than the cache,
+    since they hold every stage's rootfs. This is the command a user runs
+    to get disk space back, and before it only the next build removed
+    them. They go after the cache, so that a cache failure saying
+    "Nothing was removed" stays true.
+    """
     context = _context(context)
     mode = "build_cache" if build_cache else ("orphan" if orphan else "all")
+    result = _clear_cache_dir(mode, orphan, build_cache, context)
+    reclaim_scratch_roots(lambda count: context.info(
+        f"Removing scratch left by {count} interrupted build(s)...",
+        phase="clear-cache", resource=mode,
+    ))
+    return result
+
+
+def _clear_cache_dir(mode, orphan, build_cache, context) -> CacheCleanup:
+    """clear_cache()'s work on the cache directory itself."""
     drop_build_index = build_cache
     if drop_build_index or orphan:
         # Passing both asks for the same work: --build-cache is the
