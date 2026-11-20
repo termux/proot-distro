@@ -14,6 +14,7 @@ import urllib.request
 import pytest
 
 from proot_distro.helpers import download
+from proot_distro.operation_errors import IntegrityFailure
 from proot_distro.operations import push
 
 
@@ -145,6 +146,51 @@ def test_put_manifest_retries_then_returns_digest(monkeypatch):
     )
     assert digest == "sha256:dd"
     assert len(calls) == 2
+
+
+# ----- _check_answer --------------------------------------------------------
+
+_SENT = "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize("answer", [
+    _SENT,
+    "",                         # the header is the registry's to leave out
+    f" {_SENT}\t",              # the whitespace HTTP allows around a value
+])
+def test_an_answer_naming_the_manifest_sent_is_accepted(answer):
+    push._check_answer(answer, _SENT, "reg.example/me/app:1")
+
+
+@pytest.mark.parametrize("answer", [
+    "sha256:" + "b" * 64,       # another manifest
+    "sha256:" + "A" * 64,       # not the spelling the digest grammar allows
+    "sha512:" + "a" * 128,      # an algorithm the manifest was not hashed with
+])
+def test_an_answer_naming_another_digest_is_refused_and_named(answer):
+    with pytest.raises(IntegrityFailure) as exc:
+        push._check_answer(answer, _SENT, "reg.example/me/app:1")
+    text = str(exc.value)
+    assert f"the digest {answer}," in text
+    assert _SENT in text
+    assert "reg.example/me/app:1" in text
+
+
+@pytest.mark.parametrize("answer", [
+    "\x1b]0;pwned\x07",          # a terminal title
+    "sha256:aa\x9b2J",           # a C1 CSI after a digest's start
+    "sha256:aa\u202e",           # a right-to-left override
+    "sha256:" + "a" * 129,       # longer than any digest
+    "../sha256:" + "a" * 64,     # not the grammar
+    "md5:",                      # no encoded part
+])
+def test_a_malformed_answer_is_refused_and_never_repeated(answer):
+    with pytest.raises(IntegrityFailure) as exc:
+        push._check_answer(answer, _SENT, "reg.example/me/app:1")
+    text = str(exc.value)
+    assert "a malformed digest" in text
+    assert answer.strip() not in text
+    assert all(char.isprintable() for char in text)
 
 
 # ----- _upload_blob_bytes -------------------------------------------------
@@ -339,7 +385,9 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
     def fake_put_manifest(repo, ref, body, media, token, base, insecure=False):
         captured["manifest_base"] = base
         captured["manifest_insecure"] = insecure
-        return "sha256:dd"
+        captured["manifest_body"] = body
+        # The digest of what was sent, as an honest registry answers.
+        return "sha256:" + hashlib.sha256(body).hexdigest()
 
     monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
 
@@ -352,7 +400,8 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
     assert captured["blob_insecure"] is True
     assert captured["manifest_base"] == "http://reg.example"
     assert captured["manifest_insecure"] is True
-    assert result["manifest_digest"] == "sha256:dd"
+    assert result["manifest_digest"] == (
+        "sha256:" + hashlib.sha256(captured["manifest_body"]).hexdigest())
 
 
 def test_push_asks_for_a_credential_that_can_push(monkeypatch, tmp_path):
@@ -515,7 +564,7 @@ def test_push_image_uploads_to_the_references_repository(monkeypatch):
     def fake_put_manifest(repo, ref, body, media, token, base,
                           insecure=False):
         repos.append(("manifest", repo, ref))
-        return "sha256:dd"
+        return ""
 
     monkeypatch.setattr(push, "get_auth_token", fake_auth)
     monkeypatch.setattr(push, "_blob_exists", fake_blob_exists)
@@ -569,7 +618,8 @@ def _pushable(monkeypatch, tmp_path):
     monkeypatch.setattr(push, "_blob_exists", lambda *a, **k: False)
     monkeypatch.setattr(push, "_upload_blob_fd", lambda *a, **k: None)
     monkeypatch.setattr(push, "_upload_blob_bytes", lambda *a, **k: None)
-    monkeypatch.setattr(push, "_put_manifest", lambda *a, **k: "sha256:dd")
+    # A registry that answers the manifest upload with no digest header.
+    monkeypatch.setattr(push, "_put_manifest", lambda *a, **k: "")
 
 
 def _refuse(*a, **k):

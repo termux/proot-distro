@@ -76,9 +76,10 @@ def _clean(text: object) -> str:
     """Replace control characters in text that came from outside.
 
     Event messages carry the output of RUN steps and text from registries
-    and base images, a pushed digest is what the registry answered, and an
-    error can quote a registry's reply. Printed raw, an escape sequence in
-    any of them could rewrite the terminal screen or title.
+    and base images, and an error can quote a registry's reply. Printed
+    raw, an escape sequence in any of them could rewrite the terminal
+    screen or title. The pushed digest is cleaned as well: the library
+    works it out from what it sent, but this sample does not rely on that.
     """
     return "".join(
         char if char.isprintable() else "?" for char in str(text)

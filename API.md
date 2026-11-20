@@ -227,6 +227,10 @@ pd.push("myuser/myapp:1")
 * `dockerfile` can be a path or a readable binary stream.
 * Streamed outputs are plain tar archives. Path suffixes choose compression.
 * Other options: `architecture`, `target`, `emulator`, `no_cache`.
+* `PushResult.manifest_digest` is the `sha256:` digest of the manifest that
+  `push` sent, not text taken from the registry. If the registry reports a
+  different digest, `push` raises `IntegrityError`. The tag may still have
+  changed on the registry.
 
 Build arguments are visible to `RUN` steps and may end up in the image
 history. Do not pass secrets as build arguments.
@@ -544,7 +548,7 @@ another call) holds a lock on that container or image.
 | `inspect_start` | BusyError, NotFoundError |
 | `install` | AlreadyExistsError, AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError |
 | `move` | BusyError, NotFoundError, PartialOperationError |
-| `push` | AuthenticationError, BusyError, NetworkError, NotFoundError |
+| `push` | AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError |
 | `remove_container` | BusyError, NotFoundError |
 | `remove_image` | BusyError, NotFoundError |
 | `rename_container` | AlreadyExistsError, BusyError, NotFoundError |

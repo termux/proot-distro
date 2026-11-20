@@ -132,6 +132,28 @@ class _Corrupt(_Registry):
     do_HEAD = do_GET
 
 
+class _Lying(_Registry):
+    """An open registry that takes any push and misnames the manifest.
+
+    Every blob is already there, and a manifest upload is answered with
+    a Docker-Content-Digest that is not the digest of what was sent.
+    """
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_HEAD = do_GET
+
+    def do_PUT(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(201)
+        self.send_header("Docker-Content-Digest", "sha256:" + "f" * 64)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
 def _tls_registry(handler, certificate, key):
     """Serve *handler* over HTTPS with a throwaway certificate."""
     server = http.server.HTTPServer(("127.0.0.1", 0), handler)
@@ -213,6 +235,8 @@ def env(tmp_path_factory):
     (context / "Dockerfile").write_text("FROM scratch\nCOPY data /data\n")
     server = http.server.HTTPServer(("127.0.0.1", 0), _Registry)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    liar = http.server.HTTPServer(("127.0.0.1", 0), _Lying)
+    threading.Thread(target=liar.serve_forever, daemon=True).start()
     tls_refuse = tls_corrupt = None
     tls_refused = tls_garbage = None
     if tls is not None:
@@ -222,6 +246,7 @@ def env(tmp_path_factory):
         tls_garbage = f"127.0.0.1:{tls_corrupt.server_port}/contract/tls:1"
     refused = f"127.0.0.1:{server.server_port}/contract/img:1"
     unreachable = "127.0.0.1:1/contract/img:1"
+    misnamed = f"127.0.0.1:{liar.server_port}/contract/img:1"
     # Refs used to *install* must stay out of the local cache, or the
     # install is served from it and never touches the network.
     absent_refused = f"127.0.0.1:{server.server_port}/contract/absent:1"
@@ -229,6 +254,7 @@ def env(tmp_path_factory):
     pd.build(context, tags=["contract/locked:1"], install_as="ocibox")
     pd.build(context, tags=[refused])
     pd.build(context, tags=[unreachable])
+    pd.build(context, tags=[misnamed])
     # reset re-pulls its recorded image, so that image must not be cached.
     reset_ref = "127.0.0.1:1/contract/reset:1"
     pd.build(context, tags=[reset_ref], install_as="refbox")
@@ -260,6 +286,7 @@ def env(tmp_path_factory):
             junk_archive=junk_archive, fake_zstd=fake_zstd,
             box_backup=box_backup, context=context, refused=refused,
             unreachable=unreachable, unreadable=unreadable,
+            misnamed=misnamed,
             absent_refused=absent_refused, tls=tls is not None,
             tls_refused=tls_refused,
             absent_unreachable=absent_unreachable,
@@ -269,6 +296,7 @@ def env(tmp_path_factory):
         helper.wait()
         (unreadable / "denied").chmod(0o600)
         server.shutdown()
+        liar.shutdown()
         for extra in (tls_refuse, tls_corrupt):
             if extra is not None:
                 extra.shutdown()
@@ -438,6 +466,8 @@ def _(e): e.pd.push(e.refused, allow_insecure=True)
 def _(e): e.pd.push(e.unreachable, allow_insecure=True)
 @_scenario("push", "BusyError")
 def _(e): e.pd.push("contract/locked:1")
+@_scenario("push", "IntegrityError")
+def _(e): e.pd.push(e.misnamed, allow_insecure=True)
 
 @_scenario("remove_image", "NotFoundError")
 def _(e): e.pd.remove_image("contract/uncached:1")

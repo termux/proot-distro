@@ -875,10 +875,12 @@ def test_install_and_run_cleans_an_error_during_cleanup(monkeypatch, capsys):
 def test_build_image_cleans_event_messages_and_the_pushed_digest(
     monkeypatch, tmp_path, capsys,
 ):
-    """Regression: build events and the registry's digest were printed raw.
+    """Regression: build events and the pushed digest were printed raw.
 
-    A build-output event is what a RUN step printed, and the digest is
-    the Docker-Content-Digest header the registry sent back.
+    A build-output event is what a RUN step printed. The digest used to
+    be the registry's Docker-Content-Digest header; the library works it
+    out itself now (test_push_registry_digest.py), and the sample still
+    cleans it rather than rely on that.
     """
     module = _load("build_image")
 

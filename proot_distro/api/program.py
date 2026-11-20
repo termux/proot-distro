@@ -2403,6 +2403,9 @@ class ProotDistro:
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry could not be reached.
             BusyError: The image is locked by another operation.
+            IntegrityError: The cached image is damaged, or the registry
+                answered the upload with a digest that is not the
+                manifest's.
             OperationCancelledError: Cancelled before completion.
             OperationError: Any other failure.
         """

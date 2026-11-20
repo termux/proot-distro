@@ -330,7 +330,9 @@ optionally writes an OCI tarball (`--output`) or installs a container
 
 **push.** Load the built image from the caches, verify the config digest,
 have `PD_DOCKER_AUTH` checked and exchange it for a token, HEAD-probe and
-upload missing blobs, upload the config, `PUT` the manifest.
+upload missing blobs, upload the config, `PUT` the manifest. The digest
+reported is the SHA-256 of the manifest bytes sent; a `Docker-Content-Digest`
+answer naming another one is an integrity failure.
 
 **copy / sync.** Resolve each `[container:]path` with chroot semantics, take
 locks, `pin_path` both ends, and then work only through `dirfd`.

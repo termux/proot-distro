@@ -139,7 +139,12 @@ class BuildResult:
 
 @dataclass(frozen=True)
 class PushResult:
-    """The registry result of publishing one image tag."""
+    """The registry result of publishing one image tag.
+
+    ``manifest_digest`` is the ``sha256:`` digest of the manifest bytes
+    that were sent, worked out here and not taken from the registry's
+    answer. It is always set, although the field is typed ``Optional``.
+    """
 
     registry: str
     repository: str

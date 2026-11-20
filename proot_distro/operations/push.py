@@ -32,10 +32,13 @@
 #      POST /v2/<repo>/blobs/uploads/ + PUT <location>?digest=<digest>
 #      streaming from the cached blob through a progress reader.
 #   4. Upload the image config blob.
-#   5. PUT the manifest under the tag.
+#   5. PUT the manifest under the tag. The digest reported is the one
+#      worked out from the manifest bytes sent; the registry's
+#      Docker-Content-Digest answer must agree with it (_check_answer).
 
 import hashlib
 import os
+import re
 import urllib.error
 import urllib.parse
 
@@ -91,6 +94,15 @@ from proot_distro.operations.models import ImagePush
 # minutes. 1 MiB/s is far below any real storage, so this only ever
 # errs long.
 _COMMIT_RATE = 1024 * 1024
+
+# What a registry's Docker-Content-Digest answer must look like to be
+# repeated in a message: the OCI digest grammar, with an encoded part no
+# longer than a sha512's 128 characters. Anything else is called a
+# malformed digest instead. The header is text the registry chose, and
+# http.client hands it on as Latin-1, so it can hold any control at all.
+_SHOWN_DIGEST = re.compile(
+    r"[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]{1,128}", re.ASCII,
+)
 
 
 def push_image(
@@ -383,8 +395,12 @@ def _put_manifest(
     repo: str, reference: str, body: bytes, media_type: str,
     auth: str, base: str, insecure: bool = False,
 ) -> str:
-    """PUT a manifest at <reference> (tag or digest). Returns the registry
-    digest from the Docker-Content-Digest header, if provided."""
+    """PUT a manifest at <reference> (tag or digest).
+
+    Returns the registry's Docker-Content-Digest header as it came, or
+    '' without one. That is the registry's text and nothing checked:
+    _check_answer() is what decides whether it agrees with *body*.
+    """
     url = f"{base}/v2/{repo}/manifests/{reference}"
     headers = {
         **_ua(),
@@ -405,6 +421,43 @@ def _put_manifest(
 
     return retry_http(
         _attempt, what=f"Uploading manifest {reference}", resource=reference,
+    )
+
+
+def _check_answer(answer: str, sent: str, image_ref: str) -> None:
+    """Refuse a registry answering a manifest upload with another digest.
+
+    *answer* is the Docker-Content-Digest header the PUT came back with,
+    *sent* the digest of the manifest bytes that were PUT. The header
+    used to be reported as the pushed digest without a look at it: the
+    CLI printed it and the API returned it, so a registry could put an
+    escape sequence on the user's terminal, or have any digest at all
+    reported as the one pushed.
+
+    No header is fine. The distribution spec leaves it to the registry,
+    and *sent* names the manifest either way: a registry stores a
+    manifest byte for byte as it was sent. A header naming any other
+    digest means the registry, or something between it and here, holds
+    a manifest that is not the one pushed -- so neither digest can be
+    reported as the pushed one, and the push ends in IntegrityFailure.
+    The tag may have moved by then; the message says so. The answer is
+    repeated only when it is a well-formed digest (_SHOWN_DIGEST).
+
+    The spaces and tabs HTTP allows around a field value are not part of
+    it (RFC 9110, 5.5), and http.client keeps the trailing ones.
+    """
+    answer = answer.strip(" \t")
+    if not answer or answer == sent:
+        return
+    if _SHOWN_DIGEST.fullmatch(answer):
+        shown = f"the digest {answer}"
+    else:
+        shown = "a malformed digest"
+    raise IntegrityFailure(
+        f"The registry answered the manifest upload for "
+        f"'{quote_path(image_ref)}' with {shown}, but the manifest sent "
+        f"has the digest {sent}. The tag may now name a manifest other "
+        f"than the one pushed."
     )
 
 
@@ -610,13 +663,14 @@ def _push_registry_image(
 
     manifest_media = manifest.get("mediaType") or OCI_MANIFEST_MEDIA
     manifest_bytes = canonical_json(_strip_private_keys(manifest))
+    manifest_digest = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
     log_info(
         f"Uploading manifest for tag '{tag}' "
         f"({fmt_size(len(manifest_bytes))})...",
         phase="upload", resource=tag,
     )
     try:
-        registry_digest = _put_manifest(
+        answer = _put_manifest(
             repo, tag, manifest_bytes, manifest_media, auth, base, insecure,
         )
     except urllib.error.HTTPError as exc:
@@ -626,10 +680,11 @@ def _push_registry_image(
                      if exc.code in (401, 403) else RuntimeError)
             raise error(refusal) from exc
         raise
+    _check_answer(answer, manifest_digest, image_ref)
     bytes_uploaded += len(manifest_bytes)
 
     return {
-        "manifest_digest": registry_digest,
+        "manifest_digest": manifest_digest,
         "bytes_uploaded": bytes_uploaded,
         "registry": registry or "docker.io",
         "repo": repo,

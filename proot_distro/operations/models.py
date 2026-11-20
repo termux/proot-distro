@@ -152,7 +152,11 @@ class ImageBuild:
 
 @dataclass(frozen=True)
 class ImagePush:
-    """A cached image tag published to an OCI registry."""
+    """A cached image tag published to an OCI registry.
+
+    ``manifest_digest`` is the digest of the manifest bytes sent, never
+    the registry's Docker-Content-Digest answer (operations/push.py).
+    """
 
     image: CachedImage
     registry: str
