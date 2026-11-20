@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
+from proot_distro.message import quote_path
+
 
 class EventKind(str, Enum):
     """Kinds of informational events an operation may emit."""
@@ -44,6 +46,12 @@ class OperationEvent:
     ``resource`` optionally identifies the image, layer, path, or other object
     the producer is processing. Either may be absent when no useful context is
     available.
+
+    ``resource`` has its control and format characters escaped, spelled the
+    way messages spell names (message.quote_path): it is often a name
+    someone else chose, such as a file inside a container. ``message`` is
+    escaped by whatever produces the event, except for build output, which
+    is a RUN step's own output and is passed on as it came.
     """
 
     operation: str
@@ -54,6 +62,10 @@ class OperationEvent:
     unit: Optional[str] = None
     phase: Optional[str] = None
     resource: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.resource, str):
+            object.__setattr__(self, "resource", quote_path(self.resource))
 
 
 @runtime_checkable

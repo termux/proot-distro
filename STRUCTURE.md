@@ -67,7 +67,7 @@ Only names re-exported by `proot_distro.api` are public.
 | `api/cancellation.py` | Public structural protocol for cooperative cancellation tokens. |
 | `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
 | `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. The base class escapes every message's control and format characters. |
-| `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context, plus the public handler protocol. |
+| `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context (the resource escaped with `quote_path`), plus the public handler protocol. |
 | `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
 | `_api_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
 | `_api_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |

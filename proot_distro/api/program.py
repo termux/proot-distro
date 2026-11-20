@@ -1540,9 +1540,16 @@ class _OperationContext:
         self, operation: str, kind: EventKind, message: str, *,
         phase: Optional[str] = None, resource: Optional[str] = None,
     ) -> None:
+        """Hand the caller an event this process produced, not a worker.
+
+        The message is escaped (printable_message) as a worker's are: a
+        search's retry notice quotes the HTTP error, reason phrase and
+        all, and search runs here rather than in a worker.
+        """
         if self.event_handler is not None:
             self.event_handler(OperationEvent(
-                operation, kind, message, phase=phase, resource=resource,
+                operation, kind, printable_message(message), phase=phase,
+                resource=resource,
             ))
 
     def worker(

@@ -59,10 +59,12 @@ call `sys.exit()`. All failures inherit from `ProotDistroError`.
 
 Text in results, events and error messages can come from third parties:
 image metadata, a container's own files (which the container can change),
-registries and Docker Hub. Error and event messages have their control and
-format characters escaped, as `\e`, `\x9b` or `\u202e`. Result fields and
-build output (events with phase `build-output`) are passed on as they came.
-Remove control characters from those before you print them to a terminal.
+registries and Docker Hub. Error messages, event messages and event
+`resource` values have their control and format characters escaped, as `\e`,
+`\x9b` or `\u202e`. A `resource` is spelled the way messages spell names, so
+a backslash in it is doubled. Result fields and build output (the messages
+of events with phase `build-output`) are passed on as they came. Remove
+control characters from those before you print them to a terminal.
 
 ## Compatibility
 
