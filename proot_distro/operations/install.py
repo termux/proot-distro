@@ -43,9 +43,8 @@ from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_write_at
 from proot_distro.constants import BASE_CACHE_DIR
 from proot_distro.container_staging import (
-    create_staging, reclaim_staging, refuse_leftovers, remove_left,
+    clear_container, create_staging, reclaim_staging, refuse_leftovers,
 )
-from proot_distro.interrupts import defer_sigint
 from proot_distro.message import quote_path
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
@@ -160,9 +159,9 @@ def install_container(
     """Install a container from an OCI reference, URL, or local archive.
 
     With *replace*, the container under the name is replaced, which is
-    what `reset` asks for: it must be installed, it stays as it is while
-    the new one is built, and the two are swapped only once the new one
-    is complete (container_staging.Staging.commit).
+    what `reset` asks for: it must be installed, and it is removed
+    completely before the new one is built (container_staging.
+    clear_container), so the two never take up space at the same time.
     """
     context = context if context is not None else OperationContext()
     if not isinstance(image_ref, str) or not image_ref:
@@ -298,6 +297,12 @@ def _run_install(
             raise NotFoundFailure(
                 f"container '{install_name}' is not installed."
             )
+        context.info(
+            f"Removing the old container '{install_name}'...",
+            phase="install", resource=install_name,
+        )
+        clear_container(install_name, context,
+                        phase="install", resource=install_name)
     elif installed_now:
         failure = AlreadyExistsFailure(
             f"container '{install_name}' already exists. Specify a "
@@ -355,7 +360,6 @@ def _run_install(
     staging = None
     rootfs_fd = None
     tmp_archive = None
-    replaced = None
     installed = False
     interrupted = False
     try:
@@ -456,13 +460,9 @@ def _run_install(
 
         setup_fake_sysdata(staging.rootfs_path, container_fd=container_fd)
 
-        # The container exists from here on, complete. Ctrl-C waits for
-        # the end of the commit and for `installed`: a replacement is two
-        # renames, and an interrupt between them would leave the name
-        # empty, or one after them would have the new container removed.
-        with defer_sigint():
-            replaced = staging.commit(install_name, replace=replace)
-            installed = True
+        # The container exists from here on, complete.
+        staging.commit(install_name)
+        installed = True
 
     except KeyboardInterrupt:
         interrupted = True
@@ -506,14 +506,6 @@ def _run_install(
                     os.remove(tmp_archive)
                 except OSError:
                     pass
-
-    if replaced is not None:
-        context.info(
-            f"Removing the old rootfs of '{install_name}'...",
-            phase="install", resource=install_name,
-        )
-        remove_left(replaced, "the old container", context,
-                    phase="install", resource=install_name)
 
     context.info(
         "Finished installation.", phase="install", resource=install_name

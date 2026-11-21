@@ -1199,11 +1199,14 @@ proot-distro reset CONTAINER
 Remove the container rootfs and reinstall it from the Docker image
 recorded at install time. **All data inside the container is lost.**
 
-The new container is built first, next to the old one, and replaces it
-only once it is complete. So if a reset fails (for example, the registry
-cannot be reached), is stopped with CTRL-C or is killed, the container
-is left exactly as it was. While it runs, a reset needs enough free
-space for both the old and the new container.
+The old container is removed completely before the new one is
+written, so a reset never needs room for both. If the reset then fails
+(for example, the registry cannot be reached) or is stopped, the
+container is gone, and the reset tells you how to install it again:
+
+```
+Container 'ubuntu' was removed, but its new copy was not installed. Install it again with 'proot-distro install --name ubuntu --architecture aarch64 ubuntu:24.04'.
+```
 
 The image reference and target architecture are read from
 `containers/<name>/manifest.json`. If that file is missing, the command
@@ -1321,13 +1324,13 @@ than real hard links, because the on-disk rootfs uses proot's
 link2symlink emulation and a host-level hard link would alias what
 the guest treats as separate inodes.
 
-A restore to a new container builds it the way an install does, so if
-it fails, is stopped or is killed, no container is left, just like a
-[failed install](#if-an-install-fails-or-is-stopped). A name that holds
-the leftovers of an incomplete container is refused the same way. A
-container that already existed is overwritten in place and cannot be
-put back if that restore fails: restore the same archive again to
-repair it.
+A restore builds the container the way an install does, so if it fails,
+is stopped or is killed, no half-restored container is left, just like
+a [failed install](#if-an-install-fails-or-is-stopped). A name that
+holds the leftovers of an incomplete container is refused the same way.
+Restoring over an existing container removes it completely first, so
+the restore never needs room for both. If that restore fails, the old
+container is gone: restore the archive again to bring it back.
 
 `restore` is **TTY-safe** when reading from a pipe that involves an
 interactive producer (`gpg -d archive.gpg | proot-distro restore`):
@@ -1674,7 +1677,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | Path | Contents |
 |---|---|
 | `containers/<name>/rootfs/` | Container root filesystem |
-| `containers/.pd-staging-<pid>-<start>.<random>/` | A container that `install`, `restore` or `reset` is building, or the old one a `reset` is replacing; locked while it runs, renamed to `containers/<name>/` when complete, or removed by the next `install`, `restore` or `clear-cache` if it was killed |
+| `containers/.pd-staging-<pid>-<start>.<random>/` | A container that `install`, `restore` or `reset` is building, or the old one a `reset` or `restore` is removing; locked while it runs, renamed to `containers/<name>/` when complete, or removed by the next `install`, `restore` or `clear-cache` if it was killed |
 | `containers/<name>/manifest.json` | Image reference, arch, full OCI manifest, full image config |
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |

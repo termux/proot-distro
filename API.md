@@ -99,7 +99,7 @@ Only names in `proot_distro.api.__all__` are covered. Everything below
 | `list_sessions()` | Active sessions, as a tuple of `SessionInfo`. |
 | `remove_container(NAME)` | Permanently remove a container. Returns its former `ContainerInfo`. |
 | `rename_container(OLD, NEW)` | Rename a container. Returns the new `ContainerInfo`. |
-| `reset_container(NAME)` | Reinstall an OCI container from its image. All changes in it are lost. The new container replaces the old one only once it is complete, so a failed, cancelled or killed reset leaves the old one as it was. |
+| `reset_container(NAME)` | Reinstall an OCI container from its image. All changes in it are lost. The old container is removed completely before the new one is written, so a failed or cancelled reset leaves no container; an event says how to install it again. |
 | `remove_image(IDENTIFIER, architecture=)` | Remove cached images by reference, ID prefix or cache identifier. |
 | `clear_cache(orphan=False, build_cache=False)` | Clear the whole cache, only orphan layers, or only the build cache. Also removes the scratch files of killed builds, which the byte counts leave out. |
 | `search(QUERY, limit=25)` | Search public Docker Hub repositories. Returns `SearchResult`. |
@@ -175,11 +175,11 @@ For a path, compression is chosen from the file name. For a stream, the
 default is no compression. Pass `"gzip"`, `"bzip2"`, `"xz"` or `"zstd"`
 explicitly when you want it.
 
-Restoring over an existing container replaces it in place. If that restore
-fails or is cancelled, the container is left half-replaced: restore the same
-archive again to repair it. A restore to a new container, like an install,
-builds it aside and creates it only once it is complete, so a restore or an
-install that fails, is cancelled or is killed leaves no container behind
+A restore, like an install, builds the container aside and creates it only
+once it is complete, so a restore or an install that fails, is cancelled or is
+killed leaves no half-made container behind. Restoring over an existing
+container removes it completely first; if that restore fails, the container is
+gone, and restoring the same archive again brings it back
 (see [Cancelling operations](#cancelling-operations)). Both refuse a name
 that holds the leftovers of an incomplete container with
 `AlreadyExistsError`.

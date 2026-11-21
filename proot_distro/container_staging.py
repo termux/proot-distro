@@ -44,22 +44,22 @@ it is in CONTAINERS_DIR itself, so the rename never crosses a filesystem.
 rename(2) never follows the name it lands on. It replaces an empty
 directory and refuses anything else, so a name taken while the container
 was being built, by a guest planting a link or a directory under it, ends
-the commit in an error with nothing written through it.
-
-`reset` builds the new container the same way while the old one stays
-where it is, and commit(replace=True) swaps them: the old container is
-renamed aside, under a staging name of this process, the new one onto
-the name, and the old one is then removed. A reset that fails, is
-stopped or is killed before that leaves the old container as it was.
-Ctrl-C is held off across the two renames, so it cannot land between
-them; only a process killed outright in that instant leaves the name
-empty, with both containers under staging names for the sweep. Both names are
+the commit in an error with nothing written through it. Both names are
 checked against the staging directory's own descriptor, before the rename
 and after it, so a staging directory swapped for something else is
 refused rather than published. CONTAINERS_DIR is guest-writable on
 Termux, as it always was: everything inside the staging directory is
 written through descriptors below the one made here, exactly as the
 in-place install wrote below containers/<name>.
+
+`reset`, and `restore` over an existing container, remove the old
+container completely before they build the new one (clear_container), so
+the two never take up space at the same time. The old container is
+renamed aside first, under a staging name of this process, and removed
+from there: at every moment the name holds the complete old container,
+nothing, or the complete new one, and a process killed during the removal
+leaves the rest to the sweep. Once the old container is gone, a failure
+loses it; the callers say how to get it back.
 """
 
 import errno
@@ -78,6 +78,7 @@ from proot_distro.operation_errors import (
     AlreadyExistsFailure, OperationFailure,
 )
 from proot_distro.paths import container_entry_lstat, open_container_dir
+from proot_distro.progress import clear_bar, draw_count_bar
 
 _PREFIX = ".pd-staging"
 _STAGING_NAME = re.compile(
@@ -88,8 +89,8 @@ _STAGING_NAME = re.compile(
 # directory with something in it, or something that is not a directory.
 _TAKEN = (errno.ENOTEMPTY, errno.EEXIST, errno.ENOTDIR, errno.EISDIR)
 
-# Fresh names to move a replaced container aside to, before giving up.
-# Each holds 32 random bits, so a clash means a planted entry.
+# Fresh names to move an old container aside to, before giving up. Each
+# holds 32 random bits, so a clash means a planted entry.
 _ASIDE_ATTEMPTS = 16
 
 
@@ -133,7 +134,7 @@ class Staging:
         """Make and open rootfs/ below the staging directory."""
         return dirfd.descend_at(self.fd, ("rootfs",), create=True)
 
-    def commit(self, target: str, *, replace: bool = False):
+    def commit(self, target: str) -> None:
         """Rename the staging directory onto containers/<target>.
 
         Refused, with nothing renamed, if the staging name no longer
@@ -141,13 +142,6 @@ class Staging:
         is taken by anything but an empty directory. Refused after the
         fact if *target* is not this directory once renamed, which only
         a concurrent rename can arrange.
-
-        With *replace*, the container at *target* is first renamed aside
-        (_move_aside) and put back if the rename onto it fails. Returns
-        the name in CONTAINERS_DIR the replaced container was moved to,
-        for the caller to remove (remove_left), or None when there was
-        none. The caller holds Ctrl-C off across this call, so that the
-        name is never left empty between the two renames.
         """
         own = os.fstat(self.fd)
         if not _same(_lstat_at(self._containers_fd, self.name), own):
@@ -155,14 +149,11 @@ class Staging:
                 f"the directory container '{target}' was being built in "
                 f"was replaced; nothing was installed."
             )
-        aside = self._move_aside(target) if replace else None
         try:
             os.rename(self.name, target,
                       src_dir_fd=self._containers_fd,
                       dst_dir_fd=self._containers_fd)
         except OSError as exc:
-            if aside is not None:
-                self._put_back(aside, target)
             if exc.errno not in _TAKEN:
                 raise
             raise AlreadyExistsFailure(
@@ -174,45 +165,6 @@ class Staging:
             raise OperationFailure(
                 f"container '{target}' was replaced as it was installed."
             )
-        return aside
-
-    def _move_aside(self, target: str):
-        """Rename the container at *target* to a fresh staging name.
-
-        A staging name of this process, so that a process killed before
-        the replaced container is removed leaves it to the sweep. None
-        when nothing is at *target*. Whatever is there is renamed, never
-        followed: rename(2) moves a link planted under the name as a
-        link, which the removal then unlinks.
-        """
-        if _lstat_at(self._containers_fd, target) is None:
-            return None
-        for _attempt in range(_ASIDE_ATTEMPTS):
-            aside = scratch_name(_PREFIX)
-            try:
-                os.rename(target, aside,
-                          src_dir_fd=self._containers_fd,
-                          dst_dir_fd=self._containers_fd)
-            except OSError as exc:
-                if exc.errno in _TAKEN:
-                    continue
-                raise
-            return aside
-        raise FileExistsError(errno.EEXIST, "no free name to move it to")
-
-    def _put_back(self, aside: str, target: str) -> None:
-        """Return a replaced container to *target* after a failed swap."""
-        try:
-            os.rename(aside, target,
-                      src_dir_fd=self._containers_fd,
-                      dst_dir_fd=self._containers_fd)
-        except OSError as exc:
-            raise OperationFailure(
-                f"container '{target}' could not be put back after its "
-                f"replacement failed. It is in "
-                f"'{quote_path(os.path.join(CONTAINERS_DIR, aside))}' "
-                f"until this command ends; move it back to keep it."
-            ) from exc
 
     def discard(self, context, *, phase, resource, interrupted) -> None:
         """Remove the staging directory and everything built in it.
@@ -235,19 +187,20 @@ class Staging:
 
 
 def remove_left(name: str, what: str, context, *, phase, resource,
-                interrupted=False) -> None:
+                interrupted=False, on_remove=None) -> None:
     """Remove CONTAINERS_DIR/<name>, a staging name, and say what is left.
 
     *what* names it for the user: "the unfinished container", "the old
     container". finish_cleanup() lets a first interrupt wait for the
     removal and a second one stop it. Whatever is left is no container,
     and the next install, restore or clear-cache removes it once this
-    process has ended; the user is told so.
+    process has ended; the user is told so. *on_remove* is called with
+    each entry removed.
     """
     path = os.path.join(CONTAINERS_DIR, name)
     try:
         finish_cleanup(
-            lambda: statedir.remove_state_tree(path),
+            lambda: statedir.remove_state_tree(path, on_remove=on_remove),
             interrupted=interrupted,
         )
     finally:
@@ -258,6 +211,60 @@ def remove_left(name: str, what: str, context, *, phase, resource,
                 f"so does '{PROGRAM_NAME} clear-cache'.",
                 phase=phase, resource=resource,
             )
+
+
+def _move_aside(containers_fd: int, target: str) -> str:
+    """Rename the entry at containers/<target> to a fresh staging name.
+
+    A staging name of this process, so that a process killed before the
+    entry is removed leaves it to the sweep. Whatever is there is
+    renamed, never followed: rename(2) moves a link planted under the
+    name as a link, which the removal then unlinks.
+    """
+    for _attempt in range(_ASIDE_ATTEMPTS):
+        aside = scratch_name(_PREFIX)
+        try:
+            os.rename(target, aside,
+                      src_dir_fd=containers_fd, dst_dir_fd=containers_fd)
+        except OSError as exc:
+            if exc.errno in _TAKEN:
+                continue
+            raise
+        return aside
+    raise FileExistsError(errno.EEXIST, "no free name to move it to")
+
+
+def clear_container(name: str, context, *, phase, resource) -> None:
+    """Remove containers/<name> completely, to build a new one in its place.
+
+    For `reset` and for `restore` over an existing container, under the
+    container's lock: the old container goes before the new one is
+    written, so the two never take up space at the same time. It is
+    renamed aside in one step, so from then on nothing is listed or
+    entered under the name, and removed from there, with a running count
+    like the one the in-place clear used to draw. A first Ctrl-C lets the
+    removal finish and a second one stops it (remove_left); either way
+    the name is already free, and what is left goes to the sweep.
+    """
+    containers_fd = statedir.open_state_dir(CONTAINERS_DIR)
+    try:
+        aside = _move_aside(containers_fd, name)
+    finally:
+        os.close(containers_fd)
+    count = 0
+    clear_bar()
+
+    def counted(_rel) -> None:
+        nonlocal count
+        count += 1
+        draw_count_bar(count, count, label="Removing old rootfs",
+                       phase=phase, resource=resource)
+
+    try:
+        remove_left(aside, "the old container", context, phase=phase,
+                    resource=resource, on_remove=counted)
+    finally:
+        clear_bar()
 
 
 def create_staging() -> Staging:
@@ -327,6 +334,7 @@ def reclaim_staging(announce=None) -> int:
 
 __all__ = (
     "Staging",
+    "clear_container",
     "create_staging",
     "reclaim_staging",
     "refuse_leftovers",

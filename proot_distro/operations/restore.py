@@ -36,10 +36,10 @@
 # progress is tracked in compressed bytes consumed so total_size is
 # os.path.getsize() — instant, no upfront scan needed.
 #
-# Nothing is written by path. `containers/<name>` is opened once, at the
-# commit point, through statedir's O_NOFOLLOW walk (paths.
-# open_container_dir), and every member is written as (dir_fd, name)
-# below that descriptor. Two different things made that necessary. The
+# Nothing is written by path. The directory the container is built in is
+# opened once, at the commit point, made by container_staging.py under the
+# descriptor of an O_NOFOLLOW walk to CONTAINERS_DIR, and every member is
+# written as (dir_fd, name) below it. Two different things made that necessary. The
 # container directory itself is guest-writable on Termux, where the
 # runtime tree sits under the $TERMUX_PREFIX bound read-write into every
 # non-isolated container, so a planted `containers/<name> -> <host dir>`
@@ -54,24 +54,25 @@
 # os.makedirs/os.symlink/shutil.copy2/open(dest, 'wb') each resolved the
 # whole path afresh, which is one resolution too many.
 #
-# A restore to a name that holds no container builds it in a staging
-# directory instead, renamed onto containers/<name> only once it is
-# complete (container_staging.py), so a restore killed part-way leaves no
-# container behind. A restore over an existing container still replaces
-# it in place: there is nothing to rename onto a name that is taken.
+# The container is built in a staging directory instead, renamed onto
+# containers/<name> only once it is complete (container_staging.py), so a
+# restore killed part-way leaves no container behind. A restore over an
+# existing container removes the old one completely first
+# (clear_container), so the two never take up space at the same time;
+# the archive is still there to restore from if this one fails.
 
 import os
 import stat
 import tarfile
 
-from proot_distro import dirfd, statedir
+from proot_distro import dirfd
 from proot_distro.atomic import atomic_write_at
 from proot_distro.compress import (
     ZSTD_AVAILABLE, ZSTD_MAGIC, file_is_zstd, header_is_zstd, unsupported_msg,
 )
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.container_staging import (
-    create_staging, reclaim_staging, refuse_leftovers,
+    clear_container, create_staging, reclaim_staging, refuse_leftovers,
 )
 from proot_distro.interrupts import open_tar_member
 from proot_distro.message import quote_error, quote_path
@@ -82,15 +83,11 @@ from proot_distro.operation_errors import (
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import ArchiveRestore
 from proot_distro.progress import (
-    ByteCounter, clear_bar, draw_bytes_bar, draw_count_bar,
+    ByteCounter, clear_bar, draw_bytes_bar,
 )
-from proot_distro.shm import SHM_DIR_NAME
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
-from proot_distro.paths import (
-    container_dir, container_is_installed, container_rootfs,
-    open_container_dir,
-)
+from proot_distro.paths import container_is_installed
 from proot_distro.helpers.tar_extract import safe_resolve_parts
 
 
@@ -148,44 +145,6 @@ class _PrefixedReader:
 
 def _ignore(_rel, _exc) -> None:
     """Swallow a removal failure, the way dirfd.remove_tree() does."""
-
-
-def _clear_existing_rootfs(root_fd: int, resource=None) -> None:
-    """Remove the destination rootfs before extracting a new copy.
-
-    Streams a `Removing old rootfs... N files` counter to stderr so
-    the user gets feedback during long-running clears (multi-GB rootfs
-    on slow flash).
-
-    One fd walk does the whole job. The hand-rolled os.walk() pass that
-    used to run first could not enter a directory the guest had sealed —
-    os.walk() lists a directory before handing it over — and the
-    shutil.rmtree() behind it could neither chmod its way in nor survive a
-    tree deeper than the interpreter's stack. So a chmod-000 subtree of
-    the *old* rootfs stayed on disk and the restored container came back
-    carrying it. rmtree_at() relaxes each directory as it descends and
-    carries the descent on an explicit stack; naming the rootfs as an
-    entry of the container directory this command holds open is what
-    keeps the clear inside the container it locked.
-    """
-    count = 0
-    clear_bar()
-
-    def _counted(_rel) -> None:
-        nonlocal count
-        count += 1
-        draw_count_bar(
-            count, count, label="Removing old rootfs",
-            phase="extract", resource=resource,
-        )
-
-    dirfd.rmtree_at(root_fd, "rootfs", force=True, on_error=_ignore,
-                    on_remove=_counted)
-    # The shm store is the *old* container's scratch — what its guests
-    # left in /dev/shm — and no archive carries one, so it goes with the
-    # rootfs rather than being inherited by what replaces it.
-    dirfd.rmtree_at(root_fd, SHM_DIR_NAME, force=True, on_error=_ignore)
-    clear_bar()
 
 
 def _remove_existing(dir_fd: int, name: str, member: tarfile.TarInfo) -> None:
@@ -488,6 +447,10 @@ def restore_container(
     writes a broken (non-directory) rootfs has that partial result removed
     so no rootfs-less container is left behind.
 
+    The new container is built in a staging directory and renamed onto its
+    name at the end (container_staging.py); an existing one is removed
+    completely at the commit point, before the first member is written.
+
     Returns immutable metadata identifying the restored container and input.
     """
     context = context if context is not None else OperationContext()
@@ -573,7 +536,8 @@ def restore_container(
     restore_name = None
     lock = None
     committed = False
-    staging = None              # set when the restore makes a new container
+    staging = None              # where the container is built, at commit
+    cleared = False             # an existing container was removed for it
     succeeded = False
     interrupted = False
     dests = None                # opened with the container dir, at commit
@@ -726,8 +690,9 @@ def restore_container(
                 elif not (member.isdir() or member.issym() or member.isreg()):
                     continue
 
-                # The member will produce rootfs content: clear the old rootfs
-                # once, now. This is the destructive commit point, reached only
+                # The member will produce rootfs content: remove the old
+                # container, if there is one, and start the new one, once,
+                # now. This is the destructive commit point, reached only
                 # for a member that actually materialises something.
                 if not committed:
                     # The container directory is opened here rather than
@@ -742,20 +707,24 @@ def restore_container(
                     ))
                     if container_is_installed(restore_name,
                                               raise_errors=True):
-                        root_fd = open_container_dir(
-                            restore_name, raise_errors=True
+                        # Gone completely before the new one is written,
+                        # so the two never take up space at once.
+                        context.info(
+                            f"Removing the old container "
+                            f"'{restore_name}'...",
+                            phase="extract", resource=restore_name,
                         )
-                        rootfs_path = container_rootfs(restore_name)
-                        _clear_existing_rootfs(root_fd, restore_name)
+                        clear_container(restore_name, context,
+                                        phase="extract",
+                                        resource=restore_name)
+                        cleared = True
                     else:
                         # Leftovers under the name are refused with the
-                        # command that clears them; a free name gets a
-                        # staging directory, renamed onto it at the end.
+                        # command that clears them.
                         refuse_leftovers(restore_name)
-                        staging = create_staging()
-                        root_fd = staging.fd
-                        rootfs_path = staging.rootfs_path
-                    dests = _Destinations(root_fd, rootfs_path)
+                    staging = create_staging()
+                    root_fd = staging.fd
+                    dests = _Destinations(root_fd, staging.rootfs_path)
                     committed = True
 
                 dir_fd, leaf = dests.parent_of(parts)
@@ -816,8 +785,6 @@ def restore_container(
             # result so no rootfs-less container is left behind.
             clear_bar()
             dests.close()
-            if staging is None:
-                statedir.remove_state_tree(container_dir(restore_name))
             context.error(
                 f"Cannot restore: archive did not produce a valid container "
                 f"rootfs. Only archives created by '{PROGRAM_NAME} backup' "
@@ -838,9 +805,8 @@ def restore_container(
         if pending_manifest is not None:
             _write_manifest(*pending_manifest)
 
-        # A new container exists from here on, complete.
-        if staging is not None:
-            staging.commit(restore_name)
+        # The container exists from here on, complete.
+        staging.commit(restore_name)
 
         clear_bar()
 
@@ -875,12 +841,10 @@ def restore_container(
             if dests is not None:
                 dests.close()
             if staging is not None:
-                # A new container was never renamed onto its name, so
-                # nothing lists it: what was built goes. An existing
-                # container is overwritten in place and cannot be rolled
-                # back, so a failed restore leaves it half-replaced and a
-                # retry repairs it. Still under the lock, and the lock is
-                # released even if the removal is stopped.
+                # The container was never renamed onto its name, so
+                # nothing lists it: what was built goes. Still under the
+                # lock, and the lock is released even if the removal is
+                # stopped.
                 try:
                     if not succeeded:
                         staging.discard(
@@ -889,11 +853,13 @@ def restore_container(
                         )
                 finally:
                     staging.close()
-            elif root_fd is not None:
-                try:
-                    os.close(root_fd)
-                except OSError:
-                    pass
+            if cleared and not succeeded:
+                context.error(
+                    f"Container '{restore_name}' was removed, but the "
+                    f"restore did not finish. Restore the archive again "
+                    f"to bring it back.",
+                    phase="extract", resource=restore_name,
+                )
         finally:
             if lock is not None:
                 lock.release()

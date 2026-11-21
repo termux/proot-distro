@@ -355,9 +355,16 @@ def test_failed_restore_removes_the_container_it_created(
     assert ProotDistro().restore(archive).container.name == "recoverable"
 
 
-def test_failed_restore_keeps_an_existing_container_recoverable(
+def test_failed_restore_over_an_existing_container_can_be_run_again(
         tmp_path, builders):
-    """An overwritten container cannot be rolled back, and must not vanish."""
+    """A restore over a container removes it first; a failure leaves none.
+
+    The old container used to be overwritten in place, so a failed
+    restore left it half-replaced, listed as installed. It is removed
+    completely before the new one is written now, so the two never take
+    up space at once (container_staging.clear_container): a failure
+    leaves nothing under the name, and the archive brings it back.
+    """
     builders.make_container("recoverable", files={"old": b"old"})
     archive = _restore_archive(tmp_path, builders)
     data = archive.read_bytes()
@@ -367,5 +374,7 @@ def test_failed_restore_keeps_an_existing_container_recoverable(
     with pytest.raises(IntegrityError):
         ProotDistro().restore(truncated)
 
-    assert os.path.isdir(container_rootfs("recoverable"))
+    assert not os.path.lexists(container_dir("recoverable"))
+    assert [c.name for c in ProotDistro().list_containers()] == []
     assert ProotDistro().restore(archive).container.name == "recoverable"
+    assert os.path.isdir(container_rootfs("recoverable"))

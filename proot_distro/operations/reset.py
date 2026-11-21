@@ -20,6 +20,7 @@
 
 """Shared OCI-backed container reset service."""
 
+from proot_distro.constants import PROGRAM_NAME
 from proot_distro.helpers.docker.refs import InvalidReference, parse_reference
 from proot_distro.locking import ContainerLock
 from proot_distro.message import quote_path
@@ -29,6 +30,7 @@ from proot_distro.operations.context import OperationContext
 from proot_distro.operations.install import install_container
 from proot_distro.operations.locks import operation_lock
 from proot_distro.paths import (
+    container_entry_lstat,
     container_image_origin,
     container_is_installed,
 )
@@ -81,23 +83,37 @@ def reset_container(name, *, context=None):
     lock = ContainerLock(name, exclusive=True, command="reset")
     with operation_lock(lock):
         image_ref, architecture = _registry_origin(name)
-        # The new container is built while the old one stays where it is,
-        # and the two are swapped only once the new one is complete
-        # (install_container(replace=True), container_staging.py). So a
-        # reset that fails -- the registry is unreachable, the image is
-        # damaged -- is stopped or is killed leaves the container as it
-        # was, where it used to have lost its rootfs before the download
-        # began. The price is room for both while the reset runs. The
-        # whole container is replaced, not just its rootfs: shm/,
-        # sysdata/ and manifest.json belonged to the old rootfs and are
-        # made anew.
-        return install_container(
-            image_ref,
-            name=name,
-            architecture=architecture,
-            context=context,
-            replace=True,
-        )
+        # The old container is removed completely before the new one is
+        # built (install_container(replace=True), container_staging.
+        # clear_container), so the two never take up space at the same
+        # time; on a phone that is the difference between a reset that
+        # fits and one that does not. The whole container goes, not just
+        # its rootfs: shm/, sysdata/ and manifest.json belonged to the old
+        # rootfs and are made anew. At no point is a half container under
+        # the name. But once the old one is gone a failure loses it --
+        # the registry unreachable, the image damaged, Ctrl-C -- and with
+        # it manifest.json, the record a second reset would need. So the
+        # user is told the install that brings it back.
+        try:
+            return install_container(
+                image_ref,
+                name=name,
+                architecture=architecture,
+                context=context,
+                replace=True,
+            )
+        except BaseException:
+            if container_entry_lstat(name) is None:
+                arch = (f" --architecture {quote_path(architecture)}"
+                        if architecture else "")
+                context.error(
+                    f"Container '{name}' was removed, but its new copy "
+                    f"was not installed. Install it again with "
+                    f"'{PROGRAM_NAME} install --name {name}{arch} "
+                    f"{quote_path(image_ref)}'.",
+                    phase="reset", resource=name,
+                )
+            raise
 
 
 __all__ = ("reset_container",)

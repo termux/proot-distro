@@ -853,10 +853,9 @@ HELP_PAGES = {
             "stored Docker image manifest. All current data inside "
             "the container will be lost."
             "\n\n"
-            "The new container replaces the old one only once it is "
-            "complete, so a reset that fails or is stopped leaves the "
-            "container as it was. It needs free space for both while "
-            "it runs."
+            "The old container is removed before the new one is "
+            "written. If the reset fails, it tells you how to install "
+            "the container again."
             "\n\n"
             "Works only with containers created from Docker images."
         ),
