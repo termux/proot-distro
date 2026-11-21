@@ -73,7 +73,7 @@ import os
 import tempfile
 
 from proot_distro import dirfd, statedir
-from proot_distro.interrupts import defer_sigint
+from proot_distro.interrupts import defer_interrupts
 
 
 def _state_location(path: str):
@@ -213,7 +213,7 @@ def _replace_at(dir_fd: int, name: str, suffix: str):
     # the name a second time.
     fd = None
     try:
-        with defer_sigint():
+        with defer_interrupts():
             fd, _st = dirfd.open_new_at(
                 dir_fd, tmp_name, 0o600, readable=True
             )
@@ -269,7 +269,7 @@ def _replace_by_name(path: str, suffix: str):
     fd = None
     tmp = None
     try:
-        with defer_sigint():
+        with defer_interrupts():
             fd, tmp = tempfile.mkstemp(
                 prefix=os.path.basename(path) + ".",
                 suffix=suffix,
