@@ -51,8 +51,11 @@ _UNSET = object()
 # underscore followed by letters, digits, or underscores. Image Env
 # entries and user-supplied --env flags are filtered against this before
 # they reach the profile.d snippet — otherwise a name carrying spaces,
-# quotes, or `;` would break the sourced script.
-_VALID_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# quotes, or `;` would break the sourced script. Matched with
+# fullmatch(): `$` also matches before a trailing newline, and an Env
+# entry "NAME\n=value" wrote `export NAME` and then `='value'`, a line
+# of its own that every login shell ran as a command.
+_VALID_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # The snippet /etc/profile sources to re-export the proot-distro vars.
 _PROFILE_SNIPPET = "termux-profile.sh"
@@ -290,7 +293,7 @@ def _write_profile_snippet(profile_fd: int, env: dict,
     for key in sorted(env):
         if key in _PROFILE_INJECT_SKIP:
             continue
-        if not _VALID_ENV_KEY_RE.match(key):
+        if not _VALID_ENV_KEY_RE.fullmatch(key):
             # A malformed name (spaces, ';', quotes …) would corrupt the
             # snippet when /etc/profile sources it. Drop the entry rather
             # than write a line that breaks every subsequent shell.

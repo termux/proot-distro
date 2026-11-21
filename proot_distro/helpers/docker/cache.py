@@ -89,11 +89,15 @@ from proot_distro.helpers.docker.refs import DOCKER_TO_ARCH, canonical_ref
 
 # OCI digest grammar (algorithm ":" encoded). The algorithm component
 # allows alphanumerics joined by single +, _, -, or . separators, so
-# bare ".." can never appear in a valid digest. Anchored so a crafted
-# string like "../foo:bar" — which would make layer_cache_path or any
-# digest→path mapper escape LAYER_CACHE_DIR — is rejected.
+# bare ".." can never appear in a valid digest. Matched whole, so a
+# crafted string like "../foo:bar" — which would make layer_cache_path
+# or any digest→path mapper escape LAYER_CACHE_DIR — is rejected. With
+# fullmatch(): the `$` it was anchored with also matches before a
+# trailing newline, so "sha256:<hex>\n" passed. It reached PD_IMAGE_ID
+# from a container's manifest.json, and a blob named by one was said
+# to be altered rather than its name malformed.
 _DIGEST_RE = re.compile(
-    r"^[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*:[A-Fa-f0-9]+$"
+    r"[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*:[A-Fa-f0-9]+"
 )
 
 
@@ -105,7 +109,7 @@ def validate_digest(digest: str) -> str:
     OCI-conformant algorithm/hex pair; rejects anything containing path
     separators or empty/dot components.
     """
-    if not isinstance(digest, str) or not _DIGEST_RE.match(digest):
+    if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
         raise RuntimeError(f"Malformed digest: {digest!r}")
     return digest
 

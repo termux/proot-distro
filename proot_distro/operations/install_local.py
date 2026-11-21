@@ -82,9 +82,11 @@ _MAX_OCI_MEMBERS = 16384
 # validate_digest() has already accepted. Anything else in the archive
 # is unaddressable here, so it is not worth a TarInfo -- which is what
 # keeps a member list this reader cannot use from costing memory.
+# Matched with fullmatch(), as the digest is: `$` also matches before a
+# trailing newline, which no name _oci_blob_path() builds can end in.
 _OCI_INDEX_NAME = "index.json"
 _OCI_BLOB_RE = re.compile(
-    r"^blobs/[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*/[A-Fa-f0-9]+$"
+    r"blobs/[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*/[A-Fa-f0-9]+"
 )
 
 # Top-level directory names that signal a rootfs filesystem root.
@@ -492,7 +494,7 @@ def _index_oci_members(tf) -> dict:
                 f"entries; refusing to index it."
             )
         name = member.name
-        if name == _OCI_INDEX_NAME or _OCI_BLOB_RE.match(name):
+        if name == _OCI_INDEX_NAME or _OCI_BLOB_RE.fullmatch(name):
             member_map[name] = member
     return member_map
 

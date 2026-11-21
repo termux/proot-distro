@@ -3,6 +3,7 @@
 # not escape the blob layout, and hostile layer content must stay in rootfs.
 
 import io
+import json
 import os
 import tarfile
 
@@ -254,5 +255,39 @@ def test_oversized_json_member_is_refused(tmp_path, builders, monkeypatch):
         str(arc), [[{"name": "etc/hostname", "type": "file", "data": b"g"}]],
     )
     with pytest.raises(RuntimeError, match="larger than 64 bytes"):
+        install_local_into(str(arc), str(root), "x86_64")
+    assert os.listdir(str(root)) == []
+
+
+def test_a_digest_with_a_trailing_newline_is_malformed(tmp_path, builders):
+    # `$` matches before a trailing newline too, so validate_digest let
+    # "sha256:<hex>\n" through and _oci_blob_path() made a member name
+    # out of it, which the member index then accepted as well. Here the
+    # archive carries that member, holding the real manifest: the blob
+    # was found, then said to have been altered. It is a malformed name.
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    arc = tmp_path / "img.oci.tar"
+    builders.make_oci_archive(
+        str(arc), [[{"name": "etc/hostname", "type": "file", "data": b"g"}]],
+    )
+    with tarfile.open(str(arc)) as tf:
+        index = json.loads(tf.extractfile("index.json").read())
+        digest = index["manifests"][0]["digest"]
+        manifest = tf.extractfile(
+            "blobs/" + digest.replace(":", "/")
+        ).read()
+    index["manifests"][0]["digest"] = digest + "\n"
+    _rewrite_index(str(arc), json.dumps(index).encode())
+    newline_name = "blobs/" + digest.replace(":", "/") + "\n"
+    with tarfile.open(str(arc), "a") as tf:
+        member = tarfile.TarInfo(newline_name)
+        member.size = len(manifest)
+        tf.addfile(member, io.BytesIO(manifest))
+
+    with tarfile.open(str(arc)) as tf:
+        assert newline_name in tf.getnames()
+        assert newline_name not in install_local._index_oci_members(tf)
+    with pytest.raises(RuntimeError, match="Malformed digest"):
         install_local_into(str(arc), str(root), "x86_64")
     assert os.listdir(str(root)) == []
