@@ -44,7 +44,16 @@ it is in CONTAINERS_DIR itself, so the rename never crosses a filesystem.
 rename(2) never follows the name it lands on. It replaces an empty
 directory and refuses anything else, so a name taken while the container
 was being built, by a guest planting a link or a directory under it, ends
-the commit in an error with nothing written through it. Both names are
+the commit in an error with nothing written through it.
+
+`reset` builds the new container the same way while the old one stays
+where it is, and commit(replace=True) swaps them: the old container is
+renamed aside, under a staging name of this process, the new one onto
+the name, and the old one is then removed. A reset that fails, is
+stopped or is killed before that leaves the old container as it was.
+Ctrl-C is held off across the two renames, so it cannot land between
+them; only a process killed outright in that instant leaves the name
+empty, with both containers under staging names for the sweep. Both names are
 checked against the staging directory's own descriptor, before the rename
 and after it, so a staging directory swapped for something else is
 refused rather than published. CONTAINERS_DIR is guest-writable on
@@ -59,7 +68,9 @@ import re
 import stat
 
 from proot_distro import dirfd, statedir
-from proot_distro.build_scratch import make_root_in, reclaim_roots
+from proot_distro.build_scratch import (
+    make_root_in, reclaim_roots, scratch_name,
+)
 from proot_distro.constants import CONTAINERS_DIR, PROGRAM_NAME
 from proot_distro.interrupts import finish_cleanup
 from proot_distro.message import quote_path
@@ -76,6 +87,10 @@ _STAGING_NAME = re.compile(
 # What rename(2) answers when the name it would land on is taken: a
 # directory with something in it, or something that is not a directory.
 _TAKEN = (errno.ENOTEMPTY, errno.EEXIST, errno.ENOTDIR, errno.EISDIR)
+
+# Fresh names to move a replaced container aside to, before giving up.
+# Each holds 32 random bits, so a clash means a planted entry.
+_ASIDE_ATTEMPTS = 16
 
 
 def _lstat_at(dir_fd: int, name: str):
@@ -118,7 +133,7 @@ class Staging:
         """Make and open rootfs/ below the staging directory."""
         return dirfd.descend_at(self.fd, ("rootfs",), create=True)
 
-    def commit(self, target: str) -> None:
+    def commit(self, target: str, *, replace: bool = False):
         """Rename the staging directory onto containers/<target>.
 
         Refused, with nothing renamed, if the staging name no longer
@@ -126,6 +141,13 @@ class Staging:
         is taken by anything but an empty directory. Refused after the
         fact if *target* is not this directory once renamed, which only
         a concurrent rename can arrange.
+
+        With *replace*, the container at *target* is first renamed aside
+        (_move_aside) and put back if the rename onto it fails. Returns
+        the name in CONTAINERS_DIR the replaced container was moved to,
+        for the caller to remove (remove_left), or None when there was
+        none. The caller holds Ctrl-C off across this call, so that the
+        name is never left empty between the two renames.
         """
         own = os.fstat(self.fd)
         if not _same(_lstat_at(self._containers_fd, self.name), own):
@@ -133,11 +155,14 @@ class Staging:
                 f"the directory container '{target}' was being built in "
                 f"was replaced; nothing was installed."
             )
+        aside = self._move_aside(target) if replace else None
         try:
             os.rename(self.name, target,
                       src_dir_fd=self._containers_fd,
                       dst_dir_fd=self._containers_fd)
         except OSError as exc:
+            if aside is not None:
+                self._put_back(aside, target)
             if exc.errno not in _TAKEN:
                 raise
             raise AlreadyExistsFailure(
@@ -149,6 +174,45 @@ class Staging:
             raise OperationFailure(
                 f"container '{target}' was replaced as it was installed."
             )
+        return aside
+
+    def _move_aside(self, target: str):
+        """Rename the container at *target* to a fresh staging name.
+
+        A staging name of this process, so that a process killed before
+        the replaced container is removed leaves it to the sweep. None
+        when nothing is at *target*. Whatever is there is renamed, never
+        followed: rename(2) moves a link planted under the name as a
+        link, which the removal then unlinks.
+        """
+        if _lstat_at(self._containers_fd, target) is None:
+            return None
+        for _attempt in range(_ASIDE_ATTEMPTS):
+            aside = scratch_name(_PREFIX)
+            try:
+                os.rename(target, aside,
+                          src_dir_fd=self._containers_fd,
+                          dst_dir_fd=self._containers_fd)
+            except OSError as exc:
+                if exc.errno in _TAKEN:
+                    continue
+                raise
+            return aside
+        raise FileExistsError(errno.EEXIST, "no free name to move it to")
+
+    def _put_back(self, aside: str, target: str) -> None:
+        """Return a replaced container to *target* after a failed swap."""
+        try:
+            os.rename(aside, target,
+                      src_dir_fd=self._containers_fd,
+                      dst_dir_fd=self._containers_fd)
+        except OSError as exc:
+            raise OperationFailure(
+                f"container '{target}' could not be put back after its "
+                f"replacement failed. It is in "
+                f"'{quote_path(os.path.join(CONTAINERS_DIR, aside))}' "
+                f"until this command ends; move it back to keep it."
+            ) from exc
 
     def discard(self, context, *, phase, resource, interrupted) -> None:
         """Remove the staging directory and everything built in it.
@@ -157,25 +221,10 @@ class Staging:
         can be deeper than the interpreter's stack and hold directories
         the image sealed, which remove_state_tree() handles, and it is
         reached through the same O_NOFOLLOW walk as every state path.
-        finish_cleanup() lets a first interrupt wait for the removal and
-        a second one stop it. Whatever is left is no container, and the
-        next install, restore or clear-cache removes it once this
-        process has ended; the user is told so.
+        See remove_left().
         """
-        try:
-            finish_cleanup(
-                lambda: statedir.remove_state_tree(self.path),
-                interrupted=interrupted,
-            )
-        finally:
-            if _lstat_at(self._containers_fd, self.name) is not None:
-                context.error(
-                    f"What the unfinished container left in "
-                    f"'{quote_path(self.path)}' was not fully removed. "
-                    f"The next install or restore removes it, and so "
-                    f"does '{PROGRAM_NAME} clear-cache'.",
-                    phase=phase, resource=resource,
-                )
+        remove_left(self.name, "the unfinished container", context,
+                    phase=phase, resource=resource, interrupted=interrupted)
 
     def close(self) -> None:
         for fd in (self.fd, self._containers_fd):
@@ -183,6 +232,32 @@ class Staging:
                 os.close(fd)
             except OSError:
                 pass
+
+
+def remove_left(name: str, what: str, context, *, phase, resource,
+                interrupted=False) -> None:
+    """Remove CONTAINERS_DIR/<name>, a staging name, and say what is left.
+
+    *what* names it for the user: "the unfinished container", "the old
+    container". finish_cleanup() lets a first interrupt wait for the
+    removal and a second one stop it. Whatever is left is no container,
+    and the next install, restore or clear-cache removes it once this
+    process has ended; the user is told so.
+    """
+    path = os.path.join(CONTAINERS_DIR, name)
+    try:
+        finish_cleanup(
+            lambda: statedir.remove_state_tree(path),
+            interrupted=interrupted,
+        )
+    finally:
+        if container_entry_lstat(name) is not None:
+            context.error(
+                f"What {what} left in '{quote_path(path)}' was not fully "
+                f"removed. The next install or restore removes it, and "
+                f"so does '{PROGRAM_NAME} clear-cache'.",
+                phase=phase, resource=resource,
+            )
 
 
 def create_staging() -> Staging:
@@ -255,4 +330,5 @@ __all__ = (
     "create_staging",
     "reclaim_staging",
     "refuse_leftovers",
+    "remove_left",
 )

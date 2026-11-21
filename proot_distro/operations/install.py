@@ -43,8 +43,9 @@ from proot_distro import dirfd, statedir
 from proot_distro.atomic import atomic_write_at
 from proot_distro.constants import BASE_CACHE_DIR
 from proot_distro.container_staging import (
-    create_staging, reclaim_staging, refuse_leftovers,
+    create_staging, reclaim_staging, refuse_leftovers, remove_left,
 )
+from proot_distro.interrupts import defer_sigint
 from proot_distro.message import quote_path
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
@@ -154,8 +155,15 @@ def install_container(
     architecture=None,
     allow_insecure=False,
     context=None,
+    replace=False,
 ) -> ContainerInstallation:
-    """Install a container from an OCI reference, URL, or local archive."""
+    """Install a container from an OCI reference, URL, or local archive.
+
+    With *replace*, the container under the name is replaced, which is
+    what `reset` asks for: it must be installed, it stays as it is while
+    the new one is built, and the two are swapped only once the new one
+    is complete (container_staging.Staging.commit).
+    """
     context = context if context is not None else OperationContext()
     if not isinstance(image_ref, str) or not image_ref:
         raise InstallValidationFailure(
@@ -210,7 +218,7 @@ def install_container(
     with operation_lock(lock):
         return _run_install(
             install_name, image_ref, local_path, url, dist_arch,
-            allow_insecure, context,
+            allow_insecure, context, replace=replace,
         )
 
 
@@ -271,6 +279,8 @@ def _run_install(
     dist_arch: str,
     allow_insecure: bool = False,
     context=None,
+    *,
+    replace: bool = False,
 ) -> ContainerInstallation:
     """Inner install logic — called with the container lock already held."""
     context = context if context is not None else OperationContext()
@@ -282,14 +292,21 @@ def _run_install(
     # command here; what passes is either a real rootfs (refuse, the
     # container exists), leftovers that are no container (refused by
     # refuse_leftovers, with the command that clears them), or nothing.
-    if container_is_installed(install_name, raise_errors=True):
+    installed_now = container_is_installed(install_name, raise_errors=True)
+    if replace:
+        if not installed_now:
+            raise NotFoundFailure(
+                f"container '{install_name}' is not installed."
+            )
+    elif installed_now:
         failure = AlreadyExistsFailure(
             f"container '{install_name}' already exists. Specify a "
             f"different name with '--name NAME'."
         )
         failure.name = install_name
         raise failure
-    refuse_leftovers(install_name)
+    else:
+        refuse_leftovers(install_name)
 
     # What killed installs and restores left: never a container, but as
     # large as one.
@@ -338,6 +355,7 @@ def _run_install(
     staging = None
     rootfs_fd = None
     tmp_archive = None
+    replaced = None
     installed = False
     interrupted = False
     try:
@@ -438,9 +456,13 @@ def _run_install(
 
         setup_fake_sysdata(staging.rootfs_path, container_fd=container_fd)
 
-        # The container exists from here on, complete.
-        staging.commit(install_name)
-        installed = True
+        # The container exists from here on, complete. Ctrl-C waits for
+        # the end of the commit and for `installed`: a replacement is two
+        # renames, and an interrupt between them would leave the name
+        # empty, or one after them would have the new container removed.
+        with defer_sigint():
+            replaced = staging.commit(install_name, replace=replace)
+            installed = True
 
     except KeyboardInterrupt:
         interrupted = True
@@ -484,6 +506,14 @@ def _run_install(
                     os.remove(tmp_archive)
                 except OSError:
                     pass
+
+    if replaced is not None:
+        context.info(
+            f"Removing the old rootfs of '{install_name}'...",
+            phase="install", resource=install_name,
+        )
+        remove_left(replaced, "the old container", context,
+                    phase="install", resource=install_name)
 
     context.info(
         "Finished installation.", phase="install", resource=install_name

@@ -43,8 +43,9 @@ process ID at all, so nothing can tell a dead build's from a running
 one's, and they are never swept.
 
 The naming, the lock and the sweep are not the build's alone:
-make_root_in() and reclaim_roots() take the prefix and the pattern, and
-container_staging.py builds new containers in roots made the same way.
+scratch_name(), make_root_in() and reclaim_roots() take the prefix and
+the pattern, and container_staging.py builds new containers in roots
+made the same way.
 """
 
 import errno
@@ -92,7 +93,7 @@ def _process_start(pid: int):
         return None
 
 
-def _scratch_name(prefix: str = "pd-build") -> str:
+def scratch_name(prefix: str = "pd-build") -> str:
     """A fresh root name for this process (see the module docstring)."""
     pid = os.getpid()
     start = _process_start(pid)
@@ -125,7 +126,7 @@ def make_root_in(dir_fd: int, prefix: str = "pd-build", mode: int = 0o700):
     for any mkdir. The caller owns the descriptor, which holds the lock.
     """
     for _attempt in range(_NAME_ATTEMPTS):
-        name = _scratch_name(prefix)
+        name = scratch_name(prefix)
         try:
             os.mkdir(name, mode, dir_fd=dir_fd)
         except FileExistsError:
@@ -338,4 +339,5 @@ __all__ = (
     "make_scratch_root",
     "reclaim_roots",
     "reclaim_scratch_roots",
+    "scratch_name",
 )

@@ -25,12 +25,10 @@ from proot_distro.locking import ContainerLock
 from proot_distro.message import quote_path
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
 from proot_distro.operation_errors import NotFoundFailure, UnsupportedFailure
-from proot_distro.operations.containers import remove_path
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.install import install_container
 from proot_distro.operations.locks import operation_lock
 from proot_distro.paths import (
-    container_dir,
     container_image_origin,
     container_is_installed,
 )
@@ -83,26 +81,22 @@ def reset_container(name, *, context=None):
     lock = ContainerLock(name, exclusive=True, command="reset")
     with operation_lock(lock):
         image_ref, architecture = _registry_origin(name)
-        # The whole container goes, not just its rootfs: the install that
-        # follows builds the new one in a staging directory and renames
-        # it onto the name (container_staging.py), which takes a free
-        # name. Everything else in the directory -- shm/, sysdata/,
-        # manifest.json -- belonged to the old rootfs and is made anew,
-        # and a reset whose install failed removed all of it already.
-        context.info(
-            f"Removing rootfs of '{name}'...",
-            phase="reset", resource=name,
-        )
-        if not remove_path(container_dir(name)):
-            context.error(
-                "Finished with errors. Some files could not be deleted.",
-                phase="reset", resource=name,
-            )
+        # The new container is built while the old one stays where it is,
+        # and the two are swapped only once the new one is complete
+        # (install_container(replace=True), container_staging.py). So a
+        # reset that fails -- the registry is unreachable, the image is
+        # damaged -- is stopped or is killed leaves the container as it
+        # was, where it used to have lost its rootfs before the download
+        # began. The price is room for both while the reset runs. The
+        # whole container is replaced, not just its rootfs: shm/,
+        # sysdata/ and manifest.json belonged to the old rootfs and are
+        # made anew.
         return install_container(
             image_ref,
             name=name,
             architecture=architecture,
             context=context,
+            replace=True,
         )
 
 

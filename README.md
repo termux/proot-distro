@@ -1199,6 +1199,12 @@ proot-distro reset CONTAINER
 Remove the container rootfs and reinstall it from the Docker image
 recorded at install time. **All data inside the container is lost.**
 
+The new container is built first, next to the old one, and replaces it
+only once it is complete. So if a reset fails (for example, the registry
+cannot be reached), is stopped with CTRL-C or is killed, the container
+is left exactly as it was. While it runs, a reset needs enough free
+space for both the old and the new container.
+
 The image reference and target architecture are read from
 `containers/<name>/manifest.json`. If that file is missing, the command
 exits with an error — reset is supported for OCI image installs only
@@ -1668,7 +1674,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | Path | Contents |
 |---|---|
 | `containers/<name>/rootfs/` | Container root filesystem |
-| `containers/.pd-staging-<pid>-<start>.<random>/` | A container that `install` or `restore` is building; locked while it runs, renamed to `containers/<name>/` when complete, or removed by the next `install`, `restore` or `clear-cache` if it was killed |
+| `containers/.pd-staging-<pid>-<start>.<random>/` | A container that `install`, `restore` or `reset` is building, or the old one a `reset` is replacing; locked while it runs, renamed to `containers/<name>/` when complete, or removed by the next `install`, `restore` or `clear-cache` if it was killed |
 | `containers/<name>/manifest.json` | Image reference, arch, full OCI manifest, full image config |
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |
