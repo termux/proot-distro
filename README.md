@@ -387,13 +387,27 @@ to override.
 
 #### If an install fails or is stopped
 
-A failed install removes the half-installed container, so nothing is
-left that looks installed. CTRL-C stops an install, but the container
-is still removed first; press CTRL-C again to skip that. If anything is
-left, the install says so and tells you how to remove it:
+An install builds the new container in a hidden directory and turns it
+into the container only at the very end. So whether an install fails,
+is stopped with CTRL-C or is killed, nothing is left that looks
+installed, and you can simply install again.
+
+A failed or stopped install removes its unfinished files right away.
+CTRL-C stops an install, but the files are still removed first; press
+CTRL-C again to skip that. Files that are left that way, or by an
+install that was killed, are removed by the next `install`, `restore`
+or [`clear-cache`](#clear-cache--delete-the-download-cache):
 
 ```
-The incomplete container 'ubuntu' was not fully removed. Remove it with 'proot-distro remove ubuntu'.
+Removing what 1 interrupted install(s) or restore(s) left...
+```
+
+If the name holds the leftovers of an incomplete container, for example
+after an interrupted `remove`, install refuses it and tells you how to
+clear it:
+
+```
+Error: 'ubuntu' holds the leftovers of an incomplete container. Remove them with 'proot-distro remove ubuntu'.
 ```
 
 ---
@@ -1301,10 +1315,13 @@ than real hard links, because the on-disk rootfs uses proot's
 link2symlink emulation and a host-level hard link would alias what
 the guest treats as separate inodes.
 
-If a restore fails or is stopped, a container it created is removed
-again, just like a [failed install](#if-an-install-fails-or-is-stopped).
-A container that already existed was being overwritten and cannot be
-put back: restore the same archive again to repair it.
+A restore to a new container builds it the way an install does, so if
+it fails, is stopped or is killed, no container is left, just like a
+[failed install](#if-an-install-fails-or-is-stopped). A name that holds
+the leftovers of an incomplete container is refused the same way. A
+container that already existed is overwritten in place and cannot be
+put back if that restore fails: restore the same archive again to
+repair it.
 
 `restore` is **TTY-safe** when reading from a pipe that involves an
 interactive producer (`gpg -d archive.gpg | proot-distro restore`):
@@ -1443,8 +1460,11 @@ reported after the operation in human-readable units.
 
 Whatever the options, `clear-cache` also removes the work-in-progress
 files of builds that were killed or interrupted (see
-[Interrupting a build](#build--build-an-image-from-a-dockerfile)). They
-are not part of the cache and are not counted in the space reported.
+[Interrupting a build](#build--build-an-image-from-a-dockerfile)), and
+those of installs and restores (see
+[If an install fails or is stopped](#if-an-install-fails-or-is-stopped)).
+They are not part of the cache and are not counted in the space
+reported.
 
 After `clear-cache`, the next `install` (or `reset`) of an image
 requires network access again, and layers must be re-downloaded and
@@ -1648,6 +1668,7 @@ paths sit under `$BASE_CACHE_DIR` (`$RUNTIME_DIR/cache` on Termux,
 | Path | Contents |
 |---|---|
 | `containers/<name>/rootfs/` | Container root filesystem |
+| `containers/.pd-staging-<pid>-<start>.<random>/` | A container that `install` or `restore` is building; locked while it runs, renamed to `containers/<name>/` when complete, or removed by the next `install`, `restore` or `clear-cache` if it was killed |
 | `containers/<name>/manifest.json` | Image reference, arch, full OCI manifest, full image config |
 | `containers/<name>/rootfs/.l2s/` | Proot link2symlink (l2s) backing store (created on first login) |
 | `locks/<name>.lock` | Per-container POSIX flock (shared for `login`/`run`, exclusive for `install`/`remove`/…) |

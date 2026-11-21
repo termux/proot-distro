@@ -35,6 +35,7 @@ from proot_distro.build_scratch import (
     make_scratch_root, reclaim_scratch_roots,
 )
 from proot_distro.interrupts import finish_cleanup
+from proot_distro.container_staging import refuse_leftovers
 from proot_distro.paths import container_is_installed
 from proot_distro.message import quote_error, quote_path
 from proot_distro.locking import BuildLock
@@ -240,6 +241,9 @@ def build_image(
                 f"container '{quote_path(install_as)}' defined by "
                 f"--install-as already exists."
             )
+        # Leftovers under the name would stop the install at the end,
+        # after the whole build: refused now, with the same message.
+        refuse_leftovers(install_as)
 
     if isinstance(tags, str):
         tags = [tags]

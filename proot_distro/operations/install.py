@@ -27,6 +27,11 @@
 #
 # Heavy lifting lives in sibling modules: pulls go through
 # helpers.docker.pull_image, local archives through install_local.
+#
+# The container is built in a staging directory and renamed onto its
+# name as the last step (container_staging.py), so a process killed
+# part-way leaves no container behind, only a staging directory that the
+# next install, restore or clear-cache sweeps.
 
 import json
 import os
@@ -35,8 +40,11 @@ import stat
 import tarfile
 
 from proot_distro import dirfd, statedir
-from proot_distro.atomic import atomic_write
+from proot_distro.atomic import atomic_write_at
 from proot_distro.constants import BASE_CACHE_DIR
+from proot_distro.container_staging import (
+    create_staging, reclaim_staging, refuse_leftovers,
+)
 from proot_distro.message import quote_path
 from proot_distro.operation_errors import (
     AlreadyExistsFailure,
@@ -44,7 +52,6 @@ from proot_distro.operation_errors import (
     NotFoundFailure,
     OperationFailure,
 )
-from proot_distro.operations.containers import discard_incomplete_container
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.errors import InstallValidationFailure
 from proot_distro.operations.locks import operation_lock
@@ -53,10 +60,7 @@ from proot_distro.progress import clear_bar
 from proot_distro.locking import ContainerLock
 from proot_distro.arch import get_device_cpu_arch, normalize_arch
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
-from proot_distro.paths import (
-    container_manifest, container_rootfs,
-    container_is_installed, open_container_pair,
-)
+from proot_distro.paths import container_is_installed
 from proot_distro.sysdata import setup_fake_sysdata
 from proot_distro.helpers.docker import (
     InvalidReference, derive_alias, parse_reference, pull_image,
@@ -270,14 +274,14 @@ def _run_install(
 ) -> ContainerInstallation:
     """Inner install logic — called with the container lock already held."""
     context = context if context is not None else OperationContext()
-    rootfs_dir = container_rootfs(install_name)
 
     # Walked down to, not named: `containers/<name>` is guest-writable on
     # Termux, and os.path.isdir() said "no" to a symlink pointing at a
     # host directory with no rootfs in it, after which the whole install
     # was extracted inside that directory. A planted component stops the
-    # command in open_container_pair(); what reaches here is either a
-    # real rootfs (refuse, the container exists) or nothing yet.
+    # command here; what passes is either a real rootfs (refuse, the
+    # container exists), leftovers that are no container (refused by
+    # refuse_leftovers, with the command that clears them), or nothing.
     if container_is_installed(install_name, raise_errors=True):
         failure = AlreadyExistsFailure(
             f"container '{install_name}' already exists. Specify a "
@@ -285,6 +289,15 @@ def _run_install(
         )
         failure.name = install_name
         raise failure
+    refuse_leftovers(install_name)
+
+    # What killed installs and restores left: never a container, but as
+    # large as one.
+    reclaim_staging(lambda count: context.info(
+        f"Removing what {count} interrupted install(s) or restore(s) "
+        f"left...",
+        phase="install", resource=install_name,
+    ))
 
     if local_path is not None:
         context.info(
@@ -307,28 +320,30 @@ def _run_install(
             phase="install", resource=install_name,
         )
 
-    # Made level by level off the descriptor of the level above, for the
-    # same reason it is checked that way -- and *kept*: the extraction
-    # writes every member as (dir_fd, name) beneath this descriptor, so
-    # nothing between the check and the last byte written resolves
-    # containers/<name>/rootfs a second time. Closing it and handing the
-    # path down instead left the whole unpack open to a session that
-    # re-pointed the name, which lands the image (and the manifest that
-    # follows it) in a host directory of the session's choosing. The
-    # container directory comes back with it, for the sysdata stubs
-    # written beside the rootfs at the end.
-    container_fd, rootfs_fd = open_container_pair(
-        install_name, create=True, raise_errors=True
-    )
-
-    # Whatever stops the install before its last step leaves the
-    # container to be removed in the finally below; the removal runs
+    # Built in a staging directory, renamed onto containers/<name> only
+    # once it is complete (container_staging.py): until then there is no
+    # container to list, enter or refuse a reinstall for, and a process
+    # killed outright leaves only the staging directory. Its descriptor,
+    # and the rootfs made off it, are *kept*: the extraction writes every
+    # member as (dir_fd, name) beneath them, so nothing between the
+    # creation and the last byte written resolves a name a second time.
+    # Handing a path down instead left the whole unpack open to a session
+    # that re-pointed the name, which lands the image (and the manifest
+    # that follows it) in a host directory of the session's choosing.
+    #
+    # Whatever stops the install before the rename leaves the staging
+    # directory to be removed in the finally below; the removal runs
     # there, rather than in each handler, so an interrupt that lands
     # while a handler reports the failure cannot skip it.
+    staging = None
+    rootfs_fd = None
     tmp_archive = None
     installed = False
     interrupted = False
     try:
+        staging = create_staging()
+        container_fd = staging.fd
+        rootfs_fd = staging.open_rootfs()
         if local_path is not None:
             context.info(
                 "Extracting rootfs from archive...",
@@ -369,9 +384,8 @@ def _run_install(
                 "image_config": metadata.get("image_config", {}),
             }
             try:
-                with atomic_write(
-                    container_manifest(install_name), "w",
-                ) as fh:
+                with atomic_write_at(container_fd, "manifest.json",
+                                     "w") as fh:
                     json.dump(manifest_data, fh, indent=2)
             except OSError as exc:
                 context.error(
@@ -422,7 +436,10 @@ def _run_install(
             finally:
                 os.close(etc_fd)
 
-        setup_fake_sysdata(rootfs_dir, container_fd=container_fd)
+        setup_fake_sysdata(staging.rootfs_path, container_fd=container_fd)
+
+        # The container exists from here on, complete.
+        staging.commit(install_name)
         installed = True
 
     except KeyboardInterrupt:
@@ -452,14 +469,16 @@ def _run_install(
         raise failure from exc
     finally:
         try:
-            if not installed:
-                discard_incomplete_container(
-                    install_name, context,
-                    phase="install", interrupted=interrupted,
+            if staging is not None and not installed:
+                staging.discard(
+                    context, phase="install", resource=install_name,
+                    interrupted=interrupted,
                 )
         finally:
-            os.close(rootfs_fd)
-            os.close(container_fd)
+            if rootfs_fd is not None:
+                os.close(rootfs_fd)
+            if staging is not None:
+                staging.close()
             if tmp_archive is not None:
                 try:
                     os.remove(tmp_archive)

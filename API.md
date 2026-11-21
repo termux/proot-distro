@@ -177,9 +177,12 @@ explicitly when you want it.
 
 Restoring over an existing container replaces it in place. If that restore
 fails or is cancelled, the container is left half-replaced: restore the same
-archive again to repair it. A restore that created the container removes it
-again when it fails or is cancelled, so no incomplete container is left
-behind (see [Cancelling operations](#cancelling-operations)).
+archive again to repair it. A restore to a new container, like an install,
+builds it aside and creates it only once it is complete, so a restore or an
+install that fails, is cancelled or is killed leaves no container behind
+(see [Cancelling operations](#cancelling-operations)). Both refuse a name
+that holds the leftovers of an incomplete container with
+`AlreadyExistsError`.
 
 **Stream rules**
 
@@ -557,7 +560,7 @@ another call) holds a lock on that container or image.
 | `remove_image` | BusyError, NotFoundError |
 | `rename_container` | AlreadyExistsError, BusyError, NotFoundError |
 | `reset_container` | AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError, UnsupportedOperationError |
-| `restore` | BusyError, IntegrityError, NotFoundError, UnsupportedOperationError |
+| `restore` | AlreadyExistsError, BusyError, IntegrityError, NotFoundError, UnsupportedOperationError |
 | `run` | BusyError, NotFoundError |
 | `run_detached` | BusyError, NotFoundError |
 | `search` | NetworkError |

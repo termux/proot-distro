@@ -40,6 +40,7 @@ proot_distro/
   lazy_exports.py                                               On-demand package indexes
   interrupts.py                                                 Ctrl-C delivery; cleanups that finish
   build_scratch.py                                              Build scratch roots and their sweep
+  container_staging.py                                          Staging dirs new containers are built in
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -166,15 +167,15 @@ signalling, and descriptor-pinned login/run preparation are migrated.
 | `operations/copy.py` | Descriptor-pinned copy and move services, including secure cross-device fallback. |
 | `operations/sync.py` | Descriptor-pinned mirroring, metadata comparison, progress, and optional pruning. |
 | `operations/backup.py` | Descriptor-safe container archive creation with atomic path publication and stream output. |
-| `operations/restore.py` | Validated single-container archive extraction with deferred destructive commit; a container it created is removed again if the restore does not finish. |
-| `operations/install.py` | Local archive, URL, and OCI installation with rootfs fixups; the container is removed again if the install does not finish. |
+| `operations/restore.py` | Validated single-container archive extraction with deferred destructive commit; a new container is built in a staging directory and renamed onto its name only when complete. |
+| `operations/install.py` | Local archive, URL, and OCI installation with rootfs fixups, built in a staging directory and renamed onto the name only when complete. |
 | `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
-| `operations/reset.py` | Locked OCI-backed rootfs replacement using recorded image metadata; only a registry reference is honoured, never a guest-planted path or URL. |
+| `operations/reset.py` | Locked OCI-backed container replacement using recorded image metadata: the old container directory goes, then install builds the new one; only a registry reference is honoured, never a guest-planted path or URL. |
 | `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, optional installation, and the final removal of the build's scratch root (made and swept by `build_scratch.py`). |
 | `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
 | `operations/session_signals.py` | Tracked-session selection, PID-reuse-safe process discovery, signal delivery, escalation, and survivor reporting. |
 | `operations/session_prepare.py` | Shared login/run validation, pinned state access, identity and environment resolution, immutable launch metadata, and scoped descriptor ownership. |
-| `operations/containers.py` | Shared secure container removal and rename implementations, and `discard_incomplete_container()`: install's and restore's removal of a container they did not finish, through `finish_cleanup()`, naming whatever is left. |
+| `operations/containers.py` | Shared secure container removal and rename implementations. |
 | `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
 | `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
 | `operations/cache.py` | Shared full/orphan/build cache cleanup and reclaimed-byte accounting; every mode then sweeps the scratch roots of dead builds. |
@@ -245,7 +246,8 @@ Roughly bottom-up. Higher entries import lower ones.
 | `operation_errors.py` | Internal RuntimeError subclasses for network, integrity, missing, busy, unsupported, and registry-authentication failures; workers map them to public API exceptions while CLI catches remain unchanged. |
 | `lazy_exports.py` | `lazy_exports()`: the PEP 562 hooks behind a package index that imports a submodule only when one of its names is used. |
 | `interrupts.py` | `defer_sigint()` holds SIGINT pending across a place where CPython would lose or misplace its KeyboardInterrupt; `open_tar_member()` is the only way the package opens a tar member, because `BufferedReader` discards what tarfile's `tell()` raises. API cancellation is a SIGINT, so a lost one let a cancelled operation finish. `finish_cleanup()` lets the first interrupt landing in a cleanup wait for it to end, while a second stops it; build, install and restore remove what they leave through it. |
-| `build_scratch.py` | Makes a build's scratch root in `build-tmp/`, or the system temp dir when that cannot be used, named `pd-build-<pid>-<start>.<hex>` and flock'ed while in use. `reclaim_scratch_roots()` sweeps both places for roots this user owns whose lock is free and whose maker is gone: no such process, another user's, or one with another start time (a reused ID). Used by `build` and `clear-cache`. |
+| `build_scratch.py` | Makes a build's scratch root in `build-tmp/`, or the system temp dir when that cannot be used, named `pd-build-<pid>-<start>.<hex>` and flock'ed while in use. `reclaim_scratch_roots()` sweeps both places for roots this user owns whose lock is free and whose maker is gone: no such process, another user's, or one with another start time (a reused ID). Used by `build` and `clear-cache`. `make_root_in()` and `reclaim_roots()` are the naming and the sweep, shared with `container_staging.py`. |
+| `container_staging.py` | The staging directory install and restore build a new container in (`containers/.pd-staging-<pid>-<start>.<hex>`, named and locked like a build scratch root), its rename onto `containers/<name>` (checked against the staging dir's descriptor before and after; `rename(2)` refuses a taken name), `refuse_leftovers()` for a name that holds no container but is not free, and `reclaim_staging()`, which install, restore and `clear-cache` call. |
 | `names.py` | The one container-name rule. |
 | `progress.py` | Shared stderr progress bar and structured API progress routing with explicit phase/resource metadata. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |
@@ -280,6 +282,9 @@ RUNTIME_DIR                    Termux: <prefix>/var/lib/proot-distro
   build-tmp/                   Scratch roots for running builds (locked;
                                a dead build's is swept by the next
                                build or clear-cache; see build_scratch.py)
+  containers/.pd-staging-*/    New containers being built (locked; a dead
+                               one is swept by the next install, restore
+                               or clear-cache; see container_staging.py)
 
 BASE_CACHE_DIR                 Termux: <RUNTIME_DIR>/cache
                                Linux:  $XDG_CACHE_HOME/proot-distro
@@ -293,12 +298,15 @@ Installed containers are independent copies and do not reference the cache.
 
 ## Key flows
 
-**install.** `cli` -> `command_install` -> exclusive `ContainerLock` -> create
-`containers/<name>/rootfs` as a descriptor. Then either `pull_image` (cache
-check, manifest and index resolution, per-layer download and digest check,
-`apply_layer` -> `tar_extract`) or `install_from_local_file`
+**install.** `cli` -> `command_install` -> exclusive `ContainerLock` -> refuse
+an installed name or leftovers, sweep dead staging dirs, then create a staging
+dir (`container_staging.py`) and its `rootfs` as descriptors. Then either
+`pull_image` (cache check, manifest and index resolution, per-layer download
+and digest check, `apply_layer` -> `tar_extract`) or `install_from_local_file`
 (OCI layout or plain tar). Then `manifest.json`, the `rootfs.py` fixups and
-the `sysdata` stubs. A failed install removes what it made.
+the `sysdata` stubs, and last the rename of the staging dir onto
+`containers/<name>`. A failed install removes the staging dir; a killed one
+leaves it to the next sweep, and never a container.
 
 **login / run.** Shared lock, then pin the rootfs as a descriptor. `passwd`
 reads the user through `guestfile`. `env`, `bindings`, `sysdata` and `shm`
@@ -340,7 +348,9 @@ locks, `pin_path` both ends, and then work only through `dirfd`.
 
 **backup / restore.** Backup archives `<name>/manifest.json` and
 `<name>/rootfs/...`; restore also accepts the legacy `installed-rootfs/<name>`
-layout. Restore commits only on success.
+layout. Restore commits only on success. A restore to a name with no
+container builds it in a staging dir and renames it into place, as install
+does; one over an existing container replaces its rootfs in place.
 
 **ps / kill.** Both read `session.active_sessions()`. `kill` signals only
 tracked sessions, finds members by the inherited registry fd, and escalates

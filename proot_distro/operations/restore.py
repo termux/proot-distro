@@ -53,24 +53,32 @@
 # O_NOFOLLOW, so a name that was validated is the name that is written.
 # os.makedirs/os.symlink/shutil.copy2/open(dest, 'wb') each resolved the
 # whole path afresh, which is one resolution too many.
+#
+# A restore to a name that holds no container builds it in a staging
+# directory instead, renamed onto containers/<name> only once it is
+# complete (container_staging.py), so a restore killed part-way leaves no
+# container behind. A restore over an existing container still replaces
+# it in place: there is nothing to rename onto a name that is taken.
 
 import os
 import stat
 import tarfile
 
 from proot_distro import dirfd, statedir
-from proot_distro.atomic import atomic_replace
+from proot_distro.atomic import atomic_write_at
 from proot_distro.compress import (
     ZSTD_AVAILABLE, ZSTD_MAGIC, file_is_zstd, header_is_zstd, unsupported_msg,
 )
 from proot_distro.constants import PROGRAM_NAME
+from proot_distro.container_staging import (
+    create_staging, reclaim_staging, refuse_leftovers,
+)
 from proot_distro.interrupts import open_tar_member
 from proot_distro.message import quote_error, quote_path
 from proot_distro.operation_errors import (
     BusyFailure, IntegrityFailure, NotFoundFailure, OperationFailure,
     UnsupportedFailure,
 )
-from proot_distro.operations.containers import discard_incomplete_container
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import ArchiveRestore
 from proot_distro.progress import (
@@ -80,7 +88,8 @@ from proot_distro.shm import SHM_DIR_NAME
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
 from proot_distro.paths import (
-    container_dir, container_manifest, container_rootfs, open_container_dir,
+    container_dir, container_is_installed, container_rootfs,
+    open_container_dir,
 )
 from proot_distro.helpers.tar_extract import safe_resolve_parts
 
@@ -564,7 +573,7 @@ def restore_container(
     restore_name = None
     lock = None
     committed = False
-    created = False             # this restore made containers/<name>
+    staging = None              # set when the restore makes a new container
     succeeded = False
     interrupted = False
     dests = None                # opened with the container dir, at commit
@@ -577,15 +586,16 @@ def restore_container(
     deferred_dir_modes: list = []
 
     def _write_manifest(data: bytes, mode: int) -> None:
-        # Published through atomic_replace, which walks down to the
-        # container directory the same way this command opened it and
-        # renames the temporary onto the name under the descriptor it
-        # validated. open(path, 'wb') truncated whatever the name led to.
+        # Published through atomic_write_at, in the container directory
+        # this command holds open (or the staging directory that becomes
+        # it), renaming the temporary onto the name under that very
+        # descriptor. open(path, 'wb') truncated whatever the name led to.
         try:
-            with atomic_replace(container_manifest(restore_name)) as tmp_fd:
-                os.write(tmp_fd, data)
+            with atomic_write_at(root_fd, "manifest.json") as fh:
+                fh.write(data)
+                fh.flush()
                 try:
-                    os.fchmod(tmp_fd, mode)
+                    os.fchmod(fh.fileno(), mode)
                 except OSError:
                     pass
         except OSError:
@@ -723,17 +733,29 @@ def restore_container(
                     # The container directory is opened here rather than
                     # earlier for the same reason the clear is deferred: an
                     # archive that never gets this far must leave no trace.
-                    # The exclusive lock is held, so nobody else can create
-                    # the name between this test and the open below.
-                    created = not os.path.lexists(
-                        container_dir(restore_name)
-                    )
-                    root_fd = open_container_dir(
-                        restore_name, create=True, raise_errors=True
-                    )
-                    dests = _Destinations(root_fd,
-                                          container_rootfs(restore_name))
-                    _clear_existing_rootfs(root_fd, restore_name)
+                    # The exclusive lock is held, so no other command can
+                    # create the name between this test and what follows.
+                    reclaim_staging(lambda count: context.info(
+                        f"Removing what {count} interrupted install(s) or "
+                        f"restore(s) left...",
+                        phase="extract", resource=restore_name,
+                    ))
+                    if container_is_installed(restore_name,
+                                              raise_errors=True):
+                        root_fd = open_container_dir(
+                            restore_name, raise_errors=True
+                        )
+                        rootfs_path = container_rootfs(restore_name)
+                        _clear_existing_rootfs(root_fd, restore_name)
+                    else:
+                        # Leftovers under the name are refused with the
+                        # command that clears them; a free name gets a
+                        # staging directory, renamed onto it at the end.
+                        refuse_leftovers(restore_name)
+                        staging = create_staging()
+                        root_fd = staging.fd
+                        rootfs_path = staging.rootfs_path
+                    dests = _Destinations(root_fd, rootfs_path)
                     committed = True
 
                 dir_fd, leaf = dests.parent_of(parts)
@@ -794,7 +816,8 @@ def restore_container(
             # result so no rootfs-less container is left behind.
             clear_bar()
             dests.close()
-            statedir.remove_state_tree(container_dir(restore_name))
+            if staging is None:
+                statedir.remove_state_tree(container_dir(restore_name))
             context.error(
                 f"Cannot restore: archive did not produce a valid container "
                 f"rootfs. Only archives created by '{PROGRAM_NAME} backup' "
@@ -814,6 +837,10 @@ def restore_container(
         # Write the buffered manifest now that the rootfs is confirmed.
         if pending_manifest is not None:
             _write_manifest(*pending_manifest)
+
+        # A new container exists from here on, complete.
+        if staging is not None:
+            staging.commit(restore_name)
 
         clear_bar()
 
@@ -847,24 +874,26 @@ def restore_container(
                 raw_fh.close()
             if dests is not None:
                 dests.close()
-            if root_fd is not None:
+            if staging is not None:
+                # A new container was never renamed onto its name, so
+                # nothing lists it: what was built goes. An existing
+                # container is overwritten in place and cannot be rolled
+                # back, so a failed restore leaves it half-replaced and a
+                # retry repairs it. Still under the lock, and the lock is
+                # released even if the removal is stopped.
+                try:
+                    if not succeeded:
+                        staging.discard(
+                            context, phase="extract",
+                            resource=restore_name, interrupted=interrupted,
+                        )
+                finally:
+                    staging.close()
+            elif root_fd is not None:
                 try:
                     os.close(root_fd)
                 except OSError:
                     pass
-            if created and not succeeded:
-                # An existing container is overwritten in place and cannot
-                # be rolled back, so a failed restore leaves it
-                # half-replaced and a retry repairs it. A container this
-                # restore created has nothing to go back to: drop it,
-                # rather than leave a rootfs with no manifest that listings
-                # report as a container. Still under the lock, so no other
-                # command sees the partial tree, and the lock is released
-                # even if the removal is stopped.
-                discard_incomplete_container(
-                    restore_name, context,
-                    phase="extract", interrupted=interrupted,
-                )
         finally:
             if lock is not None:
                 lock.release()

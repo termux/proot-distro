@@ -25,6 +25,7 @@ import sys
 from proot_distro.commands.help import HELP_COMMANDS
 from proot_distro.message import crit_error, log_error, msg
 from proot_distro.operation_errors import (
+    AlreadyExistsFailure,
     BusyFailure,
     IntegrityFailure,
     NotFoundFailure,
@@ -56,7 +57,7 @@ def command_restore(args):
             archive_file=archive_file,
             context=OperationContext(verbose=getattr(args, "verbose", False)),
         )
-    except (NotFoundFailure, UnsupportedFailure) as exc:
+    except (AlreadyExistsFailure, NotFoundFailure, UnsupportedFailure) as exc:
         crit_error(str(exc))
         sys.exit(1)
     except (BusyFailure, IntegrityFailure):

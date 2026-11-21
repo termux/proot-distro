@@ -41,6 +41,10 @@ time. Those are judged by the ID alone. The roots 5.10 made in the system
 temporary directory (pd-build- and eight random characters) carry no
 process ID at all, so nothing can tell a dead build's from a running
 one's, and they are never swept.
+
+The naming, the lock and the sweep are not the build's alone:
+make_root_in() and reclaim_roots() take the prefix and the pattern, and
+container_staging.py builds new containers in roots made the same way.
 """
 
 import errno
@@ -88,12 +92,12 @@ def _process_start(pid: int):
         return None
 
 
-def _scratch_name() -> str:
+def _scratch_name(prefix: str = "pd-build") -> str:
     """A fresh root name for this process (see the module docstring)."""
     pid = os.getpid()
     start = _process_start(pid)
     stamp = "" if start is None else f"-{start}"
-    return f"pd-build-{pid}{stamp}.{os.urandom(4).hex()}"
+    return f"{prefix}-{pid}{stamp}.{os.urandom(4).hex()}"
 
 
 def _lock_scratch(fd: int) -> bool:
@@ -113,12 +117,17 @@ def _lock_scratch(fd: int) -> bool:
     return True
 
 
-def _make_root_in(dir_fd: int):
-    """Create, open and lock a fresh root under dir_fd. (name, fd)."""
+def make_root_in(dir_fd: int, prefix: str = "pd-build", mode: int = 0o700):
+    """Create, open and lock a fresh root under dir_fd. (name, fd).
+
+    Named <prefix>-<pid>-<start>.<8 hex digits> (see the module
+    docstring) and made with *mode*, which the umask narrows as it does
+    for any mkdir. The caller owns the descriptor, which holds the lock.
+    """
     for _attempt in range(_NAME_ATTEMPTS):
-        name = _scratch_name()
+        name = _scratch_name(prefix)
         try:
-            os.mkdir(name, 0o700, dir_fd=dir_fd)
+            os.mkdir(name, mode, dir_fd=dir_fd)
         except FileExistsError:
             continue
         # Off the directory's descriptor, refusing a link, so what comes
@@ -164,7 +173,7 @@ def make_scratch_root():
     except OSError:
         return _make_fallback_root()
     try:
-        name, fd = _make_root_in(dir_fd)
+        name, fd = make_root_in(dir_fd)
     except OSError:
         return _make_fallback_root()
     finally:
@@ -182,7 +191,7 @@ def _make_fallback_root():
     parent = tempfile.gettempdir()
     dir_fd = dirfd.opendir(parent)
     try:
-        name, fd = _make_root_in(dir_fd)
+        name, fd = make_root_in(dir_fd)
     finally:
         os.close(dir_fd)
     return os.path.join(parent, name), fd
@@ -233,15 +242,19 @@ def _open_system_temp():
         return None
 
 
-def _claim(dir_fd: int, claimed: list) -> None:
-    """Add the left-behind roots under dir_fd to *claimed*, locked."""
+def _claim(dir_fd: int, pattern, claimed: list) -> None:
+    """Add the left-behind roots under dir_fd to *claimed*, locked.
+
+    *pattern* matches the names to consider, with the maker's process ID
+    as its first group and its start time, if any, as the second.
+    """
     try:
         names = os.listdir(dir_fd)
     except OSError:
         return
     euid = os.geteuid()
     for name in sorted(names):
-        match = _SCRATCH_NAME.fullmatch(name)
+        match = pattern.fullmatch(name)
         if match is None:
             continue
         start = None if match.group(2) is None else int(match.group(2))
@@ -265,16 +278,26 @@ def reclaim_scratch_roots(announce=None) -> int:
     """Remove the scratch roots of builds that are no longer running.
 
     Both places a root is made are swept: build-tmp, and the system
-    temporary directory a build falls back to. A root is taken for left
-    behind only when its name is one this module gives (or 5.10 gave in
-    build-tmp), this user owns it, the process that made it is gone
-    (_maker_is_gone), and its lock is free. The process check covers the
-    moment before the lock is taken, 5.10 builds that took none, and a
-    filesystem that cannot hold one; the lock covers a process that
-    cannot be seen from here and a root renamed after the fact. The
-    owner check keeps the sweep off other users' roots in a shared /tmp.
-    The lock is kept while the root is removed, so two sweeps never work
-    on one.
+    temporary directory a build falls back to (reclaim_roots).
+    """
+    return reclaim_roots(
+        (_open_build_tmp, _open_system_temp), _SCRATCH_NAME, announce
+    )
+
+
+def reclaim_roots(openers, pattern, announce=None) -> int:
+    """Remove the roots, under each directory *openers* open, left behind.
+
+    Each opener returns a directory descriptor, or None when there is
+    nothing to sweep there. A root is taken for left behind only when
+    its name matches *pattern* (see _claim), this user owns it, the
+    process that made it is gone (_maker_is_gone), and its lock is free.
+    The process check covers the moment before the lock is taken, 5.10
+    builds that took none, and a filesystem that cannot hold one; the
+    lock covers a process that cannot be seen from here and a root
+    renamed after the fact. The owner check keeps the sweep off other
+    users' roots in a shared /tmp. The lock is kept while the root is
+    removed, so two sweeps never work on one.
 
     Entries are opened O_NOFOLLOW and removed by rmtree_at(), which
     unlinks a link instead of following it. build-tmp is guest-writable
@@ -288,11 +311,11 @@ def reclaim_scratch_roots(announce=None) -> int:
     parents = []
     claimed = []
     try:
-        for opener in (_open_build_tmp, _open_system_temp):
+        for opener in openers:
             dir_fd = opener()
             if dir_fd is not None:
                 parents.append(dir_fd)
-                _claim(dir_fd, claimed)
+                _claim(dir_fd, pattern, claimed)
         if not claimed:
             return 0
         if announce is not None:
@@ -309,4 +332,10 @@ def reclaim_scratch_roots(announce=None) -> int:
             os.close(dir_fd)
 
 
-__all__ = ("BUILD_TMP", "make_scratch_root", "reclaim_scratch_roots")
+__all__ = (
+    "BUILD_TMP",
+    "make_root_in",
+    "make_scratch_root",
+    "reclaim_roots",
+    "reclaim_scratch_roots",
+)

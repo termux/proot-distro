@@ -143,6 +143,23 @@ def atomic_write(path: str, mode: str = "wb", *, suffix: str = ".tmp",
             yield fh
 
 
+@contextlib.contextmanager
+def atomic_write_at(dir_fd: int, name: str, mode: str = "wb", *,
+                    suffix: str = ".tmp", **kwargs):
+    """atomic_write() for *name* in a directory the caller holds open.
+
+    For a writer whose destination has no name yet that would reach it: a
+    container being built in a staging directory (container_staging.py)
+    writes its manifest.json there, and the path it will have does not
+    exist until the very end. The temporary is made, written, checked and
+    renamed in *dir_fd* exactly as atomic_replace() does it below a
+    validated state directory.
+    """
+    with contextlib.contextmanager(_replace_at)(dir_fd, name, suffix) as fd:
+        with open(fd, mode, closefd=False, **kwargs) as fh:
+            yield fh
+
+
 def publish_file(src_path: str, dest_path: str) -> None:
     """Rename an already-written file onto *dest_path*.
 

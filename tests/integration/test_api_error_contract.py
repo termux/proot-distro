@@ -228,6 +228,14 @@ def env(tmp_path_factory):
         pd.install(archive, name=name)
     box_backup = tmp / "box.tar.gz"
     pd.backup("box", box_backup)
+    # A backup whose name holds leftovers by the time it is restored: what
+    # an interrupted removal leaves, a directory with no rootfs.
+    pd.install(archive, name="relic")
+    relic_backup = tmp / "relic.tar.gz"
+    pd.backup("relic", relic_backup)
+    pd.remove_container("relic")
+    (runtime / "containers" / "relic").mkdir()
+    (runtime / "containers" / "relic" / "leftover").write_text("x")
 
     context = tmp / "context"
     context.mkdir()
@@ -284,7 +292,8 @@ def env(tmp_path_factory):
         yield SimpleNamespace(
             pd=pd, tmp=tmp, archive=archive, corrupt=corrupt,
             junk_archive=junk_archive, fake_zstd=fake_zstd,
-            box_backup=box_backup, context=context, refused=refused,
+            box_backup=box_backup, relic_backup=relic_backup,
+            context=context, refused=refused,
             unreachable=unreachable, unreadable=unreadable,
             misnamed=misnamed,
             absent_refused=absent_refused, tls=tls is not None,
@@ -437,6 +446,8 @@ def _(e): e.pd.restore(e.junk_archive)
 def _(e): e.pd.restore(e.fake_zstd)
 @_scenario("restore", "BusyError")
 def _(e): e.pd.restore(e.box_backup)
+@_scenario("restore", "AlreadyExistsError")
+def _(e): e.pd.restore(e.relic_backup)
 
 @_scenario("build", "NotFoundError")
 def _(e): e.pd.build(e.tmp / "no-context", tags=["contract/x:1"])

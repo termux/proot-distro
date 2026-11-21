@@ -1777,7 +1777,8 @@ class ProotDistro:
 
         Raises:
             InvalidArgumentError: An argument is malformed.
-            AlreadyExistsError: A container with that name exists.
+            AlreadyExistsError: A container with that name exists, or the
+                name holds the leftovers of an incomplete container.
             NotFoundError: The image, URL or archive does not exist.
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry or URL could not be reached.
@@ -2169,6 +2170,8 @@ class ProotDistro:
             InvalidArgumentError: *archive* is not a path or readable stream.
             NotFoundError: The archive path does not exist.
             IntegrityError: The archive is damaged or malformed.
+            AlreadyExistsError: The archive's container name holds the
+                leftovers of an incomplete container.
             UnsupportedOperationError: The archive's compression is unavailable, for example zstd needs Python 3.14.
             BusyError: The target container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.
@@ -2538,8 +2541,9 @@ class ProotDistro:
         With no flags the whole cache is cleared. ``orphan`` limits it to
         layers no image uses; ``build_cache`` to the Dockerfile build cache.
         Whatever the flags, the scratch files that killed builds left are
-        removed too. They are not part of the cache, and the byte counts
-        leave them out.
+        removed too, and so is what killed installs and restores left.
+        They are not part of the cache, and the byte counts leave them
+        out.
 
         Raises:
             InvalidArgumentError: A flag is not a boolean.

@@ -115,6 +115,13 @@ def test_post_extraction_fixups_follow_the_pin_not_the_name(
     # that swaps the container directory once the unpack is over redirects
     # every one of those writes -- a replaced resolv.conf and hosts, and a
     # chmod 0644 plus an appended line on a host passwd-like file.
+    #
+    # The container is built in a staging directory now and renamed onto
+    # containers/box only at the end (container_staging.py), so the
+    # directory being written is the staging one, and that is what is
+    # swapped. The fixups still go through the pin, and the swap is also
+    # caught at the rename: the install is refused rather than publishing
+    # the link.
     arc = tmp_path / "box.tar.gz"
     builders.make_tar(str(arc), builders.rootfs_members(extra=[
         {"name": "etc/passwd", "type": "file",
@@ -134,13 +141,18 @@ def test_post_extraction_fixups_follow_the_pin_not_the_name(
 
     def swap_after_extraction(*args, **kwargs):
         metadata = real(*args, **kwargs)
-        os.rename(container_dir("box"), str(moved))
-        os.symlink(str(outside), container_dir("box"))
+        [staged] = [entry for entry in os.listdir(CONTAINERS_DIR)
+                    if entry.startswith(".pd-staging-")]
+        os.rename(os.path.join(CONTAINERS_DIR, staged), str(moved))
+        os.symlink(str(outside), os.path.join(CONTAINERS_DIR, staged))
         return metadata
 
     monkeypatch.setattr(install, "install_from_local_file",
                         swap_after_extraction)
-    command_install(_install_args(str(arc), name="box"))
+    with pytest.raises(SystemExit) as exc:
+        command_install(_install_args(str(arc), name="box"))
+    assert exc.value.code == 1
+    assert not os.path.lexists(container_dir("box"))
 
     # Nothing under the planted name was written, replaced or relaxed.
     assert (decoy_etc / "resolv.conf").read_text() == "nameserver 10.0.0.1\n"

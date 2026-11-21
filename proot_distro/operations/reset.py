@@ -30,12 +30,10 @@ from proot_distro.operations.context import OperationContext
 from proot_distro.operations.install import install_container
 from proot_distro.operations.locks import operation_lock
 from proot_distro.paths import (
+    container_dir,
     container_image_origin,
     container_is_installed,
-    container_rootfs,
 )
-from proot_distro.shm import shm_dir
-from proot_distro.statedir import remove_state_tree
 
 
 def _registry_origin(name):
@@ -82,21 +80,24 @@ def reset_container(name, *, context=None):
     # validated where it is read and only that in-memory value is used.
     _registry_origin(name)
 
-    rootfs_dir = container_rootfs(name)
     lock = ContainerLock(name, exclusive=True, command="reset")
     with operation_lock(lock):
         image_ref, architecture = _registry_origin(name)
+        # The whole container goes, not just its rootfs: the install that
+        # follows builds the new one in a staging directory and renames
+        # it onto the name (container_staging.py), which takes a free
+        # name. Everything else in the directory -- shm/, sysdata/,
+        # manifest.json -- belonged to the old rootfs and is made anew,
+        # and a reset whose install failed removed all of it already.
         context.info(
             f"Removing rootfs of '{name}'...",
             phase="reset", resource=name,
         )
-        if not remove_path(rootfs_dir):
+        if not remove_path(container_dir(name)):
             context.error(
-                "Finished with errors. Some files could not be deleted. "
-                "Proceeding anyway.",
+                "Finished with errors. Some files could not be deleted.",
                 phase="reset", resource=name,
             )
-        remove_state_tree(shm_dir(rootfs_dir))
         return install_container(
             image_ref,
             name=name,
