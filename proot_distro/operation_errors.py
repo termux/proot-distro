@@ -57,8 +57,26 @@ class RegistryAuthenticationError(RuntimeError):
     """A registry refused credentials or their requested permission."""
 
 
+def attach_recovery(exc: BaseException, note: str) -> None:
+    """Have *exc* carry *note*, what the user can do to undo its damage.
+
+    For a failure that has cost the user something beyond the operation
+    itself: a reset or a restore that removed the old container before it
+    failed. The CLI prints the note as an error line of its own; the API
+    worker appends it to the message of the error it raises, and adds it
+    to the message of a cancellation (_api_worker.py), so a caller that
+    reads no events learns it too. An exception that takes no attributes
+    is left as it is.
+    """
+    try:
+        exc.recovery = note
+    except (AttributeError, TypeError):
+        pass
+
+
 __all__ = (
     "AlreadyExistsFailure",
+    "attach_recovery",
     "BusyFailure",
     "IntegrityFailure",
     "NetworkFailure",

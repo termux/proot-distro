@@ -264,6 +264,12 @@ def _write_error(kind: str, message: str) -> None:
     _write_result({"_error": {"kind": kind, "message": message}})
 
 
+def _recovery(exc: BaseException) -> str:
+    """The note attach_recovery() left on *exc*, or ''."""
+    note = getattr(exc, "recovery", None)
+    return note if isinstance(note, str) else ""
+
+
 def _no_credentials(_registry: str, _repository: str, _actions: str):
     """Anonymous registry access for a caller that configured none."""
     return None
@@ -780,9 +786,24 @@ def main() -> int:
         _write_error("operation", message)
         code = exc.code if isinstance(exc.code, int) else 1
         return code if code != 0 else 1
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
+        # A cancellation's message is the parent's to write, and the note
+        # of what the cancel cost (operation_errors.attach_recovery) is
+        # handed to it for that.
+        recovery = _recovery(exc)
+        if recovery:
+            _write_error("cancelled", recovery)
         return 130
     except Exception as exc:
+        # What the failure cost the user, appended to whichever message
+        # is reported for it (operation_errors.attach_recovery).
+        recovery = _recovery(exc)
+
+        def report(kind: str, message: str) -> None:
+            if recovery:
+                message = f"{message} {recovery}"
+            _write_error(kind, message)
+
         from proot_distro.operation_errors import (
             AlreadyExistsFailure,
             BusyFailure,
@@ -793,10 +814,10 @@ def main() -> int:
             UnsupportedFailure,
         )
         if isinstance(exc, RegistryAuthenticationError):
-            _write_error("authentication", quote_error(exc))
+            report("authentication", quote_error(exc))
             return 1
         if isinstance(exc, AlreadyExistsFailure):
-            _write_error("already_exists", quote_error(exc))
+            report("already_exists", quote_error(exc))
             return 1
         for failure_type, kind in (
             (BusyFailure, "busy"),
@@ -806,22 +827,22 @@ def main() -> int:
             (UnsupportedFailure, "unsupported"),
         ):
             if isinstance(exc, failure_type):
-                _write_error(kind, quote_error(exc))
+                report(kind, quote_error(exc))
                 return 1
         from proot_distro.operations.errors import TransferPartialFailure
         if isinstance(exc, TransferPartialFailure):
-            _write_error("partial", quote_error(exc))
+            report("partial", quote_error(exc))
             return 1
         import tarfile
         if isinstance(exc, tarfile.TarError):
-            _write_error("integrity", quote_error(exc))
+            report("integrity", quote_error(exc))
             return 1
         if operation == "push":
             from proot_distro.helpers.download import NETWORK_ERRORS
             if isinstance(exc, NETWORK_ERRORS):
-                _write_error("network", quote_error(exc))
+                report("network", quote_error(exc))
                 return 1
-        _write_error("operation", f"operation failed: {quote_error(exc)}")
+        report("operation", f"operation failed: {quote_error(exc)}")
         return 1
     result["_events"] = []
     for event in events:

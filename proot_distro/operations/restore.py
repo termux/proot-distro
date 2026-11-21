@@ -61,6 +61,7 @@
 # (clear_container), so the two never take up space at the same time;
 # the archive is still there to restore from if this one fails.
 
+import errno
 import os
 import stat
 import tarfile
@@ -78,7 +79,7 @@ from proot_distro.interrupts import open_tar_member
 from proot_distro.message import quote_error, quote_path
 from proot_distro.operation_errors import (
     BusyFailure, IntegrityFailure, NotFoundFailure, OperationFailure,
-    UnsupportedFailure,
+    UnsupportedFailure, attach_recovery,
 )
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.models import ArchiveRestore
@@ -87,7 +88,7 @@ from proot_distro.progress import (
 )
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
-from proot_distro.paths import container_is_installed
+from proot_distro.paths import container_entry_lstat, container_is_installed
 from proot_distro.helpers.tar_extract import safe_resolve_parts
 
 
@@ -120,6 +121,55 @@ def _detect_compression(header: bytes) -> str:
         if header.startswith(magic):
             return mode
     return ''
+
+
+class _ArchiveReadError(OSError):
+    """An OSError reading the archive, as opposed to writing the container.
+
+    The two used to share one handler, which called every OSError a sign
+    of a corrupted archive and raised IntegrityFailure: a full disk while
+    the container was written said the backup was bad. Now that a restore
+    over a container removes the old one first (container_staging.
+    clear_container), that message could have the user throw away the
+    one good copy left.
+    """
+
+
+class _ArchiveSource:
+    """The archive's bytes, with a failure to read them told apart.
+
+    Every read of the archive goes through here, and an OSError it raises
+    comes out as _ArchiveReadError. Whatever else raises OSError during a
+    restore is writing the container.
+    """
+
+    def __init__(self, raw) -> None:
+        self._raw = raw
+
+    def read(self, size=-1):
+        try:
+            return self._raw.read(size)
+        except OSError as exc:
+            raise _ArchiveReadError(exc.errno, exc.strerror or str(exc)) \
+                from exc
+
+    def readinto(self, buffer):
+        try:
+            return self._raw.readinto(buffer)
+        except OSError as exc:
+            raise _ArchiveReadError(exc.errno, exc.strerror or str(exc)) \
+                from exc
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
+# What a failed write into the container says beyond its reason, for the
+# reasons a restore can do something about.
+_WRITE_HINTS = {
+    errno.ENOSPC: "Free up some space and restore the archive again.",
+    errno.EDQUOT: "Free up some space and restore the archive again.",
+}
 
 
 class _PrefixedReader:
@@ -431,6 +481,38 @@ def _write_hardlink(dir_fd: int, name: str, member, source) -> None:
 def restore_container(
     *, archive_path=None, archive_file=None, context=None,
 ) -> ArchiveRestore:
+    """Reinstate a single container from a tar backup (see _restore).
+
+    A restore over a container removes the old one before it writes the
+    new (container_staging.clear_container). If it then fails, the user
+    is told to restore the archive again, and so is an API caller that
+    reads no events (attach_recovery).
+    """
+    context = context if context is not None else OperationContext()
+    outcome = _Outcome()
+    try:
+        return _restore(archive_path, archive_file, context, outcome)
+    except BaseException as exc:
+        if outcome.cleared and container_entry_lstat(outcome.name) is None:
+            note = (
+                f"Container '{outcome.name}' was removed, but the restore "
+                f"did not finish. Restore the archive again to bring it "
+                f"back."
+            )
+            context.error(note, phase="extract", resource=outcome.name)
+            attach_recovery(exc, note)
+        raise
+
+
+class _Outcome:
+    """What _restore() did that its caller has to know if it fails."""
+
+    def __init__(self) -> None:
+        self.name = None        # the container restored
+        self.cleared = False    # an existing one was removed for it
+
+
+def _restore(archive_path, archive_file, context, outcome) -> ArchiveRestore:
     """Reinstate a single container from a tar backup.
 
     An archive is expected to hold exactly one container (this is all
@@ -507,10 +589,16 @@ def restore_container(
     stream_header = b""
     stream_input = archive_file
     if not archive:
-        stream_header = archive_file.read(6)
+        source = _ArchiveSource(archive_file)
+        try:
+            stream_header = source.read(6)
+        except _ArchiveReadError as exc:
+            raise OperationFailure(
+                f"cannot read the archive input stream: {quote_error(exc)}"
+            ) from exc
         if not isinstance(stream_header, bytes):
             raise OperationFailure("archive stream did not return bytes")
-        stream_input = _PrefixedReader(stream_header, archive_file)
+        stream_input = _PrefixedReader(stream_header, source)
 
     # A zstd archive on an interpreter that cannot read one would reach
     # tarfile as an unrecognisable stream and be reported as corruption,
@@ -537,7 +625,6 @@ def restore_container(
     lock = None
     committed = False
     staging = None              # where the container is built, at commit
-    cleared = False             # an existing container was removed for it
     succeeded = False
     interrupted = False
     dests = None                # opened with the container dir, at commit
@@ -567,9 +654,14 @@ def restore_container(
 
     try:
         if archive:
-            total_size = os.path.getsize(archive)
-            raw_fh = open(archive, 'rb')
-            counter = ByteCounter(raw_fh)
+            try:
+                total_size = os.path.getsize(archive)
+                raw_fh = open(archive, 'rb')
+            except OSError as exc:
+                raise _ArchiveReadError(
+                    exc.errno, exc.strerror or str(exc)
+                ) from exc
+            counter = ByteCounter(_ArchiveSource(raw_fh))
             tf_kwargs = dict(fileobj=counter, mode='r|*')
         else:
             comp = _detect_compression(stream_header)
@@ -714,10 +806,11 @@ def restore_container(
                             f"'{restore_name}'...",
                             phase="extract", resource=restore_name,
                         )
+                        outcome.name = restore_name
+                        outcome.cleared = True
                         clear_container(restore_name, context,
                                         phase="extract",
                                         resource=restore_name)
-                        cleared = True
                     else:
                         # Leftovers under the name are refused with the
                         # command that clears them.
@@ -821,7 +914,7 @@ def restore_container(
         clear_bar()
         context.error("Aborted by user.", phase="extract", resource=archive)
         raise
-    except (EOFError, OSError, tarfile.TarError) as exc:
+    except (EOFError, tarfile.TarError) as exc:
         clear_bar()
         context.error(
             f"Failed to restore container: {quote_error(exc)}",
@@ -834,6 +927,32 @@ def restore_container(
         raise IntegrityFailure(
             f"failed to restore container: {quote_error(exc)}"
         ) from exc
+    except _ArchiveReadError as exc:
+        # The archive could not be read: nothing says it is damaged.
+        clear_bar()
+        message = f"cannot read the archive: {quote_error(exc)}"
+        context.error(
+            f"Failed to restore container: {message}",
+            phase="extract", resource=archive,
+        )
+        failure = OperationFailure(message)
+        failure.reported = True
+        raise failure from exc
+    except OSError as exc:
+        # Writing the container failed -- a full disk, a read-only
+        # filesystem -- which says nothing about the archive either.
+        clear_bar()
+        message = f"cannot write the container: {quote_error(exc)}"
+        hint = _WRITE_HINTS.get(exc.errno)
+        context.error(
+            f"Failed to restore container: {message}",
+            phase="extract", resource=archive,
+        )
+        if hint:
+            context.error(hint, phase="extract", resource=archive)
+        failure = OperationFailure(f"{message}. {hint}" if hint else message)
+        failure.reported = True
+        raise failure from exc
     finally:
         try:
             if raw_fh is not None:
@@ -853,13 +972,6 @@ def restore_container(
                         )
                 finally:
                     staging.close()
-            if cleared and not succeeded:
-                context.error(
-                    f"Container '{restore_name}' was removed, but the "
-                    f"restore did not finish. Restore the archive again "
-                    f"to bring it back.",
-                    phase="extract", resource=restore_name,
-                )
         finally:
             if lock is not None:
                 lock.release()

@@ -643,6 +643,25 @@ class _SetupError(str):
     kind = "operation"
 
 
+def _cancellation_note(streams) -> str:
+    """' ' and what a cancelled worker said the cancel cost, or ''.
+
+    A reset or a restore that removed the old container before it was
+    cancelled leaves a note of how to get it back
+    (operation_errors.attach_recovery), in an error envelope of kind
+    "cancelled", for the cancellation's message.
+    """
+    try:
+        error = json.loads(streams[0])["_error"]
+        if error["kind"] != "cancelled":
+            return ""
+        note = error["message"]
+    except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError,
+            RecursionError):
+        return ""
+    return f" {note}" if isinstance(note, str) and note else ""
+
+
 def _structured_worker_error(operation: str, stdout: bytes):
     """Return a typed exception from a worker error envelope, or None."""
     try:
@@ -1169,8 +1188,9 @@ def _communicate_with_channels(
     # (container installed, session started), so report that, not
     # "cancelled", or the caller retries or leaks the new state.
     if cancelled and getattr(proc, "returncode", None) != 0:
+        note = _cancellation_note(result.get("streams"))
         raise OperationCancelledError(
-            f"{operation} was cancelled.", operation=operation
+            f"{operation} was cancelled.{note}", operation=operation
         )
     if "error" in result:
         raise result["error"]

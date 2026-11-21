@@ -1330,7 +1330,10 @@ a [failed install](#if-an-install-fails-or-is-stopped). A name that
 holds the leftovers of an incomplete container is refused the same way.
 Restoring over an existing container removes it completely first, so
 the restore never needs room for both. If that restore fails, the old
-container is gone: restore the archive again to bring it back.
+container is gone: restore the archive again to bring it back. The
+error says why it failed: a damaged archive is called damaged, while a
+full device, for example, is reported as such, with a hint to free up
+space.
 
 `restore` is **TTY-safe** when reading from a pipe that involves an
 interactive producer (`gpg -d archive.gpg | proot-distro restore`):

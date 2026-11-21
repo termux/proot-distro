@@ -25,7 +25,9 @@ from proot_distro.helpers.docker.refs import InvalidReference, parse_reference
 from proot_distro.locking import ContainerLock
 from proot_distro.message import quote_path
 from proot_distro.names import NAME_RULE_HINT, is_valid_name
-from proot_distro.operation_errors import NotFoundFailure, UnsupportedFailure
+from proot_distro.operation_errors import (
+    NotFoundFailure, UnsupportedFailure, attach_recovery,
+)
 from proot_distro.operations.context import OperationContext
 from proot_distro.operations.install import install_container
 from proot_distro.operations.locks import operation_lock
@@ -93,7 +95,8 @@ def reset_container(name, *, context=None):
         # the name. But once the old one is gone a failure loses it --
         # the registry unreachable, the image damaged, Ctrl-C -- and with
         # it manifest.json, the record a second reset would need. So the
-        # user is told the install that brings it back.
+        # user is told the install that brings it back, and so is an API
+        # caller that reads no events (attach_recovery).
         try:
             return install_container(
                 image_ref,
@@ -102,17 +105,18 @@ def reset_container(name, *, context=None):
                 context=context,
                 replace=True,
             )
-        except BaseException:
+        except BaseException as exc:
             if container_entry_lstat(name) is None:
                 arch = (f" --architecture {quote_path(architecture)}"
                         if architecture else "")
-                context.error(
+                note = (
                     f"Container '{name}' was removed, but its new copy "
                     f"was not installed. Install it again with "
                     f"'{PROGRAM_NAME} install --name {name}{arch} "
-                    f"{quote_path(image_ref)}'.",
-                    phase="reset", resource=name,
+                    f"{quote_path(image_ref)}'."
                 )
+                context.error(note, phase="reset", resource=name)
+                attach_recovery(exc, note)
             raise
 
 

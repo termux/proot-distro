@@ -63,7 +63,8 @@ def command_restore(args):
     except (BusyFailure, IntegrityFailure):
         sys.exit(1)
     except OperationFailure as exc:
-        log_error(str(exc))
+        if not getattr(exc, "reported", False):
+            log_error(str(exc))
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(1)
