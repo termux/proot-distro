@@ -21,11 +21,11 @@ from proot_distro.helpers.build_engine import run_step
 _LINGER = 'sh -c "{inner}"; exec sleep 30'
 
 
-def _spawn(inner):
+def _spawn(inner, cwd=None):
     return subprocess.Popen(
         ["sh", "-c", _LINGER.format(inner=inner)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        start_new_session=True, cwd=cwd,
     )
 
 
@@ -124,24 +124,35 @@ def _alive(pid):
         return False
 
 
-def test_the_wait_does_not_cut_a_step_short_over_a_mid_step_orphan(subreaper):
+def test_the_wait_does_not_cut_a_step_short_over_a_mid_step_orphan(
+        subreaper, tmp_path):
     # A command that orphans something halfway through -- a subshell
     # that finishes, a build tool that forks -- is still running, and
     # the step is not over until it is.
+    #
+    # The stand-in keeps proot's shape: the command is its one child
+    # from start to end, as the root tracee is proot's. This test once
+    # ran the command's shell in proot's place, and a shell has no
+    # child at all between two of its commands, so a poll landing in
+    # that instant read it as the end of the step. That failed about one
+    # run in a thousand, and could not happen with proot. The command
+    # below spends such an instant of its own on purpose, a loop of
+    # shell builtins after the orphaning, so it is not left to chance.
     baseline = set(run_step._adopted())
-    proc = subprocess.Popen(
-        ["sh", "-c", 'sh -c "sleep 5 & exit 0"; sleep 1'],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    proc = _spawn(
+        "sh -c 'sleep 5 & exit 0'; "
+        "i=0; while [ \\$i -lt 50000 ]; do i=\\$((i+1)); done; "
+        "sleep 1; : > done",
+        cwd=tmp_path,
     )
     try:
-        started = time.monotonic()
         run_step._wait_for_step(proc, baseline)
-        assert proc.poll() == 0
-        assert time.monotonic() - started >= 0.9
+        # "done" is the command's last act, so the wait did not end
+        # before the command did.
+        assert (tmp_path / "done").exists()
     finally:
         _stop(proc)
-        run_step._stop_step(proc, baseline)
+        run_step._stop_step(proc, baseline, quiet=True)
 
 
 def test_leftovers_never_names_this_process_or_its_group():
