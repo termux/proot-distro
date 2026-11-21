@@ -11,13 +11,25 @@
 #
 # The fixture below presses Ctrl-C at exactly that moment, every time,
 # so each place that opens a tar member is held to delivering it.
+#
+# It does so with a second thread running, because a signal mask is a
+# thread's own. Holding SIGINT back by blocking it in the thread that
+# opens the member worked only while no other thread existed: the kernel
+# hands a signal sent to the process, as a Ctrl-C and an API cancel are,
+# to any thread that does not block it, and Python then runs the handler
+# in the main thread wherever it next checks -- inside tell() again,
+# when that runs slowly. The test suite's own process has another thread
+# whenever pytest-rerunfailures is installed, and lost one Ctrl-C there.
 
 import ast
 import io
 import os
 import pathlib
+import select
 import signal
 import tarfile
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -31,23 +43,56 @@ from proot_distro.operations.restore import restore_container
 
 
 @pytest.fixture
-def ctrl_c_in_member_open(monkeypatch):
-    """Send this process SIGINT from inside the first raw tell() call."""
+def press_ctrl_c():
+    """A function that sends this process SIGINT and returns once it is taken.
+
+    A second thread runs throughout, so the kernel can hand the signal
+    to a thread other than the one that sent it. "Taken" means some
+    thread's C-level handler has run, which writes the signal number to
+    the wakeup fd. Python runs the handler proper in the main thread at
+    its next check, which is then always after this returns, in the code
+    that called it: the worst place for it, every time.
+    """
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    read_end, write_end = os.pipe()
+    os.set_blocking(write_end, False)
+    previous_wakeup = signal.set_wakeup_fd(write_end,
+                                           warn_on_full_buffer=False)
+    release = threading.Event()
+    bystander = threading.Thread(target=release.wait, daemon=True)
+    bystander.start()
+
+    def press():
+        os.kill(os.getpid(), signal.SIGINT)
+        taken, _, _ = select.select([read_end], [], [], 10)
+        assert taken, "no thread took the SIGINT"
+        os.read(read_end, 64)
+
+    try:
+        yield press
+    finally:
+        release.set()
+        bystander.join()
+        signal.set_wakeup_fd(previous_wakeup)
+        os.close(read_end)
+        os.close(write_end)
+        signal.signal(signal.SIGINT, previous)
+
+
+@pytest.fixture
+def ctrl_c_in_member_open(monkeypatch, press_ctrl_c):
+    """Press Ctrl-C from inside the first raw tell() call."""
     original = tarfile._FileInFile.tell
     fired = []
 
     def tell(self):
         if not fired:
             fired.append(True)
-            os.kill(os.getpid(), signal.SIGINT)
+            press_ctrl_c()
         return original(self)
 
     monkeypatch.setattr(tarfile._FileInFile, "tell", tell)
-    try:
-        yield fired
-    finally:
-        signal.signal(signal.SIGINT, previous)
+    yield fired
 
 
 def _tar(members):
@@ -122,18 +167,79 @@ def test_add_auto_extraction_stops(tmp_path, ctrl_c_in_member_open):
     assert ctrl_c_in_member_open
 
 
-def test_defer_sigint_raises_after_the_body_has_run():
-    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+def test_defer_sigint_raises_after_the_body_has_run(press_ctrl_c):
     reached = []
+    with pytest.raises(KeyboardInterrupt):
+        with interrupts.defer_sigint():
+            press_ctrl_c()
+            reached.append(True)
+    assert reached
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert signal.SIGINT not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+
+def test_an_uninterrupted_body_raises_nothing():
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
-        with pytest.raises(KeyboardInterrupt):
-            with interrupts.defer_sigint():
-                os.kill(os.getpid(), signal.SIGINT)
-                reached.append(True)
+        with interrupts.defer_sigint():
+            pass
+        assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    except KeyboardInterrupt:
+        pytest.fail("KeyboardInterrupt with no Ctrl-C pressed")
     finally:
         signal.signal(signal.SIGINT, previous)
-    assert reached
-    assert signal.SIGINT not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+
+def test_a_ctrl_c_in_the_body_wins_over_its_failure(press_ctrl_c):
+    # The caller's cleanup is for BaseException, and the user asked to
+    # stop: a body that also failed must not swallow the Ctrl-C.
+    with pytest.raises(KeyboardInterrupt) as raised:
+        with interrupts.defer_sigint():
+            press_ctrl_c()
+            raise OSError("the body failed as well")
+    assert isinstance(raised.value.__context__, OSError)
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+
+
+def test_a_handler_of_the_programs_own_is_left_in_place():
+    # Its effects are not defer_sigint's to replay, so it stays
+    # installed and runs once, as it would have.
+    calls = []
+
+    def handler(signum, _frame):
+        calls.append(signum)
+
+    previous = signal.signal(signal.SIGINT, handler)
+    try:
+        with interrupts.defer_sigint():
+            installed = signal.getsignal(signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGINT)
+        deadline = time.monotonic() + 10
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        pytest.fail("KeyboardInterrupt in place of the program's handler")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert installed is handler
+    assert calls == [signal.SIGINT]
+
+
+def test_defer_sigint_works_outside_the_main_thread():
+    # No handler may be set there, and none runs there either.
+    outcome = []
+
+    def body():
+        try:
+            with interrupts.defer_sigint():
+                outcome.append(signal.getsignal(signal.SIGINT))
+        except BaseException as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=body)
+    thread.start()
+    thread.join()
+    assert outcome == [signal.getsignal(signal.SIGINT)]
 
 
 def test_nothing_opens_a_tar_member_around_the_helper():

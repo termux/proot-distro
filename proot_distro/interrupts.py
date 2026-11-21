@@ -32,8 +32,8 @@ kinds of place break that:
   The SIGINT is consumed either way, so the work goes on as if it had
   never been interrupted, and an API cancel ends in a normal result.
 
-defer_sigint() keeps SIGINT pending across such a place and raises it
-on the way out, from code that propagates it.
+defer_sigint() holds SIGINT back across such a place and raises it on
+the way out, from code that propagates it.
 
 A third kind of place is a cleanup, where an interrupt is not lost but
 lands too late: finish_cleanup() is for those.
@@ -45,14 +45,41 @@ import signal
 
 @contextlib.contextmanager
 def defer_sigint():
-    """Hold SIGINT pending for the body; raise it on the way out.
+    """Hold a Ctrl-C back for the body; raise it on the way out.
 
-    The signal is blocked in the calling thread, so the kernel keeps it
-    rather than running the handler. Restoring the mask delivers it, and
-    signal.pthread_sigmask() runs the handlers before it returns, so the
-    KeyboardInterrupt comes from here. Where pthread_sigmask() does not
-    exist the body runs unprotected.
+    For the body, SIGINT's handler only notes that the signal came, and
+    the KeyboardInterrupt is raised here once the body is over. Swapping
+    the handler is what holds in a process with more than one thread.
+    Blocking the signal did not: a mask is a thread's own, and the
+    kernel hands a signal sent to the process, as a Ctrl-C and an API
+    cancel are, to any thread that does not block it. Python then runs
+    the handler in the main thread wherever that next checks, which can
+    be inside the very place the body guards.
+
+    The handler is swapped only when it is Python's own
+    default_int_handler. Any other is the program's, and what it does is
+    not this module's to replay, so SIGINT is then blocked in the calling
+    thread instead, which holds it while no other thread takes it. Only
+    the main thread of the main interpreter may set a handler, and that
+    is also the only thread Python runs one in, so in any other there is
+    nothing to lose. The body must not change SIGINT's handler itself.
     """
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        caught = []
+        try:
+            signal.signal(signal.SIGINT,
+                          lambda _signum, _frame: caught.append(True))
+        except ValueError:
+            # Not the main thread of the main interpreter.
+            pass
+        else:
+            try:
+                yield
+            finally:
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+                if caught:
+                    raise KeyboardInterrupt
+            return
     pthread_sigmask = getattr(signal, "pthread_sigmask", None)
     if pthread_sigmask is None:
         yield
