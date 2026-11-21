@@ -77,7 +77,9 @@ from proot_distro.message import quote_path
 from proot_distro.operation_errors import (
     AlreadyExistsFailure, OperationFailure,
 )
-from proot_distro.paths import container_entry_lstat, open_container_dir
+from proot_distro.paths import (
+    container_entry_lstat, container_is_installed, open_container_dir,
+)
 from proot_distro.progress import clear_bar, draw_count_bar
 
 _PREFIX = ".pd-staging"
@@ -267,6 +269,23 @@ def clear_container(name: str, context, *, phase, resource) -> None:
         clear_bar()
 
 
+def holds_no_container(name: str) -> bool:
+    """True unless a container is installed under *name*.
+
+    What a reset, or a restore over a container, asks once it has failed:
+    whether the old container it removed is lost, so the user is told how
+    to get it back. Asked of the rootfs, not of the entry. The final
+    rename (Staging.commit) is refused exactly when something took the
+    name meanwhile -- a stranger's directory, a link -- and the old
+    container is lost then too; only nothing at all under the name used
+    to count. An entry the walk will not follow is no container either.
+    """
+    try:
+        return not container_is_installed(name, raise_errors=True)
+    except (OSError, RuntimeError):
+        return True
+
+
 def create_staging() -> Staging:
     """Make, open and lock a fresh staging directory in CONTAINERS_DIR.
 
@@ -336,6 +355,7 @@ __all__ = (
     "Staging",
     "clear_container",
     "create_staging",
+    "holds_no_container",
     "reclaim_staging",
     "refuse_leftovers",
     "remove_left",

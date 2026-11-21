@@ -471,6 +471,14 @@ def _run_install(
             "Aborted by user.", phase="install", resource=install_name
         )
         raise
+    except (AlreadyExistsFailure, OperationFailure):
+        # The final rename refused (Staging.commit): a message whole, for
+        # the caller to print, as install's and reset's CLIs do with
+        # these two. Reported here under "Failed to install" as well, and
+        # followed by the --help line, it was printed twice, and the
+        # user was sent to read how to install an image.
+        clear_bar()
+        raise
     except (EOFError, OSError, tarfile.TarError, RuntimeError) as exc:
         clear_bar()
         context.error(

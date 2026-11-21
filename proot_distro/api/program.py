@@ -1797,8 +1797,9 @@ class ProotDistro:
 
         Raises:
             InvalidArgumentError: An argument is malformed.
-            AlreadyExistsError: A container with that name exists, or the
-                name holds the leftovers of an incomplete container.
+            AlreadyExistsError: A container with that name exists, the
+                name holds the leftovers of an incomplete container, or
+                something took it while the container was being built.
             NotFoundError: The image, URL or archive does not exist.
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry or URL could not be reached.
@@ -1945,6 +1946,8 @@ class ProotDistro:
             NotFoundError: The container does not exist.
             UnsupportedOperationError: It was not installed from an OCI image.
             BusyError: The container is locked by another operation or session.
+            AlreadyExistsError: Something took the name while the new
+                container was being built.
             AuthenticationError: The registry refused the credentials.
             NetworkError: The registry could not be reached.
             IntegrityError: Downloaded content failed validation.
@@ -2191,7 +2194,8 @@ class ProotDistro:
             NotFoundError: The archive path does not exist.
             IntegrityError: The archive is damaged or malformed.
             AlreadyExistsError: The archive's container name holds the
-                leftovers of an incomplete container.
+                leftovers of an incomplete container, or something took
+                it while the container was being built.
             UnsupportedOperationError: The archive's compression is unavailable, for example zstd needs Python 3.14.
             BusyError: The target container is locked by another operation or session.
             OperationCancelledError: Cancelled before completion.

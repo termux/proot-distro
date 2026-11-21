@@ -25,6 +25,7 @@ import sys
 from proot_distro.commands.install import _print_install_summary
 from proot_distro.message import crit_error
 from proot_distro.operation_errors import (
+    AlreadyExistsFailure,
     BusyFailure,
     NotFoundFailure,
     OperationFailure,
@@ -41,7 +42,10 @@ def command_reset(args) -> None:
             args.container_name,
             context=OperationContext(verbose=getattr(args, "verbose", False)),
         )
-    except (BusyFailure, NotFoundFailure, UnsupportedFailure) as exc:
+    except (AlreadyExistsFailure, BusyFailure, NotFoundFailure,
+            UnsupportedFailure) as exc:
+        # AlreadyExistsFailure: the name was taken while the new container
+        # was built, and the final rename refused it (Staging.commit).
         crit_error(str(exc))
         sys.exit(1)
     except OperationFailure as exc:

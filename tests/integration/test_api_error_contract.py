@@ -17,6 +17,7 @@ the single source of truth for them:
 that can produce them; they are not part of the per-method comparison.
 """
 
+import hashlib
 import http.server
 import inspect
 import json
@@ -47,6 +48,7 @@ from proot_distro.api import (
     RuntimeConfig,
     UnsupportedOperationError,
 )
+from proot_distro.helpers.docker.refs import ARCH_TO_DOCKER
 
 _ROOT = Path(__file__).resolve().parents[2]
 _GENERIC = {
@@ -154,6 +156,48 @@ class _Lying(_Registry):
         self.end_headers()
 
 
+class _Planting(_Registry):
+    """A registry whose image has its container's name taken as it is pulled.
+
+    It serves one image. When the layer is fetched -- by a reset, once the
+    old container is gone -- it makes a directory with a file in it under
+    the container's name, as a concurrent process can on Termux, so the
+    final rename of the reset refuses the name. The fixture fills in the
+    class attributes.
+    """
+
+    blobs: dict = {}
+    manifest = b""
+    layer = ""
+    plant = None
+
+    def do_GET(self):
+        digest = self.path.rsplit("/", 1)[-1]
+        if self.path == "/v2/":
+            body, kind = b"{}", "application/json"
+        elif "/manifests/" in self.path:
+            body = self.manifest
+            kind = "application/vnd.oci.image.manifest.v1+json"
+        elif digest in self.blobs:
+            body, kind = self.blobs[digest], "application/octet-stream"
+            if digest == self.layer:
+                self.plant.mkdir(exist_ok=True)
+                (self.plant / "keep").write_text("theirs")
+        else:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    do_HEAD = do_GET
+
+
 def _tls_registry(handler, certificate, key):
     """Serve *handler* over HTTPS with a throwaway certificate."""
     server = http.server.HTTPServer(("127.0.0.1", 0), handler)
@@ -245,13 +289,18 @@ def env(tmp_path_factory):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     liar = http.server.HTTPServer(("127.0.0.1", 0), _Lying)
     threading.Thread(target=liar.serve_forever, daemon=True).start()
-    tls_refuse = tls_corrupt = None
-    tls_refused = tls_garbage = None
+    tls_refuse = tls_corrupt = tls_plant = None
+    tls_refused = tls_garbage = tls_taken = None
+    planting = type("_PlantingHere", (_Planting,), {
+        "blobs": {}, "plant": runtime / "containers" / "takenbox",
+    })
     if tls is not None:
         tls_refuse = _tls_registry(_Registry, *tls)
         tls_corrupt = _tls_registry(_Corrupt, *tls)
+        tls_plant = _tls_registry(planting, *tls)
         tls_refused = f"127.0.0.1:{tls_refuse.server_port}/contract/tls:1"
         tls_garbage = f"127.0.0.1:{tls_corrupt.server_port}/contract/tls:1"
+        tls_taken = f"127.0.0.1:{tls_plant.server_port}/contract/taken:1"
     refused = f"127.0.0.1:{server.server_port}/contract/img:1"
     unreachable = "127.0.0.1:1/contract/img:1"
     misnamed = f"127.0.0.1:{liar.server_port}/contract/img:1"
@@ -269,10 +318,31 @@ def env(tmp_path_factory):
     pd.remove_image(reset_ref)
     # reset pulls the recorded image again, so drop it after recording it.
     if tls is not None:
-        for box, ref in (("authbox", tls_refused), ("badbox", tls_garbage)):
+        for box, ref in (("authbox", tls_refused), ("badbox", tls_garbage),
+                         ("takenbox", tls_taken)):
             pd.build(context, tags=[ref], install_as=box)
             pd.remove_image(ref)
     arch = pd.list_images()[0].architecture
+    layer, layer_digest, diff_id = builders.make_layer_blob(
+        builders.rootfs_members()
+    )
+    config = json.dumps({
+        "architecture": ARCH_TO_DOCKER[arch][0], "os": "linux",
+        "config": {}, "rootfs": {"type": "layers", "diff_ids": [diff_id]},
+    }).encode()
+    config_digest = "sha256:" + hashlib.sha256(config).hexdigest()
+    planting.blobs = {layer_digest: layer, config_digest: config}
+    planting.layer = layer_digest
+    planting.manifest = json.dumps({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
+                   "digest": config_digest, "size": len(config)},
+        "layers": [{
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": layer_digest, "size": len(layer),
+        }],
+    }).encode()
 
     unreadable = tmp / "unreadable"
     unreadable.mkdir()
@@ -306,7 +376,7 @@ def env(tmp_path_factory):
         (unreadable / "denied").chmod(0o600)
         server.shutdown()
         liar.shutdown()
-        for extra in (tls_refuse, tls_corrupt):
+        for extra in (tls_refuse, tls_corrupt, tls_plant):
             if extra is not None:
                 extra.shutdown()
         if saved_ca is None:
@@ -393,6 +463,16 @@ def _(e): e.pd.reset_container("authbox")
 @_scenario("reset_container", "IntegrityError")
 @needs_openssl
 def _(e): e.pd.reset_container("badbox")
+@_scenario("reset_container", "AlreadyExistsError")
+@needs_openssl
+def _(e):
+    # The final rename refused, and the message says what was lost.
+    try:
+        e.pd.reset_container("takenbox")
+    except AlreadyExistsError as exc:
+        assert "was taken while the container was being built" in str(exc)
+        assert "Install it again with" in str(exc)
+        raise
 
 @_scenario("copy", "NotFoundError")
 def _(e): e.pd.copy(e.archive, "ghost:/tmp/")

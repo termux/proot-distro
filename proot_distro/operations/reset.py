@@ -21,6 +21,7 @@
 """Shared OCI-backed container reset service."""
 
 from proot_distro.constants import PROGRAM_NAME
+from proot_distro.container_staging import holds_no_container
 from proot_distro.helpers.docker.refs import InvalidReference, parse_reference
 from proot_distro.locking import ContainerLock
 from proot_distro.message import quote_path
@@ -32,7 +33,6 @@ from proot_distro.operations.context import OperationContext
 from proot_distro.operations.install import install_container
 from proot_distro.operations.locks import operation_lock
 from proot_distro.paths import (
-    container_entry_lstat,
     container_image_origin,
     container_is_installed,
 )
@@ -106,7 +106,7 @@ def reset_container(name, *, context=None):
                 replace=True,
             )
         except BaseException as exc:
-            if container_entry_lstat(name) is None:
+            if holds_no_container(name):
                 arch = (f" --architecture {quote_path(architecture)}"
                         if architecture else "")
                 note = (

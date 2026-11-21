@@ -563,7 +563,7 @@ another call) holds a lock on that container or image.
 | `remove_container` | BusyError, NotFoundError |
 | `remove_image` | BusyError, NotFoundError |
 | `rename_container` | AlreadyExistsError, BusyError, NotFoundError |
-| `reset_container` | AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError, UnsupportedOperationError |
+| `reset_container` | AlreadyExistsError, AuthenticationError, BusyError, IntegrityError, NetworkError, NotFoundError, UnsupportedOperationError |
 | `restore` | AlreadyExistsError, BusyError, IntegrityError, NotFoundError, UnsupportedOperationError |
 | `run` | BusyError, NotFoundError |
 | `run_detached` | BusyError, NotFoundError |

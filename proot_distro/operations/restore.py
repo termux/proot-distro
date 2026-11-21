@@ -73,7 +73,8 @@ from proot_distro.compress import (
 )
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.container_staging import (
-    clear_container, create_staging, reclaim_staging, refuse_leftovers,
+    clear_container, create_staging, holds_no_container, reclaim_staging,
+    refuse_leftovers,
 )
 from proot_distro.interrupts import open_tar_member
 from proot_distro.message import quote_error, quote_path
@@ -88,7 +89,7 @@ from proot_distro.progress import (
 )
 from proot_distro.locking import ContainerLock
 from proot_distro.names import is_valid_name
-from proot_distro.paths import container_entry_lstat, container_is_installed
+from proot_distro.paths import container_is_installed
 from proot_distro.helpers.tar_extract import safe_resolve_parts
 
 
@@ -493,7 +494,7 @@ def restore_container(
     try:
         return _restore(archive_path, archive_file, context, outcome)
     except BaseException as exc:
-        if outcome.cleared and container_entry_lstat(outcome.name) is None:
+        if outcome.cleared and holds_no_container(outcome.name):
             note = (
                 f"Container '{outcome.name}' was removed, but the restore "
                 f"did not finish. Restore the archive again to bring it "
