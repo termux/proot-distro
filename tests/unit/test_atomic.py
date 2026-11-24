@@ -6,10 +6,14 @@
 # under in between.
 
 import os
+import signal
+import threading
 
 import pytest
 
+from proot_distro import atomic
 from proot_distro.atomic import atomic_replace, atomic_write
+from proot_distro.constants import RUNTIME_DIR
 
 
 def test_success_renames_into_place(tmp_path):
@@ -57,6 +61,56 @@ def test_keyboardinterrupt_cleans_up(tmp_path):
             raise KeyboardInterrupt()
     assert not dest.exists()
     assert os.listdir(tmp_path) == []
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask")
+    or not hasattr(signal, "pthread_kill"),
+    reason="needs thread-directed signal masking",
+)
+def test_sigint_during_host_temporary_creation_is_cleaned(
+        tmp_path, monkeypatch):
+    real_mkstemp = atomic.tempfile.mkstemp
+
+    def create_then_interrupt(*args, **kwargs):
+        result = real_mkstemp(*args, **kwargs)
+        signal.pthread_kill(threading.get_ident(), signal.SIGINT)
+        return result
+
+    monkeypatch.setattr(atomic.tempfile, "mkstemp", create_then_interrupt)
+    destination = tmp_path / "out.txt"
+
+    with pytest.raises(KeyboardInterrupt):
+        with atomic_replace(str(destination)):
+            pytest.fail("pending SIGINT was not delivered")
+
+    assert not destination.exists()
+    assert os.listdir(tmp_path) == []
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask")
+    or not hasattr(signal, "pthread_kill"),
+    reason="needs thread-directed signal masking",
+)
+def test_sigint_during_state_temporary_creation_is_cleaned(monkeypatch):
+    real_open = atomic.dirfd.open_new_at
+
+    def create_then_interrupt(*args, **kwargs):
+        result = real_open(*args, **kwargs)
+        signal.pthread_kill(threading.get_ident(), signal.SIGINT)
+        return result
+
+    monkeypatch.setattr(atomic.dirfd, "open_new_at", create_then_interrupt)
+    destination_dir = os.path.join(RUNTIME_DIR, "atomic-interrupt")
+    destination = os.path.join(destination_dir, "out.txt")
+
+    with pytest.raises(KeyboardInterrupt):
+        with atomic_replace(destination):
+            pytest.fail("pending SIGINT was not delivered")
+
+    assert not os.path.exists(destination)
+    assert os.listdir(destination_dir) == []
 
 
 def test_unique_tmp_names(tmp_path):

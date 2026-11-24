@@ -109,7 +109,7 @@ def test_unknown_instruction_rejected():
 
 
 def test_bom_and_crlf_normalised():
-    _d, instrs = df.parse_dockerfile("﻿FROM x\r\nRUN y\r\n")
+    _d, instrs = df.parse_dockerfile("\ufeffFROM x\r\nRUN y\r\n")
     assert _names(instrs) == ["FROM", "RUN"]
 
 

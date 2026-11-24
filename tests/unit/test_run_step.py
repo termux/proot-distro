@@ -21,11 +21,11 @@ from proot_distro.helpers.build_engine import run_step
 _LINGER = 'sh -c "{inner}"; exec sleep 30'
 
 
-def _spawn(inner):
+def _spawn(inner, cwd=None):
     return subprocess.Popen(
         ["sh", "-c", _LINGER.format(inner=inner)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        start_new_session=True, cwd=cwd,
     )
 
 
@@ -42,6 +42,9 @@ def subreaper():
     """The flag that puts a step's orphans back within reach."""
     if not run_step._become_subreaper():
         pytest.skip("kernel refuses PR_SET_CHILD_SUBREAPER")
+    children = f"/proc/{os.getpid()}/task/{os.getpid()}/children"
+    if not os.path.exists(children):
+        pytest.skip("procfs does not expose child process lists")
     return True
 
 
@@ -51,7 +54,7 @@ def test_a_step_that_ends_cleanly_is_simply_waited_for(subreaper):
     run_step._wait_for_step(proc, baseline)
 
     assert proc.poll() == 5
-    assert run_step._stop_step(proc.pid, baseline, skip_pid=proc.pid) == 0
+    assert run_step._stop_step(proc, baseline) == 0
 
 
 def test_a_backgrounded_leftover_ends_the_wait_and_is_stopped(subreaper,
@@ -66,8 +69,7 @@ def test_a_backgrounded_leftover_ends_the_wait_and_is_stopped(subreaper,
         assert proc.poll() is None
         assert time.monotonic() - started < 10
 
-        assert run_step._stop_step(proc.pid, baseline,
-                                   skip_pid=proc.pid) >= 1
+        assert run_step._stop_step(proc, baseline) >= 1
         assert run_step._leftovers(proc.pid, baseline, proc.pid) == []
         # proot itself is left alone: it is still owed the chance to
         # report the step's exit status.
@@ -97,10 +99,9 @@ def test_a_daemonised_leftover_is_found_through_adoption(subreaper):
     pid = adopted[0]
 
     # Its own group, not the step's -- there is no step group here at
-    # all. Passing this process's own pgid is what a caller must never
-    # be able to turn into a signal: _leftovers refuses it and answers
-    # from adoption alone, which is the half this test is about.
-    assert run_step._stop_step(os.getpgrp(), baseline) >= 1
+    # all, so the sweep answers from adoption alone, which is the half
+    # this test is about.
+    assert run_step._stop_step(None, baseline) >= 1
     deadline = time.monotonic() + 5
     while _alive(pid) and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -123,24 +124,35 @@ def _alive(pid):
         return False
 
 
-def test_the_wait_does_not_cut_a_step_short_over_a_mid_step_orphan(subreaper):
+def test_the_wait_does_not_cut_a_step_short_over_a_mid_step_orphan(
+        subreaper, tmp_path):
     # A command that orphans something halfway through -- a subshell
     # that finishes, a build tool that forks -- is still running, and
     # the step is not over until it is.
+    #
+    # The stand-in keeps proot's shape: the command is its one child
+    # from start to end, as the root tracee is proot's. This test once
+    # ran the command's shell in proot's place, and a shell has no
+    # child at all between two of its commands, so a poll landing in
+    # that instant read it as the end of the step. That failed about one
+    # run in a thousand, and could not happen with proot. The command
+    # below spends such an instant of its own on purpose, a loop of
+    # shell builtins after the orphaning, so it is not left to chance.
     baseline = set(run_step._adopted())
-    proc = subprocess.Popen(
-        ["sh", "-c", 'sh -c "sleep 5 & exit 0"; sleep 1'],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    proc = _spawn(
+        "sh -c 'sleep 5 & exit 0'; "
+        "i=0; while [ \\$i -lt 50000 ]; do i=\\$((i+1)); done; "
+        "sleep 1; : > done",
+        cwd=tmp_path,
     )
     try:
-        started = time.monotonic()
         run_step._wait_for_step(proc, baseline)
-        assert proc.poll() == 0
-        assert time.monotonic() - started >= 0.9
+        # "done" is the command's last act, so the wait did not end
+        # before the command did.
+        assert (tmp_path / "done").exists()
     finally:
         _stop(proc)
-        run_step._stop_step(proc.pid, baseline)
+        run_step._stop_step(proc, baseline, quiet=True)
 
 
 def test_leftovers_never_names_this_process_or_its_group():

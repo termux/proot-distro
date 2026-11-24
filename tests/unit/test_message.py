@@ -1,6 +1,8 @@
 # Tests for proot_distro.message — quiet flag, TTY-safety probe, color
 # gating, and the log helpers.
 
+import pytest
+
 from proot_distro import message
 
 
@@ -55,6 +57,34 @@ def test_warn_format(capsys):
     err = capsys.readouterr().err
     assert "Warning:" in err
     assert "careful" in err
+
+
+def test_log_event_capture_is_structured_and_context_local(capsys):
+    captured = []
+    message.set_quiet(True)
+    with message.capture_log_events(
+        lambda kind, text, phase, resource: captured.append(
+            (kind, text, phase, resource)
+        )
+    ):
+        message.log_info("phase")
+        message.log_retry("try again", resource="sha256:abc")
+        message.warn("careful")
+        message.log_error("failed")
+        message.crit_error("fatal")
+
+    assert captured == [
+        ("info", "phase", None, None),
+        ("retry", "try again", "network", "sha256:abc"),
+        ("warning", "careful", None, None),
+        ("error", "failed", None, None),
+        ("error", "fatal", None, None),
+    ]
+    assert capsys.readouterr() == ("", "")
+
+    message.set_quiet(False)
+    message.log_info("outside")
+    assert "outside" in capsys.readouterr().err
 
 
 # ----- quote_path ---------------------------------------------------------
@@ -122,3 +152,132 @@ def test_quote_error_escapes_an_exception_that_interpolated_a_name():
 def test_quote_error_falls_back_when_strerror_is_none():
     exc = OSError()
     assert "\x1b" not in message.quote_error(exc)
+
+
+# ----- C1 controls and format characters ------------------------------------
+
+@pytest.mark.parametrize("raw, quoted", [
+    ("a\x9b2Jb", "a\\x9b2Jb"),          # C1 CSI: a terminal's ESC [
+    ("a\x85b", "a\\x85b"),              # C1 NEL: a line break to some
+    ("a\x80\x9fb", "a\\x80\\x9fb"),     # the ends of the C1 range
+    ("evil\u202etxt.exe", "evil\\u202etxt.exe"),   # right-to-left override
+    ("a\u2066b\u2069", "a\\u2066b\\u2069"),          # a bidi isolate
+    ("pass\u200bwd", "pass\\u200bwd"),               # zero-width space
+    ("a\ufeffb", "a\\ufeffb"),                       # BOM / ZWNBSP
+    ("soft\xadhyphen", "soft\\xadhyphen"),           # soft hyphen
+    ("one\u2028two\u2029", "one\\u2028two\\u2029"),  # line/paragraph sep
+    ("tag\U000e0001", "tag\\U000e0001"),             # an astral format char
+])
+def test_quote_path_escapes_c1_controls_and_format_characters(raw, quoted):
+    # quote_path used to stop at C0 and DEL: an HTTP reason phrase is
+    # decoded as Latin-1, so a server's byte 0x9b reached the terminal as
+    # U+009B, and a bidi override made a name read as another.
+    assert message.quote_path(raw) == quoted
+
+
+@pytest.mark.parametrize("name", [
+    "caf\xe9", "no\xa0break", "\u3000wide", "\ue000private", "\U0001f600",
+    "\u4e2d\u6587", "\u0627\u0644\u0639\u0631\u0628\u064a\u0629",
+])
+def test_quote_path_still_leaves_other_text_alone(name):
+    # Non-ASCII spaces, private use, emoji and right-to-left *letters* are
+    # shown as they are: only controls and format characters are escaped.
+    assert message.quote_path(name) == name
+
+
+# ----- printable_message --------------------------------------------------
+
+def test_printable_message_escapes_controls_and_format_characters():
+    text = "HTTP Error 404: \x1b]0;pwned\x07\x9b2J\u202eok\rover"
+    assert message.printable_message(text) == (
+        "HTTP Error 404: \\e]0;pwned\\x07\\x9b2J\\u202eok\\rover")
+
+
+def test_printable_message_keeps_the_layout_of_a_message():
+    # A message may run over lines and line its parts up with tabs.
+    text = "first line\n\tsecond line"
+    assert message.printable_message(text) == text
+
+
+def test_printable_message_leaves_what_quote_path_escaped_unchanged():
+    # Backslashes stay as they are, so a message built with quote_path()
+    # reads the same once the log helper has seen it too.
+    quoted = "cannot copy '" + message.quote_path("a\x1b\\b\u202e") + "'"
+    assert message.printable_message(quoted) == quoted
+    assert message.printable_message("C:\\dir\\x41") == "C:\\dir\\x41"
+
+
+def test_printable_message_shows_a_non_string_as_its_str():
+    assert message.printable_message(ValueError("bad\x9b")) == "bad\\x9b"
+
+
+@pytest.mark.parametrize("helper", [
+    "log_info", "log_retry", "log_error", "warn", "crit_error",
+])
+def test_every_log_helper_escapes_what_it_prints(helper, capsys):
+    # Messages interpolate others' text in many places without quoting it
+    # ("Network error: {exc}" quotes a server's reason phrase), and the
+    # log helpers printed whatever they were given.
+    getattr(message, helper)("x\x1b]0;pwned\x07\x9b2J\u202ey")
+    err = capsys.readouterr().err
+    for char in ("\x1b", "\x07", "\x9b", "\u202e"):
+        assert char not in err
+    assert "x\\e]0;pwned\\x07\\x9b2J\\u202ey" in err
+
+
+@pytest.mark.parametrize("helper, kind", [
+    ("log_info", "info"), ("log_retry", "retry"), ("log_error", "error"),
+    ("warn", "warning"), ("crit_error", "error"),
+])
+def test_every_log_helper_escapes_the_event_it_hands_on(helper, kind):
+    # Under the API worker the helpers emit events instead of printing,
+    # and an API caller prints those too.
+    seen = []
+    with message.capture_log_events(
+            lambda k, text, phase, resource: seen.append((k, text))):
+        getattr(message, helper)("x\x9b2J\u202ey")
+    assert seen == [(kind, "x\\x9b2J\\u202ey")]
+
+
+# ----- msg ----------------------------------------------------------------
+
+_RLO = "\N{RIGHT-TO-LEFT OVERRIDE}"
+
+
+def test_msg_escapes_what_it_prints(capsys):
+    # Regression: msg() printed its arguments as they were, so a caller
+    # that interpolated someone else's text without quote_path() put that
+    # text's escape sequences on the terminal.
+    message.msg("value:", f"x\x1b]0;pwned\x07\x9b2J{_RLO}y")
+    assert capsys.readouterr().err == (
+        "value: x\\e]0;pwned\\x07\\x9b2J\\u202ey\n")
+
+
+def test_msg_keeps_its_own_colours_and_escapes_any_other(
+        monkeypatch, capsys):
+    colors = message._COLORS
+    monkeypatch.setattr(message, "C", colors)
+    message.msg(f"{colors['CYAN']}Command: {colors['GREEN']}"
+                f"x\x1b[8mhidden\x1b]0;t\x07{colors['RST']}")
+    assert capsys.readouterr().err == (
+        f"{colors['CYAN']}Command: {colors['GREEN']}"
+        f"x\\e[8mhidden\\e]0;t\\x07{colors['RST']}\n")
+    # Before the first colour and after the last one too.
+    message.msg(f"\x9bA{colors['RED']}x\x1b[2J")
+    assert capsys.readouterr().err == (
+        f"\\x9bA{colors['RED']}x\\e[2J\n")
+
+
+def test_msg_lets_no_colour_through_while_colours_are_off(capsys):
+    # Off a terminal C is empty, and so is what may pass unescaped.
+    message.msg(message._COLORS["RED"] + "x")
+    assert capsys.readouterr().err == "\\e[0m\\e[31mx\n"
+
+
+def test_msg_prints_its_arguments_as_print_would(capsys):
+    message.msg(1, None, "a")
+    assert capsys.readouterr().err == "1 None a\n"
+    message.msg()
+    assert capsys.readouterr().err == "\n"
+    message.msg("first\n\tsecond")
+    assert capsys.readouterr().err == "first\n\tsecond\n"

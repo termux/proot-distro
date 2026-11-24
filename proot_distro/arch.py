@@ -33,6 +33,7 @@ import struct
 import sys
 
 from proot_distro.message import crit_error
+from proot_distro.operation_errors import OperationFailure
 from proot_distro.constants import TERMUX_PREFIX
 from proot_distro.guestfile import read_guest_bytes
 from proot_distro.paths import container_rootfs
@@ -218,6 +219,21 @@ _QEMU_PKGS = {
 }
 
 
+def resolve_proot_bin() -> str:
+    """Return the validated absolute Proot path or raise a typed failure."""
+    override = os.environ.get("PD_PROOT_BIN")
+    if override:
+        if not os.path.isfile(override) or not os.access(override, os.X_OK):
+            raise OperationFailure(
+                f"PD_PROOT_BIN '{override}' is not found or not executable."
+            )
+        return os.path.abspath(override)
+    found = shutil.which("proot")
+    if not found:
+        raise OperationFailure("proot utility does not exist on your system.")
+    return os.path.abspath(found)
+
+
 def get_proot_bin() -> str:
     """Return the absolute path of the proot executable, or exit.
 
@@ -240,18 +256,56 @@ def get_proot_bin() -> str:
     here has already passed cli.ensure_proot_installed(), so the exit is
     a backstop, not the ordinary "proot is missing" report.
     """
-    override = os.environ.get("PD_PROOT_BIN")
-    if override:
-        if not os.path.isfile(override) or not os.access(override, os.X_OK):
-            crit_error(f"PD_PROOT_BIN '{override}' is not found or not "
-                       f"executable.")
-            sys.exit(1)
-        return os.path.abspath(override)
-    found = shutil.which("proot")
-    if not found:
-        crit_error("proot utility does not exist on your system.")
+    try:
+        return resolve_proot_bin()
+    except OperationFailure as exc:
+        crit_error(str(exc))
         sys.exit(1)
-    return os.path.abspath(found)
+
+
+def resolve_emulator_args(
+    dist_arch: str, device_arch: str, emulator_override: str = ""
+) -> list:
+    """Return validated emulator arguments or raise a typed failure."""
+    if emulator_override:
+        emu_path = emulator_override
+        if not os.path.isfile(emu_path) or not os.access(emu_path, os.X_OK):
+            raise OperationFailure(
+                f"emulator '{emu_path}' is not found or not executable."
+            )
+    else:
+        if dist_arch == device_arch:
+            return []
+
+        if dist_arch == "arm" and device_arch == "aarch64" and supports_32bit():
+            return []
+        if dist_arch == "i686" and device_arch == "x86_64":
+            return []
+
+        bin_name = _QEMU_BIN_NAMES.get(dist_arch, "")
+        if not bin_name:
+            raise OperationFailure(
+                f"unsupported architecture '{dist_arch}'. Valid values are: "
+                "aarch64, arm, i686, riscv64, x86_64."
+            )
+
+        emu_path = shutil.which(bin_name) or ""
+        if not emu_path:
+            pkg = _QEMU_PKGS.get(dist_arch, f"qemu-user-{dist_arch}")
+            raise OperationFailure(
+                f"selected container requires emulator package '{pkg}' "
+                "which is not installed."
+            )
+
+    args = ["-q", os.path.abspath(emu_path)]
+    for path in (
+        "/apex", "/linkerconfig/ld.config.txt",
+        f"{TERMUX_PREFIX}", "/system", "/vendor",
+        "/plat_property_contexts", "/property_contexts",
+    ):
+        if os.path.exists(path):
+            args += [f"--bind={path}"]
+    return args
 
 
 def get_emulator_args(
@@ -274,42 +328,10 @@ def get_emulator_args(
     while the cwd still means what the user meant by it, the answer names
     the file this checked whatever proot's cwd is by then.
     """
-    if emulator_override:
-        emu_path = emulator_override
-        if not os.path.isfile(emu_path) or not os.access(emu_path, os.X_OK):
-            crit_error(f"emulator '{emu_path}' is not found or not executable.")
-            sys.exit(1)
-    else:
-        if dist_arch == device_arch:
-            return []
-
-        # 64-bit host can run 32-bit guest natively.
-        if dist_arch == "arm" and device_arch == "aarch64" and supports_32bit():
-            return []
-        if dist_arch == "i686" and device_arch == "x86_64":
-            return []
-
-        bin_name = _QEMU_BIN_NAMES.get(dist_arch, "")
-        if not bin_name:
-            crit_error(f"unsupported architecture '{dist_arch}'. "
-                       f"Valid values are: aarch64, arm, i686, riscv64, "
-                       f"x86_64.")
-            sys.exit(1)
-
-        emu_path = shutil.which(bin_name) or ""
-        if not emu_path:
-            pkg = _QEMU_PKGS.get(dist_arch, f"qemu-user-{dist_arch}")
-            crit_error(f"selected container requires emulator package "
-                       f"'{pkg}' which is not installed.")
-            sys.exit(1)
-
-    args = ["-q", os.path.abspath(emu_path)]
-    # Extra bindings needed for QEMU to locate Android system libraries.
-    for path in (
-        "/apex", "/linkerconfig/ld.config.txt",
-        f"{TERMUX_PREFIX}", "/system", "/vendor",
-        "/plat_property_contexts", "/property_contexts",
-    ):
-        if os.path.exists(path):
-            args += [f"--bind={path}"]
-    return args
+    try:
+        return resolve_emulator_args(
+            dist_arch, device_arch, emulator_override
+        )
+    except OperationFailure as exc:
+        crit_error(str(exc))
+        sys.exit(1)

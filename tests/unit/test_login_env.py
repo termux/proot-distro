@@ -3,6 +3,7 @@
 
 import os
 import shutil
+import subprocess
 
 import pytest
 
@@ -97,6 +98,7 @@ def test_identity_pairs_unusable_image_ref(builders, ref):
     "../x:y",                # not a digest
     "sha256",                # no hex half
     "sha256:zz",             # not hex
+    _DIGEST + "\n",          # `$` matched before a trailing newline
 ])
 def test_identity_pairs_unusable_image_id(builders, digest):
     builders.make_container("box", manifest=_identity_manifest(digest=digest))
@@ -185,6 +187,26 @@ def test_inject_profile_drops_malformed_key(tmp_path):
     assert "BAD KEY" not in content
     assert "EVIL;rm" not in content
     assert "export GOOD='z'" in content
+
+
+def test_inject_profile_drops_a_key_ending_in_a_newline(builders, tmp_path):
+    # `$` matches before a trailing newline too: an image's Env entry
+    # "EVIL\n=x" was written as `export EVIL` and then `='x'`, a line of
+    # its own that every login shell ran as a command.
+    builders.make_container("box", manifest=builders.simple_image_manifest(
+        env=["EVIL\n=x", "GOOD=z"],
+    ))
+    root = _profile_dir(tmp_path)
+    login_env.inject_termux_profile(
+        str(root), dict(login_env.image_env_pairs("box"))
+    )
+    snippet = root / "etc" / "profile.d" / "termux-profile.sh"
+    content = snippet.read_text()
+    assert "EVIL" not in content
+    assert "export GOOD='z'" in content
+    sourced = subprocess.run(["sh", "-c", '. "$1"', "sh", str(snippet)],
+                             capture_output=True, text=True)
+    assert (sourced.returncode, sourced.stderr) == (0, "")
 
 
 def test_inject_profile_skips_session_and_proot_vars(tmp_path):

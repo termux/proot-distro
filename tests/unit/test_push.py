@@ -1,4 +1,4 @@
-# Tests for proot_distro.helpers.docker.push — that registry uploads handle
+# Tests for proot_distro.operations.push — that registry uploads handle
 # HTTP errors the same way as the install/pull path: transient failures (5xx)
 # are retried via the shared retry_http policy, while deterministic ones (4xx)
 # fail fast. The opener is mocked; no network.
@@ -10,11 +10,13 @@ import os
 
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 
 from proot_distro.helpers import download
-from proot_distro.helpers.docker import push
+from proot_distro.operation_errors import IntegrityFailure
+from proot_distro.operations import push
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +147,51 @@ def test_put_manifest_retries_then_returns_digest(monkeypatch):
     )
     assert digest == "sha256:dd"
     assert len(calls) == 2
+
+
+# ----- _check_answer --------------------------------------------------------
+
+_SENT = "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize("answer", [
+    _SENT,
+    "",                         # the header is the registry's to leave out
+    f" {_SENT}\t",              # the whitespace HTTP allows around a value
+])
+def test_an_answer_naming_the_manifest_sent_is_accepted(answer):
+    push._check_answer(answer, _SENT, "reg.example/me/app:1")
+
+
+@pytest.mark.parametrize("answer", [
+    "sha256:" + "b" * 64,       # another manifest
+    "sha256:" + "A" * 64,       # not the spelling the digest grammar allows
+    "sha512:" + "a" * 128,      # an algorithm the manifest was not hashed with
+])
+def test_an_answer_naming_another_digest_is_refused_and_named(answer):
+    with pytest.raises(IntegrityFailure) as exc:
+        push._check_answer(answer, _SENT, "reg.example/me/app:1")
+    text = str(exc.value)
+    assert f"the digest {answer}," in text
+    assert _SENT in text
+    assert "reg.example/me/app:1" in text
+
+
+@pytest.mark.parametrize("answer", [
+    "\x1b]0;pwned\x07",          # a terminal title
+    "sha256:aa\x9b2J",           # a C1 CSI after a digest's start
+    "sha256:aa\u202e",           # a right-to-left override
+    "sha256:" + "a" * 129,       # longer than any digest
+    "../sha256:" + "a" * 64,     # not the grammar
+    "md5:",                      # no encoded part
+])
+def test_a_malformed_answer_is_refused_and_never_repeated(answer):
+    with pytest.raises(IntegrityFailure) as exc:
+        push._check_answer(answer, _SENT, "reg.example/me/app:1")
+    text = str(exc.value)
+    assert "a malformed digest" in text
+    assert answer.strip() not in text
+    assert all(char.isprintable() for char in text)
 
 
 # ----- _upload_blob_bytes -------------------------------------------------
@@ -299,7 +346,104 @@ def test_push_refuses_a_malformed_cached_manifest(monkeypatch, manifest):
     monkeypatch.setattr(push, "load_manifest_cache",
                         lambda ref, arch: (manifest, "me/app", {}))
     with pytest.raises(RuntimeError):
-        push.push_image("reg.example/me/app:latest", "x86_64")
+        push._push_registry_image("reg.example/me/app:latest", "x86_64")
+
+
+@pytest.mark.parametrize("media", [
+    ["a"],                                          # a list: a TypeError
+    {"type": "x"},                                  # an object
+    5,                                              # sent as "5"
+    None,
+    "",
+    "x\r\nX-Injected: 1",                           # a header of its own
+    "application/vnd.oci.image.index.v1+json",      # not one manifest
+    "text/plain",
+])
+def test_push_refuses_a_cached_manifest_media_type_it_cannot_send(
+        monkeypatch, media):
+    # The media type is the Content-Type of the manifest upload. It comes
+    # from the manifest cache, which a container can write to on Termux,
+    # and was sent as it was: a list ended `push` in a TypeError
+    # traceback, a number went out as the header. It is refused now,
+    # before anything goes to the registry.
+    manifest = {
+        "mediaType": media,
+        "config": {"digest": "sha256:" + "c" * 64},
+        "layers": [{"digest": "sha256:" + "a" * 64}],
+    }
+    monkeypatch.setattr(push, "load_manifest_cache",
+                        lambda ref, arch: (manifest, "me/app", {}))
+    monkeypatch.setattr(push, "blob_present", lambda d: True)
+
+    def no_network(*a, **k):
+        raise AssertionError("the registry was contacted")
+
+    monkeypatch.setattr(push, "get_auth_token", no_network)
+    with pytest.raises(IntegrityFailure) as exc:
+        push._push_registry_image("reg.example/me/app:latest", "x86_64")
+    text = str(exc.value)
+    assert "unsupported media type" in text
+    assert all(char.isprintable() for char in text)
+
+
+@pytest.mark.parametrize("media", [
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+    None,                                           # left out: OCI
+])
+def test_push_sends_an_image_manifest_under_its_own_media_type(
+        monkeypatch, tmp_path, media):
+    _pushable(monkeypatch, tmp_path)
+    manifest, _repo, _config = push.load_manifest_cache("", "")
+    if media is None:
+        del manifest["mediaType"]
+    else:
+        manifest["mediaType"] = media
+    sent = {}
+
+    def fake_put(repo, tag, body, media_type, token, base, insecure=False):
+        sent["media"] = media_type
+        return ""
+
+    monkeypatch.setattr(push, "_put_manifest", fake_put)
+    push._push_registry_image("reg.example/me/app:1", "x86_64")
+    assert sent["media"] == (
+        media or "application/vnd.oci.image.manifest.v1+json")
+
+
+def test_cli_push_reports_an_unsendable_media_type_without_a_traceback(
+        builders, monkeypatch, capsys):
+    # Through the real caches and the real manifest upload, the registry
+    # alone stubbed out: the CLI used to die in the TypeError that
+    # http.client raised while building the request.
+    from proot_distro.arch import get_device_cpu_arch
+    from proot_distro.commands.push import command_push
+    from proot_distro.helpers.docker.cache import save_manifest_cache
+    from proot_distro.helpers.docker.media import canonical_json
+
+    ref = "reg.invalid/me/app:1"
+    digest, size, diff_id = builders.seed_cached_layer(
+        [{"name": "a", "type": "file", "data": b"x"}])
+    config = {"rootfs": {"type": "layers", "diff_ids": [diff_id]}}
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": ["application/vnd.oci.image.manifest.v1+json"],
+        "config": {"digest": "sha256:" + hashlib.sha256(
+            canonical_json(config)).hexdigest()},
+        "layers": [{"digest": digest, "size": size}],
+    }
+    save_manifest_cache(ref, get_device_cpu_arch(), manifest, "me/app",
+                        config)
+    monkeypatch.setattr(push, "get_auth_token",
+                        lambda *a, **k: ("", "https://reg.invalid"))
+    monkeypatch.setattr(push, "_blob_exists", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        command_push(SimpleNamespace(
+            image_ref=ref, override_arch=None, quiet=True,
+            allow_insecure=False,
+        ))
+    assert exc.value.code == 1
+    assert "unsupported media type" in capsys.readouterr().err
 
 
 def test_push_image_threads_base_and_insecure(monkeypatch):
@@ -339,11 +483,13 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
     def fake_put_manifest(repo, ref, body, media, token, base, insecure=False):
         captured["manifest_base"] = base
         captured["manifest_insecure"] = insecure
-        return "sha256:dd"
+        captured["manifest_body"] = body
+        # The digest of what was sent, as an honest registry answers.
+        return "sha256:" + hashlib.sha256(body).hexdigest()
 
     monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
 
-    result = push.push_image(
+    result = push._push_registry_image(
         "reg.example/me/app:latest", "x86_64", insecure=True
     )
 
@@ -352,7 +498,8 @@ def test_push_image_threads_base_and_insecure(monkeypatch):
     assert captured["blob_insecure"] is True
     assert captured["manifest_base"] == "http://reg.example"
     assert captured["manifest_insecure"] is True
-    assert result["manifest_digest"] == "sha256:dd"
+    assert result["manifest_digest"] == (
+        "sha256:" + hashlib.sha256(captured["manifest_body"]).hexdigest())
 
 
 def test_push_asks_for_a_credential_that_can_push(monkeypatch, tmp_path):
@@ -367,7 +514,7 @@ def test_push_asks_for_a_credential_that_can_push(monkeypatch, tmp_path):
         return "Bearer TKN", _BASE
 
     monkeypatch.setattr(push, "get_auth_token", fake_auth)
-    push.push_image("reg.example/me/app:1", "x86_64")
+    push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert seen == {"repo": "me/app", "registry": "reg.example",
                     "actions": "pull,push"}
 
@@ -397,7 +544,7 @@ def test_every_push_request_carries_the_resolved_authorization(
         return _FakeResp(201)
 
     _patch_opener(monkeypatch, fake)
-    push.push_image("reg.example/me/app:1", "x86_64")
+    push._push_registry_image("reg.example/me/app:1", "x86_64")
     # Layer and config: probe, upload session, upload. Then the manifest.
     assert [m for m, _a in sent] == ["HEAD", "POST", "PUT"] * 2 + ["PUT"]
     assert all(a == auth for _m, a in sent)
@@ -479,7 +626,7 @@ def test_push_image_keeps_docker_hub_verified(monkeypatch, ref, registry,
     monkeypatch.setattr(push, "get_auth_token", fake_auth)
     monkeypatch.setattr(push, "_blob_exists", fake_exists)
     monkeypatch.setattr(push, "_put_manifest", fake_put)
-    push.push_image(ref, "x86_64", insecure=True)
+    push._push_registry_image(ref, "x86_64", insecure=True)
     assert seen and all(flag is expected for flag in seen)
 
 
@@ -515,13 +662,13 @@ def test_push_image_uploads_to_the_references_repository(monkeypatch):
     def fake_put_manifest(repo, ref, body, media, token, base,
                           insecure=False):
         repos.append(("manifest", repo, ref))
-        return "sha256:dd"
+        return ""
 
     monkeypatch.setattr(push, "get_auth_token", fake_auth)
     monkeypatch.setattr(push, "_blob_exists", fake_blob_exists)
     monkeypatch.setattr(push, "_put_manifest", fake_put_manifest)
 
-    result = push.push_image("reg.example/me/app:1", "x86_64")
+    result = push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert {entry[1] for entry in repos} == {"me/app"}
     assert ("manifest", "me/app", "1") in repos
     assert result["repo"] == "me/app"
@@ -533,7 +680,7 @@ def test_push_image_refuses_a_digest_before_reading_the_cache(monkeypatch):
 
     monkeypatch.setattr(push, "load_manifest_cache", no_cache)
     with pytest.raises(RuntimeError, match="use a tag"):
-        push.push_image("reg.example/me/app@sha256:" + "a" * 64, "x86_64")
+        push._push_registry_image("reg.example/me/app@sha256:" + "a" * 64, "x86_64")
 
 
 # ----- 429 Too Many Requests ----------------------------------------------
@@ -569,7 +716,8 @@ def _pushable(monkeypatch, tmp_path):
     monkeypatch.setattr(push, "_blob_exists", lambda *a, **k: False)
     monkeypatch.setattr(push, "_upload_blob_fd", lambda *a, **k: None)
     monkeypatch.setattr(push, "_upload_blob_bytes", lambda *a, **k: None)
-    monkeypatch.setattr(push, "_put_manifest", lambda *a, **k: "sha256:dd")
+    # A registry that answers the manifest upload with no digest header.
+    monkeypatch.setattr(push, "_put_manifest", lambda *a, **k: "")
 
 
 def _refuse(*a, **k):
@@ -587,7 +735,7 @@ def test_a_rate_limited_push_says_so_at_every_stage(monkeypatch, tmp_path,
     _pushable(monkeypatch, tmp_path)
     monkeypatch.setattr(push, stage, _refuse)
     with pytest.raises(RuntimeError) as exc:
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
     text = str(exc.value)
     assert "Registry 'reg.example' refused to accept" in text
     assert "HTTP 429" in text
@@ -607,7 +755,7 @@ def test_a_spent_quota_on_a_push_is_not_retried(monkeypatch, tmp_path):
 
     _patch_opener(monkeypatch, refuse)
     with pytest.raises(RuntimeError) as exc:
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert "HTTP 429" in str(exc.value)
     assert len(calls) == 1
 
@@ -620,7 +768,7 @@ def test_other_http_errors_still_reach_the_command(monkeypatch, tmp_path):
 
     monkeypatch.setattr(push, "_put_manifest", bad_request)
     with pytest.raises(urllib.error.HTTPError):
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
 
 
 def test_auth_refusals_keep_their_own_message(monkeypatch, tmp_path):
@@ -631,7 +779,7 @@ def test_auth_refusals_keep_their_own_message(monkeypatch, tmp_path):
 
     monkeypatch.setattr(push, "_put_manifest", denied)
     with pytest.raises(RuntimeError) as exc:
-        push.push_image("reg.example/me/app:1", "x86_64")
+        push._push_registry_image("reg.example/me/app:1", "x86_64")
     assert "Push denied" in str(exc.value)
 
 

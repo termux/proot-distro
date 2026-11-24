@@ -17,6 +17,9 @@
 # the inode.
 
 import os
+import signal
+import subprocess
+import sys
 import tarfile
 from types import SimpleNamespace
 
@@ -215,18 +218,28 @@ def test_run_hands_proot_a_relative_root_and_chdirs_into_the_pin(
                    for a in seen["args"])
 
     # The hook is what makes "." mean the pinned inode. It runs in the
-    # forked child in production; here it runs in place, with the
-    # working directory restored from a descriptor afterwards.
+    # forked child, and it also ties that child to this process
+    # (PR_SET_PDEATHSIG), which must not be done to the test process
+    # itself, so it runs in a child here too: one that execs and then
+    # reports where it started and what its parent's death sends it.
+    # Both have to survive an exec to be any use to proot.
     hook = seen["preexec"]
     assert hook is not None
-    saved = os.open(os.curdir, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        hook()
-        assert (os.stat(os.curdir).st_ino
-                == os.fstat(stage.rootfs_fd).st_ino)
-    finally:
-        os.fchdir(saved)
-        os.close(saved)
+    monkeypatch.undo()  # the real Popen again, for the probe below
+    probe = (
+        "import ctypes, os\n"
+        "sig = ctypes.c_int()\n"
+        "ctypes.CDLL(None).prctl(2, ctypes.byref(sig), 0, 0, 0)\n"
+        "print(os.stat(os.curdir).st_ino, sig.value)\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", probe], preexec_fn=hook,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    inode, death_signal = map(int, out.stdout.split())
+    assert inode == os.fstat(stage.rootfs_fd).st_ino
+    assert death_signal == signal.SIGQUIT
 
 
 # --- the scratch root the stage directories are made under -----------------

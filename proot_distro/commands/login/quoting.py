@@ -17,29 +17,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
+"""Compatibility import for shared session command quoting."""
 
-# Architecture: POSIX shell double-quoting for --get-proot-cmd output.
-# We keep this isolated from shlex.quote because shlex prefers single
-# quotes and we want double quotes so users can read the produced
-# command and tweak variable references.
+from proot_distro.session_quoting import dq
 
-
-_SAFE_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "0123456789"
-    "_-+./:@="
-)
-
-
-def dq(s: str) -> str:
-    """Return s in double quotes for a POSIX shell, quoting only when needed."""
-    if s and all(c in _SAFE_CHARS for c in s):
-        return s
-    escaped = (
-        s.replace("\\", "\\\\")
-         .replace('"', '\\"')
-         .replace("$", "\\$")
-         .replace("`", "\\`")
-    )
-    return f'"{escaped}"'
+__all__ = ("dq",)

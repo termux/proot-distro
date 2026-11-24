@@ -18,27 +18,36 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: All global constants and path variables for proot-distro.
+# Architecture: Default constants and path variables for proot-distro.
 # On Termux/Android, paths are rooted under TERMUX__PREFIX (env var). On a
 # regular Linux host, XDG base directories (~/.local/share, ~/.cache) are
 # used instead. IS_TERMUX is computed once at import time and drives both
 # path selection and runtime behaviour (e.g. isolated-mode default).
 
+import functools
 import os
 import platform
-from importlib.metadata import version, PackageNotFoundError
 
 PROGRAM_AUTHOR = "Termux (@sylirre)"
 PROGRAM_NAME = "proot-distro"
 CANONICAL_PROGRAM_NAME = "PRoot-Distro"
 
-try:
-    PROGRAM_VERSION = version(PROGRAM_NAME)
-except PackageNotFoundError:
-    PROGRAM_VERSION = "rolling"
 
-os.umask(0o022)
+@functools.lru_cache(maxsize=None)
+def program_version() -> str:
+    """The installed distribution's version, or "rolling" from a checkout.
 
+    Looked up on first use rather than at import: importlib.metadata and
+    the distribution scan behind it were the largest single cost of
+    importing this module, which every API worker and CLI command does,
+    while only the help screen and an HTTP User-Agent need the answer.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(PROGRAM_NAME)
+    except PackageNotFoundError:
+        return "rolling"
 
 # ---------------------------------------------------------------------------
 # Termux / Android detection
@@ -72,7 +81,26 @@ IS_TERMUX: bool = _detect_termux()
 # Paths
 # ---------------------------------------------------------------------------
 
-if IS_TERMUX:
+# A configured API instance starts each stateful operation in a fresh worker
+# and supplies these private overrides before that interpreter imports the
+# package. Keeping them private prevents the CLI from acquiring another set
+# of user-facing storage environment variables while allowing independent
+# API instances to reuse the existing descriptor-safe state layer unchanged.
+_API_RUNTIME_DIR = os.environ.get("_PROOT_DISTRO_API_RUNTIME_DIR")
+_API_CACHE_DIR = os.environ.get("_PROOT_DISTRO_API_CACHE_DIR")
+_API_PATHS_VALID = bool(
+    _API_RUNTIME_DIR and _API_CACHE_DIR
+    and os.path.isabs(_API_RUNTIME_DIR)
+    and os.path.isabs(_API_CACHE_DIR)
+    and _API_RUNTIME_DIR != os.path.dirname(_API_RUNTIME_DIR)
+    and _API_CACHE_DIR != os.path.dirname(_API_CACHE_DIR)
+    and _API_RUNTIME_DIR != _API_CACHE_DIR
+)
+
+if _API_PATHS_VALID:
+    RUNTIME_DIR = _API_RUNTIME_DIR
+    BASE_CACHE_DIR = _API_CACHE_DIR
+elif IS_TERMUX:
     RUNTIME_DIR = os.path.join(TERMUX_PREFIX, "var", "lib", PROGRAM_NAME)
     BASE_CACHE_DIR = os.path.join(RUNTIME_DIR, "cache")
 else:

@@ -54,6 +54,7 @@ import tarfile
 import time
 import urllib.parse
 
+from proot_distro.interrupts import open_tar_member
 from proot_distro.message import log_info
 from proot_distro.helpers.download import (
     NETWORK_ERRORS, declared_length, http_opener, require_complete_body,
@@ -893,10 +894,13 @@ def _extract_tar_into_dest(fobj, dest, file_map, uid, gid, spool, src):
                         "mtime": int(m.mtime),
                     }
                 elif m.isreg():
-                    fobj_m = tf.extractfile(m)
+                    fobj_m = open_tar_member(tf, m)
                     if fobj_m is None:
                         continue
-                    spooled, _written = spool.stream(fobj_m)
+                    try:
+                        spooled, _written = spool.stream(fobj_m)
+                    finally:
+                        fobj_m.close()
                     _spool_entry(
                         file_map, arc, spool, spooled,
                         stat.S_IMODE(m.mode) or 0o644, uid, gid,

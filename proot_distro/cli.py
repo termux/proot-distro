@@ -83,10 +83,6 @@ _COMMAND_HANDLERS = {
 }
 
 
-def _sigquit_to_keyboard_interrupt(_signum, _frame):
-    raise KeyboardInterrupt()
-
-
 def _refuse_nested_proot() -> None:
     """Exit when we're running inside a proot — nested proot is unsupported."""
     err_message = (
@@ -249,13 +245,23 @@ def main() -> None:
     Validates the runtime environment, parses arguments, and dispatches
     to the chosen command's handler.
     """
+    # The standalone utility has historically used this umask. Keep that
+    # process policy at the CLI boundary: importing the programmatic API
+    # must not alter the embedding application's umask.
+    os.umask(0o022)
+
     # Route SIGQUIT (Ctrl-\) through KeyboardInterrupt so every
     # `except KeyboardInterrupt` block in the codebase handles it the
     # same as SIGINT (Ctrl-C). The default disposition of SIGQUIT is
     # to terminate the process with a core dump, which would skip
     # progress-bar cleanup, partial-file removal, and "Aborted by
     # user" messaging that the Ctrl-C handlers already provide.
-    signal.signal(signal.SIGQUIT, _sigquit_to_keyboard_interrupt)
+    #
+    # The handler is Python's own default_int_handler, the one SIGINT
+    # has, rather than a function of ours: it is the handler
+    # interrupts.defer_interrupts() holds back where CPython would lose
+    # the KeyboardInterrupt, and the only one it swaps.
+    signal.signal(signal.SIGQUIT, signal.default_int_handler)
 
     _refuse_nested_proot()
 

@@ -123,6 +123,9 @@ def test_setup_refuses_a_symlinked_sys_empty(env):
     assert os.listdir(str(outside)) == []
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_setup_drops_a_hardlink_to_a_host_file(env):
     # A hardlink is a regular file, so the type test alone kept it and
     # every later session treated the victim's inode as its own fake
@@ -181,6 +184,9 @@ def _stale(sd, name="stat"):
     (sd / name).write_text("stale\n")
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_refresh_does_not_write_through_a_hardlink(env):
     container, rootfs, outside = env
     sysdata.setup_fake_sysdata(str(rootfs))
@@ -199,6 +205,9 @@ def test_refresh_does_not_write_through_a_hardlink(env):
         sysdata.host_cpu_ids())
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_refresh_does_not_trust_a_hardlink_with_the_right_content(env):
     # The content comparison must not turn a linked host file into the
     # container's own: a victim that already reads as the fake text is
@@ -339,6 +348,9 @@ def test_bindings_skip_a_planted_symlink(env, monkeypatch):
     assert str(sd / "stat") in sources
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_bindings_skip_a_planted_hardlink(env, monkeypatch):
     # setup_fake_sysdata() is what normally drops one, but the binding
     # list is the half that decides what proot mounts, so it makes the

@@ -129,6 +129,9 @@ def test_roundtrip_sealed_subtree_is_archived(tmp_path, builders):
     assert "sealed/rootfs/sealed/inside.txt" in names
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_roundtrip_hardlinked_files_share_one_copy(tmp_path, builders):
     # tarfile's (dev, ino) table is what turns a second name for a file
     # already in the archive into a link member instead of a second copy,

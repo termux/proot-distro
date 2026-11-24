@@ -102,6 +102,42 @@ def test_run_refuses_a_symlinked_manifest(planted, capsys):
     assert "/bin/planted" not in capsys.readouterr().out
 
 
+def test_run_reads_manifest_from_pinned_container_after_name_swap(
+    builders, capsys, monkeypatch,
+):
+    """A concurrent session cannot replace the command after the pin."""
+    import proot_distro.operations.session_prepare as prepare_service
+
+    builders.make_container("box", arch=HOST_ARCH, manifest={
+        "image_config": {"config": {"Cmd": ["/bin/real-command"]}},
+    })
+    builders.make_container("standin", arch=HOST_ARCH, manifest={
+        "image_config": {"config": {"Cmd": ["/bin/planted-command"]}},
+    })
+    real_detect = prepare_service._detect_dist_type
+
+    def detect_then_swap(rootfs, rootfs_fd=None):
+        result = real_detect(rootfs, rootfs_fd)
+        target = paths.container_dir("box")
+        os.rename(target, target + ".moved")
+        os.symlink(paths.container_dir("standin"), target)
+        return result
+
+    monkeypatch.setattr(
+        prepare_service, "_detect_dist_type", detect_then_swap
+    )
+    args = _login_args("box")
+    args.run_args = []
+
+    with pytest.raises(SystemExit) as exc:
+        command_run(args)
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "/bin/real-command" in output
+    assert "/bin/planted-command" not in output
+
+
 def test_a_fifo_manifest_does_not_block(fifo):
     # The open would wait for a writer that never comes; open_regular_at
     # returns instead and the fstat refuses the type.
@@ -128,8 +164,9 @@ def test_a_non_object_image_config_is_no_image_config(builders, image_config):
     })
     assert paths.container_image_config("box") == {}
 
-    from proot_distro.commands.run import _read_image_config
-    assert _read_image_config("box") == {}
+    assert paths.manifest_image_config(
+        paths.read_container_manifest("box")
+    ) == {}
 
     from proot_distro.commands.login.env import read_manifest_env
     assert read_manifest_env("box") == []

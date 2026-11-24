@@ -37,13 +37,14 @@ import hashlib
 import json
 import os
 import re
-import sys
 import tarfile
 
 from proot_distro.atomic import atomic_replace
 from proot_distro.compress import require_read_support
-from proot_distro.message import log_info
-from proot_distro.progress import clear_bar, progress_active
+from proot_distro.interrupts import open_tar_member
+from proot_distro.operation_errors import IntegrityFailure
+from proot_distro.operations.context import OperationContext
+from proot_distro.progress import clear_bar
 from proot_distro.helpers.docker import (
     ARCH_TO_DOCKER, DOCKER_TO_ARCH, apply_layer, layer_cache_path,
     open_verified_layer, require_data_digest, split_digest,
@@ -81,9 +82,11 @@ _MAX_OCI_MEMBERS = 16384
 # validate_digest() has already accepted. Anything else in the archive
 # is unaddressable here, so it is not worth a TarInfo -- which is what
 # keeps a member list this reader cannot use from costing memory.
+# Matched with fullmatch(), as the digest is: `$` also matches before a
+# trailing newline, which no name _oci_blob_path() builds can end in.
 _OCI_INDEX_NAME = "index.json"
 _OCI_BLOB_RE = re.compile(
-    r"^blobs/[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*/[A-Fa-f0-9]+$"
+    r"blobs/[A-Za-z0-9]+(?:[+_.\-][A-Za-z0-9]+)*/[A-Fa-f0-9]+"
 )
 
 # Top-level directory names that signal a rootfs filesystem root.
@@ -151,15 +154,19 @@ def _oci_open_member(tf, member_map, path):
     """Return a readable file object for one regular member of the archive."""
     member = member_map.get(path)
     if member is None:
-        raise RuntimeError(f"OCI archive is missing required file: {path}")
+        raise IntegrityFailure(f"OCI archive is missing required file: {path}")
     if not member.isreg():
         # Reject hardlinks and symlinks: Python's extractfile() follows them
         # within the archive, letting a crafted outer tar redirect a read to
         # an unrelated member (e.g. a layer blob used as index.json).
-        raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
-    fobj = tf.extractfile(member)
+        raise IntegrityFailure(
+            f"OCI archive entry is not a regular file: {path}"
+        )
+    fobj = open_tar_member(tf, member)
     if fobj is None:
-        raise RuntimeError(f"OCI archive entry is not a regular file: {path}")
+        raise IntegrityFailure(
+            f"OCI archive entry is not a regular file: {path}"
+        )
     return fobj
 
 
@@ -177,7 +184,7 @@ def _oci_read_capped(tf, member_map, path) -> bytes:
     finally:
         fobj.close()
     if len(data) > _MAX_JSON_BYTES:
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"OCI archive entry '{path}' is larger than "
             f"{_MAX_JSON_BYTES} bytes; refusing to read it."
         )
@@ -196,12 +203,12 @@ def _oci_json_object(data: bytes, what: str) -> dict:
     try:
         payload = json.loads(data)
     except (ValueError, UnicodeDecodeError) as exc:
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"{what} is not valid JSON. The archive is corrupt or is not "
             f"an OCI image."
         ) from exc
     if not isinstance(payload, dict):
-        raise RuntimeError(
+        raise IntegrityFailure(
             f"{what} is not a JSON object. The archive is corrupt or is "
             f"not an OCI image."
         )
@@ -313,9 +320,9 @@ def _oci_cache_layer(tf, member_map, digest):
     """
     blob_path = _oci_blob_path(digest)
     _algo, expected_hex = split_digest(digest)
-    fobj = _oci_open_member(tf, member_map, blob_path)
     cache_path = layer_cache_path(digest)
     hasher = hashlib.sha256()
+    fobj = _oci_open_member(tf, member_map, blob_path)
     try:
         # atomic_replace removes the temporary on any exception, so a
         # mismatch leaves nothing behind for a later pull to pick up.
@@ -346,7 +353,7 @@ def _oci_cache_layer(tf, member_map, digest):
     return fd
 
 
-def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
+def _extract_oci(tf, member_map, rootfs_fd, dist_arch, context):
     """Install from an OCI image layout (tf already open).
 
     Reads index.json, selects the manifest for *dist_arch*, caches each
@@ -413,16 +420,25 @@ def _extract_oci(tf, member_map, rootfs_fd, dist_arch):
         layer_fd = open_verified_layer(digest)
 
         if layer_fd is not None:
-            log_info(f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
-                     f"skipping.")
+            context.info(
+                f"{short_id}: Layer {i + 1}/{n_layers} already cached, "
+                f"skipping.",
+                phase="install", resource=digest,
+            )
         else:
             # Absent, or present with content that no longer hashes to its
             # digest — either way the archive in hand is the better copy.
-            log_info(f"{short_id}: Caching layer "
-                     f"{i + 1}/{n_layers}{size_str}...")
+            context.info(
+                f"{short_id}: Caching layer "
+                f"{i + 1}/{n_layers}{size_str}...",
+                phase="install", resource=digest,
+            )
             layer_fd = _oci_cache_layer(tf, member_map, digest)
 
-        log_info(f"{short_id}: Applying layer {i + 1}/{n_layers}...")
+        context.info(
+            f"{short_id}: Applying layer {i + 1}/{n_layers}...",
+            phase="install", resource=digest,
+        )
         try:
             apply_layer(layer_fd, rootfs_fd, digest=digest)
         finally:
@@ -478,13 +494,13 @@ def _index_oci_members(tf) -> dict:
                 f"entries; refusing to index it."
             )
         name = member.name
-        if name == _OCI_INDEX_NAME or _OCI_BLOB_RE.match(name):
+        if name == _OCI_INDEX_NAME or _OCI_BLOB_RE.fullmatch(name):
             member_map[name] = member
     return member_map
 
 
 def install_from_local_file(
-    archive_path: str, rootfs_fd: int, dist_arch: str
+    archive_path: str, rootfs_fd: int, dist_arch: str, context=None,
 ):
     """Open *archive_path*, detect its format, and extract into *rootfs_fd*.
 
@@ -497,6 +513,8 @@ def install_from_local_file(
     Detection uses a streaming probe that reads at most the first 500
     member headers — fast even on compressed multi-GB images.
     """
+    context = context if context is not None else OperationContext()
+
     # A zstd outer archive needs Python 3.14; without it the probe below
     # sees a corrupt tar and would report it as one.
     require_read_support(archive_path, f"archive '{archive_path}'")
@@ -519,14 +537,17 @@ def install_from_local_file(
         # OCI image layout: blobs are accessed by digest in arbitrary
         # order, so random access — and therefore an index — is required.
         with tarfile.open(archive_path, "r:*") as tf:
-            if progress_active():
-                log_info("Indexing OCI archive...")
-                sys.stderr.flush()
+            context.info(
+                "Indexing OCI archive...",
+                phase="install", resource=archive_path,
+            )
             try:
                 member_map = _index_oci_members(tf)
             finally:
                 clear_bar()
-            return _extract_oci(tf, member_map, rootfs_fd, dist_arch)
+            return _extract_oci(
+                tf, member_map, rootfs_fd, dist_arch, context
+            )
 
     strip = detect_strip_count(probe_names)
     extract_plain_tar(archive_path, strip, rootfs_fd)

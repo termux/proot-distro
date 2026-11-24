@@ -127,7 +127,7 @@ def test_sessions_parts_match_the_constant():
 import fcntl  # noqa: E402
 import json  # noqa: E402
 
-from proot_distro.commands import kill  # noqa: E402
+from proot_distro.operations import session_signals as kill  # noqa: E402
 
 
 def _plant(name, payload):

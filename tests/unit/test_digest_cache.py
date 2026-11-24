@@ -29,6 +29,9 @@ def test_validate_digest_accepts(digest):
     "sha256:../../x",     # traversal in hex part
     "sha256:dead/beef",   # separator in hex
     "sha 256:abcd",       # space in algo
+    "sha256:abcd\n",      # `$` matched before a trailing newline
+    "\nsha256:abcd",
+    "sha256:ab\ncd",
     "",
 ])
 def test_validate_digest_rejects(digest):
@@ -230,6 +233,7 @@ def test_record_string_fields_survive_an_entry_that_lies_about_them():
     assert record["arch"] == ""
     assert record["created"] == ""
     assert record["image_id"] == "ab" * 32
+    assert record["config_digest"] == "sha256:" + "ab" * 32
 
 
 # ---------------------------------------------------------------------------

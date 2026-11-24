@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+#
+# Proot-Distro - manage proot containers.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+
+"""Install a container and run a captured foreground command.
+
+The sample demonstrates a small container lifecycle:
+
+* install an OCI image, URL, or local rootfs archive;
+* inspect the command PRoot-Distro would prepare;
+* start a foreground login command with explicit environment and pipes;
+* collect bytes from stdout and stderr; and
+* optionally remove only the container installed by this invocation.
+
+The default command needs a POSIX shell in the guest. Place ``--`` before a
+custom command so its options are not interpreted by this script.
+
+Examples::
+
+    python samples/install_and_run.py alpine:3.21 sample-alpine --remove
+    python samples/install_and_run.py debian:stable sample-debian -- uname -a
+
+Installation and ``--remove`` modify the same state used by the CLI. Existing
+containers are never adopted or removed: if installation reports that the
+name already exists, the script exits without cleanup.
+"""
+
+import argparse
+from pathlib import Path
+import subprocess
+import sys
+from typing import List, Optional, Sequence
+
+# Make direct execution from a source checkout use that exact checkout. An
+# installed copy needs no adjustment because these samples are repository files.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from proot_distro.api import ProotDistro, ProotDistroError
+
+
+def _clean(text: str) -> str:
+    """Replace control characters in text that came from the container.
+
+    The inspected shell and working directory come from the guest's own
+    /etc/passwd, the image reference from the image, and an error can quote
+    either, or a registry's reply. Printed raw, an escape sequence there
+    could rewrite the terminal screen or title. The guest command's captured
+    output is printed as it is, as if the command were run here.
+    """
+    return "".join(
+        char if char.isprintable() else "?" for char in str(text)
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    """Build the parser for installation and process-control options."""
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("source", help="image reference, URL, or local archive")
+    parser.add_argument("name", help="name for the installed container")
+    parser.add_argument(
+        "--architecture",
+        help="requested image architecture, such as arm64 or amd64",
+    )
+    parser.add_argument(
+        "--startup-timeout",
+        type=float,
+        default=30.0,
+        help="maximum seconds for proot setup (default: 30)",
+    )
+    parser.add_argument(
+        "--command-timeout",
+        type=float,
+        default=60.0,
+        help="maximum seconds for the guest command (default: 60)",
+    )
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="remove the newly installed container before exiting",
+    )
+    return parser
+
+
+def _command(values: Sequence[str]) -> List[str]:
+    """Return the requested guest command, or the sample's default command."""
+    command = list(values)
+    # ``--`` belongs to this script's syntax; it is not part of the command
+    # that will run in the container.
+    if command and command[0] == "--":
+        command.pop(0)
+    if command:
+        return command
+    return [
+        "/bin/sh",
+        "-c",
+        "printf 'Hello from the PRoot-Distro API!\\n'; uname -m",
+    ]
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run the lifecycle while preventing raw API tracebacks."""
+    raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    # argparse.REMAINDER would also consume this script's options when users
+    # place them after the container name. Split explicitly so sample options
+    # continue to work before the conventional ``--`` command separator.
+    if "--" in raw_arguments:
+        separator = raw_arguments.index("--")
+        guest_command = raw_arguments[separator + 1:]
+        del raw_arguments[separator:]
+    else:
+        guest_command = []
+    args = _parser().parse_args(raw_arguments)
+    pd = None
+    installed = False
+    status = 0
+
+    try:
+        # The default facade shares state with the CLI. Set installed only
+        # after install() succeeds so cleanup never removes a pre-existing
+        # container that caused AlreadyExistsError.
+        pd = ProotDistro()
+        container = pd.install(
+            args.source,
+            name=args.name,
+            architecture=args.architecture,
+        )
+        installed = True
+        print(
+            f"Installed {container.name} from "
+            f"{_clean(container.image_reference or args.source)}."
+        )
+
+        command = _command(guest_command)
+        # Inspection prepares the launch description but does not start proot.
+        # It is useful for displaying or auditing the resolved guest command.
+        description = pd.inspect_start(
+            container.name,
+            command,
+            environment={"PD_API_SAMPLE": "1"},
+        )
+        print(
+            "Prepared guest command: "
+            f"{_clean(' '.join(description.inner_command))}"
+        )
+        print(f"Working directory: {_clean(description.work_dir)}")
+
+        # PIPE asks SessionProcess to capture bytes instead of inheriting this
+        # script's terminal. The context manager guarantees process-tree
+        # cleanup if communicate() fails or times out.
+        with pd.start(
+            container.name,
+            command,
+            environment={"PD_API_SAMPLE": "1"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startup_timeout=args.startup_timeout,
+        ) as process:
+            stdout, stderr = process.communicate(timeout=args.command_timeout)
+            returncode = process.returncode
+
+        if stdout:
+            print("stdout:")
+            print(stdout.decode("utf-8", "replace"), end="")
+        if stderr:
+            print("stderr:")
+            print(stderr.decode("utf-8", "replace"), end="")
+        if returncode:
+            print(
+                f"Guest command exited with status {returncode}.",
+                file=sys.stderr,
+            )
+            # Pass the guest's status on; a negative value is a signal.
+            status = 128 - returncode if returncode < 0 else returncode
+    except subprocess.TimeoutExpired:
+        # Leaving the SessionProcess context terminates and reaps the full
+        # tracked guest process tree, even on this timeout path.
+        print(
+            f"Guest command exceeded {args.command_timeout:g} seconds.",
+            file=sys.stderr,
+        )
+        status = 1
+    except ProotDistroError as exc:
+        operation = exc.operation or "operation"
+        print(f"{operation} failed: {_clean(exc)}", file=sys.stderr)
+        status = 1
+    except KeyboardInterrupt:
+        # The SessionProcess context has already stopped the guest tree.
+        print("Interrupted after PRoot-Distro cleanup.", file=sys.stderr)
+        status = 130
+    finally:
+        if installed and args.remove and pd is not None:
+            # Cleanup is deliberately limited to a container installed by this
+            # invocation. A failed install never reaches this branch.
+            try:
+                pd.remove_container(args.name)
+                print(f"Removed {args.name}.")
+            except ProotDistroError as exc:
+                operation = exc.operation or "cleanup"
+                print(
+                    f"{operation} failed during cleanup: {_clean(exc)}",
+                    file=sys.stderr,
+                )
+                status = 1
+    return status
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -18,11 +18,10 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Architecture: Lists active proot sessions reported by the session
-# registry (session.py). active_sessions() already prunes dead entries
-# and validates every field it hands back, so this module only formats
-# output. --quiet prints one PID per line (to stdout, for piping into
-# kill/xargs); the default renders a colored
+# Architecture: Lists immutable records from the shared session inventory.
+# The underlying registry prunes dead entries and validates every field, so
+# this module only formats output. --quiet prints one PID per line (for piping
+# into kill/xargs); the default renders a colored
 # PID/CONTAINER/TYPE/USER/UPTIME/COMMAND table to stderr, mirroring the
 # style of command_list.
 #
@@ -40,7 +39,7 @@ import time
 
 from proot_distro.constants import PROGRAM_NAME
 from proot_distro.message import C, msg, quote_path, terminal_width
-from proot_distro.session import active_sessions
+from proot_distro.operations import list_sessions
 
 # Fixed columns (everything except the trailing, space-filling COMMAND).
 _HEADERS = ("PID", "CONTAINER", "TYPE", "USER", "UPTIME", "COMMAND")
@@ -50,11 +49,11 @@ _GAP = 2
 def command_ps(args) -> None:
     """List every active container session (one row per live proot)."""
     quiet = getattr(args, "quiet", False)
-    sessions = active_sessions()
+    sessions = list_sessions()
 
     if quiet:
         for sess in sessions:
-            print(sess["pid"])
+            print(sess.pid)
         return
 
     msg()
@@ -67,15 +66,15 @@ def command_ps(args) -> None:
         return
 
     now = time.time()
-    any_detached = any(s["detach"] for s in sessions)
+    any_detached = any(session.detached for session in sessions)
     rows = [
         (
-            str(sess["pid"]),
-            sess["container"],
-            sess["kind"] + ("*" if sess["detach"] else ""),
-            quote_path(sess["user"]),
-            _fmt_uptime(now - sess["start_time"]),
-            _fmt_command(sess["command"]),
+            str(sess.pid),
+            sess.container,
+            sess.kind + ("*" if sess.detached else ""),
+            quote_path(sess.user),
+            _fmt_uptime(now - sess.start_time),
+            _fmt_command(sess.command),
         )
         for sess in sessions
     ]

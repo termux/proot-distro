@@ -73,6 +73,7 @@ import os
 import tempfile
 
 from proot_distro import dirfd, statedir
+from proot_distro.interrupts import defer_interrupts
 
 
 def _state_location(path: str):
@@ -142,6 +143,23 @@ def atomic_write(path: str, mode: str = "wb", *, suffix: str = ".tmp",
             yield fh
 
 
+@contextlib.contextmanager
+def atomic_write_at(dir_fd: int, name: str, mode: str = "wb", *,
+                    suffix: str = ".tmp", **kwargs):
+    """atomic_write() for *name* in a directory the caller holds open.
+
+    For a writer whose destination has no name yet that would reach it: a
+    container being built in a staging directory (container_staging.py)
+    writes its manifest.json there, and the path it will have does not
+    exist until the very end. The temporary is made, written, checked and
+    renamed in *dir_fd* exactly as atomic_replace() does it below a
+    validated state directory.
+    """
+    with contextlib.contextmanager(_replace_at)(dir_fd, name, suffix) as fd:
+        with open(fd, mode, closefd=False, **kwargs) as fh:
+            yield fh
+
+
 def publish_file(src_path: str, dest_path: str) -> None:
     """Rename an already-written file onto *dest_path*.
 
@@ -193,8 +211,12 @@ def _replace_at(dir_fd: int, name: str, suffix: str):
     # that must read its own bytes back (a layer blob handed to the
     # extractor) does it through this descriptor rather than by opening
     # the name a second time.
-    fd, _st = dirfd.open_new_at(dir_fd, tmp_name, 0o600, readable=True)
+    fd = None
     try:
+        with defer_interrupts():
+            fd, _st = dirfd.open_new_at(
+                dir_fd, tmp_name, 0o600, readable=True
+            )
         yield fd
         written = os.fstat(fd)
         os.close(fd)
@@ -244,12 +266,15 @@ def _replace_by_name(path: str, suffix: str):
     """atomic_replace's body for a path the user chose, not the program."""
     dest_dir = os.path.dirname(path) or "."
     os.makedirs(dest_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        prefix=os.path.basename(path) + ".",
-        suffix=suffix,
-        dir=dest_dir,
-    )
+    fd = None
+    tmp = None
     try:
+        with defer_interrupts():
+            fd, tmp = tempfile.mkstemp(
+                prefix=os.path.basename(path) + ".",
+                suffix=suffix,
+                dir=dest_dir,
+            )
         yield fd
         os.close(fd)
         fd = None
@@ -257,8 +282,9 @@ def _replace_by_name(path: str, suffix: str):
     except BaseException:
         if fd is not None:
             _close_quietly(fd)
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
         raise

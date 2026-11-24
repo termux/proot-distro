@@ -20,7 +20,7 @@ import tarfile
 
 import pytest
 
-from proot_distro.commands import backup as backup_mod
+from proot_distro.operations import backup as backup_mod
 
 
 @pytest.fixture
@@ -100,6 +100,9 @@ def test_relax_permissions_still_opens_a_sealed_entry(env):
     assert stat.S_IMODE(f.stat().st_mode) & stat.S_IRUSR
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_does_not_chmod_a_hardlinked_host_file(env):
     root, secret = env
     # A hardlink is the file itself under a second name: O_NOFOLLOW says
@@ -119,6 +122,9 @@ def test_relax_permissions_does_not_chmod_a_hardlinked_host_file(env):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o000
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_does_not_chmod_a_link_made_after_the_lstat(env):
     root, secret = env
     # The walk's lstat says one link; the link appears before the chmod.
@@ -141,6 +147,9 @@ def test_relax_permissions_does_not_chmod_a_link_made_after_the_lstat(env):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o000
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_leaves_a_readable_hardlink_alone(env):
     # Nothing to relax: an ordinary hardlinked binary (busybox and
     # friends) is already owner-readable, so no warning and no chmod.
@@ -160,6 +169,9 @@ def test_relax_permissions_leaves_a_readable_hardlink_alone(env):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o644
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "link"), reason="host cannot create hard links"
+)
 def test_relax_permissions_names_the_entry_it_skipped(env, capsys):
     root, secret = env
     secret.chmod(0o000)
@@ -315,8 +327,8 @@ def test_backup_refuses_a_container_dir_swapped_after_the_check(
     name, host, swap = planted
     real_check = backup_mod.container_is_installed
 
-    def _check_then_swap(container):
-        answer = real_check(container)
+    def _check_then_swap(container, **kwargs):
+        answer = real_check(container, **kwargs)
         swap()
         return answer
 
@@ -339,8 +351,8 @@ def test_backup_holds_its_pin_across_a_mid_run_swap(tmp_path, planted,
     name, host, swap = planted
     real_fix = backup_mod._fix_permissions
 
-    def _fix_then_swap(container_fd, rootfs_dir):
-        real_fix(container_fd, rootfs_dir)
+    def _fix_then_swap(container_fd, rootfs_dir, context=None):
+        real_fix(container_fd, rootfs_dir, context)
         swap()
 
     monkeypatch.setattr(backup_mod, "_fix_permissions", _fix_then_swap)

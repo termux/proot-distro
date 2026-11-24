@@ -537,6 +537,21 @@ class _FlockBase:
     def lock_path(self) -> str:
         return self._lock_path
 
+    def inheritable_fd(self):
+        """Return the held descriptor that a session must inherit, or None.
+
+        Detached sessions cross an exec-based launcher before the existing
+        daemonization fork. Unlike fork, subprocess launch closes every file
+        descriptor not named explicitly, so the launcher needs the descriptor
+        number in order to preserve this lock into proot.
+        """
+        if self._fd is None:
+            return None
+        try:
+            return self._fd.fileno()
+        except (OSError, ValueError):
+            return None
+
     def holder_hint(self) -> str:
         """Parenthesised note naming the lock's holder, or ''.
 

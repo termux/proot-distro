@@ -1,0 +1,170 @@
+#
+# Proot-Distro - manage proot containers.
+#
+# Created by Sylirre <sylirre@termux.dev> for Termux project.
+# Development assisted by Claude Code (https://claude.ai/code).
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+
+"""CLI presentation and execution adapter for prepared sessions."""
+
+import os
+import shlex
+import sys
+
+from proot_distro.constants import PROGRAM_NAME
+from proot_distro.message import (
+    C, crit_error, msg, printable_message, quote_path, warn,
+)
+from proot_distro.operation_errors import (
+    BusyFailure,
+    NotFoundFailure,
+    OperationFailure,
+    UnsupportedFailure,
+)
+from proot_distro.operations.session_prepare import (
+    SessionOptions,
+    prepare_session,
+)
+from proot_distro.session_runtime import detach_session, execute_session
+
+
+def command_session(args, kind):
+    """Prepare and execute one CLI login or run request."""
+    container_name = getattr(args, "container_name", None)
+    arguments = (
+        getattr(args, "run_args", ())
+        if kind == "run"
+        else getattr(args, "login_cmd", ())
+    ) or ()
+    inspect = bool(getattr(args, "get_proot_cmd", False))
+    options = SessionOptions(
+        user=getattr(args, "user", "root") or "root",
+        environment=tuple(getattr(args, "env", ()) or ()),
+        binds=tuple(getattr(args, "bind", ()) or ()),
+        work_dir=getattr(args, "work_dir", None),
+        redirect_ports=bool(getattr(args, "redirect_ports", False)),
+        shared_home=bool(getattr(args, "shared_home", False)),
+        shared_tmp=bool(getattr(args, "shared_tmp", False)),
+        shared_x11=bool(getattr(args, "shared_x11", False)),
+        isolated=bool(getattr(args, "isolated", False)),
+        minimal=bool(getattr(args, "minimal", False)),
+        no_link2symlink=bool(getattr(args, "no_link2symlink", False)),
+        no_sysvipc=bool(getattr(args, "no_sysvipc", False)),
+        no_kill_on_exit=bool(getattr(args, "no_kill_on_exit", False)),
+        emulator=getattr(args, "emulator", None),
+        kernel=getattr(args, "kernel", None),
+        hostname=getattr(args, "hostname", None),
+    )
+    try:
+        with prepare_session(
+            kind,
+            container_name,
+            arguments,
+            options=options,
+            inspect=inspect,
+        ) as prepared:
+            if inspect:
+                warn(
+                    f"printed for inspection: this is not a copy of what "
+                    f"{PROGRAM_NAME} runs. It names the rootfs, which is "
+                    f"resolved afresh whenever the command is run, while the "
+                    f"session {PROGRAM_NAME} starts passes '--rootfs=.' from "
+                    f"inside the directory it validated."
+                )
+                _print_command(prepared.launch.shell_command)
+                raise SystemExit(0)
+            if getattr(args, "detach", False):
+                pid = detach_session(
+                    prepared,
+                    stdout_fd=getattr(args, "_detach_stdout_fd", None),
+                    stderr_fd=getattr(args, "_detach_stderr_fd", None),
+                )
+                _print_detached(prepared.launch, pid)
+                return pid
+            execute_session(prepared)
+    except (
+        OperationFailure, NotFoundFailure, BusyFailure, UnsupportedFailure,
+    ) as exc:
+        # Every typed failure preparation raises, not only OperationFailure:
+        # a missing container (SessionNotFoundFailure) or one locked by a
+        # reset (BusyFailure) used to end `login` and `run` in a traceback.
+        crit_error(str(exc))
+        raise SystemExit(1) from None
+
+
+def _stdout_is_terminal() -> bool:
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _print_command(text):
+    """Write an inspected command with filesystem-byte fidelity.
+
+    Written to a file or a pipe, the command is byte for byte what was
+    built, so that it can be run or compared. Written to a terminal, its
+    control, format and undecodable characters are shown escaped
+    (printable_message), and a warning says so: the command embeds the
+    image's Entrypoint, Cmd and Env and names from the container, all of
+    which the container can rewrite, and a terminal obeys an escape
+    sequence in them. A command with one in it cannot be copied off the
+    screen intact anyway, since the terminal has acted on it.
+    """
+    if _stdout_is_terminal():
+        shown = printable_message(text)
+        if shown != text:
+            warn(
+                "the command holds control, format or undecodable "
+                "characters, shown escaped (as \\e or \\x9b). Redirect "
+                "the output to a file to get it byte for byte."
+            )
+        text = shown
+    text += "\n"
+    try:
+        data = os.fsencode(text)
+    except UnicodeEncodeError:
+        data = text.encode("utf-8", "backslashreplace")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+
+def _print_detached(launch, pid):
+    """Tell the user which detached session started, and what it runs.
+
+    The command is the image's Entrypoint and Cmd unless arguments
+    replaced them, and those come from the container's manifest, which
+    the container can rewrite. It is quoted (quote_path) after it is
+    joined, so an escape sequence in it is shown, not obeyed.
+    """
+    msg()
+    msg(f"{C['CYAN']}Started detached session for container "
+        f"'{launch.container}':{C['RST']}")
+    msg()
+    msg(f"{C['CYAN']}PID:     {C['GREEN']}{pid}{C['RST']}")
+    msg(f"{C['CYAN']}Command: "
+        f"{C['GREEN']}{quote_path(shlex.join(launch.inner_command))}"
+        f"{C['RST']}")
+    msg()
+    msg(f"{C['CYAN']}List sessions:  "
+        f"{C['GREEN']}{PROGRAM_NAME} ps{C['RST']}")
+    msg(f"{C['CYAN']}Stop session:   "
+        f"{C['GREEN']}{PROGRAM_NAME} kill {pid}{C['RST']}")
+    msg()
+
+
+__all__ = ("command_session",)

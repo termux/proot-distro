@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from proot_distro import dirfd
-from proot_distro.commands import sync as sync_mod
+from proot_distro.operations import sync as sync_mod
 from proot_distro.commands.copy import command_copy
 from proot_distro.commands.sync import command_sync
 from proot_distro.paths import container_rootfs
@@ -400,7 +400,7 @@ def test_copy_recursive_draws_progress_against_a_real_total(tmp_path,
                                                             builders,
                                                             monkeypatch):
     """`sync` had a bar and `copy` had none, on the same size of job."""
-    import proot_distro.commands.copy as copy_mod
+    import proot_distro.operations.copy as copy_mod
     builders.make_container("box")
     src = tmp_path / "tree"
     (src / "sub").mkdir(parents=True)
@@ -424,7 +424,7 @@ def test_copy_recursive_skips_the_counting_walk_with_no_bar_to_draw(
     tmp_path, builders, monkeypatch
 ):
     """Counting is a whole extra walk of the source; do not pay for it."""
-    import proot_distro.commands.copy as copy_mod
+    import proot_distro.operations.copy as copy_mod
     builders.make_container("box")
     src = tmp_path / "tree"
     src.mkdir()

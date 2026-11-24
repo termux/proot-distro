@@ -10,11 +10,15 @@ the code.
 ```
 proot-distro.py          Checkout launcher -> cli.main()
 pyproject.toml           Packaging, console scripts, pytest config
+MANIFEST.in              Extra source-distribution files
 README.md                User reference (not technical docs)
+API.md                   User guide for the Python API (proot_distro.api)
 SECURITY.md              Points to Termux's vulnerability policy
+samples/                 Documented Python API example scripts
 proot_distro/            The package (see below)
   completions/           bash / zsh / fish completion scripts
-tests/                   unit/, integration/, security/, live/ (see Tests)
+tests/                   unit/, integration/, security/, compatibility/,
+                         packaging/, live/ (see Tests)
 .github/workflows/       tests.yml (CI), publish.yml (PyPI on `v*` tags)
 ```
 
@@ -22,12 +26,21 @@ tests/                   unit/, integration/, security/, live/ (see Tests)
 
 ```
 proot_distro/
+  api/                     Stable in-process Python interface
+  py.typed                 PEP 561 marker for installed type information
+  operations/              Shared structured operation/service layer
   cli.py  parser.py        Entry point, argparse construction
   commands/                One module (or subpackage) per subcommand
   helpers/                 Registry client, Dockerfile build engine, tar/layer I/O
   constants.py  message.py  names.py  progress.py  execenv.py   Small shared pieces
   dirfd.py  statedir.py  atomic.py  locking.py  paths.py        Safe filesystem layer
   guestfile.py  l2s.py  shm.py  sysdata.py  session.py         Container runtime state
+  session_*.py  _bootstrap.py  _detach_worker.py                Session setup/runtime helpers
+  _api_worker.py  _api_session_worker.py                        Private API worker entry points
+  lazy_exports.py                                               On-demand package indexes
+  interrupts.py                                                 Ctrl-C delivery; cleanups that finish
+  build_scratch.py                                              Build scratch roots and their sweep
+  container_staging.py                                          Staging dirs new containers are built in
   arch.py  compress.py                                          CPU/emulator and zstd knowledge
 ```
 
@@ -35,9 +48,138 @@ proot_distro/
 
 | Module | Role |
 | --- | --- |
-| `cli.py` | `main()`: routes SIGQUIT to `KeyboardInterrupt`, refuses nested proot, probes for `proot`, parses, validates required positionals, enables quiet mode, calls the handler from `_COMMAND_HANDLERS`. |
+| `cli.py` | `main()`: routes SIGQUIT to `KeyboardInterrupt` through Python's own `default_int_handler`, the one `interrupts.defer_interrupts()` holds back, refuses nested proot, probes for `proot`, parses, validates required positionals, enables quiet mode, calls the handler from `_COMMAND_HANDLERS`. |
 | `parser.py` | `build_parser()` plus `ALIAS_TO_CANONICAL` and `required_args_for()`. Help is handled manually (`add_help=False`) so a missing positional renders the command's help page instead of an argparse error. Termux-only options exist only when `IS_TERMUX`. |
 | `commands/help/` | `pages.py` holds every help page as plain data, `render.py` lays them out (stacked on narrow terminals, two columns on wide ones), `__init__.py` exposes `HELP_COMMANDS`. |
+
+### Programmatic API
+
+`proot_distro.api` is the stable, in-process Python interface. How to use it
+is documented in `API.md`; this section records how it is built. It does not
+imply a client-server relationship. `ProotDistro` delegates to the same safe
+state readers used by the CLI and returns immutable models instead of printing.
+Only names re-exported by `proot_distro.api` are public.
+
+| Module | Role |
+| --- | --- |
+| `api/program.py` | `ProotDistro` facade plus caller-thread multiplexing of live events, credentials, binary streams, cooperative worker cancellation, and interruption-safe worker cleanup. |
+| `api/config.py` | Immutable `RuntimeConfig`: independent runtime/cache roots and optional proot path. |
+| `api/credentials.py` | Redacted, optionally registry-scoped credentials, provider requests, and the public structural provider protocol. Workers ask for credentials per registry over a private bidirectional channel. |
+| `api/cancellation.py` | Public structural protocol for cooperative cancellation tokens. |
+| `api/models.py` | Frozen result records, including session launch descriptions, detached sessions, and signal results. |
+| `api/errors.py` | Stable typed hierarchy for validation, missing/existing/busy resources, authentication, network, integrity, unsupported, partial, and generic operation failures. The base class escapes every message's control and format characters. |
+| `api/events.py` | Optional info, warning, progress, and retry events with phase/resource context (the resource escaped with `quote_path`), plus the public handler protocol. |
+| `api/process.py` | Stable foreground `SessionProcess` handle with tracked-tree context cleanup. |
+| `_api_worker.py` | One-shot child executor that applies per-instance paths, invokes shared services, and delegates detached startup to the private launcher. Not a daemon or public protocol. |
+| `_api_session_worker.py` | Configured child with framed live setup events and a close-on-exec startup handshake. |
+| `_bootstrap.py` | Isolated, site-disabled command bootstrap that loads private workers from the exact imported package, with its parent directory after the standard library. |
+
+Design notes for the worker channel:
+
+* Cancellation and Ctrl-C send `SIGINT` to the worker's process group, then
+  `SIGKILL` after a grace period (at once on a repeated Ctrl-C), so a worker
+  stuck in an uninterruptible call cannot block the caller. The wait for the
+  worker uses an `Event` set by the communicate thread, not `Thread.join()`:
+  an interrupted `join()` makes CPython 3.12 report a running thread as
+  stopped, which let the call raise before the worker was reaped. A worker
+  that exited 0 wins over a late cancel request: the work committed, so its
+  result is reported.
+* When an event handler, the credential provider or the channel protocol
+  fails, the worker gets the same `SIGINT` and grace period, and its event
+  and build-output pipes are still read, and discarded, until it exits. It
+  reports events while it cleans up, and a pipe left full behind a slow
+  handler blocked that cleanup until the `SIGKILL`. A stop already under
+  way (a cancel) is not signalled a second time, which would interrupt the
+  cleanup it started.
+* A caller input stream blocked in `read()` cannot be interrupted. Input pump
+  threads are daemons and are joined with a timeout once the worker is gone;
+  from then on they start no further `read()` and drop what an in-flight one
+  returns, so a caller can keep using its stream after the call.
+* A worker's process group is never signalled once the worker is reaped:
+  its PID, and so its group ID, may already belong to someone else.
+  Session setup interrupted by Ctrl-C gets the same SIGINT, grace period
+  and SIGKILL as a worker, and `SessionProcess.close()` always reaps, even
+  when the tracked-tree signal fails (it then signals its own child).
+* Worker error envelopes and the session-setup status frame both carry a
+  `kind` that selects the public exception class. Build failures keep the
+  kind of the registry or download error that caused them
+  (`operations/errors.py: build_failure`); the subclasses are also
+  `OperationFailure`, so the CLI adapter is unchanged.
+  `tests/integration/test_api_error_contract.py` proves, with real workers,
+  which typed errors each method raises, and checks that docstrings and
+  `API.md` list exactly those. Only `search`/`NetworkError` is left
+  unproven offline (it needs Docker Hub); the TLS cases use a throwaway
+  certificate that workers trust through `SSL_CERT_FILE`. Session validation
+  failures stay generic because the parent already validated the arguments.
+* `restore` replaces an existing container in place and cannot roll that
+  back; a container it created itself is removed again if the restore
+  fails or is cancelled, so no manifest-less rootfs is left listed.
+* Registry credentials never travel in a worker request or environment.
+  A worker names each registry when it is about to authenticate
+  (`transport.use_basic_auth_provider`), and the parent answers in the
+  caller's thread. Credentials scoped to another registry are dropped
+  there. Unscoped static ones answer only the registry an `install` or
+  `push` argument names; `build` and `reset_container` refuse them,
+  because a Dockerfile or a guest-writable manifest picks those
+  registries. Asking at the moment of use also means a manifest rewritten
+  during a reset cannot redirect credentials chosen earlier.
+  `tests/security/test_api_credential_scope.py` tries each route.
+* Cancellation reaches a worker as SIGINT and stops it through the
+  operation's own KeyboardInterrupt handling, so a SIGINT must never be
+  lost inside the worker (`interrupts.py`).
+* Event frames are bounded; an oversized message is truncated, never fatal.
+* Descriptor waits use `selectors`, because `select.select` rejects
+  descriptors numbered 1024 and above.
+* Only the registry client uses the network in the parent process
+  (`search`); everything else runs in a one-shot worker.
+* One call starts one worker. An operation that leaves a container behind
+  (install, rename, reset, restore, `build --install-as`, and remove for
+  the former record) returns that container's inventory record itself
+  (`inventory.container_record`), and a missing container is the
+  operation's own `NotFoundFailure`; nothing lists every container in a
+  second interpreter first or afterwards.
+* A worker's start-up is part of every call, so it imports only what its
+  operation uses. The worker modules live outside `api/`, whose
+  `__init__` loads the whole facade. `operations/` and `helpers/docker/`
+  are indexes that import a submodule on first use (`lazy_exports.py`).
+  The version is looked up only for the help screen and a User-Agent.
+  `RegistryAuthenticationError` lives in `operation_errors.py` so naming
+  it does not load the HTTP stack. `tests/unit/test_worker_startup.py`
+  pins what a local worker may not import.
+
+### Shared operations
+
+Core operations live in `operations/`. These services own
+locking, secure state access, mutations, structured events, and immutable
+internal results. They do not parse CLI namespaces, print failures, or call
+`sys.exit()`. Command modules are presentation adapters; API workers call the
+same services. Container, image, and session inventories plus container and
+cached-image removal, rename, cache cleanup, copy, move, synchronization,
+backup, restore, install, reset, build orchestration, registry push, session
+signalling, and descriptor-pinned login/run preparation are migrated.
+
+| Module | Role |
+| --- | --- |
+| `operations/context.py` | Explicit event emitter and verbose preference supplied to services. |
+| `operations/models.py` | Frozen internal results, separate from stable public API models. |
+| `operations/locks.py` | Typed, process-control-free adapter around non-blocking state locks. |
+| `operations/inventory.py` | Shared immutable container, cached-image, and live-session inventories. |
+| `operations/copy.py` | Descriptor-pinned copy and move services, including secure cross-device fallback. |
+| `operations/sync.py` | Descriptor-pinned mirroring, metadata comparison, progress, and optional pruning. |
+| `operations/backup.py` | Descriptor-safe container archive creation with atomic path publication and stream output. |
+| `operations/restore.py`; a failure names its cause (a damaged archive is `IntegrityFailure`; an unreadable archive or an unwritable container is `OperationFailure`), and one that removed the old container carries how to get it back (`attach_recovery`). | Validated single-container archive extraction with deferred destructive commit; the container is built in a staging directory and renamed onto its name only when complete, and an existing one is removed completely first.; a failure names its cause (a damaged archive is `IntegrityFailure`; an unreadable archive or an unwritable container is `OperationFailure`), and one that removed the old container carries how to get it back (`attach_recovery`). |
+| `operations/install.py` | Local archive, URL, and OCI installation with rootfs fixups, built in a staging directory and renamed onto the name only when complete. |
+| `operations/install_local.py` | Secure plain-rootfs and local OCI-layout detection, validation, and extraction. |
+| `operations/reset.py` | Locked OCI-backed container replacement using recorded image metadata: the old container is removed completely, then install builds the new one (`replace=True`), and a failure names the install command that brings it back; only a registry reference is honoured, never a guest-planted path or URL. |
+| `operations/build.py` | Dockerfile validation, deterministic tag locking, build-engine orchestration, OCI publication, optional installation, and the final removal of the build's scratch root (made and swept by `build_scratch.py`). |
+| `operations/push.py` | Cached-image resolution, locking, authentication, retrying OCI blob and manifest uploads, progress, and byte accounting. |
+| `operations/session_signals.py` | Tracked-session selection, PID-reuse-safe process discovery, signal delivery, escalation, and survivor reporting. |
+| `operations/session_prepare.py` | Shared login/run validation, pinned state access, identity and environment resolution, immutable launch metadata, and scoped descriptor ownership. |
+| `operations/containers.py` | Shared secure container removal and rename implementations. |
+| `operations/images.py` | Cached-image resolution, locking, removal, shared-layer collection, and dependent-container reporting. |
+| `operations/errors.py` | Structured failures carrying image suggestions and ambiguity details. |
+| `operations/cache.py` | Shared full/orphan/build cache cleanup and reclaimed-byte accounting; every mode then sweeps the scratch roots of dead builds. |
+| `operations/__init__.py` | Lazy index of the services and models above: a name imports its submodule when first used. |
 
 ### Commands
 
@@ -46,12 +188,12 @@ what the command takes (see `locking.py`).
 
 | Command (aliases) | Module | Does | Lock |
 | --- | --- | --- | --- |
-| `install` (`add`, `i`, `in`, `ins`) | `install.py`, `install_local.py` | Pull a reference, or unpack a local/URL OCI layout or rootfs tarball, into `containers/<name>/`. Writes `manifest.json`. | container, exclusive |
+| `install` (`add`, `i`, `in`, `ins`) | `install.py` | Pull a reference, or unpack a local/URL OCI layout or rootfs tarball, into `containers/<name>/`. Writes `manifest.json`. | container, exclusive |
 | `remove` (`rm`) | `remove.py` | Delete a container, or with `--image` a cached image. | container, exclusive; `--image`: build lock |
 | `rename` | `rename.py` | Rename a container and rewrite its l2s symlinks. | exclusive |
 | `reset` | `reset.py` | Reinstall from the image recorded in `manifest.json`. | exclusive |
-| `login` (`sh`) | `login/` | Start a shell or command inside a container. | container, shared |
-| `run` | `run.py` | Run the image's Entrypoint/Cmd; delegates to `command_login`. | shared |
+| `login` (`sh`) | `login/` | Adapt CLI arguments to shared preparation, then start a shell or command. | container, shared |
+| `run` | `run.py` | Adapt CLI arguments to shared OCI Entrypoint/Cmd preparation. | shared |
 | `list` (`li`, `ls`) | `list.py` | Installed containers, or `--image` for cached images. | none |
 | `search` (`s`, `se`) | `search.py` | Docker Hub repository search (presentation only). | none |
 | `backup` (`bak`, `bkp`) | `backup.py` | Tar a container, optionally compressed. | shared |
@@ -64,29 +206,31 @@ what the command takes (see `locking.py`).
 | `kill` | `kill.py` | Tear down a session's whole process tree. | none |
 | `clear-cache` (`clear`, `cl`) | `clear_cache.py` | Delete the download cache, or only orphan blobs / the build index. The orphan and build-index sweeps refuse while another command holds an exclusive lock. | none taken; sweeps probe for held locks |
 
-`login/` is split by concern:
+Session implementation is split by concern:
 
 | Module | Role |
 | --- | --- |
-| `__init__.py` | `command_login`: resolve rootfs, user, env, binds, then exec proot. |
-| `proot_cmd.py` | `build_proot_args()`: assembles the proot argv in a fixed order. |
-| `passwd.py` | uid/gid/home/shell lookup, read through `guestfile`. |
-| `env.py` | Image `Env`, identity variables, `/etc/profile.d` injection. |
-| `bindings.py` | Android storage and system `--bind` lists. |
-| `detach.py` | `--detach`: double-fork daemonisation. |
-| `migrate.py` | One-shot move from the legacy `installed-rootfs/` layout. |
-| `quoting.py` | POSIX double-quoting for `--get-proot-cmd`. |
+| `commands/session.py` | CLI presentation and execution adapter shared by the `login` and `run` handlers. |
+| `session_command.py` | `build_proot_args()`: assembles the Proot argv in a fixed order. |
+| `session_identity.py` | uid/gid/home/shell lookup, read through `guestfile`. |
+| `session_env.py` | Image `Env`, identity variables, `/etc/profile.d` injection. |
+| `session_bindings.py` | Android storage and system `--bind` lists. |
+| `session_runtime.py` | Foreground registration/exec and detached-launch protocol; potentially multithreaded callers first exec a fresh helper. |
+| `_detach_worker.py` | Isolated single-threaded helper that performs detached double-fork daemonisation with explicit descriptor transfer and a minimal ambient environment. |
+| `session_migrate.py` | One-shot move from the legacy `installed-rootfs/` layout. |
+| `commands/login/*.py` | Compatibility imports for internal helper locations used before shared preparation. |
+| `session_quoting.py` | POSIX double-quoting for `--get-proot-cmd`. |
 
 ### Helpers
 
 | Module | Role |
 | --- | --- |
-| `helpers/docker/` | Pure-Python registry client. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth and the `PD_DOCKER_AUTH` check, redirects, JSON caps, refusal messages), `pull.py`, `push.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
+| `helpers/docker/` | Pure-Python registry client, with a lazy package index. `refs.py` (Docker's reference grammar, no I/O), `transport.py` (auth and the `PD_DOCKER_AUTH` check, redirects, JSON caps, refusal messages), `pull.py`, `layers.py` (download + apply a layer), `cache.py` (manifest and layer caches, digest checks), `search.py` (Hub only), `media.py` (media types, canonical JSON). |
 | `helpers/dockerfile.py` | Pure Dockerfile parser. No execution and no variable expansion. |
 | `helpers/build_engine/` | Dockerfile interpreter. `engine.py` (`BuildEngine`: FROM, dispatch, history), `stage.py` (per-FROM state and descriptors), `handlers.py` (metadata-only instructions and the dispatch table), `run_step.py` (RUN under proot), `copy_step.py` (COPY/ADD), `users.py`, `dockerignore.py`, `parsing.py`, `constants.py`, `errors.py`. |
 | `helpers/layer_diff.py` | Snapshot the rootfs before and after a RUN, diff, write a gzipped OCI layer with whiteouts. |
 | `helpers/build_cache.py` | Recipe-hash index so unchanged steps replay a cached layer. |
-| `helpers/oci_writer.py` | Final `build` outputs: manifest cache entry and OCI image-layout tarball. |
+| `helpers/oci_writer.py` | Final `build` outputs: manifest cache entry plus atomic path or sequential stream OCI tarballs. |
 | `helpers/tar_extract.py` | The single streaming tar -> rootfs extractor, used for layers and plain tarballs. |
 | `helpers/rootfs.py` | Post-extraction fixups: `resolv.conf`, `/etc/hosts`, Android uid/gid entries. |
 | `helpers/download.py` | HTTP opener, redirect policy, retries (honouring `Retry-After`, giving up on a spent quota), `download_file`, `sha256_file`. |
@@ -97,10 +241,15 @@ Roughly bottom-up. Higher entries import lower ones.
 
 | Module | Role |
 | --- | --- |
-| `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and the paths derived from them. Computed once at import. |
-| `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, `quote_path` (escapes terminal control bytes in any name read from disk or network). |
+| `constants.py` | `IS_TERMUX`, `RUNTIME_DIR`, `BASE_CACHE_DIR` and derived paths. Computed once at import from CLI defaults or private per-worker API overrides. `program_version()` is looked up on first use. |
+| `message.py` | Colours, `msg`/`log_*`/`crit_error`, quiet flag, typed info/warning/retry event routing, `quote_path` (escapes control and format characters, C1 and bidi ones included, in names read from disk or network), and `printable_message` (the same for whole messages; `msg` applies it to everything it prints except the colour codes of `C`, every log helper applies it, and so do the API's error classes and its decoding of worker events). |
+| `operation_errors.py` `attach_recovery()` has an exception carry a note of what its failure cost the user, which the API worker appends to the error's message and hands the parent for a cancellation's. | Internal RuntimeError subclasses for network, integrity, missing, busy, unsupported, and registry-authentication failures; workers map them to public API exceptions while CLI catches remain unchanged. `attach_recovery()` has an exception carry a note of what its failure cost the user, which the API worker appends to the error's message and hands the parent for a cancellation's. |
+| `lazy_exports.py` | `lazy_exports()`: the PEP 562 hooks behind a package index that imports a submodule only when one of its names is used. |
+| `interrupts.py` | `defer_interrupts()` holds SIGINT and SIGQUIT (the CLI's Ctrl-\, which raises KeyboardInterrupt through the same `default_int_handler`) back across a place where CPython would lose or misplace their KeyboardInterrupt. It swaps that default handler for one that only takes note, because blocking a signal held it only in a process with no other thread; `open_tar_member()` is the only way the package opens a tar member, because `BufferedReader` discards what tarfile's `tell()` raises. API cancellation is a SIGINT, so a lost one let a cancelled operation finish. `finish_cleanup()` lets the first interrupt landing in a cleanup wait for it to end, while a second stops it; build, install and restore remove what they leave through it. |
+| `build_scratch.py` | Makes a build's scratch root in `build-tmp/`, or the system temp dir when that cannot be used, named `pd-build-<pid>-<start>.<hex>` and flock'ed while in use. `reclaim_scratch_roots()` sweeps both places for roots this user owns whose lock is free and whose maker is gone: no such process, another user's, or one with another start time (a reused ID). Used by `build` and `clear-cache`. `make_root_in()` and `reclaim_roots()` are the naming and the sweep, shared with `container_staging.py`. |
+| `container_staging.py` | The staging directory install and restore build a new container in (`containers/.pd-staging-<pid>-<start>.<hex>`, named and locked like a build scratch root), its rename onto `containers/<name>` (checked against the staging dir's descriptor before and after; `rename(2)` refuses a taken name), `clear_container()`, which `reset` and `restore` over an existing container call to remove the old one first (renamed aside under a staging name, then removed with `remove_left()`), `refuse_leftovers()` for a name that holds no container but is not free, `holds_no_container()`, which a failed reset or restore over a container asks before it says the old one is lost (true for a name something took, too), and `reclaim_staging()`, which install, restore and `clear-cache` call. |
 | `names.py` | The one container-name rule. |
-| `progress.py` | Shared stderr progress bar. |
+| `progress.py` | Shared stderr progress bar and structured API progress routing with explicit phase/resource metadata. |
 | `execenv.py` | Which environment variables may reach a proot exec (`LD_*` and `PROOT_*` from an image are refused). |
 | `dirfd.py` | `openat(2)`-based file operations: every call takes `(dir_fd, name)` and opens with `O_NOFOLLOW`. Also copy, remove, and tree walks that hold one fd per level. |
 | `statedir.py` | Walks down from a trust root (`RUNTIME_DIR`, `BASE_CACHE_DIR`) one `O_NOFOLLOW` step at a time and returns the descriptor. |
@@ -130,7 +279,14 @@ RUNTIME_DIR                    Termux: <prefix>/var/lib/proot-distro
   sessions/<pid>.json          Active proot sessions
   locks/<name>.lock            Container locks
   locks/build/<key>.lock       Build locks
-  build-tmp/                   Scratch roots for running builds
+  build-tmp/                   Scratch roots for running builds (locked;
+                               a dead build's is swept by the next
+                               build or clear-cache; see build_scratch.py)
+  containers/.pd-staging-*/    New containers being built, and old ones a
+                               reset or restore is removing (a dead
+                               process's are swept by the next install,
+                               restore or clear-cache; see
+                               container_staging.py)
 
 BASE_CACHE_DIR                 Termux: <RUNTIME_DIR>/cache
                                Linux:  $XDG_CACHE_HOME/proot-distro
@@ -144,41 +300,59 @@ Installed containers are independent copies and do not reference the cache.
 
 ## Key flows
 
-**install.** `cli` -> `command_install` -> exclusive `ContainerLock` -> create
-`containers/<name>/rootfs` as a descriptor. Then either `pull_image` (cache
-check, manifest and index resolution, per-layer download and digest check,
-`apply_layer` -> `tar_extract`) or `install_from_local_file`
+**install.** `cli` -> `command_install` -> exclusive `ContainerLock` -> refuse
+an installed name or leftovers, sweep dead staging dirs, then create a staging
+dir (`container_staging.py`) and its `rootfs` as descriptors. Then either
+`pull_image` (cache check, manifest and index resolution, per-layer download
+and digest check, `apply_layer` -> `tar_extract`) or `install_from_local_file`
 (OCI layout or plain tar). Then `manifest.json`, the `rootfs.py` fixups and
-the `sysdata` stubs. A failed install removes what it made.
+the `sysdata` stubs, and last the rename of the staging dir onto
+`containers/<name>`. A failed install removes the staging dir; a killed one
+leaves it to the next sweep, and never a container.
 
 **login / run.** Shared lock, then pin the rootfs as a descriptor. `passwd`
 reads the user through `guestfile`. `env`, `bindings`, `sysdata` and `shm`
 prepare binds and environment. `proot_cmd.build_proot_args` builds the argv.
-The session is recorded in `session.py`, and the process either `execvpe`s
-into proot (the lock fd is inherited, so the lock lives as long as the
-session) or is daemonised by `detach`. `run` reads Entrypoint/Cmd from
-`manifest.json`, validates their shape, and calls `command_login`.
+The process either `execvpe`s into proot or, for a detached session, execs the
+single-threaded `_detach_worker` before double-fork daemonisation. The final
+process enters the pinned rootfs, records itself in `session.py`, and inherits
+the container-lock and session-record descriptors, so its pins and locks live
+as long as the session. `run` reads Entrypoint/Cmd from `manifest.json`,
+validates their shape, and calls `command_login`.
 
 **build.** Parse the Dockerfile (`dockerfile.py`) and decide if proot is
-needed (only RUN-family instructions). `BuildEngine` creates a scratch root
-under `build-tmp/` and one `Stage` per FROM. Each instruction becomes a
+needed (only RUN-family instructions). `operations/build.py` has
+`build_scratch.py` create a scratch root under `build-tmp/` (or the system
+temp dir when that cannot be used), named after its process's ID and
+start time and flock'ed for as long as the build runs, after sweeping the
+roots in both places whose process is gone and whose lock is free; a
+first interrupt during the final removal lets it finish. `BuildEngine` makes one `Stage` per FROM in it. Each instruction becomes a
 history entry and, if it changes files, a layer. RUN looks up the recipe hash
 in `build_cache`; on a miss it snapshots, runs under proot, snapshots again,
-and `layer_diff` writes the layer. COPY/ADD build a file map and write the
+and `layer_diff` writes the layer. A step is over when nothing of it runs:
+leftovers are stopped first, and proot is ended last with SIGQUIT, never
+SIGKILL first, because a SIGKILLed proot leaves its tracees running
+untraced. Its parent-death signal is that same SIGQUIT, so a step does
+not outlive a build process that is killed outright. COPY/ADD build a file map and write the
 layer straight from it. `oci_writer` then stores the manifest in the cache, and
 optionally writes an OCI tarball (`--output`) or installs a container
 (`--install-as`).
 
-**push.** Load the built image from the caches, verify the config digest,
-have `PD_DOCKER_AUTH` checked and exchange it for a token, HEAD-probe and
-upload missing blobs, upload the config, `PUT` the manifest.
+**push.** Load the built image from the caches, verify the config digest and
+that the manifest's media type is an image manifest's, have `PD_DOCKER_AUTH`
+checked and exchange it for a token, HEAD-probe and upload missing blobs,
+upload the config, `PUT` the manifest. The digest
+reported is the SHA-256 of the manifest bytes sent; a `Docker-Content-Digest`
+answer naming another one is an integrity failure.
 
 **copy / sync.** Resolve each `[container:]path` with chroot semantics, take
 locks, `pin_path` both ends, and then work only through `dirfd`.
 
 **backup / restore.** Backup archives `<name>/manifest.json` and
 `<name>/rootfs/...`; restore also accepts the legacy `installed-rootfs/<name>`
-layout. Restore commits only on success.
+layout. Restore commits only on success: it builds the container in a
+staging dir and renames it into place, as install does, after removing an
+existing one completely (`clear_container`).
 
 **ps / kill.** Both read `session.active_sessions()`. `kill` signals only
 tracked sessions, finds members by the inherited registry fd, and escalates
@@ -220,9 +394,11 @@ The suite (about 2000 tests) is offline and deterministic by default. See
 | Directory | Covers |
 | --- | --- |
 | `tests/unit/` | Pure functions: parsing, naming, digests, caches, quoting, locking, session registry. |
-| `tests/integration/` | Whole `command_*` pipelines driven with `SimpleNamespace` args in a sandboxed runtime tree. |
+| `tests/integration/` | Whole `command_*` pipelines and public-API concurrency, cancellation, and interruption flows in sandboxed runtime trees. |
 | `tests/security/` | Exploit attempts for each closed hole: traversal, symlink and hardlink escapes, TOCTOU swaps, cache poisoning, forged records. |
 | `tests/live/` | Opt-in (`RUN_LIVE_TESTS=1`): real registry pulls and real proot. |
+| `tests/compatibility/` | Versioned snapshots of public API exports, signatures, models, enums, protocols, and exceptions. |
+| `tests/packaging/` | Offline source/wheel build, content, installation, API-contract, dependency, and console-entry-point checks. |
 
 `conftest.py` redirects XDG and `HOME` into a sandbox before importing the
 package and refuses to run outside it. `_builders.py` holds shared fixtures
@@ -232,10 +408,11 @@ Basic auth, TLS from the test-only CA in `tests/tls/`), against which
 `integration/test_registry_auth.py` runs pull and push end to end.
 
 CI (`tests.yml`) first builds proot from a pinned termux/proot commit (the
-distro package is never installed) and checks that it confines. It then
-runs unit, integration, security and live tests on Python 3.9 (Ubuntu
-24.04), 3.12 and 3.15 (latest Ubuntu), plus an end-to-end shell script on
-pushes that installs Alpine, Debian and Ubuntu and exercises each command.
+distro package is never installed) and checks that it confines. It then runs
+unit, compatibility, packaging, integration, security and live tests on Python
+3.9 (Ubuntu 24.04), 3.12 and 3.15 (latest Ubuntu), plus an end-to-end shell
+script on pushes that installs Alpine, Debian and Ubuntu and exercises each
+command.
 
 ## Adding things
 

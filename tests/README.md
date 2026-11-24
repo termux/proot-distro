@@ -16,21 +16,30 @@ RUN_LIVE_TESTS=1 python -m pytest -q tests/live   # opt-in network/proot tests
 
 ## Layout
 
-- `unit/` — pure-function correctness (names, paths, arch/ELF detection,
-  Dockerfile parsing + `${VAR}` expansion, digest validation, cache keys,
-  layer diff/whiteouts, OCI writer, quoting, env injection, argparse, ...).
+- `unit/` — pure-function correctness (public API contracts, names, paths,
+  arch/ELF detection, Dockerfile parsing + `${VAR}` expansion, digest
+  validation, cache keys, layer diff/whiteouts, OCI writer, quoting, env
+  injection, argparse, ...).
 - `security/` — containment of malformed/malicious input. Proves a hostile
   third-party tar / OCI image / backup archive cannot escape the destination
   rootfs or the containers directory (path traversal via member names,
   hard-link / symlink linknames, crafted `index.json` digests, COPY/ADD
   sources, `--bind` specs).
-- `integration/` — the real `command_*` pipelines driven with
-  `types.SimpleNamespace` args, against the sandboxed runtime tree
-  (install / backup→restore / build→install / copy / sync / rename / reset /
-  clear-cache / CLI dispatch / `login --get-proot-cmd`), and pull / push
-  authentication end to end against `_registry.py` (below).
+- `integration/` — the public mutation API and real `command_*` pipelines
+  driven with `types.SimpleNamespace` args, against the sandboxed runtime
+  tree (API + CLI install / backup→restore / build→install / sessions /
+  image removal / cache cleanup / copy / sync / rename / reset /
+  clear-cache / CLI dispatch / `login --get-proot-cmd`), concurrent API
+  instances and processes, cancellation/interruption recovery, and pull /
+  push authentication end to end against `_registry.py` (below).
+- `compatibility/` — the versioned public Python API snapshot. It pins exports,
+  signatures, dataclass fields, enums, protocols, and exception inheritance.
+- `packaging/` — offline source/wheel builds and installed-artifact checks for
+  package contents, typing metadata, API compatibility, dependencies, and both
+  console scripts.
 - `live/` — opt-in smoke tests behind `@pytest.mark.live`, skipped unless
-  `RUN_LIVE_TESTS=1` (real Docker Hub pull, real proot run).
+  `RUN_LIVE_TESTS=1` (real Docker Hub pull, real proot run, and how a RUN
+  step's real proot is ended).
 
 ## How isolation works
 
@@ -65,8 +74,9 @@ pipelines run unmocked: probe, challenge, credential check, token
 exchange, redirects and uploads. It speaks Bearer or Basic
 authentication, can refuse a wrong password the way a given registry
 does (`reject_code`: 401, GHCR's 403, ECR's 400), has accounts that sign
-in but may not pull (`outsiders`), and records every request with its
-Authorization header. TLS comes from `tests/tls/`: a CA
+in but may not pull (`outsiders`), can answer a manifest upload with any
+`Docker-Content-Digest` or none (`manifest_digest_header`), and records
+every request with its Authorization header. TLS comes from `tests/tls/`: a CA
 made for this suite alone (its key was discarded) and a certificate it
 issued for `localhost` / `127.0.0.1`. Tests trust it by pointing
 `SSL_CERT_FILE` at `tests/tls/ca.pem`; since Python 3.12 builds an HTTPS

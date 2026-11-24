@@ -5,7 +5,8 @@ import os
 
 import pytest
 
-from proot_distro.commands import restore
+from proot_distro.commands.restore import command_restore
+from proot_distro.operations import restore
 from proot_distro.constants import CONTAINERS_DIR
 from proot_distro.paths import container_dir, container_rootfs
 
@@ -85,7 +86,7 @@ def _run_restore(tmp_path, members):
     arc = tmp_path / "backup.tar"
     make_tar(str(arc), members)
     args = type("A", (), {"archive": str(arc), "verbose": False})()
-    restore.command_restore(args)
+    command_restore(args)
 
 
 def test_restore_hostile_archive_contained(tmp_path):
@@ -137,7 +138,7 @@ def test_restore_bare_root_archive_rejected(tmp_path):
     make_tar(str(arc), [{"name": "loosefile", "type": "file", "data": b"x"}])
     args = type("A", (), {"archive": str(arc), "verbose": False})()
     with pytest.raises(SystemExit) as exc:
-        restore.command_restore(args)
+        command_restore(args)
     assert exc.value.code == 1
 
 
